@@ -1,0 +1,149 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+# $Id: Portfile 131116 2015-01-06 09:42:26Z mojca@macports.org $
+
+PortSystem          1.0
+PortGroup           muniversal 1.0
+
+name                cmake
+version             3.1.2
+set branch          [join [lrange [split ${version} .] 0 1] .]
+categories          devel
+license             BSD
+installs_libs       no
+maintainers         css michaelld
+description         Cross-platform make
+long_description    An extensible, open-source system that manages the build    \
+                    process in an operating system and compiler independent manner. \
+                    Unlike many cross-platform systems, CMake is designed to be     \
+                    used in conjunction with the native build environment.
+homepage            http://www.cmake.org/
+master_sites        http://www.cmake.org/files/v${branch}/
+platforms           darwin freebsd
+
+checksums           rmd160 50caf6ff5de97390decf43446ef0733750a5862c \
+                    sha256 2b210f7d867a1e716c1895357ebe63c7b9ae61fdb5f2d300ab2f01795f085b35
+
+depends_lib-append  port:libidn \
+                    port:openssl \
+                    port:curl \
+                    port:expat \
+                    port:zlib \
+                    port:bzip2 \
+                    port:libarchive
+
+patchfiles          patch-CMakeFindFrameworks.cmake.diff \
+                    patch-Modules-FindFreetype.cmake.diff \
+                    patch-Modules-FindQt4.cmake.diff \
+                    patch-Modules-Platform-Darwin.cmake.diff \
+                    patch-Modules-Platform-Darwin-Initialize.cmake.diff \
+                    patch-Modules-noArchCheck.diff
+
+# RJVB : fix for the obsolete use of -bundle instead of -dynamiclib in CMAKE_SHARED_MODULE_CREATE
+# suspending this patch because -dynamiclib won't work with -bundle_loader (breaks port:mysql56)
+# patchfiles-append   patch-SHARED_BUNDLE_flag.diff
+
+configure.env-append \
+                    CMAKE_PREFIX_PATH=${prefix} \
+                    CMAKE_INCLUDE_PATH=${prefix}/include/ncurses \
+                    CMAKE_LIBRARY_PATH=${prefix}/lib
+
+platform darwin {
+    configure.env-append \
+                    CMAKE_OSX_DEPLOYMENT_TARGET="${macosx_deployment_target}"
+
+    if {${configure.sdkroot} != ""} {
+        configure.env-append CMAKE_OSX_SYSROOT="${configure.sdkroot}"
+    } else {
+        configure.env-append CMAKE_OSX_SYSROOT="/"
+    }
+}
+
+configure.args      --mandir=/share/man --docdir=/share/doc/cmake \
+                    --parallel=${build.jobs} \
+                    --init=${worksrcpath}/macports.cmake \
+                    --system-libs
+#--sphinx-man --sphinx-build=${prefix}/bin/sphinx-build-3.3
+
+configure.universal_args
+configure.post_args
+
+# Leopard's Rosetta has some difficulties configuring the ppc slice
+platform darwin 9 {
+    global universal_archs_supported
+    if {${build_arch} eq "i386" || ${build_arch} eq "x86_64"} {
+        supported_archs i386 x86_64
+    } elseif {${build_arch} eq "ppc" || ${build_arch} eq "ppc64"} {
+        supported_archs ppc ppc64
+    }
+    set universal_archs_supported ${supported_archs}
+}
+
+platform darwin {
+    # TODO: Figure out why using libc++ fails on Lion and fix the bootstrap
+    #       script to honor CMAKE_OSX_SYSROOT and CMAKE_OSX_DEPLOYMENT_TARGET.
+    #       Since nothing links against cmake and cmake is just using the STL,
+    #       we're safe to force libstdc++
+    #
+    #       https://www.cmake.org/Bug/view.php?id=15039&nbn=16
+    if {${os.major} < 12} {
+        configure.cxx_stdlib libstdc++
+    }
+}
+
+post-patch {
+    # copy cmake init file, ready to be patched below
+    copy ${filespath}/macports.cmake ${worksrcpath}
+
+    # patch PREFIX
+    reinplace "s|__PREFIX__|${prefix}|g" ${worksrcpath}/macports.cmake
+    reinplace "s|__PREFIX__|${prefix}|g" ${worksrcpath}/Modules/CMakeFindFrameworks.cmake
+}
+
+post-destroot {
+    xinstall -d -m 0755 ${destroot}${prefix}/share/emacs/site-lisp
+    xinstall -m 0644 ${worksrcpath}/Auxiliary/cmake-mode.el \
+        ${destroot}${prefix}/share/emacs/site-lisp
+    foreach type {syntax indent} {
+        xinstall -d -m 0755 ${destroot}${prefix}/share/vim/vimfiles/${type}
+        xinstall -m 0644 -W ${worksrcpath}/Auxiliary cmake-${type}.vim \
+            ${destroot}${prefix}/share/vim/vimfiles/${type}
+    }
+    if ([variant_isset gui]) {
+        set app CMake
+        xinstall -d ${destroot}${applications_dir}/${app}.app/Contents/MacOS \
+            ${destroot}${applications_dir}/${app}.app/Contents/Resources
+        xinstall -m 644 ${filespath}/Info.plist.in ${destroot}${applications_dir}/${app}.app/Contents/Info.plist
+        reinplace "s|@VERSION@|${version}|g" ${destroot}${applications_dir}/${app}.app/Contents/Info.plist
+        reinplace "s|@PREFIX@|${prefix}|g" ${destroot}${applications_dir}/${app}.app/Contents/Info.plist
+        ln -s ${prefix}/bin/cmake-gui ${destroot}${applications_dir}/${app}.app/Contents/MacOS/cmake-gui
+        xinstall -m 644 ${worksrcpath}/Source/QtDialog/CMakeSetup.icns ${destroot}${applications_dir}/${app}.app/Contents/Resources/CMakeSetup.icns
+        file delete -force ${destroot}${prefix}/PlugIns
+        file delete -force ${destroot}${prefix}/Resources
+    }
+}
+
+variant qt4 description {Build the Qt4 gui version} {
+    PortGroup qt4 1.0
+}
+
+variant gui description {Qt based cmake-gui} {
+    if {[variant_isset qt4]} {
+        # qt4 being requested we have to make sure CMake doesn't detect and use
+        # qt5 if that happens to be installed too:
+        patchfiles-append   patch-CMakeLists.txt.diff \
+                            patch-CMakeLists-4qt4.diff
+    } else {
+        # this is how cmake checks what Qt version to use:
+        if {[file exists ${prefix}/lib/pkgconfig/Qt5Widgets.pc]} {
+            PortGroup qt5 1.0
+        } else {
+            PortGroup qt4 1.0
+        }
+        patchfiles-append   patch-CMakeLists.txt.diff
+    }
+    configure.args-append --qt-gui --qt-qmake=${qt_qmake_cmd}
+}
+
+livecheck.type      regex
+livecheck.regex     ${name}-(\[0-9.\]+)${extract.suffix}
+livecheck.url       [lindex $master_sites 0]

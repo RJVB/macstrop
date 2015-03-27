@@ -1,0 +1,114 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
+PortSystem          1.0
+
+name                qt5-creator-mac
+
+if { ${subport} eq "${name}-docs" || ${subport} eq "${name}-examples" } {
+    supported_archs   noarch
+}
+
+PortGroup           qmake5 1.0
+# no point in building this one universal really, nowadays
+universal_variant   no
+
+version             3.3.0
+categories          devel aqua
+platforms           darwin
+license             LGPL-2.1
+maintainers         mcalhoun openmaintainer
+description         Cross-platform integrated development environment (IDE) tailored to the needs of Qt developers.
+long_description    Qt Creator is a cross-platform integrated development environment (IDE) tailored to the needs of Qt developers.
+
+homepage            http://qt-project.org/wiki/Category:Tools::QtCreator
+
+subport ${name}-devel {
+    fetch.type      git
+    if {[file exists /Users/bertin/cworks/new/Qt/QC-git]} {
+        git.url     /Users/bertin/cworks/new/Qt/QC-git
+    } else {
+        git.url     https://gitorious.org/qt-creator/qt-creator.git
+    }
+    git.branch      17bbb4e
+    version         3.3.81
+    distname        qt-creator-opensource-src-3.3.x
+}
+if { ${subport} ne "${name}-devel" } {
+    master_sites    https://download.qt-project.org/official_releases/qtcreator/[join [lrange [split ${version} .] 0 1] .]/${version}/
+
+    distname        qt-creator-opensource-src-${version}
+    checksums       rmd160  9dc8f91ab67fdd7b4dacb226e46dbe92e4665b2d \
+                    sha256  27a5c8815fab95f959134047f8315686de4de6f99b0bedfd46b5dedae390525a
+    livecheck.type  regex
+    livecheck.url   http://www.qt.io/download-open-source/
+    livecheck.regex qt-creator-opensource-src-(\[a-z0-9.\]+)${extract.suffix}"
+}
+
+if { ${subport} eq ${name} || ${subport} eq "${name}-devel" } {
+    depends_lib-append     port:botan
+    configure.args-append  "USE_SYSTEM_BOTAN=1"
+        
+    post-extract            {
+        file mkdir ${workpath}/build
+        if { ${subport} eq "${name}-devel" } {
+            catch {eval exec sh -c "\"cd ${workpath}/${worksrcdir} ; git submodule update --init\""} result
+            ui_debug "git submodule -init: $result"
+        }
+    }
+    configure.args-append   ../${worksrcdir}/qtcreator.pro
+    default configure.dir   {${workpath}/build}
+    default build.dir       {${workpath}/build}
+
+    if { ![variant_isset universal] } {
+        destroot {
+            # make install attempts to install command line tools into /bin, etc.
+            xinstall -m 755 -d ${destroot}${qt_apps_dir}
+            copy "${build.dir}/bin/Qt Creator.app" "${destroot}${qt_apps_dir}"
+            reinplace "s|/usr/local|${prefix}|g" \
+                "${destroot}${qt_apps_dir}/Qt Creator.app/Contents/Resources/qbs/share/qbs/imports/qbs/Probes/PathProbe.qbs"
+            reinplace "s|/usr/local/lib|${qt_frameworks_dir}|g" \
+                "${destroot}${qt_apps_dir}/Qt Creator.app/Contents/Resources/qbs/share/qbs/imports/qbs/Probes/FrameworkProbe.qbs"
+        }
+    } else {
+        # We should really just override destroot, but the muniversal Portgroup would override our override.
+        destroot.cmd "true"
+        merger-post-destroot {
+            foreach arch ${universal_archs_to_use} {
+                set adest ${destroot}-${arch}${qt_apps_dir}
+                xinstall -m 755 -d ${adest}
+                copy "${worksrcpath}-${arch}/bin/Qt Creator.app" "${adest}"
+                reinplace "s|/usr/local/|${prefix}/|g" \
+                    "${adest}/Qt Creator.app/Contents/Resources/qbs/share/qbs/imports/qbs/Probes/FrameworkProbe.qbs" \
+                    "${adest}/Qt Creator.app/Contents/Resources/qbs/share/qbs/imports/qbs/Probes/PathProbe.qbs"
+            }
+        }
+    }
+}
+
+#use_parallel_build  no
+
+subport ${name}-docs {
+    depends_lib-append port:${name} port:qt5-mac-sqlite3-plugin 
+    build.target       docs
+    
+    destroot {
+        delete "${worksrcpath}/bin/Qt Creator.app/Contents/Info.plist"
+        delete "${worksrcpath}/bin/Qt Creator.app/Contents/MacOS/qml2puppet.app/Contents/Info.plist"
+        delete "${worksrcpath}/bin/Qt Creator.app/Contents/MacOS/qmlpuppet.app/Contents/Info.plist"
+        delete "${worksrcpath}/bin/Qt Creator.app/Contents/Resources/qml/qmldump/Info.plist"
+        
+        xinstall -m 755 -d ${destroot}${qt_apps_dir}
+        copy "${worksrcpath}/bin/Qt Creator.app" "${destroot}${qt_apps_dir}"
+        
+        xinstall -m 755 -d ${destroot}${qt_docs_dir}
+        copy ${worksrcpath}/doc/html ${worksrcpath}/doc/html-dev ${destroot}${qt_docs_dir}
+    }
+}
+
+subport ${name}-examples {
+    depends_lib-append port:${name}
+    build           {}
+    destroot.dir    ${worksrcpath}/src/shared/qbs
+    destroot.target -f Makefile.static INSTALL_ROOT=${destroot}${prefix} install_examples
+}
+

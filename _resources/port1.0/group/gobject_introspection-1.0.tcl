@@ -1,0 +1,1 @@
+/opt/local/var/macports/sources/svn.macports.org/trunk/dports/_resources/port1.0/group/gobject_introspection-1.0.tcl
