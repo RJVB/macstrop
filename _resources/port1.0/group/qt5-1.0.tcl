@@ -330,3 +330,8 @@ if {![info exists building_qt5]} {
         destroot.env-append PATH=${qt_dir}/bin:$env(PATH)
     }
 }
+
+proc qt_branch {} {
+    global version
+    return [join [lrange [split ${version} .] 0 1] .]
+}
