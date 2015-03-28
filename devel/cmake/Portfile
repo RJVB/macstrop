@@ -1,16 +1,16 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
-# $Id: Portfile 131116 2015-01-06 09:42:26Z mojca@macports.org $
+# $Id: Portfile 134053 2015-03-17 19:47:23Z michaelld@macports.org $
 
 PortSystem          1.0
 PortGroup           muniversal 1.0
 
 name                cmake
-version             3.1.2
+version             3.2.1
 set branch          [join [lrange [split ${version} .] 0 1] .]
 categories          devel
 license             BSD
 installs_libs       no
-maintainers         css michaelld
+maintainers         michaelld css
 description         Cross-platform make
 long_description    An extensible, open-source system that manages the build    \
                     process in an operating system and compiler independent manner. \
@@ -20,16 +20,18 @@ homepage            http://www.cmake.org/
 master_sites        http://www.cmake.org/files/v${branch}/
 platforms           darwin freebsd
 
-checksums           rmd160 50caf6ff5de97390decf43446ef0733750a5862c \
-                    sha256 2b210f7d867a1e716c1895357ebe63c7b9ae61fdb5f2d300ab2f01795f085b35
+checksums           rmd160 8c102bce34d3c9ccb328ec8b629dcc91142a7243 \
+                    sha256 759f1cf6b1a26b037726a9acca6da501235c20ad3671df29d43f29052ef1502c
 
-depends_lib-append  port:libidn \
-                    port:openssl \
-                    port:curl \
+depends_lib-append  port:curl \
                     port:expat \
                     port:zlib \
                     port:bzip2 \
                     port:libarchive
+
+# CMake 3.2 changed dependency requirements to include jsoncpp.
+# jsoncpp 1.0+ requires CMake for building. catch 22. So, have CMake
+# use its internal jsoncpp until a better solution comes about.
 
 patchfiles          patch-CMakeFindFrameworks.cmake.diff \
                     patch-Modules-FindFreetype.cmake.diff \
@@ -37,10 +39,6 @@ patchfiles          patch-CMakeFindFrameworks.cmake.diff \
                     patch-Modules-Platform-Darwin.cmake.diff \
                     patch-Modules-Platform-Darwin-Initialize.cmake.diff \
                     patch-Modules-noArchCheck.diff
-
-# RJVB : fix for the obsolete use of -bundle instead of -dynamiclib in CMAKE_SHARED_MODULE_CREATE
-# suspending this patch because -dynamiclib won't work with -bundle_loader (breaks port:mysql56)
-# patchfiles-append   patch-SHARED_BUNDLE_flag.diff
 
 configure.env-append \
                     CMAKE_PREFIX_PATH=${prefix} \
@@ -58,14 +56,18 @@ platform darwin {
     }
 }
 
-configure.args      --mandir=/share/man --docdir=/share/doc/cmake \
+configure.args      --docdir=share/doc/cmake \
                     --parallel=${build.jobs} \
                     --init=${worksrcpath}/macports.cmake \
-                    --system-libs
+                    --system-libs \
+                    --no-system-jsoncpp
 #--sphinx-man --sphinx-build=${prefix}/bin/sphinx-build-3.3
 
 configure.universal_args
 configure.post_args
+
+# CMake's configure script doesn't recognize `--host`.
+array set merger_host {i386 {} x86_64 {} ppc {} ppc64 {}}
 
 # Leopard's Rosetta has some difficulties configuring the ppc slice
 platform darwin 9 {
@@ -89,6 +91,8 @@ platform darwin {
         configure.cxx_stdlib libstdc++
     }
 }
+
+build.post_args VERBOSE=ON
 
 post-patch {
     # copy cmake init file, ready to be patched below
@@ -122,26 +126,65 @@ post-destroot {
     }
 }
 
-variant qt4 description {Build the Qt4 gui version} {
-    PortGroup qt4 1.0
+variant gui description {Build Qt-based cmake-gui} {
+    configure.args-append --qt-gui
 }
 
-variant gui description {Qt based cmake-gui} {
-    if {[variant_isset qt4]} {
-        # qt4 being requested we have to make sure CMake doesn't detect and use
-        # qt5 if that happens to be installed too:
-        patchfiles-append   patch-CMakeLists.txt.diff \
-                            patch-CMakeLists-4qt4.diff
-    } else {
-        # this is how cmake checks what Qt version to use:
-        if {[file exists ${prefix}/lib/pkgconfig/Qt5Widgets.pc]} {
-            PortGroup qt5 1.0
-        } else {
-            PortGroup qt4 1.0
-        }
-        patchfiles-append   patch-CMakeLists.txt.diff
+if {[variant_isset gui]} {
+
+    variant qt4 conflicts qt5 description {Build Qt GUI using Qt4} {
+        PortGroup qt4 1.0
+        patchfiles-append patch-qt4gui.diff
+        configure.args-append --qt-qmake=${qt_qmake_cmd}
     }
-    configure.args-append --qt-gui --qt-qmake=${qt_qmake_cmd}
+
+    variant qt5 conflicts qt4 description {Build Qt GUI using Qt5} {
+        PortGroup qt5 1.0
+        patchfiles-append patch-qt5gui.diff
+        configure.args-append --qt-qmake=${qt_qmake_cmd}
+    }
+
+    if {![variant_isset qt4] && ![variant_isset qt5]} {
+        default_variants +qt4
+    }
+
+    if {![variant_isset qt4] && ![variant_isset qt5]} {
+        ui_error "\n\nYou must select either the +qt4 or +qt5 variant when building the GUI.\n"
+        return -code error "Invalid variant selection"
+    }
+} else {
+    configure.args-append --no-qt-gui
+}
+
+variant docs description {Build documentation: HTML and manpages} {
+    configure.args-append \
+        --mandir=share/man \
+        --sphinx-man \
+        --sphinx-html
+}
+
+if {[variant_isset docs]} {
+
+    variant python27 conflicts python34 description {Build documentation using Sphinx from Python 2.7} {
+        depends_build-append port:py27-sphinx
+        configure.args-append \
+            --sphinx-build=${prefix}/bin/sphinx-build-2.7
+    }
+
+    variant python34 conflicts python27 description {Build documentation using Sphinx from Python 3.4} {
+        depends_build-append port:py34-sphinx
+        configure.args-append \
+            --sphinx-build=${prefix}/bin/sphinx-build-3.4
+    }
+
+    if {![variant_isset python27] && ![variant_isset python34]} {
+        default_variants +python27
+    }
+
+    if {![variant_isset python27] && ![variant_isset python34]} {
+        ui_error "\n\nYou must select either the +python27 or +python34 variant when building docs.\n"
+        return -code error "Invalid variant selection"
+    }
 }
 
 livecheck.type      regex
