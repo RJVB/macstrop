@@ -292,3 +292,8 @@ if {![info exists building_qt4]} {
 } else {
     destroot.env-append QMAKE_NO_DEFAULTS=""
 }
+
+proc qt_branch {} {
+    global version
+    return [join [lrange [split ${version} .] 0 1] .]
+}
