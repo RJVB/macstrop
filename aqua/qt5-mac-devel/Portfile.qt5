@@ -2,7 +2,7 @@
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
 # $Id: port=qt5 1 2014-12-08 18:51:13Z rjvbertin@gmail.com, mcalhoun@macports.org $
 
-# set building_qt5 immediately!
+# set building_qt5 immediately, before including the Qt5 PortGroup!
 set building_qt5    1
 
 PortGroup           qt5 1.0
@@ -17,7 +17,7 @@ if {[expr ${branch} >= 5.4]} {
 
 categories          aqua
 platforms           macosx
-maintainers         mcalhoun openmaintainer
+maintainers         gmail.com:rjvbertin mcalhoun openmaintainer
 license             {LGPL-2.1 GPL-3}
 
 homepage            http://qt.io
@@ -41,6 +41,10 @@ if {${QT53}} {
 }
 
 dist_subdir         qt5-mac
+
+# Qt5 is huge. Enable HFS compression.
+depends_extract-append      port:libarchive
+extract.post_args           "| bsdtar -x -k --hfsCompression"
 
 if { ${os.platform} ne "darwin" } {
     pre-fetch {
@@ -113,6 +117,35 @@ if { ${subport} eq "${name}-zz-docs"  } {
 if {[info exists env(QTDIR)]} {
     ui_msg "unsetting \$QTDIR"
     unset env(QTDIR)
+}
+
+if {${QT53}} {
+    proc qt_cc {} {
+        global prefix
+        foreach cc {clang-mp-3.5 clang-mp-3.4} {
+            if {[file exists ${prefix}/bin/${cc}]} {
+                return ${prefix}/bin/${cc}
+            }
+        }
+        ui_error "\nNo compatible MacPorts clang compiler found. This is a bug, please report\n"
+        return -code error "No compatible clang found in ${prefix}/bin"
+    }
+    proc qt_cxx {} {
+        global prefix
+        foreach cxx {clang++-mp-3.5 clang++-mp-3.4} {
+            if {[file exists ${prefix}/bin/${cxx}]} {
+                return ${prefix}/bin/${cxx}
+            }
+        }
+        ui_error "\nNo compatible MacPorts clang++ compiler found. This is a bug, please report\n"
+        return -code error "No compatible clang++ found in ${prefix}/bin"
+    }
+}
+
+if {${subport} eq ${name} || ${subport} eq "${name}-kde"} {
+    PortGroup           select 1.0
+    select.group        qt
+    select.file         ${filespath}/qt5
 }
 
 if { ${subport} eq ${name} || ${subport} eq "${name}-kde" || ${subport} eq "${name}-zz-docs" || ${subport} eq "${name}-x11"} {
@@ -314,8 +347,8 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-kde" || ${subport} eq "${na
         configure.args-append   -qt-xcb -xcb-xlib
         if {${QT53}} {
             configure.args-append   -qpa xcb -I ${prefix}/include -L ${prefix}/lib
-            patchfiles-append   patch-xcb-XOpenGL.diff \
-                                patch-xcb-missing-functions.diff
+            patchfiles-append   qt532/patch-xcb-XOpenGL.diff \
+                                qt532/patch-xcb-missing-functions.diff
         }
     } else {
         # configure options that don't show up in configure --help
@@ -325,35 +358,48 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-kde" || ${subport} eq "${na
 
     if {${os.platform} eq "darwin" && ${os.major} <= 10} {
         # Some extra blackish magic to get Qt 5.3.2 to build on OS X 10.6, using a recent clang version.
-        patchfiles-append       qt532/patch-configure-allow-macports-clang.diff \
+        patchfiles-append       qt532/patch-configure-allow-macports-binutils.diff \
                                 qt532/patch-nistest.diff \
-                                qt532/patch-icutest.pro.diff
+                                qt532/patch-icutest.pro.diff \
+                                qt532/patch-clangconf.diff
         if {${subport} ne "${name}-x11" && ${subport} ne "${name}-zz-docs"} {
             patchfiles-append   qt532/patch-geoclue-gvalue-init.diff
         }
-        patchfiles-append       qt532/patch-sdk.prf-xcrun-not-for-compilers.diff
+        #patchfiles-append       qt532/patch-sdk.prf-xcrun-not-for-compilers.diff
+        patchfiles-append       qt532/patch-sdk.prf-no-xcrun.diff
         # a hackery bit of post-patch to be done pre-configure
         # (or post-patch, so it can be checked before running configure)
         post-patch {
             xinstall -m 775 -d ${build.dir}/qtbase
-            # the configure script will build a bootstrap qmake executable respecting our mkspec (macx-clang referring to a MacPorts clang version)
-            # because we patched it to do just that (patch-configure-allow-macports-clang.diff).
-            # HOWEVER, the generated qmake itself is not so well-behaved: it contains Mac-specific logic to figure out what it
-            # thinks is the ideal compiler, store that info in .qmake.stash, and will use that. And that's not going to work on OS X 10.6.8 ...
-            # We override this "feature" by providing an appropriate .qmake.stash.
-            # NB: this issue also hampers the universal build of the qtwebengine subport.
-            file copy ${filespath}/qt532/qmake.stash.in ${build.dir}/qtbase/.qmake.stash
+            xinstall -m 775 -d ${build.dir}/qtbase/bin
+            # take some measures to pick the appropriate clang compiler. The compiler_blacklist portgroup and MacPorts based
+            # have already introduced a dependency on clang-3.5 (unless clang-3.4 is installed?!). We create symlinks to clang
+            # 3.4 or 3.5 in our build tree, so that the user doesn't have to do a `port select` for us.
+            if {![file exists ${build.dir}/qtbase/bin/clang++]} {
+                ln -s [qt_cc] ${build.dir}/qtbase/bin/clang
+                ln -s [qt_cxx] ${build.dir}/qtbase/bin/clang++
+            }
+            # instruct the build system to use these for building:
+            reinplace -W ${worksrcpath}/qtbase/mkspecs/common "s|macportsclang|${build.dir}/qtbase/bin/clang|g" clang.conf
             reinplace -W ${worksrcpath}/qtbase "s|PREFIX|${prefix}|g" config.tests/unix/icu/icu.pro
+            # the configure script will build a bootstrap qmake executable respecting our mkspec (macx-clang referring to a MacPorts clang version)
+            # because we patched it to do just that (patch-configure-allow-macports-binutils.diff).
+            # We also provide an appropriate .qmake.stash to be sure that qmake doesn't generate a less appropriate one (despite the sdk.prf patch)
+            # NB: this issue also hampers the universal build of the qtwebengine subport.
+            if {![file exists ${build.dir}/qtbase/.qmake.stash]} {
+                file copy ${filespath}/qt532/qmake.stash.in ${build.dir}/qtbase/.qmake.stash
+            }
+            reinplace -W ${build.dir}/qtbase "s|PREFIX/bin/clang|${build.dir}/qtbase/bin/clang|g" .qmake.stash
             reinplace -W ${build.dir}/qtbase "s|PREFIX|${prefix}|g" .qmake.stash
             # put a copy at the build root, which will be required for building qtwebkit
             # (way ahead in the future...)
-            file copy ${build.dir}/qtbase/.qmake.stash ${build.dir}
+            if {![file exists ${build.dir}/.qmake.stash]} {
+                file copy ${build.dir}/qtbase/.qmake.stash ${build.dir}
+            }
+            ui_msg "Everything is set up to use the Qt-specific compiler symlink ${build.dir}/qtbase/bin/clang++ but the build system will probably resolve\
+                    the actual compiler to which this link points ([qt_cxx]). That is of no consequence; future Qt5 ports will use the Qt compiler in ${qt_bins_dir}."
         }
         configure.args-append   -process
-        if {![file exists ${prefix}/bin/clang++]} {
-            ui_error "\nYou need to install port:clang-3.4 or newer and use port select --set clang mp-clang3.4 (or newer)\n"
-                return -code error "supported compiler not found"
-        }
     } else {
         # We don't want qmake to 2nd-guess the compiler we specify in our mkspec and replace it with an Xcode compiler
         patchfiles-append       patch-sdk.prf-xcrun-not-for-compilers.diff
@@ -380,10 +426,6 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-kde" || ${subport} eq "${na
         configure.universal_cxxflags
         configure.universal_cppflags
 }
-
-# Qt5 is huge. Enable HFS compression.
-depends_extract-append      port:libarchive
-extract.post_args           "| bsdtar -x -k --hfsCompression"
 
 if { ${subport} eq ${name} || ${subport} eq "${name}-kde" || ${subport} eq "${name}-x11" || ${subport} eq "${name}-qtwebengine" } {
     depends_lib                              \
@@ -649,10 +691,23 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-kde" || ${subport} eq "${na
                 # expose KF5 styles to Qt5 ... once we know where those styles are stored and if it's still required.
                 #ln -s ${prefix}/lib/kf5??/plugins/styles ${destroot}${qt_plugins_dir}/
             }
-            # clean up the generated mkspecs/qmodule.pri:
-            # undo any symlink normalisation that introduced the clang version number into QMAKE_CC/CXX (e.g. clang++-mp-3.5)
-            reinplace "s|bin/clang-mp-*|bin/clang|g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
-            reinplace "s|bin/clang\+\+-mp-*|bin/clang\+\+|g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
+            if {${QT53}} {
+                # create our own compiler symlinks in qt_bins_dir:
+                ln -s [qt_cc] ${destroot}${qt_bins_dir}/clang
+                ln -s [qt_cxx] ${destroot}${qt_bins_dir}/clang++
+                # edit the build scripts to use those compilers:
+                reinplace "s|${build.dir}/qtbase/bin/clang|${qt_bins_dir}/clang|g" ${destroot}${qt_mkspecs_dir}/common/clang.conf
+                reinplace "s|${prefix}/bin/clang-mp-.*|${qt_bins_dir}/clang|g" ${destroot}${qt_mkspecs_dir}/qmodule.pri
+                reinplace "s|${prefix}/bin/clang\+\+-mp-.*|${qt_bins_dir}/clang\+\+|g" ${destroot}${qt_mkspecs_dir}/qmodule.pri
+                notes-append "Qt ${version} has been configured to use the C++ compiler ${qt_bins_dir}/clang++,\
+                    which is a symlink to [qt_cxx]. Remember to update this link (and its C compiler companion, clang)\
+                    if ever you upgrade your port:clang installation and remove the current version."
+            } else {
+                # clean up the generated mkspecs/qmodule.pri:
+                # undo any symlink normalisation that introduced the clang version number into QMAKE_CC/CXX (e.g. clang++-mp-3.5)
+                reinplace "s|bin/clang-mp-.*|bin/clang|g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
+                reinplace "s|bin/clang\+\+-mp-.*|bin/clang\+\+|g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
+            }
             # if the user used configure.optflags="-something" make sure that gets added to compiler options qmake
             # determines, rather than replacing all of those
             reinplace "s|QMAKE_CFLAGS = |QMAKE_CFLAGS \+= |g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
@@ -830,7 +885,10 @@ subport ${name}-psql84-plugin {
     depends_lib-append port:postgresql84
 
     # extract only the qtbase component
-    extract.post_args-append    ${distname}/qtbase ${distname}/configure
+    extract.post_args-append    ${distname}/qtbase
+    post-extract {
+        file delete -force ${worksrcpath}/qtbase/mkspecs
+    }
     # for single architecture, easier to use
     #    worksrcdir ${worksrcdir}/qtbase/src/plugins/sqldrivers/psql,
     #    but doesn't work for universal build
