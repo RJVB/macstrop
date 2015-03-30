@@ -58,23 +58,24 @@ if { ${os.platform} ne "darwin" } {
             return -code error "unsupported OS"
     }
 } elseif { ${os.major} == 10 } {
-    if {${QT54}} {
-        pre-fetch {
-            ui_warn "OS X prior to 10.7 (Lion) is not a Reference Configuration for Qt."
-            if { [variant_isset universal] } {
-                ui_warn "OS X 10.6 (Snow Leopard) is \"occasionally tested\" but ONLY in 32-bit mode."
+    pre-fetch {
+        ui_warn "OS X prior to 10.7 (Lion) is not a Reference Configuration for Qt."
+        if { [variant_isset universal] } {
+            ui_warn "OS X 10.6 (Snow Leopard) is \"occasionally tested\" but ONLY in 32-bit mode."
+                ui_warn "OS X 10.6 (Snow Leopard) is deprecated and scheduled for removal in Qt 5.4."
+        } else {
+            if { ${build_arch} eq "i386" } {
+                ui_warn "OS X 10.6 (Snow Leopard) is \"occasionally tested\"."
                     ui_warn "OS X 10.6 (Snow Leopard) is deprecated and scheduled for removal in Qt 5.4."
             } else {
-                if { ${build_arch} eq "i386" } {
-                    ui_warn "OS X 10.6 (Snow Leopard) is \"occasionally tested\"."
-                        ui_warn "OS X 10.6 (Snow Leopard) is deprecated and scheduled for removal in Qt 5.4."
-                } else {
-                    ui_warn "OS X 10.6 (Snow Leopard) is \"occasionally tested\" but ONLY in 32-bit mode."
-                        ui_warn "OS X 10.6 (Snow Leopard) is deprecated and scheduled for removal in Qt 5.4."
-                }
+                ui_warn "OS X 10.6 (Snow Leopard) is \"occasionally tested\" but ONLY in 32-bit mode."
+                    ui_warn "OS X 10.6 (Snow Leopard) is deprecated and scheduled for removal in Qt 5.4."
             }
-            ui_warn "See http://qt-project.org/doc/qt-5/supported-platforms.html#reference-configurations"
         }
+        ui_warn "See http://qt-project.org/doc/qt-5/supported-platforms.html#reference-configurations"
+        ui_warn "MacPorts applies patches to build Qt with a recent, non-Xcode clang version;"
+        # remove if ever this changes:
+        ui_warn "currently, these patches have been tested only in 64-bit mode."
     }
 } elseif { ${os.major} > 13 } {
     pre-fetch {
@@ -146,6 +147,7 @@ if {${subport} eq ${name} || ${subport} eq "${name}-kde"} {
     PortGroup           select 1.0
     select.group        qt
     select.file         ${filespath}/qt5
+    variant abort description {this variant provides qFatal's standard behaviour of calling abort(2)} {}
 }
 
 if { ${subport} eq ${name} || ${subport} eq "${name}-kde" || ${subport} eq "${name}-zz-docs" || ${subport} eq "${name}-x11"} {
@@ -254,6 +256,12 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-kde" || ${subport} eq "${na
                                 qt532/Break-after-handling-the-read-write.patch
     }
 
+    if {${subport} eq ${name} || ${subport} eq "${name}-kde"} {
+        if {![variant_isset abort]} {
+            patchfiles-append   patch-qFatal-no-abort.diff
+        }
+    }
+
     # --prefix is not recognised.
     configure.pre_args-delete       --prefix=${prefix}
 
@@ -344,9 +352,9 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-kde" || ${subport} eq "${na
     if {${subport} eq "${name}-x11"} {
         patchfiles-append       patch-to-build-xcb.diff
         configure.args-delete   -no-xinput2 -no-xcb -no-xcb-xlib
-        configure.args-append   -qt-xcb -xcb-xlib
+        configure.args-append   -xcb -xcb-xlib -qpa xcb
         if {${QT53}} {
-            configure.args-append   -qpa xcb -I ${prefix}/include -L ${prefix}/lib
+            configure.args-append   -I ${prefix}/include -L ${prefix}/lib
             patchfiles-append   qt532/patch-xcb-XOpenGL.diff \
                                 qt532/patch-xcb-missing-functions.diff
         }
@@ -484,6 +492,10 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-kde" || ${subport} eq "${na
 
     post-patch {
         #reinplace "s|//opt//local//|${prefix}/|g" ${worksrcpath}/qtbase/src/corelib/io/qstandardpaths_mac.cpp
+        if {${use_parallel_build} && [file exists ${worksrcpath}/qtbase/configure]} {
+            # let qmake be build in parallel too
+            reinplace "s|\"\$MAKE\")|\"\$MAKE\" -j${build.jobs})|g" ${worksrcpath}/qtbase/configure
+        }
     }
 
     if { [variant_isset universal] } {
@@ -770,7 +782,8 @@ if {${subport} eq "${name}"} {
 }
 
 subport ${name}-x11 {
-    depends_lib-append  port:xorg-xcb-util port:xorg-inputproto \
+    depends_lib-append  port:xorg-xcb-util port:xorg-xcb-util-wm port:xorg-xcb-util-image \
+                        port:xorg-xcb-util-keysyms port:xorg-inputproto \
                         port:xrender port:mesa path:${qt_bins_dir}/qmake:${name}
     description         ${description} - the xcb (X11) platform plugin
     long_description    ${long_description} This port installs just the xcb \
@@ -921,6 +934,7 @@ subport ${name}-examples {
     PortGroup                   qmake5 1.0
 
     description                 ${description} - the examples
+    long_description            ${long_description} - the examples
     universal_variant           no
 
     # extract only the examples
@@ -940,10 +954,18 @@ subport ${name}-examples {
                                 ${distname}/qtwebkit-examples/examples/ \
                                 ${distname}/qtxmlpatterns/examples/
     if {${QT54}} {
-        extract.post_args-append    {distname}/qtwebengine/examples/
-        post-extract {
-            copy ${filespath}/all-examples.pro ${workpath}/${worksrcdir}/all-examples.pro
-            file mkdir ${workpath}/build
+        variant qtwebengine description {build the qtwebengine examples too} {
+            depends_lib-append          port:${name}-qtwebengine
+            extract.post_args-append    ${distname}/qtwebengine/examples/
+            post-extract {
+                copy ${filespath}/all-examples.pro ${workpath}/${worksrcdir}/all-examples.pro
+                file mkdir ${workpath}/build
+            }
+        } else {
+            post-extract {
+                copy ${filespath}/qt532/all-examples.pro ${workpath}/${worksrcdir}/all-examples.pro
+                file mkdir ${workpath}/build
+            }
         }
     } else {
         post-extract {
