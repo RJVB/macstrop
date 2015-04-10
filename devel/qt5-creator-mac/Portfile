@@ -9,46 +9,98 @@ if { ${subport} eq "${name}-docs" || ${subport} eq "${name}-examples" } {
     universal_variant no
     supported_archs   noarch
 }
-PortGroup           qmake5 1.0
 
-version             3.2.2
+PortGroup           qmake5 1.0
+# universal build hasn't been tested (20150410)
+# universal_variant   no
+
 categories          devel aqua
 platforms           darwin
 license             LGPL-2.1
-maintainers         mcalhoun openmaintainer
+maintainers         gmail.com:rjvbertin mcalhoun openmaintainer
 description         Cross-platform integrated development environment (IDE) tailored to the needs of Qt developers.
 long_description    Qt Creator is a cross-platform integrated development environment (IDE) tailored to the needs of Qt developers.
 
-homepage            http://qt-project.org/wiki/Category:Tools::QtCreator
-distname            qt-creator-opensource-src-${version}
-master_sites        https://download.qt-project.org/official_releases/qtcreator/[join [lrange [split ${version} .] 0 1] .]/${version}/
+homepage            http://wiki.qt.io/Category:Tools::QtCreator
 
-checksums           rmd160  5c85bfb5dc02c3639453421dd48355c8b4aa8145 \
-                    sha256  a115f1d7b08446dcfeb79537f3d8d251dbc3c9808d0ff377efe5c4fad7dbd8f0
+subport ${name}-devel {
+    fetch.type      git
+    if {[file exists ${filespath}/QC-git/.git]} {
+        git.url     ${filespath}/QC-git
+    } else {
+        git.url     git://code.qt.io/qt-creator/qt-creator.git
+    }
+    git.branch      7a59dbc9
+    version         3.4.0.398.g${git.branch}
+    distname        qt-creator-opensource-src-3.4.x
 
-if { ${subport} eq ${name}  } {
+    # don't let QtCreator set up a global Mac-style menubar when using the xcb plugin
+    patchfiles-append   devel/patch-show-menubar-with-xcb.diff
+}
+#else
+if { ${subport} ne "${name}-devel" } {
+    version         3.3.2
+    master_sites    https://download.qt.io/official_releases/qtcreator/[join [lrange [split ${version} .] 0 1] .]/${version}/
+
+    distname        qt-creator-opensource-src-${version}
+    checksums       rmd160  faeff05d1d58f3eb4666618221a3775239f4c6ec \
+                    sha256  6ef76d23c778a58caffb487b8bc6a192defa2d5dd5fab1ecf8eb70d53ccfb98a
+    livecheck.type  regex
+    livecheck.url   http://www.qt.io/download-open-source/
+    livecheck.regex qt-creator-opensource-src-(\[a-z0-9.\]+)${extract.suffix}
+
+    patchfiles-append   patch-show-menubar-with-xcb.diff
+}
+# don't set up a Dock menu when using the xcb plugin
+patchfiles-append   patch-no-dockmenu-xcb.diff
+
+if { ${subport} eq ${name} || ${subport} eq "${name}-devel" } {
     depends_lib-append     port:botan
     configure.args-append  "USE_SYSTEM_BOTAN=1"
-        
+
+    post-fetch            {
+        file mkdir ${workpath}/build
+        if { ${subport} eq "${name}-devel" } {
+            catch {eval exec sh -c "\"cd ${workpath}/${worksrcdir} ; git submodule update --init\""} result
+            ui_debug "git submodule -init: $result"
+            if {[file exists ${filespath}/QC-git/.git]} {
+                reinplace -W ${workpath}/${worksrcdir} "s|qt-labs/qbs.git|files/QC-git/src/shared/qbs|g" .git/config
+            }
+            catch {eval exec sh -c "\"cd ${workpath}/${worksrcdir} ; git submodule update\""} result
+            ui_debug "git submodule: $result"
+        }
+    }
+    configure.args-append   ../${worksrcdir}/qtcreator.pro
+    default configure.dir   {${workpath}/build}
+    default build.dir       {${workpath}/build}
+
     if { ![variant_isset universal] } {
         destroot {
             # make install attempts to install command line tools into /bin, etc.
             xinstall -m 755 -d ${destroot}${qt_apps_dir}
-            copy "${worksrcpath}/bin/Qt Creator.app" "${destroot}${qt_apps_dir}"
+            copy "${build.dir}/bin/Qt Creator.app" "${destroot}${qt_apps_dir}"
+            reinplace "s|/usr/local|${prefix}|g" \
+                "${destroot}${qt_apps_dir}/Qt Creator.app/Contents/Resources/qbs/share/qbs/imports/qbs/Probes/PathProbe.qbs"
+            reinplace "s|/usr/local/lib|${qt_frameworks_dir}|g" \
+                "${destroot}${qt_apps_dir}/Qt Creator.app/Contents/Resources/qbs/share/qbs/imports/qbs/Probes/FrameworkProbe.qbs"
         }
     } else {
         # We should really just override destroot, but the muniversal Portgroup would override our override.
         destroot.cmd "true"
         merger-post-destroot {
             foreach arch ${universal_archs_to_use} {
-                xinstall -m 755 -d ${destroot}-${arch}${qt_apps_dir}
-                copy "${worksrcpath}-${arch}/bin/Qt Creator.app" "${destroot}-${arch}${qt_apps_dir}"
+                set adest ${destroot}-${arch}${qt_apps_dir}
+                xinstall -m 755 -d ${adest}
+                copy "${worksrcpath}-${arch}/bin/Qt Creator.app" "${adest}"
+                reinplace "s|/usr/local/|${prefix}/|g" \
+                    "${adest}/Qt Creator.app/Contents/Resources/qbs/share/qbs/imports/qbs/Probes/FrameworkProbe.qbs" \
+                    "${adest}/Qt Creator.app/Contents/Resources/qbs/share/qbs/imports/qbs/Probes/PathProbe.qbs"
             }
         }
     }
 }
 
-use_parallel_build  no
+#use_parallel_build  no
 
 subport ${name}-docs {
     depends_lib-append port:${name} port:qt5-mac-sqlite3-plugin 
@@ -75,6 +127,3 @@ subport ${name}-examples {
     destroot.target -f Makefile.static INSTALL_ROOT=${destroot}${prefix} install_examples
 }
 
-livecheck.type      regex
-livecheck.url       http://www.qt.io/download-open-source/
-livecheck.regex     qt-creator-opensource-src-(\[a-z0-9.\]+)${extract.suffix}"
