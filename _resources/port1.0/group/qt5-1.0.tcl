@@ -112,7 +112,7 @@ set qt_name             qt5
 
 global qt5_is_concurrent
 # check if we're building qt5 itself
-if {![info exists building_qt5] || ![info exists name] || ${name} ne "qt5-mac"} {
+if {![info exists building_qt5] || ![info exists name] || (${name} ne "qt5-mac" && ${name} ne "qt5-mac-devel")} {
     # no, this must be a dependent port: check the qt5 install:
     if {[file exists ${prefix}/libexec/${qt_name}/bin/qmake]} {
         # we have a "concurrent" install, which means we must look for the various components

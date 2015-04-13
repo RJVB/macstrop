@@ -103,7 +103,7 @@ set qt_name             qt4
 
 global qt4_is_concurrent
 if {![variant_isset exclusive]} {
-    if {![info exists building_qt4] || ![info exists name] || ${name} ne "qt4-mac" || ${subport} eq "${name}-transitional"} {
+    if {![info exists building_qt4] || ![info exists name] || (${name} ne "qt4-mac" && ${name} ne "qt4-mac-devel") || ${subport} eq "${name}-transitional"} {
         #exec ls -l ${prefix}/libexec/${qt_name}/bin/qmake
         if {[file exists ${prefix}/libexec/${qt_name}/bin/qmake]} {
             # we have a "concurrent" install, which means we must look for the various components
@@ -203,16 +203,16 @@ if {![info exists building_qt4]} {
         # if not, depend on the library version
 
         if {[info exists qt4_is_concurrent]} {
-            if {[file exists ${qt_frameworks_dir}/QtCore/QtCore]} {
-                set qt4_dependency path:libexec/${qt_name}/Library/Frameworks/QtCore/QtCore:qt4-mac
+            if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
+                set qt4_dependency path:libexec/${qt_name}/Library/Frameworks/QtCore.framework/QtCore:qt4-mac
                 #depends_lib-append path:libexec/${qt_name}/Library/Frameworks/QtCore/QtCore:qt4-mac
             } else {
                 set qt4_dependency path:libexec/${qt_name}/lib/libQtCore.4.dylib:qt4-mac
                 #depends_lib-append path:libexec/${qt_name}/lib/libQtCore.4.dylib:qt4-mac
             }
         } else {
-            if {[file exists ${qt_frameworks_dir}/QtCore/QtCore]} {
-                set qt4_dependency path:Library/Frameworks/QtCore/QtCore:qt4-mac
+            if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
+                set qt4_dependency path:Library/Frameworks/QtCore.framework/QtCore:qt4-mac
                 #depends_lib-append path:Library/Frameworks/QtCore/QtCore:qt4-mac
             } else {
                 set qt4_dependency path:lib/libQtCore.4.dylib:qt4-mac
