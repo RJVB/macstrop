@@ -149,7 +149,6 @@ set qt_data_dir         ${prefix}/share/${qt_name}
 set qt_translations_dir ${prefix}/share/${qt_name}/translations
 set qt_sysconf_dir      ${prefix}/etc/${qt_name}
 set qt_tests_dir        ${prefix}/share/${qt_name}/tests
-set qt_demos_dir        ${prefix}/share/${qt_name}/demos
 set qt_cmake_module_dir ${prefix}/lib/cmake
 set qt_qmake_cmd        ${qt_dir}/bin/qmake
 set qt_moc_cmd          ${qt_dir}/bin/moc
@@ -161,6 +160,7 @@ set qt_frameworks_dir_rel   ${qt_dir_rel}/Library/Frameworks
 global qt_apps_dir
 set qt_apps_dir         ${applications_dir}/Qt5
 set qt_examples_dir     ${qt_apps_dir}/examples
+set qt_demos_dir        ${qt_apps_dir}/demos
 
 global qt_qmake_spec
 global qt_qmake_spec_32

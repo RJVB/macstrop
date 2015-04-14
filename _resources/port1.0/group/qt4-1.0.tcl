@@ -137,7 +137,7 @@ if {[info exists qt4_is_concurrent]} {
     set qt_sysconf_dir      ${prefix}/etc/${qt_name}
     #set qt_examples_dir     ${prefix}/share/${qt_name}/examples
     set qt_examples_dir     ${applications_dir}/Qt4/examples
-    set qt_demos_dir        ${prefix}/share/${qt_name}/demos
+    set qt_demos_dir        ${applications_dir}/Qt4/demos
     # no need to change the cmake_module_dir, though I'd have preferred to
     # put it into ${prefix}/lib/cmake as qt5-mac also does, and which is the place Linux uses
     set qt_cmake_module_dir ${prefix}/share/cmake/Modules
