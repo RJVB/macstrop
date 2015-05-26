@@ -77,6 +77,59 @@ namespace eval macports {
     variable ui_prefix "---> "
 }
 
+##
+# Return the port environment variables.
+proc macports::environment {} {
+    set mpenv {}
+    if {![macports::ui_isset ports_quiet]} {
+        lappend mpenv "$macports::ui_prefix port_cmd_version:  ${macports::autoconf::macports_version}"
+    } else {
+        lappend mpenv "port_cmd_version  ${macports::autoconf::macports_version}"
+    }
+    if {[info exists macports::bootstrap_options]} {
+        foreach bootstrap_option [lsort $macports::bootstrap_options] {
+            if {[info exists macports::$bootstrap_option]} {
+                if {![macports::ui_isset ports_quiet]} {
+                    lappend mpenv "$macports::ui_prefix bootstrap_options: $bootstrap_option: [set macports::$bootstrap_option]"
+                } else {
+                    lappend mpenv "bootstrap_options $bootstrap_option [set macports::$bootstrap_option]"
+                }
+            }
+        }
+    }
+    if {[info exists macports::sources]} {
+        foreach source $macports::sources {
+            if {![macports::ui_isset ports_quiet]} {
+                lappend mpenv "$macports::ui_prefix port_tree_sources: $source"
+            } else {
+                lappend mpenv "port_tree_sources $source"
+            }
+        }
+    }
+    if {[info exists macports::global_variations]} {
+        set gvl {}
+        foreach {variation mode} [array get macports::global_variations] {
+            lappend gvl $mode$variation
+        }
+        if {![macports::ui_isset ports_quiet]} {
+            lappend mpenv "$macports::ui_prefix global_variations: [join $gvl { }]"
+        } else {
+            lappend mpenv "global_variations [join $gvl { }]"
+        }
+    }
+    set shenv {}
+    foreach keyval [exec /usr/bin/printenv] {
+        lappend shenv $keyval
+    }
+    if {![macports::ui_isset ports_quiet]} {
+        lappend mpenv "$macports::ui_prefix shell environment: [join $shenv { }]"
+    } else {
+        lappend mpenv "shell environment [join $shenv { }]"
+    }
+    ui_msg "[join $mpenv \n]"
+    return 0
+}
+
 # Provided UI instantiations
 # For standard messages, the following priorities are defined
 #     debug, info, msg, warn, error
@@ -655,6 +708,9 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
                     if {[lsearch -exact $bootstrap_options $option] >= 0} {
                         set macports::$option [string trim $val]
                         global macports::$option
+                        if {[info exists macports::ui_options(ports_env)]} {
+                            ui_msg "$macports::ui_prefix $file: ${option}: [set macports::$option]"
+                        }
                     }
                 }
             }
@@ -671,6 +727,9 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
                 if {[lsearch -exact $user_options $option] >= 0} {
                     set macports::$option $val
                     global macports::$option
+                    if {[info exists macports::ui_options(ports_env)]} {
+                        ui_msg "$macports::ui_prefix user: ${option}: [set macports::$option]"
+                    }
                 }
             }
         }
@@ -698,6 +757,9 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
                     }
                 }
                 lappend sources [concat [list $url] $flags]
+                if {[info exists macports::ui_options(ports_env)]} {
+                    ui_msg "$macports::ui_prefix $sources_conf: [lindex $sources end]"
+                }
             } else {
                 ui_warn "$sources_conf specifies invalid source '$line', ignored."
             }

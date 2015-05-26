@@ -289,7 +289,7 @@ proc _activate_file {srcfile dstfile} {
 # extract an archive to a temporary location
 # returns: path to the extracted directory
 proc extract_archive_to_tmpdir {location} {
-    global macports::registry.path
+    global macports::prefix macports::registry.path
     set extractdir [mkdtemp [::file dirname $location]/mpextractXXXXXXXX]
     set startpwd [pwd]
 
@@ -338,9 +338,32 @@ proc extract_archive_to_tmpdir {location} {
             t(ar|bz|lz|xz|gz) {
                 set tar "tar"
                 if {[catch {set tar [macports::findBinary $tar ${macports::autoconf::tar_path}]} errmsg] == 0} {
-                    ui_debug "Using $tar"
-                    set unarchive.cmd "$tar"
-                    set unarchive.pre_args {-xvpf}
+                    if {[catch {system "echo \"666f6f000000000000000000000000000000000000000000000000000000
+                        000000000000000000000000000000000000000000000000000000000000
+                        000000000000000000000000000000000000000000000000000000000000
+                        000000000000000000003030303634342000303030373635200030303030
+                        323420003030303030303030303030203132343531323633353135203031
+                        323137340020300000000000000000000000000000000000000000000000
+                        000000000000000000000000000000000000000000000000000000000000
+                        000000000000000000000000000000000000000000000000000000000000
+                        000000000000000000000000000000000075737461720030306d66656972
+                        690000000000000000000000000000000000000000000000000000737461
+                        666600000000000000000000000000000000000000000000000000000030
+                        303030303020003030303030302000000000000000000000000000000000
+                        000000000000000000000000000000000000000000000000000000000000
+                        000000000000000000000000000000000000000000000000000000000000
+                        000000000000000000000000000000000000000000000000000000000000
+                        000000000000000000000000000000000000000000000000000000000000
+                        000000000000000000000000000000000000000000000000000000000000
+                        0000\" | xxd -r -p | bsdtar --hfsCompression -xqOf - foo > /dev/null"} result]} {
+                        ui_debug "Using $tar"
+                        set unarchive.cmd "$tar"
+                        set unarchive.pre_args {-xvpf}
+                    } else {
+                        ui_debug "Using bsdtar"
+                        set unarchive.cmd "${macports::prefix}/bin/bsdtar"
+                        set unarchive.pre_args {-xvp --hfsCompression -f}
+                    }
                     if {[regexp {z2?$} ${unarchive.type}]} {
                         set unarchive.args {-}
                         if {[regexp {bz2?$} ${unarchive.type}]} {

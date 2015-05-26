@@ -601,6 +601,12 @@ proc variant {args} {
     }
     ditem_key $ditem name "[join [ditem_key $ditem provides] -]"
 
+    if {![regexp {^[A-Za-z0-9_]+$} [ditem_key $ditem provides]]} {
+        set name [ditem_key $ditem provides] 
+        ditem_delete $ditem
+        return -code error "Variant name $name contains invalid characters"
+    }
+
     # make a user procedure named variant-blah-blah
     # we will call this procedure during variant-run
     makeuserproc "variant-[ditem_key $ditem name]" \{$code\}
@@ -851,6 +857,7 @@ proc append_to_environment_value {command key args} {
         }
         # Parse out any delimiters. Is this even necessary anymore?
         regexp {^(['"])(.*)\1$} $value -> delim value
+#" stub quote to help editor highlighting
 
         append env_key " $value"
     }
@@ -1820,6 +1827,7 @@ proc open_statefile {args} {
         set statefile /dev/null
     }
 
+    ui_debug "Opening statefile $statefile"
     set fd [open $statefile a+]
     if {![tbool ports_dryrun]} {
         if {[catch {flock $fd -exclusive -noblock} result]} {
