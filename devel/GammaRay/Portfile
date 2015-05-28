@@ -1,0 +1,161 @@
+# -*- coding: utf-8; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
+# kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
+# $Id: Portfile 133968 2015-03-16 09:49:19Z petr@macports.org $
+
+PortSystem          1.0
+PortGroup           cmake 1.0
+cmake.out_of_source yes
+
+name                GammaRay
+version             2.2.50
+
+description         a Qt poking-around tool.
+long_description    GammaRay is a tool to poke around in a Qt-application and also to manipulate the application to some extent.
+
+homepage            http://www.kdab.com/kdab-products/gammaray/
+categories          devel
+platforms           darwin
+license             {GPL-2 GPL-3}
+maintainers         gmail.com:rjvbertin openmaintainer
+universal_variant   no
+installs_libs       no
+
+if {${subport} ne ${name}} {
+    fetch.type          git
+    git.branch          9e4d6de641b9cb293bbe932c8bfc0480ea05dbbb
+    if {[file exists ${filespath}/${name}-git/.git]} {
+        git.url         file://${filespath}/${name}-git
+    } else {
+        PortGroup       github 1.0
+        github.setup    KDAB GammaRay ${git.branch}
+    }
+}
+
+depends_build-append    port:git port:doxygen
+depends_lib-append      port:graphviz \
+                        port:openssl \
+                        port:perl5
+
+variant kde description {build KDE support (currently only KDE4)} {}
+
+subport ${name}-qt4 {
+    description-append      Includes the Qt4 probe
+    long_description-append This port includes the Qt4 probe
+    PortGroup               qt4 1.0
+    conflicts               ${name}-qt4
+    configure.args-append   -DGAMMARAY_ENFORCE_QT4_BUILD=true
+    # port:vtk-qt4 is not yet available instead of port:vtk +qt4, so depend on it using a path: style dep:
+    depends_lib-append      path:${qt_plugins_dir}/designer/libQVTKWidgetPlugin.dylib:vtk-qt4 \
+                            port:automoc port:phonon
+    if {[variant_isset kde]} {
+        depends_lib-append  port:kdelibs4
+    }
+}
+
+subport ${name}-qt5 {
+    description-append      Includes the Qt5 probe
+    long_description-append This port includes the Qt5 probe
+    PortGroup               qt5 1.0
+    conflicts               ${name}-qt5
+    # this can optionally depend also on https://github.com/KDAB/KDStateMachineEditor
+    # port:vtk-qt5 is not yet available instead of port:vtk +qt5, so depend on it using a path: style dep:
+    depends_lib-append      path:${qt_plugins_dir}/designer/libQVTKWidgetPlugin.dylib:vtk-qt5
+    if {[variant_isset kde]} {
+        notes-append "KDE support with Qt5 requires KF5 which is not yet available on OS X"
+    }
+}
+
+# GammaRay doesn't support building multiple Qt probes in a single go, so we can
+# only provide a "probe" subport that can build either the Qt4 or the Qt5 subport.
+subport ${name}-probe {
+    description                 The Qt4/Qt5 probe for ${name}-qt5/${name}-qt4
+    long_description-append     This port builds either the Qt4 for ${name}-qt5 or the Qt5 probe for ${name}-qt4.
+
+    # I don't know if the probes link to VTK, but having the QtX version present
+    # while building the probe for QtY confuses cmake, so we remove the whole
+    # VTK-scanning part from the toplevel CMake file.
+    patchfiles-append           patch-no-vtk.diff
+
+    variant qt4 conflicts qt5 description {build the Qt4 probe for ${name}-qt5} {
+        PortGroup               qt4 1.0
+        conflicts               ${name}-qt4
+        depends_run-append      port:${name}-qt5
+        depends_lib-append      port:automoc port:phonon
+        if {[variant_isset kde]} {
+            depends_lib-append  port:kdelibs4
+        }
+        configure.args-append   -DGAMMARAY_PROBE_ONLY_BUILD=true \
+                                -DGAMMARAY_ENFORCE_QT4_BUILD=true
+    }
+
+    variant qt5 conflicts qt4 description {build the Qt5 probe for ${name}-qt4} {
+        PortGroup               qt5 1.0
+        conflicts               ${name}-qt5
+        configure.args-append   -DGAMMARAY_PROBE_ONLY_BUILD=true
+        depends_lib-append      port:${name}-qt4
+        if {[variant_isset kde]} {
+            notes-append "KDE support with Qt5 requires KF5 which is not yet available on OS X"
+        }
+    }
+
+    pre-fetch {
+        if {![variant_isset qt4] && ![variant_isset qt5]} {
+             return -code error "\n\nERROR:\n\
+        You must select either the qt4 or the qt5 variant\n"
+        }
+    }
+}
+
+if {${subport} eq "${name}-qt4"} {
+    # this space intentionally left empty - for now
+} elseif {${subport} eq "${name}-qt5"} {
+    # this space intentionally left empty - for now
+} else {
+    if {${subport} eq ${name}} {
+        # default version to install is the Qt5 version because it (supposedly) works so much better.
+        depends_lib             port:${name}-qt5
+        description-append      Installs ${depends_lib}
+        long_description-append This is a stub port that will install ${depends_lib}
+    } elseif {${subport} eq "${name}-probe"} {
+        depends_lib
+    }
+    if {![variant_isset qt4] && ![variant_isset qt5]} {
+        supported_archs         noarch
+        archive_sites
+        distfiles
+        depends_fetch
+        depends_build
+        use_configure           no
+        fetch                   {}
+        build.target            {}
+    }
+}
+
+patchfiles-append           patch-prefer-lldb.diff
+
+if {![variant_isset kde]} {
+    patchfiles-append       patch-no-KDE.diff
+}
+
+post-destroot {
+    xinstall -m 755 -d ${destroot}/${qt_apps_dir}
+    xinstall -m 755 -d ${destroot}/${qt_mkspecs_dir}/modules
+    if {${subport} eq "${name}-probe"} {
+        delete ${destroot}/${prefix}/GammaRay.app/Contents/Resources
+        delete ${destroot}/${prefix}/mkspecs
+    } else {
+        move ${destroot}/${prefix}/GammaRay.app/Contents/Resources/cmake ${destroot}${prefix}/share
+        move ${destroot}/${prefix}/GammaRay.app/Contents/Resources/include/gammaray ${destroot}${prefix}/include
+        delete ${destroot}/${prefix}/GammaRay.app/Contents/Resources/include
+        delete ${destroot}/${prefix}/GammaRay.app/Contents/Resources/man
+        foreach pri [glob  ${destroot}/${prefix}/mkspecs/modules/*] {
+            move ${pri} ${destroot}/${qt_mkspecs_dir}/modules
+        }
+    }
+    foreach pri [glob  ${destroot}/${prefix}/GammaRay.app/Contents/Frameworks/*.dylib] {
+        move ${pri} ${destroot}${prefix}/lib
+    }
+#     move ${destroot}/${prefix}/GammaRay.app/Contents/MacOS/gammaray ${destroot}${prefix}/bin
+    delete ${destroot}/${prefix}/GammaRay.app/Contents/MacOS/gammaray
+    move ${destroot}/${prefix}/GammaRay.app ${destroot}/${qt_apps_dir}
+}
