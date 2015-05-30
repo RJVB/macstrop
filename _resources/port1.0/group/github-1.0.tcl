@@ -136,6 +136,9 @@ proc handle_tarball_from {option action args} {
             tags {
                 github.master_sites ${github.homepage}/tarball/${git.branch}
             }
+            archive {
+                github.master_sites ${github.homepage}/archive/${git.branch}
+            }
             default {
                 return -code error "invalid value \"${args}\" for github.tarball_from"
             }
