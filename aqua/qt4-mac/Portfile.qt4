@@ -36,14 +36,23 @@ distname            qt-everywhere-opensource-src-${version}
 
 master_sites        http://download.qt.io/official_releases/qt/${branch}/${version}/
 
-checksums           rmd160  0220d4e76ac761c9ecfb8ddab6f2c1dc6ad70c33 \
-                    sha256  8b14dd91b52862e09b8e6a963507b74bc2580787d171feda197badfa7034032c
+checksums           rmd160  afb5e5a99388e6429faca59cb5000054feffd166 \
+                    sha256  e2882295097e47fe089f8ac741a95fef47e0a73a3f3cdf21b56990638f626ea0
+
+# Qt4 is large enough to justify extending "base" behaviour transparently, enabling HFS compression.
+depends_extract-append      port:libarchive
+extract.post_args           "| bsdtar -x -k --hfsCompression"
+
+# post-extract {
+#     ui_msg "patchfiles:\n${patchfiles}"
+# }
 
 minimum_xcodeversions   {8 2.5}
 
 depends_lib-append  port:zlib path:bin/dbus-daemon:dbus \
                     port:openssl port:tiff \
-                    port:libpng port:libmng port:jpeg
+                    port:libpng port:libmng \
+                    path:libjpeg.dylib:jpeg
 
 # find a way to specify the OS MINOR version.  For OSX 10.X, this
 # value will be X.  The type is this variable is integer, so we can
@@ -249,26 +258,22 @@ if {${subport} eq ${name}} {
     patchfiles-append   \
         patch-tools_macdeployqt_shared_shared.cpp.diff
 
-    # (24) minimum patches required for 10.10; squashed; temporary until 4.8.7.
-
-    patchfiles-append   \
-        patch-10.10.diff
-
-    # (25) avoid leaving zombies when starting an inexisting executable through QProcess
+    # (24) avoid leaving zombies when starting an inexisting executable through QProcess
     patchfiles-append \
         qprocess-nozombies.patch
 
-    # (26) don't build with exceptions, which gives a completely ABI-compatible build
+    # (25) don't build with exceptions, which gives a completely ABI-compatible build
     patchfiles-append       disable-exceptions.patch
 
-    # (27) prevent mouse event for deleted object
+    # (26) prevent mouse event for deleted object
     patchfiles-append       qt4-prevent-mousevent-for-deleted-object.diff
 
-    # (28) build the qtconfig tool
+    # (27) build the qtconfig tool
     patchfiles-append       patch-tools-build_qtconfig.diff
 
-    # (29) correct issues with the handling of font weight and styles.
-    patchfiles-append       patch-improve-fontweight-support.diff
+    # (28) correct issues with the handling of font weight and styles.
+    patchfiles-append       patch-improve-fontweight-support2.diff \
+                            patch-fontpanel.diff
 }
 
 # error out if trying to build on a new OSX version (> 10.10).
@@ -388,6 +393,13 @@ if {${subport} eq "${name}"} {
                     ${worksrcpath}/${fixfile}
             }
         }
+
+        # clean up for the following copy steps, in case we're being called in incremental
+        # fashion.
+        delete ${worksrcpath}/mkspecs/features/c++11.prf ${worksrcpath}/config.tests/mac/c++11                          \
+            ${worksrcpath}/mkspecs/features/mac/objective_cxx.prf ${worksrcpath}/mkspecs/features/mac/split_sources.prf \
+            ${worksrcpath}/config.tests/mac/fconstant_cfstrings.test ${worksrcpath}/config.tests/mac/objc_block         \
+            ${worksrcpath}/config.tests/mac/cpath ${worksrcpath}/config.tests/mac/library_path
 
         # copy C++11 files into place, if that variant is set
 
@@ -1008,12 +1020,15 @@ if {${subport} eq "${name}"} {
             # move the .app
 
             move ${dr_qt_bins_dir}/${app} ${dr_qt_apps_dir}
+            # link it back
+            ln -s ${qt_apps_dir}/${app} ${dr_qt_bins_dir}
 
-            # link the app's executable back
-
+            # provide a proxy to the app's executable; symlinks won't
+            # be accepted by qtchooser if the user has that port installed.
             set texe [strsed ${app} {g@\.app@@}]
-            ln -s ${qt_apps_dir}/${app}/Contents/MacOS/${texe} \
-                ${dr_qt_bins_dir}
+            set appProxy ${dr_qt_bins_dir}/[string tolower ${texe}]
+            copy ${filespath}/appProxy.sh ${appProxy}
+            reinplace "s|@BUNDLEEXEC@|${qt_apps_dir}/${app}/Contents/MacOS/${texe}|g" ${appProxy}
 
         }
         if {![variant_isset examples]} {
@@ -1149,9 +1164,7 @@ if {${subport} eq "${name}"} {
     }
 
     variant KDE description {Include RJVB's patches for use with KDE} {
-        patchfiles-append  qt4-correct-systraymenu-iconhandling.patch \
-                           qt4-deactivate-menurole-heuristics.patch \
-                           prevent_addTitleRelated_crash.patch \
+        patchfiles-append  qt4-deactivate-menurole-heuristics.patch \
                            debug-negative-qtimerint.patch \
                            silence-qfilesystemwatcher.patch \
                            patch-QAction_isEnabled.diff
@@ -1162,6 +1175,10 @@ if {${subport} eq "${name}"} {
         configure.args-delete   -no-exceptions
     }
 
+    variant harfbuzz description {Use HarfBuzz to do text layout instead of Core Text when possible.} {
+        depends_lib-append      port:harfbuzz
+        configure.args-append   -harfbuzz
+    }
 }
 
 ## The convenience subport that installs the symlinks which allow ports built against qt4-mac +exclusive
