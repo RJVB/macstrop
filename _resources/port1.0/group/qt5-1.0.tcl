@@ -112,7 +112,8 @@ set qt_name             qt5
 
 global qt5_is_concurrent
 # check if we're building qt5 itself
-if {![info exists building_qt5] || ![info exists name] || (${name} ne "qt5-mac" && ${name} ne "qt5-mac-devel")} {
+if {![info exists building_qt5] || ![info exists name] \
+    || (${name} ne "qt5-mac" && ${name} ne "qt5-mac-devel" && ${name} ne "qt5" && ${name} ne "qt5-devel")} {
     # no, this must be a dependent port: check the qt5 install:
     if {[file exists ${prefix}/libexec/${qt_name}/bin/qmake]} {
         # we have a "concurrent" install, which means we must look for the various components
@@ -121,7 +122,7 @@ if {![info exists building_qt5] || ![info exists name] || (${name} ne "qt5-mac" 
         set auto_concurrent     1
     }
 } else {
-    # we're building qt5-mac or one of its subports
+    # we're building qt5, qt5-mac or one of its subports/variants
     # we're asking for the standard concurrent install. No need to guess anything, give the user what s/he wants
     set qt5_is_concurrent   1
     set auto_concurrent     1
@@ -217,7 +218,7 @@ set qt_cmake_defines    \
      -DQT_ZLIB_LIBRARY=${prefix}/lib/libz.dylib \
      -DQT_PNG_LIBRARY=${prefix}/lib/libpng.dylib"
 
-# allow for depending on either qt5-mac or qt5-mac-devel or qt5-mac*-kde, simultaneously
+# allow for depending on either qt5[-mac] or qt5[-mac]-devel or qt5[-mac]*-kde, simultaneously
 
 if {![info exists building_qt5]} {
     if {${os.platform} eq "darwin"} {
@@ -228,15 +229,15 @@ if {![info exists building_qt5]} {
         global qt5_dependency
         if {[info exists qt5_is_concurrent]} {
             if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
-                set qt5_dependency path:libexec/${qt_name}/Library/Frameworks/QtCore.framework/QtCore:qt5-mac
+                set qt5_dependency path:libexec/${qt_name}/Library/Frameworks/QtCore.framework/QtCore:qt5
             } else {
-                set qt5_dependency path:libexec/${qt_name}/lib/libQtCore.5.dylib:qt5-mac
+                set qt5_dependency path:libexec/${qt_name}/lib/libQtCore.5.dylib:qt5
             }
         } else {
             if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
-                set qt5_dependency path:Library/Frameworks/QtCore.framework/QtCore:qt5-mac
+                set qt5_dependency path:Library/Frameworks/QtCore.framework/QtCore:qt5
             } else {
-                set qt5_dependency path:lib/libQtCore.5.dylib:qt5-mac
+                set qt5_dependency path:lib/libQtCore.5.dylib:qt5
             }
         }
         depends_lib-append ${qt5_dependency}
