@@ -1,5 +1,5 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
-# $Id: cmake-1.0.tcl 134168 2015-03-19 16:28:00Z michaelld@macports.org $
+# $Id: cmake-1.0.tcl 135668 2015-04-29 13:41:29Z michaelld@macports.org $
 #
 # Copyright (c) 2009 Orville Bennett <illogical1 at gmail.com>
 # Copyright (c) 2010-2014 The MacPorts Project
@@ -42,7 +42,8 @@ default cmake.build_dir {${workpath}/build}
 # standard place to install extra CMake modules
 set cmake_share_module_dir ${prefix}/share/cmake/Modules
 
-depends_build-append port:cmake
+# can use cmake or cmake-devel; default to cmake if not installed
+depends_build-append path:bin/cmake:cmake
 
 proc _cmake_get_build_dir {} {
     if {[option cmake.out_of_source]} {
