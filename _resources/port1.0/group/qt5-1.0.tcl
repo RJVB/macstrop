@@ -1,6 +1,6 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
-# $Id: qt5-2.0.tcl 113952 2015-01-12 16:30:53Z gmail.com:rjvbertin $
+# $Id: qt5-1.0.tcl 113952 2015-06-11 16:30:53Z gmail.com:rjvbertin $
 # $Id: qt5-1.0.tcl 113952 2013-11-26 18:01:53Z michaelld@macports.org $
 
 # Copyright (c) 2014 The MacPorts Project
@@ -35,7 +35,7 @@
 # This portgroup defines standard settings when using Qt5.
 #
 # Usage:
-# PortGroup     qt5 2.0
+# PortGroup     qt5 1.0
 
 # no universal binary support in Qt 5
 #     see http://lists.qt-project.org/pipermail/interest/2012-December/005038.html
@@ -61,10 +61,14 @@ Qt5 must also be installed with +debug.\n"
     }
 }
 
-# standard Qt5 name
+# standard Qt5 name. This should be just "qt5" (or qt53 for instance when more
+# specific version info must be included). There is nothing but a historical reason
+# to call the Qt5 port itself qt5-mac, so that name should not appear on disk where
+# files could be installed that would be the distant descendants of files from qt4-x11
 global qt_name
 set qt_name             qt5
 
+# global definitions with explanation; set the actual values below for cleanness.
 # standard install directory
     global qt_dir
     global qt_dir_rel
@@ -111,7 +115,8 @@ set qt_name             qt5
     global qt_lrelease_cmd
 
 global qt5_is_concurrent
-# check if we're building qt5 itself
+# check if we're building qt5 itself. We're aiming to phase out exclusive installs, but we
+# keep the this block for now that handles detection of the nature of the installed port.
 if {![info exists building_qt5] || ![info exists name] \
     || (${name} ne "qt5-mac" && ${name} ne "qt5-mac-devel" && ${name} ne "qt5" && ${name} ne "qt5-devel")} {
     # no, this must be a dependent port: check the qt5 install:
@@ -119,21 +124,12 @@ if {![info exists building_qt5] || ![info exists name] \
         # we have a "concurrent" install, which means we must look for the various components
         # in different locations (esp. qmake)
         set qt5_is_concurrent   1
-        set auto_concurrent     1
     }
 } else {
     # we're building qt5, qt5-mac or one of its subports/variants
     # we're asking for the standard concurrent install. No need to guess anything, give the user what s/he wants
     set qt5_is_concurrent   1
-    set auto_concurrent     1
 }
-
-#if {![info exists qt5_is_concurrent]} {
-#    if {![info exists building_qt5]} {
-#                return -code error "\n\nERROR:\n\
-# Qt5 appears to be installed in the old, exclusive mode"
-#     }
-# }
 
 set qt_dir              ${prefix}/libexec/${qt_name}
 set qt_dir_rel          libexec/${qt_name}
@@ -179,18 +175,8 @@ compiler.blacklist-append {clang < 500}
 options qt_arch_types
 default qt_arch_types {[string map {i386 x86} [get_canonical_archs]]}
 
-# standard qmake spec
-# configure script prefers clang (but "[a]dvertise[s] g++ as an alternative on Lion and below").
-#if {${os.platform} eq "darwin" && ${os.major} <= 10} {
-#    # According to http://qt-project.org/doc/qt-5/supported-platforms.html#reference-configurations,
-#    #    however, Snow Leopard is only tested on "GCC as provided by Apple"
-#    # Create a variant for Snow Leopard that uses "-platform macx-g++-32" or "-platform macx-g++"?
-#    set qt_qmake_spec_32 macx-g++-32
-#    set qt_qmake_spec_64 macx-g++
-#} else {
-    set qt_qmake_spec_32 macx-clang-32
-    set qt_qmake_spec_64 macx-clang
-#}
+set qt_qmake_spec_32 macx-clang-32
+set qt_qmake_spec_64 macx-clang
 
 if { ![option universal_variant] || ![variant_isset universal] } {
     if { ${build_arch} eq "i386" } {
