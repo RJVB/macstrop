@@ -37,9 +37,6 @@
 # Usage:
 # PortGroup     qt5 1.0
 
-# no universal binary support in Qt 5
-#     see http://lists.qt-project.org/pipermail/interest/2012-December/005038.html
-#     see also https://bugreports.qt-project.org/browse/QTBUG-24952
 if { ![exists universal_variant] || [option universal_variant] } {
     PortGroup muniversal 1.0
     #universal_archs_supported i386 x86_64
@@ -71,7 +68,10 @@ set qt_name             qt5
 # global definitions with explanation; set the actual values below for cleanness.
 # standard install directory
     global qt_dir
+# idem, relative to ${prefix}
     global qt_dir_rel
+# archdata: equal to qt_dir
+    global qt_archdata_dir
 # standard Qt documents directory
     global qt_docs_dir
 # standard Qt plugins directory
@@ -82,12 +82,13 @@ set qt_name             qt5
     global qt_imports_dir
 # standard Qt qml directory
     global qt_qml_dir
-# standard Qt includes directory
+# standard Qt includes directory, under ${prefix}/includes where they would be expected
     global qt_includes_dir
 # standard Qt libraries directory
     global qt_libs_dir
-# standard Qt libraries directory
+# standard Qt libraries directory: OS X frameworks
     global qt_frameworks_dir
+# idem, relative to ${prefix}
     global qt_frameworks_dir_rel
 # standard Qt non-.app executables directory
     global qt_bins_dir
@@ -97,12 +98,14 @@ set qt_name             qt5
     global qt_translations_dir
 # standard Qt sysconf directory
     global qt_sysconf_dir
+# standard Qt .app executables directory, if created
+    global qt_apps_dir
 # standard Qt examples directory
     global qt_examples_dir
-# standard Qt tests directory
-    global qt_tests_dir
 # standard Qt demos directory
     global qt_demos_dir
+# standard Qt tests directory
+    global qt_tests_dir
 # standard CMake module directory for Qt-related files
     global qt_cmake_module_dir
 # standard qmake command location
@@ -133,28 +136,28 @@ if {![info exists building_qt5] || ![info exists name] \
 
 set qt_dir              ${prefix}/libexec/${qt_name}
 set qt_dir_rel          libexec/${qt_name}
-set qt_docs_dir         ${prefix}/share/doc/${qt_name}
-set qt_plugins_dir      ${prefix}/share/${qt_name}/plugins
-set qt_mkspecs_dir      ${prefix}/share/${qt_name}/mkspecs
-set qt_imports_dir      ${prefix}/share/${qt_name}/imports
-set qt_qml_dir          ${prefix}/share/${qt_name}/qml
 set qt_includes_dir     ${prefix}/include/${qt_name}
 set qt_libs_dir         ${qt_dir}/lib
 set qt_frameworks_dir   ${qt_dir}/Library/Frameworks
+set qt_frameworks_dir_rel   ${qt_dir_rel}/Library/Frameworks
 set qt_bins_dir         ${qt_dir}/bin
+set qt_cmake_module_dir     ${prefix}/lib/cmake
+set qt_archdata_dir         ${qt_dir}
+set qt_sysconf_dir          ${prefix}/etc/${qt_name}
 set qt_data_dir         ${prefix}/share/${qt_name}
+set qt_plugins_dir          ${prefix}/share/${qt_name}/plugins
+set qt_mkspecs_dir          ${prefix}/share/${qt_name}/mkspecs
+set qt_imports_dir          ${prefix}/share/${qt_name}/imports
+set qt_qml_dir              ${prefix}/share/${qt_name}/qml
 set qt_translations_dir ${prefix}/share/${qt_name}/translations
-set qt_sysconf_dir      ${prefix}/etc/${qt_name}
 set qt_tests_dir        ${prefix}/share/${qt_name}/tests
-set qt_cmake_module_dir ${prefix}/lib/cmake
+set qt_docs_dir             ${prefix}/share/doc/${qt_name}
+
 set qt_qmake_cmd        ${qt_dir}/bin/qmake
 set qt_moc_cmd          ${qt_dir}/bin/moc
 set qt_uic_cmd          ${qt_dir}/bin/uic
 set qt_lrelease_cmd     ${qt_dir}/bin/lrelease
-set qt_frameworks_dir_rel   ${qt_dir_rel}/Library/Frameworks
 
-# standard Qt .app executables directory, if created
-global qt_apps_dir
 set qt_apps_dir         ${applications_dir}/Qt5
 set qt_examples_dir     ${qt_apps_dir}/examples
 set qt_demos_dir        ${qt_apps_dir}/demos
