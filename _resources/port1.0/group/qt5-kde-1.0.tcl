@@ -218,15 +218,15 @@ if {![info exists building_qt5]} {
         global qt5_dependency
         if {[info exists qt5_is_concurrent]} {
             if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
-                set qt5_dependency path:libexec/${qt_name}/Library/Frameworks/QtCore.framework/QtCore:qt5
+                set qt5_dependency path:libexec/${qt_name}/Library/Frameworks/QtCore.framework/QtCore:qt5-kde
             } else {
-                set qt5_dependency path:libexec/${qt_name}/lib/libQtCore.5.dylib:qt5
+                set qt5_dependency path:libexec/${qt_name}/lib/libQtCore.5.dylib:qt5-kde
             }
         } else {
             if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
-                set qt5_dependency path:Library/Frameworks/QtCore.framework/QtCore:qt5
+                set qt5_dependency path:Library/Frameworks/QtCore.framework/QtCore:qt5-kde
             } else {
-                set qt5_dependency path:lib/libQtCore.5.dylib:qt5
+                set qt5_dependency path:lib/libQtCore.5.dylib:qt5-kde
             }
         }
         depends_lib-append ${qt5_dependency}
