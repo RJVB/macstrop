@@ -1,0 +1,85 @@
+--- /Volumes/patux.home/bertin/Desktop/Downloads/transportmanager.cpp	2014-07-10 13:17:43.000000000 +0200
++++ mailtransport/transportmanager.cpp	2015-07-22 17:58:34.000000000 +0200
+@@ -73,6 +73,7 @@
+ 
+     ~TransportManagerPrivate() {
+       delete config;
++        delete wallet;
+       qDeleteAll( transports );
+     }
+ 
+@@ -408,6 +409,12 @@
+   d->transports.removeAll( t );
+   d->validateDefault();
+   QString group = t->currentGroup();
++  if (t->storePassword()) {
++      Wallet *currentWallet = wallet();
++      if ( currentWallet ) {
++          currentWallet->removeEntry( QString::number(t->id()) );
++      }
++  }
+   delete t;
+   d->config->deleteGroup( group );
+   d->writeConfig();
+@@ -567,12 +574,15 @@
+ 
+ KWallet::Wallet * TransportManager::wallet()
+ {
+-  if ( d->wallet && d->wallet->isOpen() ) {
+-    return d->wallet;
++  // do not return False is a previous attempt to open the NetworkWallet failed; most likely that was
++  // just a transient failure. However, no need to consider an existing d->wallet if !Wallet::isEnabled() .
++  // RJVB: We could however return NULL too if (walletAsyncOpen && walletOpenFailed)
++  if ( !Wallet::isEnabled() ) {
++    return 0;
+   }
+ 
+-  if ( !Wallet::isEnabled() || d->walletOpenFailed ) {
+-    return 0;
++  if ( d->wallet && d->wallet->isOpen() ) {
++    return d->wallet;
+   }
+ 
+   WId window = 0;
+@@ -588,6 +598,10 @@
+   if ( !d->wallet ) {
+     d->walletOpenFailed = true;
+     return 0;
++  } else {
++    // we just opened a wallet in synchronous mode; record the state
++    d->walletAsyncOpen = false;
++    d->walletOpenFailed = false;
+   }
+ 
+   d->prepareWallet();
+@@ -638,7 +652,8 @@
+   }
+ 
+   // async wallet opening
+-  if ( !d->wallet && !d->walletOpenFailed ) {
++  // RJVB: don't be discouraged by a previous failure opening a wallet, but check if the system is enabled first
++  if ( !d->wallet && Wallet::isEnabled() ) {
+     WId window = 0;
+     if ( qApp->activeWindow() ) {
+       window = qApp->activeWindow()->winId();
+@@ -651,7 +666,11 @@
+     if ( d->wallet ) {
+       connect( d->wallet, SIGNAL(walletOpened(bool)), SLOT(slotWalletOpened(bool)) );
+       d->walletAsyncOpen = true;
++      d->walletOpenFailed = false;
++      // RJVB: passwords will be loaded the next time we're called (?)
+     } else {
++      // RJVB: record the exact state:
++      d->walletAsyncOpen = false;
+       d->walletOpenFailed = true;
+       loadPasswords();
+     }
+@@ -671,6 +690,8 @@
+     delete wallet;
+     wallet = 0;
+   } else {
++    // RJVB: unset the error flag
++    walletOpenFailed = false;
+     prepareWallet();
+   }
+   q->loadPasswords();
