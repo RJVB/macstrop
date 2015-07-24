@@ -463,7 +463,9 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         }
         configure.args-append   -process
     } else {
-        # We don't want qmake to 2nd-guess the compiler we specify in our mkspec and replace it with an Xcode compiler
+        # We don't want qmake to 2nd-guess the compiler we specify in our mkspec and
+        # replace it with an Xcode compiler determined by xcrun.
+        # 20150723: also exclude the QMAKE_LINK commands from being determined by xcrun
         patchfiles-append       patch-sdk.prf-xcrun-not-for-compilers.diff
     }
 
@@ -488,6 +490,8 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         configure.universal_cxxflags
         configure.universal_cppflags
 
+    configure.ldflags-append    ${configure.optflags}
+
     # patches for improving the KDE experience (and facilitating debugging)
     patchfiles-append       patch-enable-dumpObjectInfo.diff
     if {${QT54}} {
@@ -504,6 +508,15 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
 
 if { (${subport} eq ${name}) \
     || (${subport} eq "${name}-x11") || (${subport} eq "${name}-qtwebengine") } {
+
+    if {${QT54}} {
+        variant LTO description \
+            {Use link-time optimisation (currently incompatible with the SSE4+ instruction sets)} {
+            # -no-sse4* do not appear to have the intended effect
+            #configure.args-append   -no-sse4.1 -no-sse4.2
+        }
+    }
+
     depends_lib                              \
         port:zlib                            \
         port:libpng                          \
@@ -540,17 +553,16 @@ if { (${subport} eq ${name}) \
     }
 
     # set up things for an out-of-source build:
+    default configure.dir   {${workpath}/build}
+    default build.dir       {${workpath}/build}
     if {${subport} eq "${name}-x11"} {
-        default configure.cmd   {../${worksrcdir}/qtbase/configure}
-        #destroot.destdir        DESTDIR=${destroot}/tmp
-        #destroot.env-replace    INSTALL_ROOT=${destroot} INSTALL_ROOT=${destroot}/tmp
+        #default configure.cmd   {../${worksrcdir}/qtbase/configure}
+        default configure.cmd   {../${worksrcdir}/configure}
     } elseif {${subport} eq "${name}-qtwebengine"} {
         configure.args          -Wall -r ../${worksrcdir}/qtwebengine/qtwebengine.pro
     } else {
         default configure.cmd   {../${worksrcdir}/configure}
     }
-    default configure.dir   {${workpath}/build}
-    default build.dir       {${workpath}/build}
 
     build.type              gnu
     # make sure we use the latest gmake:
@@ -616,7 +628,7 @@ if { (${subport} eq ${name}) \
 
     post-destroot {
 
-        if {${subport} ne "${name}-x11"} {
+        #if {${subport} ne "${name}-x11"} 
 
             # move items out of the Frameworks directory that are more appropriate to lib directory
             xinstall -m 775 -d ${destroot}${qt_cmake_module_dir}
@@ -809,12 +821,14 @@ if { (${subport} eq ${name}) \
                 }
             }
             if {[file exists ${destroot}${qt_mkspecs_dir}/qmodule.pri]} {
-                # if the user used configure.optflags="-something" make sure that gets added to compiler options qmake
-                # determines, rather than replacing all of those
+                # if the user used configure.optflags="-something" make sure that gets added to compiler and linker
+                # options qmake determines, rather than replacing all of those
                 reinplace "s|QMAKE_CFLAGS = |QMAKE_CFLAGS \+= |g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
                 reinplace "s|QMAKE_CXXFLAGS = |QMAKE_CXXFLAGS \+= |g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
+                reinplace "s|QMAKE_LFLAGS = |QMAKE_LFLAGS \+= |g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
             }
-        } else {
+        # else 
+        if {${subport} eq "${name}-x11"} {
             file delete -force ${destroot}-tmp
             file rename ${destroot} ${destroot}-tmp
             # now cherry-pick the things we want which aren't yet
@@ -824,10 +838,24 @@ if { (${subport} eq ${name}) \
             xinstall -d -m 755 ${destroot}${qt_plugins_dir}/platforms
             file rename ${destroot}-tmp/${qt_plugins_dir}/platforms/libqxcb.dylib ${destroot}${qt_plugins_dir}/platforms
             xinstall -d -m 755 ${destroot}${qt_cmake_module_dir}/Qt5Gui
-            file rename ${destroot}-tmp/${qt_frameworks_dir}/cmake/Qt5Gui/Qt5Gui_QComposePlatformInputContextPlugin.cmake \
+            file rename ${destroot}-tmp/${qt_cmake_module_dir}/Qt5Gui/Qt5Gui_QComposePlatformInputContextPlugin.cmake \
                 ${destroot}${qt_cmake_module_dir}/Qt5Gui
-            file rename ${destroot}-tmp/${qt_frameworks_dir}/cmake/Qt5Gui/Qt5Gui_QXcbIntegrationPlugin.cmake \
+            file rename ${destroot}-tmp/${qt_cmake_module_dir}/Qt5Gui/Qt5Gui_QXcbIntegrationPlugin.cmake \
                 ${destroot}${qt_cmake_module_dir}/Qt5Gui
+            xinstall -d -m 755 ${destroot}${qt_cmake_module_dir}/Qt5X11Extras
+            file rename ${destroot}-tmp/${qt_cmake_module_dir}/Qt5X11Extras/Qt5X11ExtrasConfig.cmake \
+                ${destroot}${qt_cmake_module_dir}/Qt5X11Extras
+            file rename ${destroot}-tmp/${qt_cmake_module_dir}/Qt5X11Extras/Qt5X11ExtrasConfigVersion.cmake \
+                ${destroot}${qt_cmake_module_dir}/Qt5X11Extras
+            xinstall -d -m 755 ${destroot}${qt_pkg_config_dir}
+            file rename ${destroot}-tmp/${qt_pkg_config_dir}/Qt5X11Extras.pc ${destroot}${qt_pkg_config_dir}
+            xinstall -d -m 755 ${destroot}${qt_frameworks_dir}
+            file rename ${destroot}-tmp/${qt_frameworks_dir}/QtX11Extras.framework ${destroot}${qt_frameworks_dir}
+            xinstall -d -m 755 ${destroot}${qt_libs_dir}
+            file rename ${destroot}-tmp/${qt_libs_dir}/libQtX11Extras.prl ${destroot}${qt_libs_dir}
+            xinstall -d -m 755 ${destroot}${qt_mkspecs_dir}/modules
+            file rename ${destroot}-tmp/${qt_mkspecs_dir}/modules/qt_lib_x11extras.pri ${destroot}/${qt_mkspecs_dir}/modules
+            file rename ${destroot}-tmp/${qt_mkspecs_dir}/modules/qt_lib_x11extras_private.pri ${destroot}/${qt_mkspecs_dir}/modules
             file delete -force ${destroot}-tmp
         }
 
@@ -854,6 +882,23 @@ if { (${subport} eq ${name}) \
     }
 }
 
+post-configure {
+    if {${QT54} && [variant_isset LTO]} {
+        if {${subport} eq "${name}-x11"} {
+            #system -W ${build.dir} "bin/qmake -config ltcg ../${worksrcdir}/qtbase"
+            system -W ${build.dir} "qtbase/bin/qmake -config ltcg ../${worksrcdir}"
+        } elseif {${subport} eq "${name}-qtwebengine"} {
+            system -W ${build.dir} "${qt_qmake_cmd} -config ltcg ../${worksrcdir}/qtwebengine"
+        } else {
+            foreach qdir {qtbase qtconnectivity qtdeclarative qtenginio qtlocation qtmacextras \
+                        qtmultimedia qtquick1 qtsensors qtserialport qtsvg qttools qtwebchannel \
+                        qtwebsockets qtxmlpatterns} {
+                system -W ${build.dir}/${qdir} "${build.dir}/qtbase/bin/qmake -config ltcg ../../${worksrcdir}/${qdir}"
+            }
+        }
+    }
+}
+
 subport ${name}-x11 {
     depends_lib-append  port:xorg-xcb-util port:xorg-xcb-util-wm port:xorg-xcb-util-image \
                         port:xorg-xcb-util-keysyms port:xorg-inputproto \
@@ -863,7 +908,7 @@ subport ${name}-x11 {
                         platform plugin, which allows rendering to (remote) X11 servers.
 
     # extract only the qtbase component
-    extract.post_args-append    ${distname}/qtbase
+    extract.post_args-append    ${distname}/qtbase ${distname}/qtx11extras ${distname}/configure ${distname}/qt.pro
 }
 
 subport ${name}-zz-docs {
