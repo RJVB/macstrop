@@ -479,6 +479,7 @@ if {${subport} eq "${name}" || ${subport} eq "${name}-x11"} {
 
     # --prefix is not recognized.
     configure.pre_args-delete       --prefix=${prefix}
+    configure.args
 
     # --disable-dependency-tracking is not recognized.
     configure.universal_args-delete --disable-dependency-tracking
@@ -495,6 +496,19 @@ if {${subport} eq "${name}" || ${subport} eq "${name}-x11"} {
     configure.universal_cppflags
     configure.march
     configure.mtune
+
+    configure.ldflags-append    ${configure.optflags}
+    if {[variant_isset LTO]} {
+        configure.cflags-append     -flto
+        configure.cxxflags-append   -flto
+        configure.objcflags-append  -flto
+        configure.objcxxflags-append  -flto
+        configure.ldflags-append    -flto
+        # deactivate 3DNOW support. SSE4 support also needs to be disabled because of the
+        # same clang bug, but we do that with a patchfile. Doing it here would also disable
+        # AVX support.
+        configure.args-append       -no-3dnow
+    }
 
     # Use compiler.cpath and compiler.library_path for all -I and -L
     # entries, so-as to avoid conflicts with already-installed headers and
@@ -514,7 +528,14 @@ if {${subport} eq "${name}" || ${subport} eq "${name}-x11"} {
 
     set library_path [ list ${prefix}/lib ]
 
-    # -dbus-linked prevends qt4 from trying to dynamically load libdbus-1,
+    # set up things for an out-of-source build:
+    default configure.dir   {${workpath}/build}
+    default build.dir       {${workpath}/build}
+    default configure.cmd   {../${worksrcdir}/configure}
+#     set qmake_cache_path    ${worksrcpath}/.qmake.cache
+    set qmake_cache_path    ${build.dir}/.qmake.cache
+
+        # -dbus-linked prevends qt4 from trying to dynamically load libdbus-1,
     #     which it is not able to find in ${prefix}.
     #
     # -openssl-linked ensures that the MacPorts openssl is used.
@@ -531,7 +552,7 @@ if {${subport} eq "${name}" || ${subport} eq "${name}-x11"} {
     #     the 'phonon' port, which is more up to date than that provided
     #     by Qt.
 
-    configure.args                                            \
+    configure.args-append                                     \
         -v                                                    \
         -confirm-license                                      \
         -opensource                                           \
@@ -607,19 +628,15 @@ if {${subport} eq "${name}" || ${subport} eq "${name}-x11"} {
 
         configure.args-append -arch \"${qt_arch_types}\"
 
-        # cannot use pre-compiled headers when compiling with more than 1
-        # arch type (typically +universal) or for X11
-
-        #if {[llength ${qt_arch_types}] != 1 || [variant_isset x11]}
-
         # check to see if not compiling for the native machine hardware
         # (e.g., compiling for just i386 but CPU is x86_64); optimization
         # of QMake does not work in this circumstance.
 
         if {[lsearch -exact ${qt_arch_types} ${os.arch}] == -1} {
 
+            ui_msg "qt_arch_types=${qt_arch_types} but os.arch==${os.arch} ; ignoring and building optimised qmake anyway"
             # not building for native arch: disable optimizing qmake
-            configure.args-delete -optimized-qmake
+            #configure.args-delete -optimized-qmake
 
         } elseif {${MINOR} == 6 &&
                   [llength ${qt_arch_types}] == 1 &&
@@ -664,24 +681,24 @@ if {${subport} eq "${name}" || ${subport} eq "${name}-x11"} {
 
         # SQLITE
         reinplace "/SQLITE/s@-I${prefix}/\[^ \]*include\[^ \]*@@g" \
-            ${worksrcpath}/.qmake.cache
+            ${build.dir}/.qmake.cache
         reinplace "/SQLITE/s@-L${prefix}/\[^ \]*lib\[^ \]*@@g" \
-            ${worksrcpath}/.qmake.cache
+            ${build.dir}/.qmake.cache
         # DBUS
         reinplace "/DBUS/s@-I${prefix}/\[^ \]*include\[^ \]*@@g" \
-            ${worksrcpath}/.qmake.cache
+            ${build.dir}/.qmake.cache
         reinplace "/DBUS/s@-L${prefix}/\[^ \]*lib\[^ \]*@@g" \
-            ${worksrcpath}/.qmake.cache
+            ${build.dir}/.qmake.cache
         # OPENSSL
         reinplace "/OPENSSL/s@-I${prefix}/\[^ \]*include\[^ \]*@@g" \
-            ${worksrcpath}/.qmake.cache
+            ${build.dir}/.qmake.cache
         reinplace "/OPENSSL/s@-L${prefix}/\[^ \]*lib\[^ \]*@@g" \
-            ${worksrcpath}/.qmake.cache
+            ${build.dir}/.qmake.cache
         # ODBC
         reinplace "/ODBC/s@-I${prefix}/\[^ \]*include\[^ \]*@@g" \
-            ${worksrcpath}/.qmake.cache
+            ${build.dir}/.qmake.cache
         reinplace "/ODBC/s@-L${prefix}/\[^ \]*lib\[^ \]*@@g" \
-            ${worksrcpath}/.qmake.cache
+            ${build.dir}/.qmake.cache
     }
 
     pre-build {
@@ -1078,6 +1095,12 @@ if {${subport} eq "${name}" || ${subport} eq "${name}-x11"} {
             # given that we did NOT build QtCore WITHOUT exceptions...
             exec patch -d ${destroot}${qt_frameworks_dir} -Np0 -i ${filespath}/qconfig-remove-EXCEPTIONS.diff
         }
+    }
+
+    variant LTO description {Build with Link-Time Optimisation (LTO) (currently incompatible with the SSE4+ instruction sets)} {
+        # certain components do not support LTO:
+        patchfiles-append       patch-no-lto.diff \
+                                patch-lto-no-sse4.diff
     }
 
     variant odbc description {Enable iODBC SQL Driver} {
