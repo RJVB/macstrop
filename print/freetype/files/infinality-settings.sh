@@ -2,6 +2,7 @@
 
 ###          freetype2-infinality-ultimate settings          ###
 ###           rev. 0.4.8.3, for freetype2 v.2.5.x            ###
+###             also used for freetype2 v.2.6.x              ###
 ###                                                          ###
 ###                Copyright (c) 2014 bohoomil               ###
 ### The MIT License (MIT) http://opensource.org/licenses/MIT ###
