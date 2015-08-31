@@ -1,29 +1,306 @@
 diff --git plugins/patchreview/patchreview.cpp plugins/patchreview/patchreview.cpp
-index 18b63db..04f3a25 100644
+index 3cf7850..0fb020b 100644
 --- plugins/patchreview/patchreview.cpp
 +++ plugins/patchreview/patchreview.cpp
-@@ -304,7 +304,14 @@ PatchReviewPlugin::~PatchReviewPlugin() {
-     removeHighlighting();
+@@ -34,8 +34,11 @@
+ #include <ktexteditor/document.h>
+ #include <ktexteditor/view.h>
+ 
++#include <QCoreApplication>
++
+ ///Whether arbitrary exceptions that occurred while diff-parsing within the library should be caught
+ #define CATCHLIBDIFF
++#undef RJVB_CLOSE_ALL_FIRST
+ 
+ /* Exclude this file from doublequote_chars check as krazy doesn't understand
+    std::string*/
+@@ -306,9 +309,15 @@ PatchReviewPlugin::~PatchReviewPlugin()
+ 
      // Tweak to work around a crash on OS X; see https://bugs.kde.org/show_bug.cgi?id=338829
      // and http://qt-project.org/forums/viewthread/38406/#162801
--    m_patch->deleteLater();
-+    if( m_patch ) {
-+        disconnect( m_patch, SIGNAL( patchChanged() ), this, SLOT( notifyPatchChanged() ) );
-+        if ( qobject_cast<LocalPatchSource*>( m_patch ) ) {
-+            // make sure we don't leak this
-+            // TODO: what about other patch sources?
-+            m_patch->deleteLater();
-+        }
-+    }
+-    if (m_patch) {
+-        m_patch->deleteLater();
+-    }
++    setPatch(nullptr);
++//     if( m_patch ) {
++//         disconnect( m_patch, SIGNAL( patchChanged() ), this, SLOT( notifyPatchChanged() ) );
++//         if ( qobject_cast<LocalPatchSource*>( m_patch ) ) {
++//             // make sure we don't leak this
++//             // TODO: what about other patch sources?
++//             m_patch->deleteLater();
++//         }
++//     }
  }
  
  void PatchReviewPlugin::clearPatch( QObject* _patch ) {
-@@ -476,7 +483,7 @@ void PatchReviewPlugin::setPatch( IPatchSource* patch ) {
-         if ( qobject_cast<LocalPatchSource*>( m_patch ) ) {
-             // make sure we don't leak this
-             // TODO: what about other patch sources?
--            delete m_patch;
-+            m_patch->deleteLater();
+@@ -324,6 +333,32 @@ void PatchReviewPlugin::clearPatch( QObject* _patch ) {
+ void PatchReviewPlugin::closeReview()
+ {
+     if( m_patch ) {
++        if( m_highlighters.size() ) {
++#ifdef RJVB_CLOSE_ALL_FIRST
++            // close all views associated with our main window's area in a way that's as closely comparable
++            // to closing them one by one through the UI (or by using the "Close All" menu action).
++            // This appears to be the surest way to ensure that will be no pending events or other nested event-loop
++            // issues that could lead to dangling pointers after we've deleted objects representing the content shown
++            // in those views. At least on OS X it is likely that we arrive here through Qt's mouse event handler,
++            // and allowing control to return there without ensuring that all (ObjC) objects have been released properly
++            // by processing all events related to their disposal is a sure way to crash.
++            // Note that the same approach was already used to close edit views that were open when our plugin was loaded.
++            Sublime::MainWindow *w = dynamic_cast<Sublime::MainWindow *>( ICore::self()->uiController()->activeMainWindow() );
++            foreach( Sublime::View * view, w->area()->views() ) {
++                // simulate a user click on the document tab's close button
++                // if necessary, try if(view->hasWidget()) {view->widget()->close();}
++                w->area()->closeView( view );
++            }
++            // now make sure all pending events are duly processed
++            QCoreApplication::sendPostedEvents();
++            QCoreApplication::processEvents();
++            qDebug() << "### Closed all patchreview documents";
++            // if all's well, there should be nothing left in m_highlighters, but we continue
++            // on the regular code path nonetheless.
++#else
++            qDebug() << "### Closing patchreview" << m_patch << "with" << m_highlighters.size() << "open documents";
++#endif
++        }
+         removeHighlighting();
+         m_modelList.reset( 0 );
+ 
+diff --git vcs/vcspluginhelper.cpp vcs/vcspluginhelper.cpp
+index 26ab57c..62453a3 100644
+--- vcs/vcspluginhelper.cpp
++++ vcs/vcspluginhelper.cpp
+@@ -110,12 +110,12 @@ struct VcsPluginHelper::VcsPluginHelperPrivate {
+         connect(commitAction, SIGNAL(triggered()), parent, SLOT(commit()));
+         connect(addAction, SIGNAL(triggered()), parent, SLOT(add()));
+         connect(updateAction, SIGNAL(triggered()), parent, SLOT(update()));
+-        connect(diffToBaseAction, SIGNAL(triggered()), parent, SLOT(diffToBase()));
++        connect(diffToBaseAction, SIGNAL(triggered()), parent, SLOT(diffToBase()), Qt::QueuedConnection);
+         connect(revertAction, SIGNAL(triggered()), parent, SLOT(revert()));
+-        connect(historyAction, SIGNAL(triggered()), parent, SLOT(history()));
+-        connect(annotationAction, SIGNAL(triggered()), parent, SLOT(annotation()));
+-        connect(diffForRevAction, SIGNAL(triggered()), parent, SLOT(diffForRev()));
+-        connect(diffForRevGlobalAction, SIGNAL(triggered()), parent, SLOT(diffForRevGlobal()));
++        connect(historyAction, SIGNAL(triggered()), parent, SLOT(history()), Qt::QueuedConnection);
++        connect(annotationAction, SIGNAL(triggered()), parent, SLOT(annotation()), Qt::QueuedConnection);
++        connect(diffForRevAction, SIGNAL(triggered()), parent, SLOT(diffForRev()), Qt::QueuedConnection);
++        connect(diffForRevGlobalAction, SIGNAL(triggered()), parent, SLOT(diffForRevGlobal()), Qt::QueuedConnection);
+         connect(pullAction, SIGNAL(triggered()), parent, SLOT(pull()));
+         connect(pushAction, SIGNAL(triggered()), parent, SLOT(push()));
+     }
+@@ -203,12 +203,15 @@ void VcsPluginHelper::disposeEventually(KTextEditor::Document *)
+ void VcsPluginHelper::setupFromContext(Context* context)
+ {
+     d->ctxUrls.clear();
++    if (!context) {
++        return;
++    }
+     {
+         KDevelop::ProjectItemContext* prjctx = dynamic_cast<KDevelop::ProjectItemContext*>(context);
+ 
+         if (prjctx) {
+             foreach(KDevelop::ProjectBaseItem* item, prjctx->items()) {
+-                if(!item->target())
++                if(item && !item->target())
+                     d->ctxUrls.append(item->path().toUrl());
+             }
+         }
+diff --git vcs/widgets/vcsdiffpatchsources.cpp vcs/widgets/vcsdiffpatchsources.cpp
+index 195b9b6..2a41375 100644
+--- vcs/widgets/vcsdiffpatchsources.cpp
++++ vcs/widgets/vcsdiffpatchsources.cpp
+@@ -1,6 +1,6 @@
+ /*
+     Copyright 2009 David Nolden <david.nolden.kdevelop@art-master.de>
+-    
++
+    This library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Library General Public
+    License version 2 as published by the Free Software Foundation.
+@@ -17,6 +17,7 @@
+ */
+ 
+ #include "vcsdiffpatchsources.h"
++
+ #include <qboxlayout.h>
+ #include <qlabel.h>
+ #include <kglobalsettings.h>
+@@ -46,21 +47,21 @@ VCSCommitDiffPatchSource::VCSCommitDiffPatchSource(VCSDiffUpdater* updater)
+     m_commitMessageEdit.data()->setFont( KGlobalSettings::fixedFont() );
+     m_commitMessageEdit.data()->setLineWrapMode(QTextEdit::NoWrap);
+     m_vcs->setupCommitMessageEditor(updater->url(), m_commitMessageEdit.data());
+-    
++
+     QHBoxLayout* titleLayout = new QHBoxLayout;
+     titleLayout->addWidget(new QLabel(i18n("Commit Message:")));
+-    
++
+     m_oldMessages = new KComboBox(m_commitMessageWidget.data());
+-    
++
+     m_oldMessages->addItem(i18n("Old Messages"));
+     foreach(QString message, oldMessages())
+         m_oldMessages->addItem(message, message);
+     m_oldMessages->setMaximumWidth(200);
+-    
++
+     connect(m_oldMessages, SIGNAL(currentIndexChanged(QString)), this, SLOT(oldMessageChanged(QString)));
+-    
++
+     titleLayout->addWidget(m_oldMessages);
+-    
++
+     layout->addLayout(titleLayout);
+     layout->addWidget(m_commitMessageEdit.data());
+     connect(this, SIGNAL(reviewCancelled(QString)), SLOT(addMessageToHistory(QString)));
+@@ -77,16 +78,16 @@ void VCSCommitDiffPatchSource::addMessageToHistory(const QString& message)
+ {
+     if(ICore::self()->shuttingDown())
+         return;
+-    
++
+     KConfigGroup vcsGroup(ICore::self()->activeSession()->config(), "VCS");
+-    
++
+     const int maxMessages = 10;
+     QStringList oldMessages = vcsGroup.readEntry("OldCommitMessages", QStringList());
+-    
++
+     oldMessages.removeAll(message);
+     oldMessages.push_front(message);
+     oldMessages = oldMessages.mid(0, maxMessages);
+-    
++
+     vcsGroup.writeEntry("OldCommitMessages", oldMessages);
+ }
+ 
+@@ -130,7 +131,7 @@ VCSDiffPatchSource::VCSDiffPatchSource(VCSDiffUpdater* updater)
+         foreach( const QVariant &var, varlist.toList() )
+         {
+             VcsStatusInfo info = qVariantValue<KDevelop::VcsStatusInfo>( var );
+-            
++
+             m_infos += info;
+             if(info.state()!=VcsStatusInfo::ItemUpToDate)
+                 m_selectable[info.url()] = info.state();
+@@ -150,6 +151,7 @@ VCSDiffPatchSource::~VCSDiffPatchSource()
+ {
+     QFile::remove(m_file.toLocalFile());
+     delete m_updater;
++    qDebug() << "~VCSDiffPatchSource()" << this;
+ }
+ 
+ KUrl VCSDiffPatchSource::baseDir() const {
+@@ -205,7 +207,11 @@ void VCSDiffPatchSource::update() {
+ }
+ 
+ VCSCommitDiffPatchSource::~VCSCommitDiffPatchSource() {
+-    delete m_commitMessageWidget.data();
++//     delete m_commitMessageWidget.data();
++    if (m_commitMessageEdit.data()) {
++        m_commitMessageWidget.data()->deleteLater();
++    }
++    qDebug() << "~VCSCommitDiffPatchSource()" << this;
+ }
+ 
+ bool VCSCommitDiffPatchSource::canSelectFiles() const {
+@@ -229,14 +235,14 @@ bool VCSCommitDiffPatchSource::canCancel() const {
+ }
+ 
+ void VCSCommitDiffPatchSource::cancelReview() {
+-    
++
+     QString message;
+ 
+     if (m_commitMessageEdit)
+         message = m_commitMessageEdit.data()->toPlainText();
+ 
+     emit reviewCancelled(message);
+-    
++
+     deleteLater();
+ }
+ 
+@@ -281,10 +287,13 @@ bool showVcsDiff(IPatchSource* vcsDiff)
+     KDevelop::IPatchReview* patchReview = ICore::self()->pluginController()->extensionForPlugin<IPatchReview>("org.kdevelop.IPatchReview");
+ 
+     //Only give one VCS diff at a time to the patch review plugin
+-    delete currentShownDiff;
+-    
++//     delete currentShownDiff;
++    if (currentShownDiff) {
++        currentShownDiff->deleteLater();
++    }
++
+     currentShownDiff = vcsDiff;
+-    
++
+     if( patchReview ) {
+         patchReview->startReview(currentShownDiff);
+         return true;
+diff --git vcs/widgets/vcsdiffwidget.cpp vcs/widgets/vcsdiffwidget.cpp
+index 54787b9..4daa106 100644
+--- vcs/widgets/vcsdiffwidget.cpp
++++ vcs/widgets/vcsdiffwidget.cpp
+@@ -63,6 +63,9 @@ public:
+             return;
+         }else{
+             delete patch;
++//             if (patch) {
++//                 patch->deleteLater();
++//             }
+         }
+         
+         kDebug() << "diff:" << diff.leftTexts().count();
+diff --git plugins/grepview/grepviewplugin.cpp plugins/grepview/grepviewplugin.cpp
+index 7e3d933..c2438a4 100644
+--- plugins/grepview/grepviewplugin.cpp
++++ plugins/grepview/grepviewplugin.cpp
+@@ -134,7 +134,7 @@ KDevelop::ContextMenuExtension GrepViewPlugin::contextMenuExtension(KDevelop::Co
+             KAction* action = new KAction( i18n( "Find/Replace in This Folder" ), this );
+             action->setIcon(KIcon("edit-find"));
+             m_contextMenuDirectory = items.at(0)->folder()->path().toLocalFile();
+-            connect( action, SIGNAL(triggered()), this, SLOT(showDialogFromProject()));
++            connect( action, SIGNAL(triggered()), this, SLOT(showDialogFromProject()), Qt::QueuedConnection);
+             extension.addAction( KDevelop::ContextMenuExtension::ExtensionGroup, action );
          }
      }
-     m_patch = patch;
+@@ -143,7 +143,7 @@ KDevelop::ContextMenuExtension GrepViewPlugin::contextMenuExtension(KDevelop::Co
+         KDevelop::EditorContext *econtext = dynamic_cast<KDevelop::EditorContext*>(context);
+         if ( econtext->view()->selection() ) {
+             QAction* action = new QAction(KIcon("edit-find"), i18n("&Find/Replace in Files"), this);
+-            connect(action, SIGNAL(triggered(bool)), this, SLOT(showDialogFromMenu()));
++            connect(action, SIGNAL(triggered(bool)), this, SLOT(showDialogFromMenu()), Qt::QueuedConnection);
+             extension.addAction(KDevelop::ContextMenuExtension::ExtensionGroup, action);
+         }
+     }
+@@ -155,7 +155,7 @@ KDevelop::ContextMenuExtension GrepViewPlugin::contextMenuExtension(KDevelop::Co
+             KAction* action = new KAction( i18n( "Find/Replace in This Folder" ), this );
+             action->setIcon(KIcon("edit-find"));
+             m_contextMenuDirectory = fcontext->urls().first().toLocalFile();
+-            connect( action, SIGNAL(triggered()), this, SLOT(showDialogFromProject()));
++            connect( action, SIGNAL(triggered()), this, SLOT(showDialogFromProject()), Qt::QueuedConnection);
+             extension.addAction( KDevelop::ContextMenuExtension::ExtensionGroup, action );
+         }
+     }
+diff --git interfaces/ipatchsource.cpp interfaces/ipatchsource.cpp
+index 94af5a7..6c64db0 100644
+--- interfaces/ipatchsource.cpp
++++ interfaces/ipatchsource.cpp
+@@ -18,6 +18,7 @@
+ 
+ #include "ipatchsource.h"
+ #include <qicon.h>
++#include <kdebug.h>
+ 
+ using namespace KDevelop;
+ 
+@@ -29,7 +30,7 @@ QIcon IPatchSource::icon() const
+ 
+ IPatchReview::~IPatchReview()
+ {
+-
++//     qDebug() << "~IPatchReview" << this << ";" << kBacktrace();
+ }
+ 
+ void IPatchSource::cancelReview()
