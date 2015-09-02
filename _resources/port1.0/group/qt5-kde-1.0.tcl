@@ -233,6 +233,15 @@ if {![info exists building_qt5]} {
     }
 }
 
+variant LTO description {Build with Link-Time Optimisation (LTO) (currently not 100% compatible with SSE4+ and 3DNow intrinsics)} {}
+if {![info exists building_qt5] && [variant_exists LTO] && [variant_isset LTO]} {
+    configure.cflags-append     -flto
+    configure.cxxflags-append   -flto
+    configure.objcflags-append  -flto
+    configure.objcxxflags-append  -flto
+    configure.ldflags-append    -flto
+}
+
 # standard configure environment, when not building qt5
 
 if {![info exists building_qt5]} {
