@@ -54,6 +54,7 @@ Qt4 must also be installed with +debug.\n"
 if {[info exists name] && ${subport} ne "${name}-transitional"} {
     # exclusive mode doesn't make sense for the transitional subport ...
     variant exclusive description {Builds and installs Qt4-mac the older way, such that other Qt versions can NOT be installed alongside it} {}
+    variant LTO description {Build with Link-Time Optimisation (LTO) (currently not 100% compatible with SSE4+ and 3DNow intrinsics)} {}
 }
 
 # standard Qt4 name
@@ -225,6 +226,14 @@ if {![info exists building_qt4]} {
         #depends_lib-append      path:lib/libQtCore.so.4:qt4-x11
     }
     depends_lib-append  ${qt4_dependency}
+}
+
+if {[variant_exists LTO] && [variant_isset LTO]} {
+    configure.cflags-append     -flto
+    configure.cxxflags-append   -flto
+    configure.objcflags-append  -flto
+    configure.objcxxflags-append  -flto
+    configure.ldflags-append    -flto
 }
 
 # standard configure environment, when not building qt4
