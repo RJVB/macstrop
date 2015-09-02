@@ -67,6 +67,10 @@ switch ${os.platform}_${os.major} {
     }
 }
 
+configure.args-delete   -DCMAKE_BUILD_TYPE=Release
+# force cmake to use the compiler flags passed through CFLAGS, CXXFLAGS etc. in the environment
+configure.args-append   -DCMAKE_BUILD_TYPE:STRING=MacPorts -DCMAKE_STRIP:FILEPATH=/bin/echo
+
 # augment the CMake module lookup path, if necessary depending on
 # where Qt4 is installed.
 if {${qt_cmake_module_dir} ne ${cmake_share_module_dir}} {
