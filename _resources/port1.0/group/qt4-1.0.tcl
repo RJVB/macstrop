@@ -55,7 +55,10 @@ if {[info exists name] && ${subport} ne "${name}-transitional"} {
     # exclusive mode doesn't make sense for the transitional subport ...
     variant exclusive description {Builds and installs Qt4-mac the older way, such that other Qt versions can NOT be installed alongside it} {}
     variant LTO description {Build with Link-Time Optimisation (LTO) (currently not 100% compatible with SSE4+ and 3DNow intrinsics)} {}
+} elseif {![info exists building_qt5] && ![variant_exists LTO]} {
+    variant LTO description {Build with Link-Time Optimisation (LTO) (currently not 100% compatible with SSE4+ and 3DNow intrinsics)} {}
 }
+
 
 # standard Qt4 name
 global qt_name
