@@ -239,7 +239,7 @@ if {![info exists building_qt5] && [variant_exists LTO] && [variant_isset LTO]} 
     configure.cxxflags-append   -flto
     configure.objcflags-append  -flto
     configure.objcxxflags-append  -flto
-    configure.ldflags-append    -flto
+    configure.ldflags-append    ${configure.optflags} -flto
 }
 
 # standard configure environment, when not building qt5

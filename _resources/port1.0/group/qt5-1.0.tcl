@@ -46,16 +46,20 @@
 # indicated a preference. If not, use the default/mainstream port:qt5-mac .
 if {[file exists ${prefix}/include/qt5/QtCore/QtCore]} {
     # Qt5 has been installed through port:qt5-kde
+    ui_msg "Qt5 is provided by port:qt5-kde"
     PortGroup   qt5-kde 1.0
 } elseif {[file exists ${prefix}/libexec/qt5-mac/include/QtCore/QtCore]} {
     # Qt5 has been installed through port:qt5-mac
+    ui_msg "Qt5 is provided by port:qt5-mac"
     PortGroup   qt5-mac 1.0
 } elseif {[info exists qt5.prefer_kde]} {
     # The calling port has indicated a preference for port:qt5-kde and
     # Qt5 has hopefully not been installed through the outdated, exclusive port:qt5-mac (5.3.2)
+    ui_msg "Qt5 will be provided by port:qt5-kde, by request"
     PortGroup   qt5-kde 1.0
 } else {
     # default fall-back to mainstream port:qt5-mac
+    ui_msg "Qt5 will be provided by port:qt5-mac (default)"
     PortGroup   qt5-mac 1.0
 }
 
