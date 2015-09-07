@@ -2,7 +2,21 @@ diff --git drkonqi/backtracegenerator.cpp drkonqi/backtracegenerator.cpp
 index 1107e11..8347ca6 100644
 --- drkonqi/backtracegenerator.cpp
 +++ drkonqi/backtracegenerator.cpp
-@@ -94,6 +94,11 @@ bool BacktraceGenerator::start()
+@@ -55,9 +55,11 @@ BacktraceGenerator::~BacktraceGenerator()
+         m_proc->terminate();
+         if (!m_proc->waitForFinished(10000)) {
+             m_proc->kill();
+-            m_proc->waitForFinished();
++            m_proc->deleteLater();
++        }
++        else {
++            delete m_proc;
+         }
+-        delete m_proc;
+         delete m_temp;
+     }
+ }
+@@ -94,6 +96,11 @@ bool BacktraceGenerator::start()
      *m_proc << KShell::splitArgs(str);
      m_proc->setOutputChannelMode(KProcess::OnlyStdoutChannel);
      m_proc->setNextOpenMode(QIODevice::ReadWrite | QIODevice::Text);
@@ -14,6 +28,25 @@ index 1107e11..8347ca6 100644
      connect(m_proc, SIGNAL(readyReadStandardOutput()),
              SLOT(slotReadInput()));
      connect(m_proc, SIGNAL(finished(int,QProcess::ExitStatus)),
+@@ -121,11 +128,17 @@ void BacktraceGenerator::slotReadInput()
+     m_output += m_proc->readAllStandardOutput();
+ 
+     int pos;
+-    while ((pos = m_output.indexOf('\n')) != -1) {
++    while ((pos = m_output.indexOf('\n')) != -1 && m_proc->state() == QProcess::Running) {
+         QString line = QString::fromLocal8Bit(m_output, pos + 1);
+         m_output.remove(0, pos + 1);
+ 
+         emit newLine(line);
++        if (line == QString::fromAscii("(lldb) detach")) {
++            // Anything following this line doesn't interest us, and lldb has been known
++            // to turn into a zombie instead of exitting, thereby blocking us.
++            m_proc->disconnect();
++            slotProcessExited(0, QProcess::NormalExit);
++        }
+     }
+ }
+ 
 diff --git drkonqi/data/debuggers/external/lldbrc drkonqi/data/debuggers/external/lldbrc
 new file mode 100644
 index 0000000..c8ef63b
@@ -42,7 +75,7 @@ index 0000000..1b44430
 +[KCrash]
 +Exec=lldb -p %pid
 +ExecInputFile=%tempfile
-+BatchCommands=set set term-width 200\nthread info\nbt all\ndetach\nquit
++BatchCommands=set set term-width 200\nthread info\nbt all\ndetach
 diff --git drkonqi/debugger.cpp drkonqi/debugger.cpp
 index 26ca338..ce32a82 100644
 --- drkonqi/debugger.cpp
