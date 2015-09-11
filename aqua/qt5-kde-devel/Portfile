@@ -500,6 +500,17 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
     configure.args-append   -force-debug-info -no-strip -no-separate-debug-info
 }
 
+set CXX                     [file tail ${configure.cxx}]
+set CXX_dir                 [file dirname ${configure.cxx}]
+set CXX_parts               [split ${CXX} -]
+set CXX_family              [lindex ${CXX_parts} 0]
+set CXX_mp                  [expr {[lindex ${CXX_parts} 1] eq "mp"}]
+set CXX_vsuffix             [join [lrange ${CXX_parts} 1 end] -]
+#                 if {${CXX_mp}} {
+#                     ui_msg "${CXX_dir} ${CXX} ${CXX_family} ${CXX_mp} ${CXX_vsuffix}"
+#                     ui_msg "${CXX_dir}/llvm-ar-${CXX_vsuffix}"
+#                 }
+
 if { (${subport} eq ${name}) \
     || (${subport} eq "${name}-x11") || (${subport} eq "${name}-qtwebengine") } {
 
@@ -512,8 +523,10 @@ if { (${subport} eq ${name}) \
     } elseif {${QT53} && [variant_isset LTO]} {
         ui_msg "The LTO variant is currently ignored (moot) for Qt 5.3"
     }
-    if {[variant_isset LTO] && ${os.platform} eq "darwin" && ${os.major} <= 13} {
-        patchfiles-append           patch-clangconf-lto-commands.diff
+    if {[variant_isset LTO] && ${os.platform} eq "darwin"} {
+        if {(${os.major} <= 13) || ${CXX_mp}} {
+            patchfiles-append       patch-clangconf-lto-commands.diff
+        }
     }
     configure.ldflags-append        ${configure.optflags}
 
@@ -579,7 +592,11 @@ if { (${subport} eq ${name}) \
             reinplace "s|\"\$MAKE\")|\"\$MAKE\" -j${build.jobs})|g" ${worksrcpath}/qtbase/configure
         }
         if {[variant_isset LTO] && ${os.platform} eq "darwin"} {
-            if {${os.major} <= 13} {
+            if {${CXX_mp}} {
+                reinplace "s|@LLVM_AR@|${CXX_dir}/llvm-ar-${CXX_vsuffix}|g" ${worksrcpath}/qtbase/mkspecs/common/clang.conf
+                reinplace "s|@LLVM_NM@|${CXX_dir}/llvm-nm-${CXX_vsuffix}|g" ${worksrcpath}/qtbase/mkspecs/common/clang.conf
+                reinplace "s|@LLVM_RANLIB@|${CXX_dir}/llvm-ranlib-${CXX_vsuffix}|g" ${worksrcpath}/qtbase/mkspecs/common/clang.conf
+            } elseif {${os.major} <= 13} {
                 reinplace "s|@LLVM_AR@|ar|g" ${worksrcpath}/qtbase/mkspecs/common/clang.conf
                 reinplace "s|@LLVM_NM@|nm|g" ${worksrcpath}/qtbase/mkspecs/common/clang.conf
                 reinplace "s|@LLVM_RANLIB@|ranlib|g" ${worksrcpath}/qtbase/mkspecs/common/clang.conf
@@ -698,24 +715,25 @@ if { (${subport} eq ${name}) \
                 ln -s ${tf_full}.framework/${tf} ${dr_qt_libs_dir}/lib${tf}.${qt_major}.${t_minor}.${qt_patch}.dylib
 
                 # copy .prl file, then correct it for library usage
+                if {[file exists ${destroot}${tf_full}.framework/${tf}.prl]} {
+                    copy ${destroot}${tf_full}.framework/${tf}.prl ${dr_qt_libs_dir}/lib${tf}.prl
 
-                copy ${destroot}${tf_full}.framework/${tf}.prl ${dr_qt_libs_dir}/lib${tf}.prl
+                    # fix TARGET in .prl file
 
-                # fix TARGET in .prl file
+                    reinplace "/QMAKE_PRL_TARGET/s|Qt\\(\[^ \]*\\)|libQt\\1.${qt_major}.${t_minor}.${qt_patch}.dylib|" ${dr_qt_libs_dir}/lib${tf}.prl
 
-                reinplace "/QMAKE_PRL_TARGET/s|Qt\\(\[^ \]*\\)|libQt\\1.${qt_major}.${t_minor}.${qt_patch}.dylib|" ${dr_qt_libs_dir}/lib${tf}.prl
+                    # fix PRL_LIBS -F -> -L in .prl file
 
-                # fix PRL_LIBS -F -> -L in .prl file
+                    reinplace "/QMAKE_PRL_LIBS/s|-F${qt_frameworks_dir}|-L${qt_libs_dir}|" ${dr_qt_libs_dir}/lib${tf}.prl
 
-                reinplace "/QMAKE_PRL_LIBS/s|-F${qt_frameworks_dir}|-L${qt_libs_dir}|" ${dr_qt_libs_dir}/lib${tf}.prl
+                    # fix "-framework Qt*" -> "-lQt*" in .prl file
 
-                # fix "-framework Qt*" -> "-lQt*" in .prl file
+                    reinplace "/QMAKE_PRL_LIBS/s|-framework Qt|-lQt|g" \
+                        ${dr_qt_libs_dir}/lib${tf}.prl
 
-                reinplace "/QMAKE_PRL_LIBS/s|-framework Qt|-lQt|g" \
-                    ${dr_qt_libs_dir}/lib${tf}.prl
-
-                # remove the QMAKE_PRL_BUILD_DIR line from the .prl file
-                reinplace "/QMAKE_PRL_BUILD_DIR/d" ${dr_qt_libs_dir}/lib${tf}.prl
+                    # remove the QMAKE_PRL_BUILD_DIR line from the .prl file
+                    reinplace "/QMAKE_PRL_BUILD_DIR/d" ${dr_qt_libs_dir}/lib${tf}.prl
+                }
 
                 # deal with debug files
 
@@ -738,20 +756,21 @@ if { (${subport} eq ${name}) \
                     ln -s ${tf_full}.framework/${tf}_debug ${dr_qt_libs_dir}/lib${tf}_debug.${qt_major}.${t_minor}.${qt_patch}.dylib
 
                     # copy .prl file, then correct it for library usage
+                    if {[file exists ${destroot}${tf_full}.framework/${tf}.prl]} {
+                        copy ${destroot}${tf_full}.framework/${tf}_debug.prl ${dr_qt_libs_dir}/lib${tf}_debug.prl
 
-                    copy ${destroot}${tf_full}.framework/${tf}_debug.prl ${dr_qt_libs_dir}/lib${tf}_debug.prl
+                        # fix TARGET in .prl file
 
-                    # fix TARGET in .prl file
+                        reinplace "/QMAKE_PRL_TARGET/s|Qt\\(\[^ \]*\\)|libQt\\1.${qt_major}.${t_minor}.${qt_patch}.dylib|" ${dr_qt_libs_dir}/lib${tf}_debug.prl
 
-                    reinplace "/QMAKE_PRL_TARGET/s|Qt\\(\[^ \]*\\)|libQt\\1.${qt_major}.${t_minor}.${qt_patch}.dylib|" ${dr_qt_libs_dir}/lib${tf}_debug.prl
+                        # fix PRL_LIBS -F -> -L in .prl file
 
-                    # fix PRL_LIBS -F -> -L in .prl file
+                        reinplace "/QMAKE_PRL_LIBS/s|-F${qt_frameworks_dir}|-L${qt_libs_dir}|" ${dr_qt_libs_dir}/lib${tf}_debug.prl
 
-                    reinplace "/QMAKE_PRL_LIBS/s|-F${qt_frameworks_dir}|-L${qt_libs_dir}|" ${dr_qt_libs_dir}/lib${tf}_debug.prl
+                        # fix "-framework Qt*" -> "-lQt*_debug" in .prl file
 
-                    # fix "-framework Qt*" -> "-lQt*_debug" in .prl file
-
-                    reinplace "/QMAKE_PRL_LIBS/s|-framework Qt\\(\[^ \]*\\)|-lQt\\1_debug|g" ${dr_qt_libs_dir}/lib${tf}_debug.prl
+                        reinplace "/QMAKE_PRL_LIBS/s|-framework Qt\\(\[^ \]*\\)|-lQt\\1_debug|g" ${dr_qt_libs_dir}/lib${tf}_debug.prl
+                    }
                 }
             }
 
