@@ -73,13 +73,19 @@ if {${QT53}} {
 # we'll stick to the qt5-mac name for some purposes for now:
 dist_subdir         qt5-mac
 
-# Qt5 is huge. Enable HFS compression if bsdtar is already installed
-# This doesn't change the built/installed files, so should be acceptable runtime behaviour
-if {[file exists ${prefix}/bin/bsdtar]} {
-    extract.post_args       "| bsdtar -x -k --hfsCompression"
+if {${os.platform} eq "darwin"} {
+    # Qt5 is huge. Enable HFS compression if bsdtar is already installed
+    # This doesn't change the built/installed files, so should be acceptable runtime behaviour
+    if {[file exists ${prefix}/bin/bsdtar]} {
+        extract.post_args       "| bsdtar -x -k --hfsCompression"
+    }
+} else {
+    extract.post_args-append    "-k"
 }
 
 if { ${os.platform} ne "darwin" } {
+    # probably linux, violate MacPorts premises by allowing a build fully dependent
+    # on system/host libraries.
     pre-fetch {
         ui_msg "You're on your own on \"${os.platform}\"!!"
     }
@@ -310,13 +316,15 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         set OSX_MINOR [expr ${os.major} - 4]
     }
 
-    if {${configure.sdkroot} ne ""} {
-        configure.args-append \
-            -sdk [string tolower [join [lrange [split [lindex [split ${configure.sdkroot} "/"] end] "."] 0 end-1] "."]]
-    } else {
-        # default: build for the current OS version, requesting the corresponding SDK explicitly
-        configure.args-append \
-            -sdk [string tolower "macosx10.${OSX_MINOR}"]
+    if {${os.platform} eq "darwin"} {
+        if {${configure.sdkroot} ne ""} {
+            configure.args-append \
+                -sdk [string tolower [join [lrange [split [lindex [split ${configure.sdkroot} "/"] end] "."] 0 end-1] "."]]
+        } else {
+            # default: build for the current OS version, requesting the corresponding SDK explicitly
+            configure.args-append \
+                -sdk [string tolower "macosx10.${OSX_MINOR}"]
+        }
     }
 
     # NB: -prefix->${prefix} !
@@ -346,23 +354,48 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         -release          \
         -opensource       \
         -confirm-license  \
-        -shared           \
-        -force-pkg-config
+        -shared
 
-# Third Party Libraries:
-    configure.args-append \
-        -no-pulseaudio   \
-        -no-mtdev         \
-        -no-harfbuzz      \
-        -openssl-linked   \
-        -no-xinput2       \
-        -no-xcb           \
-        -no-xcb-xlib
+    if {${os.platform} eq "darwin"} {
+        configure.args-append   \
+            -force-pkg-config   \
+            -no-pch             \
+            -no-evdev           \
+            -no-linuxfb         \
+            -no-kms             \
+            -framework          \
+            -no-rpath
 
-# configure options that don't show up in configure --help
-    configure.args-append \
-        -no-libudev       \
-        -no-egl
+        # Third Party Libraries:
+        configure.args-append \
+            -no-pulseaudio   \
+            -no-mtdev         \
+            -no-harfbuzz      \
+            -openssl-linked   \
+            -no-xinput2       \
+            -no-xcb           \
+            -no-xcb-xlib
+
+        # configure options that don't show up in configure --help
+        configure.args-append \
+            -no-libudev       \
+            -no-egl
+    } else {
+        # presume we want to build the xcb version.
+        configure.args-append   \
+            -xcb -xcb-xlib      \
+            -qpa xcb
+        set PKG_CONFIG_PATH "/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig"
+        configure.env-append    \
+            PKG_CONFIG_PATH=${PKG_CONFIG_PATH}
+        build.env-append        \
+            PKG_CONFIG_PATH=${PKG_CONFIG_PATH}
+        if {${os.platform} eq "linux"} {
+            post-patch {
+                reinplace "s/mac|/linux|mac|/g" ${build.dir}/qtbase/config.tests/unix/iconv/iconv.pro
+            }
+        }
+    }
 
 # Additional options:
     configure.args-append    \
@@ -374,24 +407,20 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         -nis                 \
         -cups                \
         -iconv               \
-        -no-evdev            \
         -icu                 \
         -fontconfig          \
-        -no-pch              \
         -dbus-linked         \
         -glib                \
         -directfb            \
-        -no-linuxfb          \
-        -no-kms              \
-        -no-use-gold-linker  \
-        -framework           \
-        -no-rpath
+        -no-use-gold-linker
 
     configure.args-append   -optimized-qmake
 
     # the sqlite3 plugin ("sqlite") has been re-absorbed into the main port
     configure.args-append -system-sqlite
-    depends_lib-append port:sqlite3
+    if {${os.platform} eq "darwin"} {
+        depends_lib-append port:sqlite3
+    }
     foreach driver { db2 ibase mysql oci odbc psql sqlite2 tds } {
         configure.args-append -no-sql-${driver}
     }
@@ -412,59 +441,63 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         # Yes, this patch has to be applied when building the master port, not the xcb plugin subport...
         patchfiles-append       patch-designer-show-menubar-on-xcb.diff
                 # configure options that don't show up in configure --help
-        # openvg makes sense only when using X11 ...
-        configure.args-append   -no-openvg
+        if {${os.platform} eq "darwin"} {
+            # openvg makes sense only when using X11 ...
+            configure.args-append   -no-openvg
+        }
     }
 
-    if {${os.platform} eq "darwin" && ${os.major} <= 10} {
-        # Some extra blackish magic to get Qt 5.3.2 to build on OS X 10.6, using a recent clang version.
-        patchfiles-append       qt532/patch-configure-allow-macports-binutils.diff \
-                                qt532/patch-nistest.diff \
-                                qt532/patch-icutest.pro.diff \
-                                qt532/patch-clangconf.diff
-        if {${subport} ne "${name}-x11" && ${subport} ne "${name}-zz-docs"} {
-            patchfiles-append   qt532/patch-geoclue-gvalue-init.diff
+    if {${os.platform} eq "darwin"} {
+        if {${os.major} <= 10} {
+            # Some extra blackish magic to get Qt 5.3.2 to build on OS X 10.6, using a recent clang version.
+            patchfiles-append       qt532/patch-configure-allow-macports-binutils.diff \
+                                    qt532/patch-nistest.diff \
+                                    qt532/patch-icutest.pro.diff \
+                                    qt532/patch-clangconf.diff
+            if {${subport} ne "${name}-x11" && ${subport} ne "${name}-zz-docs"} {
+                patchfiles-append   qt532/patch-geoclue-gvalue-init.diff
+            }
+            #patchfiles-append       qt532/patch-sdk.prf-xcrun-not-for-compilers.diff
+            patchfiles-append       qt532/patch-sdk.prf-no-xcrun.diff
+            # a hackery bit of post-patch to be done pre-configure
+            # (or post-patch, so it can be checked before running configure)
+            post-patch {
+                xinstall -m 775 -d ${build.dir}/qtbase
+                xinstall -m 775 -d ${build.dir}/qtbase/bin
+                # take some measures to pick the appropriate clang compiler. The compiler_blacklist portgroup and MacPorts based
+                # have already introduced a dependency on clang-3.5 (unless clang-3.4 is installed?!). We create symlinks to clang
+                # 3.4 or 3.5 in our build tree, so that the user doesn't have to do a `port select` for us.
+                if {![file exists ${build.dir}/qtbase/bin/clang++]} {
+                    ln -s [qt_cc] ${build.dir}/qtbase/bin/clang
+                    ln -s [qt_cxx] ${build.dir}/qtbase/bin/clang++
+                }
+                # instruct the build system to use these for building:
+                reinplace -W ${worksrcpath}/qtbase/mkspecs/common "s|macportsclang|${build.dir}/qtbase/bin/clang|g" clang.conf
+                reinplace -W ${worksrcpath}/qtbase "s|PREFIX|${prefix}|g" config.tests/unix/icu/icu.pro
+                # the configure script will build a bootstrap qmake executable respecting our mkspec (macx-clang referring to a MacPorts clang version)
+                # because we patched it to do just that (patch-configure-allow-macports-binutils.diff).
+                # We also provide an appropriate .qmake.stash to be sure that qmake doesn't generate a less appropriate one (despite the sdk.prf patch)
+                # NB: this issue also hampers the universal build of the qtwebengine subport.
+                if {![file exists ${build.dir}/qtbase/.qmake.stash]} {
+                    file copy ${filespath}/qt532/qmake.stash.in ${build.dir}/qtbase/.qmake.stash
+                }
+                reinplace -W ${build.dir}/qtbase "s|PREFIX/bin/clang|${build.dir}/qtbase/bin/clang|g" .qmake.stash
+                reinplace -W ${build.dir}/qtbase "s|PREFIX|${prefix}|g" .qmake.stash
+                # put a copy at the build root, which will be required for building qtwebkit
+                # (way ahead in the future...)
+                if {![file exists ${build.dir}/.qmake.stash]} {
+                    file copy ${build.dir}/qtbase/.qmake.stash ${build.dir}
+                }
+                ui_msg "Everything is set up to use the Qt-specific compiler symlink ${build.dir}/qtbase/bin/clang++ but the build system will probably resolve\
+                        the actual compiler to which this link points ([qt_cxx]). That is of no consequence; future Qt5 ports will use the Qt compiler in ${qt_bins_dir}."
+            }
+            configure.args-append   -process
+       } else {
+            # We don't want qmake to 2nd-guess the compiler we specify in our mkspec and
+            # replace it with an Xcode compiler determined by xcrun.
+            # 20150723: also exclude the QMAKE_LINK commands from being determined by xcrun
+            patchfiles-append       patch-sdk.prf-xcrun-not-for-compilers.diff
         }
-        #patchfiles-append       qt532/patch-sdk.prf-xcrun-not-for-compilers.diff
-        patchfiles-append       qt532/patch-sdk.prf-no-xcrun.diff
-        # a hackery bit of post-patch to be done pre-configure
-        # (or post-patch, so it can be checked before running configure)
-        post-patch {
-            xinstall -m 775 -d ${build.dir}/qtbase
-            xinstall -m 775 -d ${build.dir}/qtbase/bin
-            # take some measures to pick the appropriate clang compiler. The compiler_blacklist portgroup and MacPorts based
-            # have already introduced a dependency on clang-3.5 (unless clang-3.4 is installed?!). We create symlinks to clang
-            # 3.4 or 3.5 in our build tree, so that the user doesn't have to do a `port select` for us.
-            if {![file exists ${build.dir}/qtbase/bin/clang++]} {
-                ln -s [qt_cc] ${build.dir}/qtbase/bin/clang
-                ln -s [qt_cxx] ${build.dir}/qtbase/bin/clang++
-            }
-            # instruct the build system to use these for building:
-            reinplace -W ${worksrcpath}/qtbase/mkspecs/common "s|macportsclang|${build.dir}/qtbase/bin/clang|g" clang.conf
-            reinplace -W ${worksrcpath}/qtbase "s|PREFIX|${prefix}|g" config.tests/unix/icu/icu.pro
-            # the configure script will build a bootstrap qmake executable respecting our mkspec (macx-clang referring to a MacPorts clang version)
-            # because we patched it to do just that (patch-configure-allow-macports-binutils.diff).
-            # We also provide an appropriate .qmake.stash to be sure that qmake doesn't generate a less appropriate one (despite the sdk.prf patch)
-            # NB: this issue also hampers the universal build of the qtwebengine subport.
-            if {![file exists ${build.dir}/qtbase/.qmake.stash]} {
-                file copy ${filespath}/qt532/qmake.stash.in ${build.dir}/qtbase/.qmake.stash
-            }
-            reinplace -W ${build.dir}/qtbase "s|PREFIX/bin/clang|${build.dir}/qtbase/bin/clang|g" .qmake.stash
-            reinplace -W ${build.dir}/qtbase "s|PREFIX|${prefix}|g" .qmake.stash
-            # put a copy at the build root, which will be required for building qtwebkit
-            # (way ahead in the future...)
-            if {![file exists ${build.dir}/.qmake.stash]} {
-                file copy ${build.dir}/qtbase/.qmake.stash ${build.dir}
-            }
-            ui_msg "Everything is set up to use the Qt-specific compiler symlink ${build.dir}/qtbase/bin/clang++ but the build system will probably resolve\
-                    the actual compiler to which this link points ([qt_cxx]). That is of no consequence; future Qt5 ports will use the Qt compiler in ${qt_bins_dir}."
-        }
-        configure.args-append   -process
-    } else {
-        # We don't want qmake to 2nd-guess the compiler we specify in our mkspec and
-        # replace it with an Xcode compiler determined by xcrun.
-        # 20150723: also exclude the QMAKE_LINK commands from being determined by xcrun
-        patchfiles-append       patch-sdk.prf-xcrun-not-for-compilers.diff
     }
 
     # Qt builds part of the system using environment provided by MacPorts.
@@ -532,19 +565,25 @@ if { (${subport} eq ${name}) \
     }
     configure.ldflags-append        ${configure.optflags}
 
-    depends_lib                              \
-        port:zlib                            \
-        port:libpng                          \
-        port:jpeg                            \
-        port:freetype                        \
-        path:bin/dbus-daemon:dbus            \
-        port:openssl                         \
-        port:tiff                            \
-        port:libmng                          \
-        path:lib/pkgconfig/glib-2.0.pc:glib2 \
-        port:icu                             \
-        port:pcre                            \
-        port:libiconv
+    if {${os.platform} eq "darwin"} {
+        depends_lib                              \
+            port:zlib                            \
+            port:libpng                          \
+            port:jpeg                            \
+            port:freetype                        \
+            path:bin/dbus-daemon:dbus            \
+            port:openssl                         \
+            port:tiff                            \
+            port:libmng                          \
+            path:lib/pkgconfig/glib-2.0.pc:glib2 \
+            port:icu                             \
+            port:pcre                            \
+            port:libiconv
+    }
+
+    if {${subport} ne "${name}-qtwebengine"} {
+        extract.post_args-append    --exclude ${distname}/qtwebengine
+    }
 
     post-extract {
         file mkdir ${workpath}/build
@@ -554,8 +593,6 @@ if { (${subport} eq ${name}) \
             if {[file exists ${worksrcpath}/qtwebengine] && (${subport} ne "${name}-zz-docs")} {
                 file delete -force ${worksrcpath}/qtwebengine
                 patchfiles-append   patch-disable-qtwebengine.diff
-            } else {
-                ui_msg "not exists ${worksrcpath}/qtwebengine or ${subport} == ${name}-zz-docs";
             }
             if {[variant_isset universal]} {
                 ui_msg "Setting up symlinks for architectures ${universal_archs_to_use}"
@@ -582,7 +619,9 @@ if { (${subport} eq ${name}) \
     build.type              gnu
     # make sure we use the latest gmake:
     build.cmd               gmake
-    depends_build-append    port:gmake
+    if {${os.platform} eq "darwin"} {
+        depends_build-append    port:gmake
+    }
 
     # see https://bugreports.qt-project.org/browse/QTBUG-35514
     build.target
@@ -898,7 +937,9 @@ if { (${subport} eq ${name}) \
     }
 
     variant harfbuzz description {Use HarfBuzz-NG to do text shaping} {
-        depends_lib-append port:harfbuzz
+        if {${os.platform} eq "darwin"} {
+            depends_lib-append port:harfbuzz
+        }
         configure.args-replace \
             -no-harfbuzz       \
             -system-harfbuzz
@@ -954,15 +995,21 @@ post-configure {
 }
 
 subport ${name}-x11 {
-    depends_lib-append  port:xorg-xcb-util port:xorg-xcb-util-wm port:xorg-xcb-util-image \
-                        port:xorg-xcb-util-keysyms port:xorg-inputproto \
-                        port:xrender port:mesa path:${qt_bins_dir}/qmake:${name}
-    description         ${description} - the xcb (X11) platform plugin
-    long_description    ${long_description} This port installs just the xcb \
-                        platform plugin, which allows rendering to (remote) X11 servers.
+    if {${os.platform} eq "darwin"} {
+        depends_lib-append  port:xorg-xcb-util port:xorg-xcb-util-wm port:xorg-xcb-util-image \
+                            port:xorg-xcb-util-keysyms port:xorg-inputproto \
+                            port:xrender port:mesa path:${qt_bins_dir}/qmake:${name}
+        description         ${description} - the xcb (X11) platform plugin
+        long_description    ${long_description} This port installs just the xcb \
+                            platform plugin, which allows rendering to (remote) X11 servers.
 
-    # extract only the qtbase component
-    extract.post_args-append    ${distname}/qtbase ${distname}/qtx11extras ${distname}/configure ${distname}/qt.pro
+        # extract only the qtbase component
+        extract.post_args-append    ${distname}/qtbase ${distname}/qtx11extras ${distname}/configure ${distname}/qt.pro
+    } else {
+        ui_msg "x11 subport unsupported on ${os.platform}"
+        description         unsupported on ${os.platform}
+        long_description    unsupported on ${os.platform}
+    }
 }
 
 subport ${name}-zz-docs {
@@ -1025,8 +1072,10 @@ if {${QT54}} {
             ui_msg "Warning: this component doesn't currently support a universal build (probable Qt bug)"
         }
 
-        # the QtWebengine components is built using ninja
-        depends_build       port:ninja
+        if {${os.platform} eq "darwin"} {
+            # the QtWebengine components is built using ninja
+            depends_build       port:ninja
+        }
         # qtwebengine/src/3rdparty/ninja/bootstrap.py calls g++ (must set CXX)
         build.env-append    CXX=${configure.cxx}
 
@@ -1075,7 +1124,9 @@ if {${QT54}} {
 subport ${name}-psql84-plugin {
     PortGroup           qmake5 1.0
 
-    depends_lib-append port:postgresql84
+    if {${os.platform} eq "darwin"} {
+        depends_lib-append port:postgresql84
+    }
 
     # extract only the qtbase component
     extract.post_args-append    ${distname}/qtbase
@@ -1123,7 +1174,7 @@ subport ${name}-examples {
                                 ${distname}/qtcanvas3d/examples
     if {${QT54}} {
         variant qtwebengine description {build the qtwebengine examples too} {
-            #depends_lib-append          port:${name}-qtwebengine
+            depends_lib-append          port:${name}-qtwebengine
             extract.post_args-append    ${distname}/qtwebengine/examples/
             post-extract {
                 copy ${filespath}/all-examples.pro ${workpath}/${worksrcdir}/all-examples.pro

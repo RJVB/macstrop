@@ -178,8 +178,13 @@ compiler.blacklist-append {clang < 500}
 options qt_arch_types
 default qt_arch_types {[string map {i386 x86} [get_canonical_archs]]}
 
-set qt_qmake_spec_32 macx-clang-32
-set qt_qmake_spec_64 macx-clang
+if {${os.platform} eq "darwin"} {
+    set qt_qmake_spec_32 macx-clang-32
+    set qt_qmake_spec_64 macx-clang
+} elseif {${os.platform} eq "linux"} {
+    set qt_qmake_spec_32 linux-g++
+    set qt_qmake_spec_64 linux-g++-64
+}
 
 if { ![option universal_variant] || ![variant_isset universal] } {
     if { ${build_arch} eq "i386" } {
