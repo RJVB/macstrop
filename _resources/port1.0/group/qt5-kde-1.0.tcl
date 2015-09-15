@@ -167,7 +167,9 @@ global qt_qmake_spec_32
 global qt_qmake_spec_64
 
 PortGroup                 compiler_blacklist_versions 1.0
-compiler.whitelist        clang macports-clang-3.5 macports-clang-3.4
+if {${os.platform} eq "darwin"} {
+    compiler.whitelist        clang macports-clang-3.7 macports-clang-3.6 macports-clang-3.5 macports-clang-3.4
+}
 compiler.blacklist-append macports-llvm-gcc-4.2 llvm-gcc-4.2
 compiler.blacklist-append gcc-4.2 apple-gcc-4.2 gcc-4.0
 compiler.blacklist-append macports-clang-3.1 macports-clang-3.0 macports-clang-3.2 macports-clang-3.3
@@ -184,6 +186,7 @@ if {${os.platform} eq "darwin"} {
 } elseif {${os.platform} eq "linux"} {
     set qt_qmake_spec_32 linux-g++
     set qt_qmake_spec_64 linux-g++-64
+    compiler.blacklist-append   clang
 }
 
 if { ![option universal_variant] || ![variant_isset universal] } {
