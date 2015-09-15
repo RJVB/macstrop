@@ -158,7 +158,11 @@ set qt_moc_cmd          ${qt_dir}/bin/moc
 set qt_uic_cmd          ${qt_dir}/bin/uic
 set qt_lrelease_cmd     ${qt_dir}/bin/lrelease
 
-set qt_apps_dir         ${applications_dir}/Qt5
+if {${os.platform} eq "darwin"} {
+    set qt_apps_dir     ${applications_dir}/Qt5
+} else {
+    set qt_apps_dir     ${qt_bins_dir}
+}
 set qt_examples_dir     ${qt_apps_dir}/examples
 set qt_demos_dir        ${qt_apps_dir}/demos
 
