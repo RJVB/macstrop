@@ -219,6 +219,16 @@ set qt_cmake_defines    \
      -DQT_ZLIB_LIBRARY=${prefix}/lib/libz.dylib \
      -DQT_PNG_LIBRARY=${prefix}/lib/libpng.dylib"
 
+if {${os.platform} eq "darwin"} {
+    # extensions on shared libraries
+    set qt_libs_ext     dylib
+    # extensions on plugins created by Qt's build system
+    set qt_plugins_ext  dylib
+} else {
+    set qt_libs_ext     so
+    set qt_plugins_ext  so
+}
+
 # allow for depending on either qt5[-mac] or qt5[-mac]-devel or qt5[-mac]*-kde, simultaneously
 
 if {![info exists building_qt5]} {
@@ -232,13 +242,13 @@ if {![info exists building_qt5]} {
             if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
                 set qt5_dependency path:libexec/${qt_name}/Library/Frameworks/QtCore.framework/QtCore:qt5-kde
             } else {
-                set qt5_dependency path:libexec/${qt_name}/lib/libQtCore.5.dylib:qt5-kde
+                set qt5_dependency path:libexec/${qt_name}/lib/libQtCore.${qt_libs_ext}:qt5-kde
             }
         } else {
             if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
                 set qt5_dependency path:Library/Frameworks/QtCore.framework/QtCore:qt5-kde
             } else {
-                set qt5_dependency path:lib/libQtCore.5.dylib:qt5-kde
+                set qt5_dependency path:lib/libQtCore.${qt_libs_ext}:qt5-kde
             }
         }
         depends_lib-append ${qt5_dependency}
