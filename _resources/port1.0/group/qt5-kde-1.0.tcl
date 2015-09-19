@@ -255,7 +255,7 @@ if {![info exists building_qt5]} {
     }
 }
 
-if {${os.platform} eq "darwin"]} {
+if {${os.platform} eq "darwin"} {
     variant LTO description {Build with Link-Time Optimisation (LTO) (currently not 100% compatible with SSE4+ and 3DNow intrinsics)} {}
 }
 
