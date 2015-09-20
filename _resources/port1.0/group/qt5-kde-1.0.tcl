@@ -173,13 +173,25 @@ global qt_qmake_spec_64
 PortGroup                 compiler_blacklist_versions 1.0
 if {${os.platform} eq "darwin"} {
     # not sure if {macports-clang >= X} is actually supported ...
-    compiler.whitelist        clang {macports-clang >= 3.4}
+    compiler.whitelist        clang macports-clang-3.7 macports-clang-3.6 macports-clang-3.5 macports-clang-3.4
 }
 compiler.blacklist-append macports-llvm-gcc-4.2 llvm-gcc-4.2
 compiler.blacklist-append gcc-4.2 apple-gcc-4.2 gcc-4.0
 compiler.blacklist-append macports-clang-3.1 macports-clang-3.0 macports-clang-3.2 macports-clang-3.3
 compiler.blacklist-append {clang < 500}
-
+# starting with the one-but-newest macports-clang in the whitelist, check it it is
+# installed and blacklist the other values so that the automatic selection mechanism
+# will select the installed whitelisted version.
+foreach v {3.6 3.5 3.4} {
+    if {[file exists ${prefix}/libexec/llvm-${v}/bin/clang]} {
+        foreach o {3.7 3.6 3.5 3.4} {
+            if {${o} ne ${v}} {
+                compiler.blacklist-append   macports-clang-${o}
+            }
+        }
+    }
+}
+ui_msg "compiler.blacklist=${compiler.blacklist}"
 
 # set Qt understood arch types, based on user preference
 options qt_arch_types
