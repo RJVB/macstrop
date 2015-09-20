@@ -172,7 +172,7 @@ global qt_qmake_spec_64
 
 PortGroup                 compiler_blacklist_versions 1.0
 if {${os.platform} eq "darwin"} {
-    compiler.whitelist        clang macports-clang-3.7 macports-clang-3.6 macports-clang-3.5 macports-clang-3.4
+    compiler.whitelist        clang macports-clang-3.4 macports-clang-3.5 macports-clang-3.6 macports-clang-3.7
 }
 compiler.blacklist-append macports-llvm-gcc-4.2 llvm-gcc-4.2
 compiler.blacklist-append gcc-4.2 apple-gcc-4.2 gcc-4.0
