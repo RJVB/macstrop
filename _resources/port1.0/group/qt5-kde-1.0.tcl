@@ -192,12 +192,14 @@ compiler.blacklist-append   {clang < 500}
 #         }
 #     }
 # }
-if {${os.platform} > 10} {
-    whitelist_macports_clang_versions   {3.7 3.6 3.5 3.4}
-} else {
-    whitelist_macports_clang_versions   {3.5 3.4}
+if {${os.platform} eq "darwin"} {
+    if {${os.platform} > 10} {
+        whitelist_macports_clang_versions   {3.7 3.6 3.5 3.4}
+    } else {
+        whitelist_macports_clang_versions   {3.5 3.4}
+    }
+    blacklist_macports_clang_versions       {< 3.4}
 }
-blacklist_macports_clang_versions       {< 3.4}
 
 # set Qt understood arch types, based on user preference
 options qt_arch_types
