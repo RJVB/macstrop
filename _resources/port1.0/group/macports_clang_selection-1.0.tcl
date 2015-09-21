@@ -137,7 +137,7 @@ proc blacklist_macports_clang_versions {versions} {
             }
         }
     }
-    ui_msg "compiler.blacklist=${compiler.blacklist}"
+    ui_debug "compiler.blacklist=${compiler.blacklist}"
 }
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
