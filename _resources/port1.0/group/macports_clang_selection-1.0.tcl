@@ -68,7 +68,44 @@
 # {<= 3.4} will blacklist an installed port:clang-3.3 but not macports-clang-2.0
 # (which isn't installed because no such port exists; idem for a non-installed
 # macports-clang-3.2).
+#
+# These functions can be seen as breaking the reproducable build principle and
+# should thus be used sparingly and/or under special circumstances only.
+# For this reason, another macro is provided: macports-clang-latest. This returns
+# the latest macports-clang version known to exist for the host OS version, or
+# else the current/latest stable release version (clang-3.6 as of sept. 2015).
+# As such,
+#     compiler.whitelist [macports-clang-latest]
+# behaves like
+#     compiler.whitelist clang
+# and should be equally acceptable under the reproducable build principle.
 
+proc macports-clang-latest {} {
+    global os.major
+    global os.platform
+    if {${os.platform} eq "darwin"} {
+        if {${os.major} < 10} {
+            ui_msg "macports-clang-latest is untested on OS X 10.5 and earlier"
+            return "macports-clang-3.4"
+        }
+        switch ${os.major} {
+            10 {
+                # latest version known to build
+                ui_debug "Returning last-known-to-build macports-clang-3.5"
+                return "macports-clang-3.5"
+            }
+            default {
+                # latest stable release version in MacPorts (20150922)
+                ui_debug "Returning current latest stable release version macports-clang-3.6"
+                return "macports-clang-3.6"
+            }
+        }
+    } else {
+        # latest stable release version in MacPorts (20150922)
+        ui_debug "Not OS X: returning current latest stable release version macports-clang-3.6"
+        return "macports-clang-3.6"
+    }
+}
 
 proc whitelist_macports_clang_versions {versions} {
     global prefix
