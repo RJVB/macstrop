@@ -58,6 +58,16 @@ Qt5 must also be installed with +debug.\n"
     }
 }
 
+if {![variant_exists qt5kde]} {
+    # define a variant that will be set default when port:qt5-kde or port:qt5-kde-devel is
+    # installed. This means that a user doing a new install (or upgrade) of a port depending
+    # on Qt5 and with port:qt5-kde installed will request a variant the build bots should not
+    # consider a default variant. This should protect against pulling in a binary build against
+    # the wrong Qt5 port.
+    variant qt5kde description {default variant set for ports that build against port:qt5-kde} {}
+}
+default_variants        +qt5kde
+
 # standard Qt5 name. This should be just "qt5" (or qt53 for instance when more
 # specific version info must be included). There is nothing but a historical reason
 # to call the Qt5 port itself qt5-mac, so that name should not appear on disk where
