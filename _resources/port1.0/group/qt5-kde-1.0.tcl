@@ -64,7 +64,7 @@ if {![variant_exists qt5kde]} {
     # on Qt5 and with port:qt5-kde installed will request a variant the build bots should not
     # consider a default variant. This should protect against pulling in a binary build against
     # the wrong Qt5 port.
-    variant qt5kde description {default variant set for ports that build against port:qt5-kde} {}
+    variant qt5kde description {default variant set for port:qt5-kde* and ports that depend on them} {}
 }
 default_variants        +qt5kde
 
