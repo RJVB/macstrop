@@ -145,7 +145,7 @@ default configure.cppflags      {-I${prefix}/include}
 if {${os.platform} eq "darwin"} {
 	default configure.ldflags  {"-L${prefix}/lib -Wl,-headerpad_max_install_names"}
 } else {
-	default configure.ldflags  {"-L${prefix}/lib"}
+	default configure.ldflags  {"-L${prefix}/lib -Wl,-rpath,${prefix}/lib"}
 }
 default configure.libs          {}
 default configure.fflags        {${configure.optflags}}
