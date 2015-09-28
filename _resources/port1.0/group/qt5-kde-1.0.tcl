@@ -288,6 +288,8 @@ if {![info exists building_qt5]} {
 
 if {${os.platform} eq "darwin"} {
     variant LTO description {Build with Link-Time Optimisation (LTO) (currently not 100% compatible with SSE4+ and 3DNow intrinsics)} {}
+} else {
+    variant LTO description {Build with Link-Time Optimisation (LTO) (experimental)} {}
 }
 
 if {![info exists building_qt5] && [variant_exists LTO] && [variant_isset LTO]} {
@@ -296,6 +298,14 @@ if {![info exists building_qt5] && [variant_exists LTO] && [variant_isset LTO]} 
     configure.objcflags-append  -flto
     configure.objcxxflags-append  -flto
     configure.ldflags-append    ${configure.optflags} -flto
+    # assume any compiler not clang will be gcc
+    if {![string match "*clang*" ${configure.compiler}]} {
+        configure.cflags-append         -fuse-linker-plugin -ffat-lto-objects
+        configure.cxxflags-append       -fuse-linker-plugin -ffat-lto-objects
+        configure.objcflags-append      -fuse-linker-plugin -ffat-lto-objects
+        configure.objcxxflags-append    -fuse-linker-plugin -ffat-lto-objects
+        configure.ldflags-append        -fuse-linker-plugin
+    }
 }
 
 # standard configure environment, when not building qt5
