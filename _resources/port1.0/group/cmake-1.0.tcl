@@ -67,7 +67,7 @@ configure.pre_args  -DCMAKE_INSTALL_PREFIX=${prefix}
 
 configure.args      -DCMAKE_VERBOSE_MAKEFILE=ON \
                     -DCMAKE_COLOR_MAKEFILE=ON \
-                    -DCMAKE_BUILD_TYPE=Release \
+                    -DCMAKE_BUILD_TYPE=MacPorts \
                     -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
                     -DCMAKE_INSTALL_RPATH=${prefix}/lib \
                     -DCMAKE_INSTALL_NAME_DIR=${prefix}/lib \
