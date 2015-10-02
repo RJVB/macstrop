@@ -117,7 +117,7 @@ if {![variant_isset exclusive]} {
         }
     } else {
         if {![info exists qt4_is_concurrent]} {
-            ui_msg "NB:\nQt4 has been or will be installed in concurrent mode\n"
+            ui_debug "NB:\nQt4 has been or will be installed in concurrent mode\n"
         }
         # we're asking for the standard concurrent install. No need to guess anything, give the user what s/he wants
         set qt4_is_concurrent   1
