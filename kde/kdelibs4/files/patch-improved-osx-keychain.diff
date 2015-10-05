@@ -1518,10 +1518,18 @@ index d0934e6..cad0bdc 100644
 +#endif
 \ No newline at end of file
 diff --git a/kdeui/util/qosxkeychain.cpp b/kdeui/util/qosxkeychain.cpp
-index 7cb9a22..cb04336 100644
+index 7cb9a22..82ab50a 100644
 --- a/kdeui/util/qosxkeychain.cpp
 +++ b/kdeui/util/qosxkeychain.cpp
-@@ -32,6 +32,7 @@ using namespace KWallet;
+@@ -26,12 +26,15 @@
+ #include <QtCore/QPointer>
+ #include <QtGui/QWidget>
+ 
++#include <klockfile.h>
++
+ #include "kwallet.h"
+ #include <kdebug.h>
+ using namespace KWallet;
  #include "qosxkeychain.h"
  
  #include <CoreServices/CoreServices.h>
@@ -1529,7 +1537,7 @@ index 7cb9a22..cb04336 100644
  
  //! Define INTERNET_TOO=1 in order to build read-access to the kSecInternetPasswordItemClass items
  #define INTERNET_TOO    0
-@@ -82,6 +83,24 @@ static QString keyChainName( SecKeychainRef keychain, QString *path=NULL )
+@@ -82,6 +85,24 @@ static QString keyChainName( SecKeychainRef keychain, QString *path=NULL )
      return keyFile.fileName();
  }
  
@@ -1554,7 +1562,7 @@ index 7cb9a22..cb04336 100644
  /*! Open an OS X keychain with name @p n.
   * OS X keychains can be created without a full path (say, "kdewallet"), in which case they
   * are stored e.g. as ~/Library/Keychains/kdewallet . However, opening a preexisting keychain like "login"
-@@ -124,12 +143,13 @@ static OSStatus openKeychain( const QString &n, SecKeychainRef *keychain )
+@@ -124,12 +145,13 @@ static OSStatus openKeychain( const QString &n, SecKeychainRef *keychain )
      return err;
  }
  
@@ -1570,7 +1578,7 @@ index 7cb9a22..cb04336 100644
                                                       accountName.size(), accountName.constData(),
                                                       value.size(), value.constData(), itemRef );
      }
-@@ -161,7 +181,7 @@ OSXKeychain::OSXKeychain()
+@@ -161,7 +183,7 @@ OSXKeychain::OSXKeychain()
      serviceList.append("");
  }
  
@@ -1579,7 +1587,7 @@ index 7cb9a22..cb04336 100644
      : name(n)
  {   QString errMsg;
      OSStatus err = openKeychain( n, &keyChainRef );
-@@ -170,6 +190,57 @@ OSXKeychain::OSXKeychain(const QString &n)
+@@ -170,6 +192,57 @@ OSXKeychain::OSXKeychain(const QString &n)
          kWarning() << "Keychain '" << n << "' does not exist: attempting to create it";
          err = SecKeychainCreate( n.toUtf8(), 0, NULL, true, NULL, &keyChainRef );
          isKDEChain = true;
@@ -1637,7 +1645,7 @@ index 7cb9a22..cb04336 100644
      }
  
      if( isError( err, &errMsg ) ){
-@@ -197,14 +268,58 @@ OSXKeychain::OSXKeychain(const QString &n)
+@@ -197,14 +270,58 @@ OSXKeychain::OSXKeychain(const QString &n)
  void OSXKeychain::close()
  {
      if( keyChainRef ){
@@ -1697,7 +1705,7 @@ index 7cb9a22..cb04336 100644
  }
  
  OSStatus OSXKeychain::renameItem(const QString &currentKey, const QString &newKey)
-@@ -295,6 +410,13 @@ bool OSXKeychain::IsOpen(const QString &walletName)
+@@ -295,6 +412,41 @@ bool OSXKeychain::IsOpen(const QString &walletName)
  OSStatus OSXKeychain::UnLock(const SecKeychainRef keychain)
  {   QString errMsg;
      OSStatus err;
@@ -1708,10 +1716,38 @@ index 7cb9a22..cb04336 100644
 +        // This is an attempt to avoid those multiple dialogs.
 +        return noErr;
 +    }
++    // lock the keychain file. This is to prevent multiple processes posting unlock dialogs
++    // at approximately the same time (which looks sloppy).
++    KLockFile *klock = NULL;
++    if( keychain ){
++        QString lockName = OSXKeychain::Path(keychain) + ".lock";
++        klock = new KLockFile(lockName);
++        if( klock ){
++            if( klock->isLocked() ){
++                int pid;
++                QString hn, an;
++                klock->getLockInfo( pid, hn, an );
++                kDebug() << "Attempting to lock" << lockName << "held by" << an << "(" << pid << ")" << "on" << hn;
++            }
++            else{
++                kDebug() << "Locking" << lockName;
++            }
++            kDebug() << "\tLock result =" << klock->lock();
++            klock->setStaleTime(120);
++        }
++    }
++
++    if( IsOpen(keychain) ){
++        if( klock ){
++            klock->unlock();
++            delete klock;
++        }
++        return noErr;
++    }
      err = SecKeychainUnlock( keychain, 0, NULL, false );
      if( isError( err, &errMsg ) ){
          if( keychain ){
-@@ -303,6 +425,14 @@ OSStatus OSXKeychain::UnLock(const SecKeychainRef keychain)
+@@ -303,6 +455,18 @@ OSStatus OSXKeychain::UnLock(const SecKeychainRef keychain)
          else{
              kDebug() << "Could not unlock the default keychain:"  << qPrintable(errMsg);
          }
@@ -1723,10 +1759,14 @@ index 7cb9a22..cb04336 100644
 +            qDebug() << "\tIgnoring error signalled above because keychain is (now) open";
 +            err = noErr;
 +        }
++    }
++    if( klock ){
++        klock->unlock();
++        delete klock;
      }
      return err;
  }
-@@ -330,7 +460,7 @@ OSStatus OSXKeychain::Lock(const QString &walletName)
+@@ -330,7 +494,7 @@ OSStatus OSXKeychain::Lock(const QString &walletName)
      OSStatus err = openKeychain( walletName, &keychain );
      if( !err && keychain ){
          err = Lock(keychain);
@@ -1735,7 +1775,7 @@ index 7cb9a22..cb04336 100644
      }
      return err;
  }
-@@ -377,7 +507,7 @@ bool OSXKeychain::HasItem(const QString &key,
+@@ -377,7 +541,7 @@ bool OSXKeychain::HasItem(const QString &key,
             *errReturn = err;
         }
      }
@@ -1744,7 +1784,7 @@ index 7cb9a22..cb04336 100644
      return found;
  }
  
-@@ -424,7 +554,8 @@ OSStatus OSXKeychain::ReadItem(const QString &key, QByteArray *value,
+@@ -424,7 +588,8 @@ OSStatus OSXKeychain::ReadItem(const QString &key, QByteArray *value,
              if( !SecKeychainItemCopyContent( theItem, NULL, &attrList, &len, NULL ) ){
                  if( attr.length > 0 ){
                      osxKeyChain->lastReadService.clear();
@@ -1754,7 +1794,7 @@ index 7cb9a22..cb04336 100644
                  }
                  SecKeychainItemFreeContent( &attrList, NULL );
              }
-@@ -533,7 +664,7 @@ OSStatus OSXKeychain::WriteItem( const QString &key, const QByteArray &value,
+@@ -533,7 +698,7 @@ OSStatus OSXKeychain::WriteItem( const QString &key, const QByteArray &value,
          const QByteArray serviceName( osxKeyChain->currentService.toUtf8() );
          // save the "GenericPassword" item using the service name, which appears to be the only way to write
          // to the "Where" field shown in the Keychain Utility.
@@ -1763,7 +1803,7 @@ index 7cb9a22..cb04336 100644
          // the service (folder!) string will also appear on the "Name" field, which however can be changed
          // independently, via the Label attribute.
          saveLabel = true;
-@@ -651,7 +782,8 @@ OSStatus OSXKeychain::ItemList( SecKeychainRef keychain, QStringList &keyList, O
+@@ -651,7 +816,8 @@ OSStatus OSXKeychain::ItemList( SecKeychainRef keychain, QStringList &keyList, O
                              // try to fetch the item's ServiceItem attribute
                              attr.tag = kSecServiceItemAttr;
                              if( !SecKeychainItemCopyContent( item, NULL, &attrList, &len, NULL ) ){
