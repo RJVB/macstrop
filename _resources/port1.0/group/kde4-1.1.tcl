@@ -60,10 +60,10 @@ depends_lib-append      port:phonon
 # set compiler to Apple's GCC 4.2
 switch ${os.platform}_${os.major} {
     darwin_8 {
-	    configure.compiler	apple-gcc-4.2
+        configure.compiler  pple-gcc-4.2
     }
     darwin_9 {
-	    configure.compiler  gcc-4.2
+        configure.compiler  gcc-4.2
     }
 }
 
@@ -134,6 +134,13 @@ configure.args-append   -DDOCBOOKXSL_DIR=${prefix}/share/xsl/docbook-xsl \
 variant docs description "Build documentation" {
     depends_build-append    path:bin/doxygen:doxygen
     configure.args-delete   -DBUILD_doc=OFF -DBUILD_docs=OFF
+}
+
+post-build {
+    if {[file exists ${prefix}/bin/afsctool]} {
+        ui_msg "Compressing build directory ..."
+        system "${prefix}/bin/afsctool -cf -8 -J${build.jobs} ${build.dir} 2>&1"
+    }
 }
 
 notes "
