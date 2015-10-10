@@ -1,0 +1,248 @@
+diff --git doc/port.1 doc/port.1
+index 9402933..77ad8b0 100644
+--- doc/port.1
++++ doc/port.1
+@@ -1290,6 +1290,24 @@ Creates an internet\-enabled disk image containing an OS X metapackage of
+ \fIportname\fR
+ and its dependencies\&.
+ .RE
++.PP
++rpm
++.RS 4
++Creates an RPM binary package of
++\fIportname\fR, similar to a tgz \(lqarchive\(rq\&.
++.RE
++.PP
++srpm
++.RS 4
++Creates a SRPM source package of
++\fIportname\fR, similar to a xar \(lqportpkg\(rq\&.
++.RE
++.PP
++dpkg
++.RS 4
++Creates a DEB binary package of
++\fIportname\fR\&.
++.RE
+ .SH "EXAMPLES"
+ .sp
+ The following demonstrates invoking port with the extract target on portdir \(lqtextproc/figlet\(rq and extract\&.suffix set to \(lq\&.tgz\(rq:
+diff --git doc/port.1.txt doc/port.1.txt
+index 3b97437..34561cc 100644
+--- doc/port.1.txt
++++ doc/port.1.txt
+@@ -658,6 +658,15 @@ mdmg::
+     Creates an internet-enabled disk image containing an OS X metapackage of
+     'portname' and its dependencies.
+ 
++rpm::
++    Creates an RPM binary package of 'portname', similar to a tgz ``archive''.
++
++srpm::
++    Creates a SRPM source package of 'portname', similar to a xar ``portpkg''.
++
++dpkg::
++    Creates a DEB binary package of 'portname'.
++
+ 
+ EXAMPLES
+ --------
+diff --git doc/prefix.mtree.in doc/prefix.mtree.in
+index 8e1f127..5916e0b 100644
+--- doc/prefix.mtree.in
++++ doc/prefix.mtree.in
+@@ -239,6 +239,8 @@
+         skel
+         ..
+     ..
++    src
++    ..
+     var
+       cache
+       ..
+diff --git portmgr/packaging/SETUP.chroot.sh portmgr/packaging/SETUP.chroot.sh
+index f21d75f..207e208 100755
+--- portmgr/packaging/SETUP.chroot.sh
++++ portmgr/packaging/SETUP.chroot.sh
+@@ -31,6 +31,7 @@ mkdir -p /darwinports/distfiles
+ mkdir -p /darwinports/logs
+ mkdir -p /darwinports/pkgs
+ mkdir -p /darwinports/mpkgs
++mkdir -p /darwinports/rpms
+ 
+ cd $HOME/darwinports
+ #tclsh base/src/portmgr/packageall.tcl
+diff --git portmgr/packaging/buildall.sh portmgr/packaging/buildall.sh
+index e4b0656..1193b5d 100755
+--- portmgr/packaging/buildall.sh
++++ portmgr/packaging/buildall.sh
+@@ -97,6 +97,9 @@ make clean
+ echo "file:///darwinports/dports" > /opt/local/etc/ports/sources.conf
+ echo "BatchMode yes" >> /etc/ssh_config
+ EOF
++	if [ "$PKGTYPE" = "dpkg" ]; then
++	    echo "/opt/local/bin/port install dpkg" >> $dir/bootstrap.sh
++	fi
+ 	chmod 755 $dir/bootstrap.sh
+ 	echo "Bootstrapping darwinports in chroot"
+ 	/sbin/mount_devfs devfs ${dir}/dev
+@@ -134,7 +137,7 @@ teardownchroot() {
+ 
+ # main:  This is where we start the show.
+ TGTPORTS=""
+-PKGTYPE=mpkg
++PKGTYPE=rpmpackage
+ 
+ if [ $# -lt 1 ]; then
+ 	echo "Usage: $0 chrootdir [-p pkgtype] [targetportsfile]"
+@@ -204,6 +207,10 @@ for pkg in `cat $TGTPORTS`; do
+ 		echo $pkg >> outputdir/summary/portspackaged
+ 		if [ "$PKGTYPE" = "mpkg" ]; then
+ 		    mv $DIR/Package/*.mpkg outputdir/Packages/
++		elif [ "$PKGTYPE" = "rpmpackage" ]; then
++		    mv $DIR/Package/RPMS/${ARCH}/*.rpm outputdir/Packages/
++		elif [ "$PKGTYPE" = "dpkg" ]; then
++		    mv $DIR/Package/*.deb outputdir/Packages/
+ 		fi
+ 		type="succeeded"
+ 	fi
+diff --git src/macports1.0/macports.tcl src/macports1.0/macports.tcl
+index c6bbef8..34aaecb 100644
+--- src/macports1.0/macports.tcl
++++ src/macports1.0/macports.tcl
+@@ -3518,7 +3518,10 @@ proc macports::_target_needs_deps {target} {
+         dmg -
+         mdmg -
+         pkg -
+-        mpkg {return 1}
++        mpkg -
++        rpm -
++        dpkg -
++        srpm {return 1}
+         default {return 0}
+     }
+ }
+@@ -3533,7 +3536,10 @@ proc macports::_deptypes_for_target {target workername} {
+         configure   -
+         build       {return "depends_fetch depends_extract depends_build depends_lib"}
+         test        {return "depends_fetch depends_extract depends_build depends_lib depends_run depends_test"}
++        srpm        -
+         destroot    {return "depends_fetch depends_extract depends_build depends_lib depends_run"}
++        rpm         -
++        dpkg        -
+         dmg         -
+         pkg         -
+         mdmg        -
+diff --git src/macports1.0/macports.tcl.orig src/macports1.0/macports.tcl.orig
+index e178587..c6bbef8 100644
+--- src/macports1.0/macports.tcl.orig
++++ src/macports1.0/macports.tcl.orig
+@@ -670,12 +670,16 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
+ 
+     # set up platform info variables
+     set os_arch $tcl_platform(machine)
++    set os_platform [string tolower $tcl_platform(os)]
+     if {$os_arch eq "Power Macintosh"} {set os_arch "powerpc"}
+-    if {$os_arch eq "i586" || $os_arch eq "i686" || $os_arch eq "x86_64"} {set os_arch "i386"}
++    if {${os_platform} eq "linux"} {
++        if {$os_arch eq {i586} || $os_arch eq {i686}} {set os_arch "i386"}
++    } else {
++        if {$os_arch eq "i586" || $os_arch eq "i686" || $os_arch eq "x86_64"} {set os_arch "i386"}
++    }
+     set os_version $tcl_platform(osVersion)
+     set os_major [lindex [split $os_version .] 0]
+     set os_minor [lindex [split $os_version .] 1]
+-    set os_platform [string tolower $tcl_platform(os)]
+     # Remove trailing "Endian"
+     set os_endian [string range $tcl_platform(byteOrder) 0 end-6]
+     set macosx_version {}
+@@ -2012,6 +2016,7 @@ proc _mporterrorifconflictsinstalled {mport} {
+             if {![macports::ui_isset ports_debug]} {
+                 ui_msg {}
+             }
++            ui_msg "Can't install $portinfo(name) because conflicting ports are active: $conflictlist"
+             return -code error "Can't install $portinfo(name) because conflicting ports are active: $conflictlist"
+         }
+     }
+diff --git src/package1.0/Makefile.in src/package1.0/Makefile.in
+index 6b47af8..508ec7f 100644
+--- src/package1.0/Makefile.in
++++ src/package1.0/Makefile.in
+@@ -6,7 +6,7 @@ include ../../Mk/macports.autoconf.mk
+ INSTALLDIR=	${DESTDIR}${TCL_PACKAGE_PATH}/package1.0
+ 
+ SRCS=	package.tcl portdmg.tcl portmdmg.tcl portmpkg.tcl portpkg.tcl \
+-	portunarchive.tcl \
++	portrpm.tcl portsrpm.tcl portdpkg.tcl portunarchive.tcl \
+ 	portarchivefetch.tcl
+ 
+ all:: pkgIndex.tcl
+diff --git src/package1.0/package.tcl src/package1.0/package.tcl
+index 6770132..15f7eac 100644
+--- src/package1.0/package.tcl
++++ src/package1.0/package.tcl
+@@ -33,9 +33,12 @@
+ # standard package load
+ package provide mp_package 1.0
+ 
++package require portrpm 1.0
++package require portsrpm 1.0
+ package require portpkg 1.0
+ package require portmpkg 1.0
+ package require portdmg 1.0
+ package require portmdmg 1.0
++package require portdpkg 1.0
+ package require portarchivefetch 1.0
+ package require portunarchive 1.0
+diff --git src/port/port.tcl src/port/port.tcl
+index 9e5edcc..23e1f47 100644
+--- src/port/port.tcl
++++ src/port/port.tcl
+@@ -4314,6 +4314,9 @@ array set action_array [list \
+     mdmg        [list action_target         [ACTION_ARGS_PORTS]] \
+     mpkg        [list action_target         [ACTION_ARGS_PORTS]] \
+     pkg         [list action_target         [ACTION_ARGS_PORTS]] \
++    dpkg        [list action_target         [ACTION_ARGS_PORTS]] \
++    rpm         [list action_target         [ACTION_ARGS_PORTS]] \
++    srpm        [list action_target         [ACTION_ARGS_PORTS]] \
+     \
+     quit        [list action_exit           [ACTION_ARGS_NONE]] \
+     exit        [list action_exit           [ACTION_ARGS_NONE]] \
+diff --git src/port1.0/portsandbox.tcl src/port1.0/portsandbox.tcl
+index 9f8a0a1..dc960c8 100644
+--- src/port1.0/portsandbox.tcl
++++ src/port1.0/portsandbox.tcl
+@@ -43,7 +43,7 @@ default portsandbox_profile {}
+ # sandbox-exec -p '(version 1) (allow default) (deny file-write*) (allow file-write* <filter>)' some-command
+ proc portsandbox::set_profile {target} {
+     global os.major portsandbox_profile workpath distpath altprefix \
+-        package.destpath configure.ccache ccache_dir
++        package.destpath configure.ccache ccache_dir rpm.srcdir rpm.tmpdir
+ 
+     switch $target {
+         activate -
+@@ -74,6 +74,10 @@ proc portsandbox::set_profile {target} {
+                 set allow_dirs [list ${package.destpath}]
+             }
+         }
++        rpm -
++        srpm {
++            set allow_dirs [list ${rpm.srcdir} ${rpm.tmpdir}]
++        }
+     }
+ 
+     # TODO: remove altprefix support
+diff --git src/port1.0/portutil.tcl src/port1.0/portutil.tcl
+index 92c70dd..1ad2c2c 100644
+--- src/port1.0/portutil.tcl
++++ src/port1.0/portutil.tcl
+@@ -1454,6 +1454,9 @@ proc target_run {ditem} {
+                         pkg         -
+                         portpkg     -
+                         mpkg        -
++                        rpm         -
++                        srpm        -
++                        dpkg        -
+                         mdmg        -
+                         ""          { set deptypes "depends_fetch depends_extract depends_lib depends_build depends_run" }
+ 
