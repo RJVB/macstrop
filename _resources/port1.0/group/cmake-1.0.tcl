@@ -113,9 +113,49 @@ pre-configure {
     # from the concerned Release build type so that configure.optflags
     # gets honored (Debug used by the +debug variant does not set
     # optimization flags by default).
-    if {${configure.optflags} ne ""} {
-        configure.args-append -DCMAKE_C_FLAGS="-DNDEBUG" \
-                              -DCMAKE_CXX_FLAGS="-DNDEBUG"
+    # NB: more recent CMake versions (>=3?) no longer take the env. variables into
+    # account, and thus require explicit use of ${configure.c*flags} below:
+#     if {${configure.optflags} ne ""} {
+#         configure.args-append   -DCMAKE_C_FLAGS="-DNDEBUG ${configure.cflags}" \
+#                                 -DCMAKE_CXX_FLAGS="-DNDEBUG ${configure.cxxflags}"
+#     }
+    # Using a custom BUILD_TYPE we can simply append to the env. variables,
+    # but why do we set -DNDEBUG?
+    configure.cflags-append     -DNDEBUG
+    configure.cxxflags-append   -DNDEBUG
+
+    # process ${configure.cppflags} to extract include directives and other options
+    if {${configure.cppflags} ne ""} {
+        set cppflags [split ${configure.cppflags}]
+        # reset configure.cppflags; we don't want options in double in CPPFLAGS and CFLAGS/CXXFLAGS
+        configure.cppflags-delete   ${configure.cppflags}
+        set next_is_path 0
+        foreach flag ${cppflags} {
+            if {${next_is_path}} {
+                # previous option was a lone -I
+                configure.cppflags-append       -I${flag}
+                set next_is_path 0
+            } else {
+                if {[string match "-I" ${flag}]} {
+                    # lone -I, store the next argument as a path
+                    # (or ignore if this is the last argument)
+                    set next_is_path 1
+                } elseif {[string match "-I*" ${flag}]} {
+                    # a -Ipath option
+                    configure.cppflags-append   ${flag}
+                } else {
+                    # everything else must go into CFLAGS and CXXFLAGS
+                    configure.cflags-append     ${flag}
+                    configure.cxxflags-append   ${flag}
+                    # append to the ObjC flags too, even if CMake ignores them:
+                    configure.objcflags-append  ${flag}
+                    configure.objcxxflags-append   ${flag}
+                }
+            }
+        }
+        ui_debug "-DINCLUDE_DIRECTORIES=${configure.cppflags}"
+        ui_debug "CFLAGS=\"${configure.cflags}\" CXXFLAGS=\"${configure.cxxflags}\""
+        configure.args-append   -DINCLUDE_DIRECTORIES:PATH="${configure.cppflags}"
     }
 
     platform darwin {
