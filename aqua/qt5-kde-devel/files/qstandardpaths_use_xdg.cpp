@@ -40,7 +40,14 @@
 
 const QString qspUsesXDGLocationsTag("$Id: @(#) " __FILE__ " - " __DATE__ " $");
 
-QStandardPathsConfiguration qspUsesXDGLocations(true);
+static QStandardPathsConfiguration qspUsesXDGLocations(true);
+
+bool setXDGLocationsEnabled(bool useXDGLocations)
+{
+    QStandardPathsConfiguration dummy(useXDGLocations);
+    // this should force even clever linkers to preserve qspUsesXDGLocations
+    return qspUsesXDGLocations.usesXDGLocations() != useXDGLocations;
+}
 
 #endif //Q_NO_STANDARDPATHS
 #endif //Q_OS_OSX
