@@ -92,6 +92,13 @@ configure.args-append   -DBUILD_doc=OFF \
 
 # explicitly define certain headers and libraries, to avoid
 # conflicts with those installed into system paths by the user.
+# 20151015 RJVB : these are handled in FindMySQL.cmake :
+#                         -DMYSQL_INCLUDE_DIR=${prefix}/include/mysql5/mysql \
+#                         -DMYSQL_LIB_DIR=${prefix}/lib/mysql5/mysql \
+# 20151015 RJVB : these are best left to port select ...
+#                         -DMYSQLCONFIG_EXECUTABLE=${prefix}/bin/mysql_config5 \
+#                         -DMYSQLD_EXECUTABLE=${prefix}/libexec/mysqld \
+
 configure.args-append   -DDOCBOOKXSL_DIR=${prefix}/share/xsl/docbook-xsl \
                         -DGETTEXT_INCLUDE_DIR=${prefix}/include \
                         -DGETTEXT_LIBRARY=${prefix}/lib/libgettextlib.dylib \
@@ -116,10 +123,6 @@ configure.args-append   -DDOCBOOKXSL_DIR=${prefix}/share/xsl/docbook-xsl \
                         -DLIBXML2_XMLLINT_EXECUTABLE=${prefix}/bin/xmllint \
                         -DLIBXSLT_INCLUDE_DIR=${prefix}/include \
                         -DLIBXSLT_LIBRARIES=${prefix}/lib/libxslt.dylib \
-                        -DMYSQLD_EXECUTABLE=${prefix}/libexec/mysqld \
-                        -DMYSQL_INCLUDE_DIR=${prefix}/include/mysql5/mysql \
-                        -DMYSQL_LIB_DIR=${prefix}/lib/mysql5/mysql \
-                        -DMYSQLCONFIG_EXECUTABLE=${prefix}/bin/mysql_config5 \
                         -DOPENAL_INCLUDE_DIR=/System/Library/Frameworks/OpenAL.framework/Headers \
                         -DOPENAL_LIBRARY=/System/Library/Frameworks/OpenAL.framework \
                         -DPNG_INCLUDE_DIR=${prefix}/include \
