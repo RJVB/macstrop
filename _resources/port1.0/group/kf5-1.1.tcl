@@ -38,11 +38,11 @@ PortGroup               cmake 1.0
 PortGroup               qt5-kde 1.0
 
 ########################################################################
-# Projects including the 'kf5' port group must set
+# Projects including the 'kf5' port group can optionally set
 #
 #  - their project name as 'kf5.project'
 #
-# an specify whether they are
+# in that case, they should specify whether they are
 #
 #  - a framework by defining 'kf5.framework'
 #
