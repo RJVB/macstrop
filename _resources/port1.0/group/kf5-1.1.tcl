@@ -196,10 +196,23 @@ if {[info exists kf5.project]} {
 
 # maintainers             gmail.com:rjvbertin mk openmaintainer
 
+post-build {
+    if {[file exists ${prefix}/bin/afsctool]} {
+        ui_msg "--->  Compressing build directory ..."
+        if {[catch {system "${prefix}/bin/afsctool -cfvv -8 -J${build.jobs} ${build.dir} 2>&1"} result context]} {
+            ui_msg "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
+        } else {
+            ui_debug "Compressing ${build.dir}: ${result}"
+        }
+    }
+}
+
 # variables to facilitate setting up dependencies to KF5 frameworks that may (or not)
 # also exist as port:kf5-foo-devel .
 set kf5_attica_dep          path:lib/libKF5Attica.5.dylib:kf5-attica
 set kf5_karchive_dep        path:lib/libKF5Archive.5.dylib:kf5-karchive
+set kf5_kcoreaddons_dep     path:lib/libKF5CoreAddons.5.dylib:kf5-kcoreaddons
+set kf5_kauth_dep           path:lib/libKF5Auth.5.dylib:kf5-kauth
 
 #########
 # to install kf5-frameworkintegration:
@@ -233,3 +246,4 @@ set kf5_karchive_dep        path:lib/libKF5Archive.5.dylib:kf5-karchive
 #  kf5-sonnet
 
 
+# kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
