@@ -194,21 +194,7 @@ if {[info exists kf5.project]} {
     use_xz                  yes
 }
 
-#ui_warn " -> kf5.virtualPath: '${kf5.virtualPath}'"
-#ui_warn " -> kf5.folder: '${kf5.folder}'"
-#ui_warn " -> kf5.virtualPath: '${kf5.virtualPath}'"
-#ui_warn " -> distname: '${distname}'"
-
 # maintainers             gmail.com:rjvbertin mk openmaintainer
-
-# TODO: This is currently broken due to strange numbering scheme omitting the minor for the folder-regex.
-#if { [ info exists kf5.framework ] } {
-#    livecheck.type          regex
-#    livecheck.url           http://download.kde.org/stable/frameworks/
-#    livecheck.regex         "(5\\.\\d+)/"
-#} else {
-    livecheck.type          none
-#}
 
 # variables to facilitate setting up dependencies to KF5 frameworks that may (or not)
 # also exist as port:kf5-foo-devel .
