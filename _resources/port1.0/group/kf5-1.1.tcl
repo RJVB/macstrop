@@ -210,6 +210,11 @@ if {[info exists kf5.project]} {
     livecheck.type          none
 #}
 
+# variables to facilitate setting up dependencies to KF5 frameworks that may (or not)
+# also exist as port:kf5-foo-devel .
+set kf5_attica_dep          path:lib/libKF5Attica.5.dylib:kf5-attica
+set kf5_karchive_dep        path:lib/libKF5Archive.5.dylib:kf5-karchive
+
 #########
 # to install kf5-frameworkintegration:
 #  kf5-attica
