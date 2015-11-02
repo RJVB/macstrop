@@ -34,6 +34,7 @@
 # PortGroup     kf5 1.0
 
 PortGroup               cmake 1.0
+set qt5.prefer_kde      1
 PortGroup               qt5 1.0
 
 ########################################################################
@@ -55,10 +56,10 @@ PortGroup               qt5 1.0
 ########################################################################
 
 if { ![ info exists kf5.project ] } {
-    ui_error "You haven't defined kf5.project, which is mandatory for any KF5 project."
-    return -code error "incomplete port definition"
+    ui_debug "kf5.project is not defined; falling back to \"manual\" configuration"
+} else {
+    name                kf5-${kf5.project}
 }
-name                    kf5-${kf5.project}
 
 platforms               darwin
 supported_archs         noarch
@@ -76,7 +77,7 @@ cmake.out_of_source     yes
 # NOTE: Many kf5 ports violate MacPorts' ports file systems,
 #       but it is a must due to Qt5's QStandardPaths logic,
 #       so we'll quieten the warning.
-destroot.violate_mtree  yes
+# destroot.violate_mtree  yes
 
 # TODO:
 #
@@ -87,14 +88,14 @@ destroot.violate_mtree  yes
 #depends_lib-append      port:phonon
 
 # This is used by all KF5 frameworks
-depends_lib-append      port:kde-extra-cmake-modules
+depends_lib-append      path:share/ECM/cmake/ECMConfig.cmake:kde-extra-cmake-modules
 
-# Use directory set by qt5-mac
+# Use directory set by qt5-kde or qt5-mac
 configure.args-append   -DECM_MKSPECS_INSTALL_DIR=${qt_mkspecs_dir}
 
-# This is why we need destroo.violate_mtree set to "yes"
-configure.args-append   -DCONFIG_INSTALL_DIR="/Library/Preferences" \
-                        -DDATA_INSTALL_DIR="/Library/Application Support"
+# # This is why we need destroo.violate_mtree set to "yes"
+# configure.args-append   -DCONFIG_INSTALL_DIR="/Library/Preferences" \
+#                         -DDATA_INSTALL_DIR="/Library/Application Support"
 #
 # Actually this should be used instead of DATA_INSTALL_DIR, but it doesn't work:
 #                       -DKDE_INSTALL_DATADIR_KF5="/Library/Application Support"
@@ -108,8 +109,13 @@ configure.args-append   -DBUILD_doc=OFF \
                         -DBUILD_SHARED_LIBS=ON \
                         -DBUNDLE_INSTALL_DIR=${applications_dir}/KF5 \
                         -DCMAKE_DISABLE_FIND_PACKAGE_X11=ON \
-                        -DCMAKE_BUILD_TYPE=debug \
-                        -DLIB_SUFFIX=64
+                        -DAPPLE_SUPPRESS_X11_WARNING=ON
+#                         -DLIB_SUFFIX=64
+variant docs description {build and install the documentation} {
+    configure.args-delete \
+                        -DBUILD_doc=OFF \
+                        -DBUILD_docs=OFF
+}
 
 # explicitly define certain headers and libraries, to avoid
 # conflicts with those installed into system paths by the user.
@@ -150,35 +156,42 @@ configure.args-append   -DDOCBOOKXSL_DIR=${prefix}/share/xsl/docbook-xsl \
                         -DTIFF_LIBRARY=${prefix}/lib/libtiff.dylib
 
 # KF5 frameworks are released with one version ATM:
-version                 5.15.0
-set branch              [join [lrange [split ${version} .] 0 1] .]
-
-if { ![ info exists kf5.framework ] && ![ info exists kf5.portingAid ] } {
-    if { ![ info exists kf5.virtualPath ] } {
-        ui_error "You haven't defined kf5.virtualPath, which is mandatory for any KF5 project. (Or is this project perhaps a framework or porting aid?)"
-        return -code error "incomplete port definition"
-    } else {
-        if { ![ info exists kf5.release ] } {
-            ui_error "You haven't defined kf5.virtualPath, which is mandatory for any KF5 project."
-            return -code error "incomplete port definition"
-        } else {
-            set kf5.folder  "${kf5.virtualPath}/${kf5.release}/src"
-            distname        ${kf5.project}-${kf5.release}
-            version         ${kf5.release}
-        }
-    }
-} else {
-    distname            ${kf5.project}-${version}
-}
+set kf5_version          5.15.0
+set kf5_branch           [join [lrange [split ${kf5_version} .] 0 1] .]
 
 if { [ info exists kf5.portingAid ] } {
     set kf5.virtualPath     "frameworks"
-    set kf5.folder          "frameworks/${branch}/portingAids"
+    set kf5.folder          "frameworks/${kf5_branch}/portingAids"
 }
 
 if { [ info exists kf5.framework ] } {
     set kf5.virtualPath     "frameworks"
-    set kf5.folder          "frameworks/${branch}"
+    set kf5.folder          "frameworks/${kf5_branch}"
+}
+
+if {[info exists kf5.project]} {
+    if { ![ info exists kf5.framework ] && ![ info exists kf5.portingAid ] } {
+        if { ![ info exists kf5.virtualPath ] } {
+            ui_error "You haven't defined kf5.virtualPath, which is mandatory for any KF5 project using kf5.project. \
+            (Or is this project perhaps a framework or porting aid?)"
+            return -code error "incomplete port definition"
+        } else {
+            if { ![ info exists kf5.release ] } {
+                ui_error "You haven't defined kf5.virtualPath, which is mandatory for any KF5 project using kf5.project."
+                return -code error "incomplete port definition"
+            } else {
+                set kf5.folder \
+                            "${kf5.virtualPath}/${kf5.release}/src"
+                distname    ${kf5.project}-${kf5.release}
+                version     ${kf5.release}
+            }
+        }
+    } else {
+        distname            ${kf5.project}-${kf5_version}
+    }
+    homepage                http://projects.kde.org/projects/${kf5.virtualPath}/${kf5.project}
+    master_sites            http://download.kde.org/stable/${kf5.folder}
+    use_xz                  yes
 }
 
 #ui_warn " -> kf5.virtualPath: '${kf5.virtualPath}'"
@@ -186,13 +199,7 @@ if { [ info exists kf5.framework ] } {
 #ui_warn " -> kf5.virtualPath: '${kf5.virtualPath}'"
 #ui_warn " -> distname: '${distname}'"
 
-maintainers             mk openmaintainer
-description             ${kf5.project}
-long_description        ${description}
-homepage                http://projects.kde.org/projects/${kf5.virtualPath}/${kf5.project}
-master_sites            http://download.kde.org/stable/${kf5.folder}
-
-use_xz                  yes
+# maintainers             gmail.com:rjvbertin mk openmaintainer
 
 # TODO: This is currently broken due to strange numbering scheme omitting the minor for the folder-regex.
 #if { [ info exists kf5.framework ] } {
@@ -202,4 +209,36 @@ use_xz                  yes
 #} else {
     livecheck.type          none
 #}
+
+#########
+# to install kf5-frameworkintegration:
+#  kf5-attica
+#  kf5-karchive
+#  kf5-kauth
+#  kf5-kbookmarks
+#  kf5-kcodecs
+#  kf5-kcompletion
+#  kf5-kconfig
+#  kf5-kconfigwidgets
+#  kf5-kcoreaddons
+#  kf5-kcrash
+#  kf5-kdbusaddons
+#  kf5-kdoctools
+#  kf5-kglobalaccel
+#  kf5-kguiaddons
+#  kf5-ki18n
+#  kf5-kiconthemes
+#  kf5-kio
+#  kf5-kitemviews
+#  kf5-kjobwidgets
+#  kf5-knotifications
+#  kf5-kservice
+#  kf5-ktextwidgets
+#  kf5-kwallet
+#  kf5-kwidgetsaddons
+#  kf5-kwindowsystem
+#  kf5-kxmlgui
+#  kf5-solid
+#  kf5-sonnet
+
 
