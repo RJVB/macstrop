@@ -34,8 +34,8 @@
 # PortGroup     kf5 1.0
 
 PortGroup               cmake 1.0
-set qt5.prefer_kde      1
-PortGroup               qt5 1.0
+# set qt5.prefer_kde      1
+PortGroup               qt5-kde 1.0
 
 ########################################################################
 # Projects including the 'kf5' port group must set
