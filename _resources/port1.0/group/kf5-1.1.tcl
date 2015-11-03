@@ -209,10 +209,18 @@ post-build {
 
 # variables to facilitate setting up dependencies to KF5 frameworks that may (or not)
 # also exist as port:kf5-foo-devel .
-set kf5_attica_dep          path:lib/libKF5Attica.5.dylib:kf5-attica
-set kf5_karchive_dep        path:lib/libKF5Archive.5.dylib:kf5-karchive
-set kf5_kcoreaddons_dep     path:lib/libKF5CoreAddons.5.dylib:kf5-kcoreaddons
-set kf5_kauth_dep           path:lib/libKF5Auth.5.dylib:kf5-kauth
+if {${os.platform} eq "darwin"} {
+    set kf5_lib_path    lib
+    set kf5_lib_ext     5.dylib
+} elseif {${os.platform} eq "linux"} {
+    set kf5_lib_path    lib/${os.arch}-linux-gnu
+    set kf5_lib_ext     so.5
+}
+set kf5_attica_dep          path:${kf5_lib_path}/libKF5Attica.${kf5_lib_ext}:kf5-attica
+set kf5_karchive_dep        path:${kf5_lib_path}/libKF5Archive.${kf5_lib_ext}:kf5-karchive
+set kf5_kcoreaddons_dep     path:${kf5_lib_path}/libKF5CoreAddons.${kf5_lib_ext}:kf5-kcoreaddons
+set kf5_kauth_dep           path:${kf5_lib_path}/libKF5Auth.${kf5_lib_ext}:kf5-kauth
+set kf5_kconfig_dep         path:${kf5_lib_path}/libKF5ConfigCore.${kf5_lib_ext}:kf5-kconfig
 
 #########
 # to install kf5-frameworkintegration:
@@ -244,6 +252,34 @@ set kf5_kauth_dep           path:lib/libKF5Auth.5.dylib:kf5-kauth
 #  kf5-kxmlgui
 #  kf5-solid
 #  kf5-sonnet
+# In this order:
+# kf5-attica, kf5-karchive, kf5-kcoreaddons, kf5-kauth
+# For kf5-kconfig: skipping org.macports.main (dry run)
+# For kf5-kcodecs: skipping org.macports.main (dry run)
+# For kf5-ki18n: skipping org.macports.main (dry run)
+# For kf5-kdoctools: skipping org.macports.main (dry run)
+# For kf5-kguiaddons: skipping org.macports.main (dry run)
+# For kf5-kwidgetsaddons: skipping org.macports.main (dry run)
+# For kf5-kconfigwidgets: skipping org.macports.main (dry run)
+# For kf5-kitemviews: skipping org.macports.main (dry run)
+# For kf5-kiconthemes: skipping org.macports.main (dry run)
+# For kf5-kwindowsystem: skipping org.macports.main (dry run)
+# For kf5-kcrash: skipping org.macports.main (dry run)
+# For kf5-kdbusaddons: skipping org.macports.main (dry run)
+# For kf5-kglobalaccel: skipping org.macports.main (dry run)
+# For kf5-kcompletion: skipping org.macports.main (dry run)
+# For kf5-kservice: skipping org.macports.main (dry run)
+# For kf5-sonnet: skipping org.macports.main (dry run)
+# For kf5-ktextwidgets: skipping org.macports.main (dry run)
+# For kf5-kxmlgui: skipping org.macports.main (dry run)
+# For kf5-kbookmarks: skipping org.macports.main (dry run)
+# For kf5-kjobwidgets: skipping org.macports.main (dry run)
+# For kf5-knotifications: skipping org.macports.main (dry run)
+# For kf5-kwallet: skipping org.macports.main (dry run)
+# For kf5-solid: skipping org.macports.main (dry run)
+# For kf5-kio: skipping org.macports.main (dry run)
+# For kf5-frameworkintegration: skipping org.macports.main (dry run)
+
 
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
