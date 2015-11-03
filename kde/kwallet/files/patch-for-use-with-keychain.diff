@@ -1,0 +1,264 @@
+diff -U 3 -H -d -p -r -N -x '*.o' -x '*.orig' -- src/manager/kwalleteditor.cpp
+--- src/manager/kwalleteditor.cpp	2014-10-09 09:07:50.000000000 +0200
++++ src/manager/kwalleteditor.cpp	2015-11-03 17:40:05.000000000 +0100
+@@ -77,7 +77,6 @@ QAction *KWalletEditor::_alwaysHideConte
+ 
+ RegisterCreateActionsMethod KWalletEditor::_registerCreateActionMethod(&KWalletEditor::createActions);
+ 
+-
+ KWalletEditor::KWalletEditor(QWidget* parent, const char *name)
+ : QWidget(parent), _displayedItem(0), _actionCollection(0), _alwaysShowContents(false) {
+     setupUi( this );
+@@ -151,9 +150,19 @@ KWalletEditor::KWalletEditor(QWidget* pa
+ 
+ //	createActions();
+     // TODO: remove kwalleteditor.rc file
++#ifdef Q_OS_MAC
++    walletTimer = 0;
++#endif
+ }
+ 
+ KWalletEditor::~KWalletEditor() {
++#ifdef Q_OS_MAC
++    if (walletTimer) {
++        walletTimer->stop();
++        delete walletTimer;
++        walletTimer = 0;
++    }
++#endif
+     emit enableFolderActions(false);
+     emit enableWalletActions(false);
+     emit enableContextFolderActions(false);
+@@ -179,6 +188,18 @@ void KWalletEditor::setWallet(KWallet::W
+     _nonLocal = isPath;
+ 
+     _w = wallet;
++#ifdef Q_OS_MAC
++    walletIsOpen = _w->isOpen();
++    if (!walletList.contains(_walletName)) {
++        walletTimer = new QTimer(this);
++        if (walletTimer) {
++            walletTimer->setObjectName(QString::fromLatin1("open/close timer for wallet ") + _walletName);
++            connect(walletTimer, SIGNAL(timeout()), this, SLOT(walletTimerFired()));
++            walletTimer->start(2000);
++            walletList.append(_walletName);
++        }
++    }
++#endif
+     _entryList->setWallet(_w);
+     connect(_w, SIGNAL(walletOpened(bool)), this, SLOT(walletOpened(bool)));
+     connect(_w, SIGNAL(walletClosed()), this, SLOT(walletClosed()));
+@@ -327,12 +348,33 @@ void KWalletEditor::disconnectActions()
+ }
+ 
+ void KWalletEditor::walletClosed() {
++#ifdef Q_OS_MAC
++    walletTimer->stop();
++    delete walletTimer;
++    walletTimer = 0;
++#endif
+ 	_w = 0L;
+ 	setEnabled(false);
+ 	emit enableWalletActions(false);
+ 	emit enableFolderActions(false);
+ }
+ 
++void KWalletEditor::walletTimerFired()
++{
++#ifdef Q_OS_MAC
++    bool open = _w->isOpen();
++    if (open != walletIsOpen) {
++        if (walletIsOpen) {
++            walletClosed();
++        }
++        else {
++            walletOpened(true);
++        }
++        walletIsOpen = open;
++    }
++#endif
++}
++
+ 
+ void KWalletEditor::updateFolderList(bool checkEntries) {
+ 	const QStringList fl = _w->folderList();
+diff -U 3 -H -d -p -r -N -x '*.o' -x '*.orig' -- src/manager/kwalleteditor.h
+--- src/manager/kwalleteditor.h	2014-10-09 09:07:50.000000000 +0200
++++ src/manager/kwalleteditor.h	2015-11-03 17:10:30.000000000 +0100
+@@ -29,6 +29,10 @@
+ #include <QStringList>
+ #include <QLabel>
+ 
++#ifdef Q_OS_MAC
++#include <QTimer>
++#endif
++
+ class KActionCollection;
+ class KMenu;
+ class QTreeWidgetItem;
+@@ -38,7 +42,22 @@ class KWMapEditor;
+ class KAction;
+ class KTreeWidgetSearchLine;
+ 
+-
++// #ifdef Q_OS_MAC
++// class QWalletTimer : public QTimer {
++// public:
++//     QWalletTimer(QObject *parent, KWallet::Wallet *w)
++//         : QTimer(parent)
++//     {
++//         _w = w;
++//     }
++// //     virtual ~QWalletTimer() {}
++// public slots:
++//     void fired();
++// protected:
++//     KWallet::Wallet *_w;
++// };
++// #endif
++// 
+ class KWalletEditor : public QWidget, public Ui::WalletWidget {
+ 	Q_OBJECT
+ 
+@@ -59,6 +78,7 @@ protected:
+ 		void walletClosed();
+ 		void createFolder();
+ 		void deleteFolder();
++        void walletTimerFired();
+ 
+ 	private slots:
+ 		void updateFolderList(bool checkEntries = false);
+@@ -129,6 +149,11 @@ protected:
+         KTreeWidgetSearchLine *_searchLine;
+         static QAction *_alwaysShowContentsAction, *_alwaysHideContentsAction;
+         bool _alwaysShowContents;
++#ifdef Q_OS_MAC
++        QStringList walletList;
++        QTimer *walletTimer;
++        bool walletIsOpen;
++#endif
+ };
+ 
+ #endif
+diff -U 3 -H -d -p -r -N -x '*.o' -x '*.orig' -- src/manager/walletcontrolwidget.cpp
+--- src/manager/walletcontrolwidget.cpp	2014-10-09 09:07:50.000000000 +0200
++++ src/manager/walletcontrolwidget.cpp	2015-11-03 17:39:51.000000000 +0100
+@@ -42,9 +42,38 @@ WalletControlWidget::WalletControlWidget
+     setupUi(this);
+     onSetupWidget();
+ 
++#ifdef Q_OS_MAC
++    walletTimer = 0;
++#endif
+     QTimer::singleShot(1, this, SLOT(onSetupWidget()));
+ }
+ 
++WalletControlWidget::~WalletControlWidget()
++{
++#ifdef Q_OS_MAC
++    if (walletTimer) {
++        walletTimer->stop();
++        delete walletTimer;
++        walletTimer = 0;
++    }
++#endif
++}
++
++void WalletControlWidget::setWalletTimer()
++{
++#ifdef Q_OS_MAC
++    if (_wallet) {
++        walletIsOpen = _wallet->isOpen();
++        walletTimer = new QTimer(this);
++        if (walletTimer) {
++            walletTimer->setObjectName(QString::fromLatin1("open/close timer for wallet ") + _walletName);
++            connect(walletTimer, SIGNAL(timeout()), this, SLOT(walletTimerFired()));
++            walletTimer->start(1000);
++        }
++    }
++#endif
++}
++
+ bool WalletControlWidget::openWallet()
+ {
+     bool result = false;
+@@ -70,6 +99,7 @@ void WalletControlWidget::onSetupWidget(
+     }
+ 
+     if (_wallet) {
++        setWalletTimer();
+         connect(_wallet, SIGNAL(walletClosed()), this, SLOT(onWalletClosed()));
+         _openClose->setText(i18n("&Close"));
+ 
+@@ -135,10 +165,30 @@ void WalletControlWidget::onOpenClose()
+ 
+ void WalletControlWidget::onWalletClosed()
+ {
++#ifdef Q_OS_MAC
++    walletTimer->stop();
++    delete walletTimer;
++    walletTimer = 0;
++#endif
+     _wallet = 0;
+     onSetupWidget();
+ }
+ 
++void WalletControlWidget::walletTimerFired()
++{
++#ifdef Q_OS_MAC
++    if (_wallet) {
++        bool open = _wallet->isOpen();
++        if (open != walletIsOpen) {
++            if (walletIsOpen) {
++                onWalletClosed();
++            }
++            walletIsOpen = open;
++        }
++    }
++#endif
++}
++
+ void WalletControlWidget::updateWalletDisplay()
+ {
+ //     QList<QAction*> existingActions = _disconnect->actions();
+diff -U 3 -H -d -p -r -N -x '*.o' -x '*.orig' -- src/manager/walletcontrolwidget.h
+--- src/manager/walletcontrolwidget.h	2014-10-09 09:07:50.000000000 +0200
++++ src/manager/walletcontrolwidget.h	2015-11-03 17:32:21.000000000 +0100
+@@ -20,6 +20,9 @@
+ #define WALLETCONTROLWIDGET_H
+ 
+ #include "ui_walletcontrolwidget.h"
++#ifdef Q_OS_MAC
++#include <QTimer>
++#endif
+ 
+ class KWalletEditor;
+ class ApplicationsManager;
+@@ -33,6 +36,7 @@ class WalletControlWidget : public QWidg
+     Q_OBJECT
+ public:
+     WalletControlWidget(QWidget* parent, const QString& walletName);
++    virtual ~WalletControlWidget();
+ 
+     bool openWallet();
+ 
+@@ -43,6 +47,7 @@ public Q_SLOTS:
+     void updateWalletDisplay();
+     void onDisconnectApplication();
+     void onChangePassword();
++    void walletTimerFired();
+ 
+ protected:
+     virtual void hideEvent(QHideEvent*);
+@@ -53,6 +58,11 @@ private:
+     KWallet::Wallet*    _wallet;
+     KWalletEditor*      _walletEditor;
+     ApplicationsManager* _applicationsManager;
++#ifdef Q_OS_MAC
++    QTimer *walletTimer;
++    bool walletIsOpen;
++    void setWalletTimer();
++#endif
+ };
+ 
+ #endif // WALLETCONTROLWIDGET_H
