@@ -145,10 +145,6 @@ if {![info exists kf5.framework]} {
                         -DLIBXML2_XMLLINT_EXECUTABLE=${prefix}/bin/xmllint \
                         -DLIBXSLT_INCLUDE_DIR=${prefix}/include \
                         -DLIBXSLT_LIBRARIES=${prefix}/lib/libxslt.dylib \
-                        -DMYSQLD_EXECUTABLE=${prefix}/libexec/mysqld \
-                        -DMYSQL_INCLUDE_DIR=${prefix}/include/mysql5/mysql \
-                        -DMYSQL_LIB_DIR=${prefix}/lib/mysql5/mysql \
-                        -DMYSQLCONFIG_EXECUTABLE=${prefix}/bin/mysql_config5 \
                         -DOPENAL_INCLUDE_DIR=/System/Library/Frameworks/OpenAL.framework/Headers \
                         -DOPENAL_LIBRARY=/System/Library/Frameworks/OpenAL.framework \
                         -DPNG_INCLUDE_DIR=${prefix}/include \
@@ -232,6 +228,8 @@ kf5.framework_dependency    kauth libKF5Auth
 kf5.framework_dependency    kconfig libKF5ConfigCore
 kf5.framework_dependency    kcodecs libKF5Codecs
 kf5.framework_dependency    ki18n libKF5I18n
+# kf5-kdoctools does install a static library but I don't know if it has dependents
+set kf5.kdoctools_dep       path:bin/meinproc5:kf5-kdoctools
 
 #########
 # to install kf5-frameworkintegration:
