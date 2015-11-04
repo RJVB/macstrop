@@ -106,11 +106,14 @@ configure.args-append   -DECM_MKSPECS_INSTALL_DIR=${qt_mkspecs_dir}
 # standard configure args
 configure.args-append   -DBUILD_doc=OFF \
                         -DBUILD_docs=OFF \
-                        -DBUILD_SHARED_LIBS=ON \
+                        -DBUILD_SHARED_LIBS=ON
+if {${os.platform} eq "darwin"} {
+    configure.args-append \
                         -DBUNDLE_INSTALL_DIR=${applications_dir}/KF5 \
                         -DCMAKE_DISABLE_FIND_PACKAGE_X11=ON \
                         -DAPPLE_SUPPRESS_X11_WARNING=ON
-#                         -DLIB_SUFFIX=64
+}
+
 variant docs description {build and install the documentation} {
     configure.args-delete \
                         -DBUILD_doc=OFF \
