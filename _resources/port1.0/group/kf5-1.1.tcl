@@ -117,6 +117,8 @@ if {${os.platform} eq "darwin"} {
                         -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
     configure.args-delete \
                         -DCMAKE_INSTALL_RPATH=${prefix}/lib
+    configure.args-append \
+                        -DCMAKE_PREFIX_PATH=${prefix}
 }
 
 variant docs description {build and install the documentation} {
