@@ -112,6 +112,11 @@ if {${os.platform} eq "darwin"} {
                         -DBUNDLE_INSTALL_DIR=${applications_dir}/KF5 \
                         -DCMAKE_DISABLE_FIND_PACKAGE_X11=ON \
                         -DAPPLE_SUPPRESS_X11_WARNING=ON
+} elseif {${os.platform} eq "linux"} {
+    configure.args-delete \
+                        -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+    configure.args-delete \
+                        -DCMAKE_INSTALL_RPATH=${prefix}/lib
 }
 
 variant docs description {build and install the documentation} {
