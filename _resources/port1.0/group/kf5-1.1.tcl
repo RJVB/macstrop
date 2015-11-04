@@ -156,17 +156,17 @@ configure.args-append   -DDOCBOOKXSL_DIR=${prefix}/share/xsl/docbook-xsl \
                         -DTIFF_LIBRARY=${prefix}/lib/libtiff.dylib
 
 # KF5 frameworks are released with one version ATM:
-set kf5_version          5.15.0
-set kf5_branch           [join [lrange [split ${kf5_version} .] 0 1] .]
+set kf5.version          5.15.0
+set kf5.branch           [join [lrange [split ${kf5.version} .] 0 1] .]
 
 if { [ info exists kf5.portingAid ] } {
     set kf5.virtualPath     "frameworks"
-    set kf5.folder          "frameworks/${kf5_branch}/portingAids"
+    set kf5.folder          "frameworks/${kf5.branch}/portingAids"
 }
 
 if { [ info exists kf5.framework ] } {
     set kf5.virtualPath     "frameworks"
-    set kf5.folder          "frameworks/${kf5_branch}"
+    set kf5.folder          "frameworks/${kf5.branch}"
 }
 
 if {[info exists kf5.project]} {
@@ -187,7 +187,7 @@ if {[info exists kf5.project]} {
             }
         }
     } else {
-        distname            ${kf5.project}-${kf5_version}
+        distname            ${kf5.project}-${kf5.version}
     }
     homepage                http://projects.kde.org/projects/${kf5.virtualPath}/${kf5.project}
     master_sites            http://download.kde.org/stable/${kf5.folder}
@@ -209,18 +209,25 @@ post-build {
 
 # variables to facilitate setting up dependencies to KF5 frameworks that may (or not)
 # also exist as port:kf5-foo-devel .
-if {${os.platform} eq "darwin"} {
-    set kf5_lib_path    lib
-    set kf5_lib_ext     5.dylib
-} elseif {${os.platform} eq "linux"} {
-    set kf5_lib_path    lib/${os.arch}-linux-gnu
-    set kf5_lib_ext     so.5
+proc kf5.framework_dependency {name library} {
+    upvar #0 kf5.${name}_dep dep
+    global os.platform
+    if {${os.platform} eq "darwin"} {
+        set kf5.lib_path    lib
+        set kf5.lib_ext     5.dylib
+    } elseif {${os.platform} eq "linux"} {
+        set kf5.lib_path    lib/${os.arch}-linux-gnu
+        set kf5.lib_ext     so.5
+    }
+    set dep                 path:${kf5.lib_path}/${library}.${kf5.lib_ext}:kf5-${name}
 }
-set kf5_attica_dep          path:${kf5_lib_path}/libKF5Attica.${kf5_lib_ext}:kf5-attica
-set kf5_karchive_dep        path:${kf5_lib_path}/libKF5Archive.${kf5_lib_ext}:kf5-karchive
-set kf5_kcoreaddons_dep     path:${kf5_lib_path}/libKF5CoreAddons.${kf5_lib_ext}:kf5-kcoreaddons
-set kf5_kauth_dep           path:${kf5_lib_path}/libKF5Auth.${kf5_lib_ext}:kf5-kauth
-set kf5_kconfig_dep         path:${kf5_lib_path}/libKF5ConfigCore.${kf5_lib_ext}:kf5-kconfig
+
+kf5.framework_dependency    attica libKF5Attica
+kf5.framework_dependency    karchive libKF5Archive
+kf5.framework_dependency    kcoreaddons libKF5CoreAddons
+kf5.framework_dependency    kauth libKF5Auth
+kf5.framework_dependency    kconfig libKF5ConfigCore
+kf5.framework_dependency    kcodecs libKF5Codecs
 
 #########
 # to install kf5-frameworkintegration:
