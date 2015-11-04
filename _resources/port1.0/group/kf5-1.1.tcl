@@ -117,7 +117,7 @@ variant docs description {build and install the documentation} {
                         -DBUILD_docs=OFF
 }
 
-if {![info exists kf5.framework] || [info exists kf5.define_external_deps]} {
+if {![info exists kf5.framework]} {
     # explicitly define certain headers and libraries, to avoid
     # conflicts with those installed into system paths by the user.
     configure.args-append \
@@ -231,6 +231,7 @@ kf5.framework_dependency    kcoreaddons libKF5CoreAddons
 kf5.framework_dependency    kauth libKF5Auth
 kf5.framework_dependency    kconfig libKF5ConfigCore
 kf5.framework_dependency    kcodecs libKF5Codecs
+kf5.framework_dependency    ki18n libKF5I18n
 
 #########
 # to install kf5-frameworkintegration:
