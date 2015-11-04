@@ -126,41 +126,49 @@ variant docs description {build and install the documentation} {
                         -DBUILD_docs=OFF
 }
 
+if {${os.platform} eq "darwin"} {
+   set kf5.libs_dir    ${prefix}/lib
+   set kf5.libs_ext    dylib
+} elseif {${os.platform} eq "linux"} {
+   set kf5.libs_dir    ${prefix}/lib/${os.arch}-linux-gnu
+   set kf5.libs_ext    so
+}
+
 if {![info exists kf5.framework]} {
     # explicitly define certain headers and libraries, to avoid
     # conflicts with those installed into system paths by the user.
     configure.args-append \
                         -DDOCBOOKXSL_DIR=${prefix}/share/xsl/docbook-xsl \
                         -DGETTEXT_INCLUDE_DIR=${prefix}/include \
-                        -DGETTEXT_LIBRARY=${prefix}/lib/libgettextlib.dylib \
+                        -DGETTEXT_LIBRARY=${prefix}/lib/libgettextlib.${kf5.libs_ext} \
                         -DGIF_INCLUDE_DIR=${prefix}/include \
-                        -DGIF_LIBRARY=${prefix}/lib/libgif.dylib \
+                        -DGIF_LIBRARY=${prefix}/lib/libgif.${kf5.libs_ext} \
                         -DJASPER_INCLUDE_DIR=${prefix}/include \
-                        -DJASPER_LIBRARY=${prefix}/lib/libjasper.dylib \
+                        -DJASPER_LIBRARY=${prefix}/lib/libjasper.${kf5.libs_ext} \
                         -DJPEG_INCLUDE_DIR=${prefix}/include \
-                        -DJPEG_LIBRARY=${prefix}/lib/libjpeg.dylib \
-                        -DLBER_LIBRARIES=${prefix}/lib/liblber.dylib \
+                        -DJPEG_LIBRARY=${prefix}/lib/libjpeg.${kf5.libs_ext} \
+                        -DLBER_LIBRARIES=${prefix}/lib/liblber.${kf5.libs_ext} \
                         -DLDAP_INCLUDE_DIR=${prefix}/include \
-                        -DLDAP_LIBRARIES=${prefix}/lib/libldap.dylib \
+                        -DLDAP_LIBRARIES=${prefix}/lib/libldap.${kf5.libs_ext} \
                         -DLIBEXSLT_INCLUDE_DIR=${prefix}/include \
-                        -DLIBEXSLT_LIBRARIES=${prefix}/lib/libexslt.dylib \
-                        -DLIBICALSS_LIBRARY=${prefix}/lib/libicalss.dylib \
+                        -DLIBEXSLT_LIBRARIES=${prefix}/lib/libexslt.${kf5.libs_ext} \
+                        -DLIBICALSS_LIBRARY=${prefix}/lib/libicalss.${kf5.libs_ext} \
                         -DLIBICAL_INCLUDE_DIRS=${prefix}/include \
-                        -DLIBICAL_LIBRARY=${prefix}/lib/libical.dylib \
+                        -DLIBICAL_LIBRARY=${prefix}/lib/libical.${kf5.libs_ext} \
                         -DLIBINTL_INCLUDE_DIR=${prefix}/include \
-                        -DLIBINTL_LIBRARY=${prefix}/lib/libintl.dylib \
+                        -DLIBINTL_LIBRARY=${prefix}/lib/libintl.${kf5.libs_ext} \
                         -DLIBXML2_INCLUDE_DIR=${prefix}/include/libxml2 \
-                        -DLIBXML2_LIBRARIES=${prefix}/lib/libxml2.dylib \
+                        -DLIBXML2_LIBRARIES=${prefix}/lib/libxml2.${kf5.libs_ext} \
                         -DLIBXML2_XMLLINT_EXECUTABLE=${prefix}/bin/xmllint \
                         -DLIBXSLT_INCLUDE_DIR=${prefix}/include \
-                        -DLIBXSLT_LIBRARIES=${prefix}/lib/libxslt.dylib \
+                        -DLIBXSLT_LIBRARIES=${prefix}/lib/libxslt.${kf5.libs_ext} \
                         -DOPENAL_INCLUDE_DIR=/System/Library/Frameworks/OpenAL.framework/Headers \
                         -DOPENAL_LIBRARY=/System/Library/Frameworks/OpenAL.framework \
                         -DPNG_INCLUDE_DIR=${prefix}/include \
                         -DPNG_PNG_INCLUDE_DIR=${prefix}/include \
-                        -DPNG_LIBRARY=${prefix}/lib/libpng.dylib \
+                        -DPNG_LIBRARY=${prefix}/lib/libpng.${kf5.libs_ext} \
                         -DTIFF_INCLUDE_DIR=${prefix}/include \
-                        -DTIFF_LIBRARY=${prefix}/lib/libtiff.dylib
+                        -DTIFF_LIBRARY=${prefix}/lib/libtiff.${kf5.libs_ext}
 }
 
 # KF5 frameworks are released with one version ATM:
@@ -213,12 +221,6 @@ post-build {
             ui_debug "Compressing ${build.dir}: ${result}"
         }
     }
-}
-
-if {${os.platform} eq "darwin"} {
-   set kf5.libs_dir    ${prefix}/lib
-} elseif {${os.platform} eq "linux"} {
-   set kf5.libs_dir    ${prefix}/lib/${os.arch}-linux-gnu
 }
 
 # variables to facilitate setting up dependencies to KF5 frameworks that may (or not)
