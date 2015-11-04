@@ -219,6 +219,7 @@ proc kf5.framework_dependency {name library} {
         set kf5.lib_ext     so.5
     }
     set dep                 path:${kf5.lib_path}/${library}.${kf5.lib_ext}:kf5-${name}
+    ui_debug "Dependency expression for KF5ramework ${name}: ${dep}"
 }
 
 kf5.framework_dependency    attica libKF5Attica
@@ -230,6 +231,7 @@ kf5.framework_dependency    kcodecs libKF5Codecs
 kf5.framework_dependency    ki18n libKF5I18n
 # kf5-kdoctools does install a static library but I don't know if it has dependents
 set kf5.kdoctools_dep       path:bin/meinproc5:kf5-kdoctools
+kf5.framework_dependency    kguiaddons libKF5GuiAddons
 
 #########
 # to install kf5-frameworkintegration:
