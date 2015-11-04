@@ -117,9 +117,11 @@ variant docs description {build and install the documentation} {
                         -DBUILD_docs=OFF
 }
 
-# explicitly define certain headers and libraries, to avoid
-# conflicts with those installed into system paths by the user.
-configure.args-append   -DDOCBOOKXSL_DIR=${prefix}/share/xsl/docbook-xsl \
+if {![info exists kf5.framework] || [info exists kf5.define_external_deps]} {
+    # explicitly define certain headers and libraries, to avoid
+    # conflicts with those installed into system paths by the user.
+    configure.args-append \
+                        -DDOCBOOKXSL_DIR=${prefix}/share/xsl/docbook-xsl \
                         -DGETTEXT_INCLUDE_DIR=${prefix}/include \
                         -DGETTEXT_LIBRARY=${prefix}/lib/libgettextlib.dylib \
                         -DGIF_INCLUDE_DIR=${prefix}/include \
@@ -154,6 +156,7 @@ configure.args-append   -DDOCBOOKXSL_DIR=${prefix}/share/xsl/docbook-xsl \
                         -DPNG_LIBRARY=${prefix}/lib/libpng.dylib \
                         -DTIFF_INCLUDE_DIR=${prefix}/include \
                         -DTIFF_LIBRARY=${prefix}/lib/libtiff.dylib
+}
 
 # KF5 frameworks are released with one version ATM:
 set kf5.version          5.15.0
