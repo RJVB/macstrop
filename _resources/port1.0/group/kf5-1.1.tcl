@@ -210,7 +210,7 @@ post-build {
 # also exist as port:kf5-foo-devel .
 proc kf5.framework_dependency {name library} {
     upvar #0 kf5.${name}_dep dep
-    global os.platform
+    global os.platform os.arch
     if {${os.platform} eq "darwin"} {
         set kf5.lib_path    lib
         set kf5.lib_ext     5.dylib
