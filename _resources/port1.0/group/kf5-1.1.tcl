@@ -215,6 +215,12 @@ post-build {
     }
 }
 
+if {${os.platform} eq "darwin"} {
+   set kf5.libs_dir    ${prefix}/lib
+} elseif {${os.platform} eq "linux"} {
+   set kf5.libs_dir    ${prefix}/lib/${os.arch}-linux-gnu
+}
+
 # variables to facilitate setting up dependencies to KF5 frameworks that may (or not)
 # also exist as port:kf5-foo-devel .
 proc kf5.framework_dependency {name library} {
