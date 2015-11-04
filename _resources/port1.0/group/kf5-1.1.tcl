@@ -114,11 +114,10 @@ if {${os.platform} eq "darwin"} {
                         -DAPPLE_SUPPRESS_X11_WARNING=ON
 } elseif {${os.platform} eq "linux"} {
     configure.args-delete \
-                        -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
-    configure.args-delete \
                         -DCMAKE_INSTALL_RPATH=${prefix}/lib
     configure.args-append \
-                        -DCMAKE_PREFIX_PATH=${prefix}
+                        -DCMAKE_PREFIX_PATH=${prefix} \
+                        -DCMAKE_INSTALL_RPATH="${prefix}/lib/${os.arch}-linux-gnu\;${prefix}/lib"
 }
 
 variant docs description {build and install the documentation} {
