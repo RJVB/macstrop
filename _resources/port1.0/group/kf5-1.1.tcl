@@ -250,6 +250,7 @@ kf5.framework_dependency    ki18n libKF5I18n
 set kf5.kdoctools_dep       path:bin/meinproc5:kf5-kdoctools
 kf5.framework_dependency    kguiaddons libKF5GuiAddons
 kf5.framework_dependency    kwidgetsaddons libKF5WidgetsAddons
+kf5.framework_dependency    kconfigwidgets libKF5ConfigWidgets
 
 #########
 # to install kf5-frameworkintegration:
