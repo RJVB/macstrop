@@ -252,6 +252,7 @@ kf5.framework_dependency    kguiaddons libKF5GuiAddons
 kf5.framework_dependency    kwidgetsaddons libKF5WidgetsAddons
 kf5.framework_dependency    kconfigwidgets libKF5ConfigWidgets
 kf5.framework_dependency    kitemviews libKF5ItemViews
+kf5.framework_dependency    kiconthemes libKF5IconThemes
 
 #########
 # to install kf5-frameworkintegration:
