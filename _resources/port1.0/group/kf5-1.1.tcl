@@ -260,6 +260,7 @@ kf5.framework_dependency    kitemviews libKF5ItemViews
 kf5.framework_dependency    kiconthemes libKF5IconThemes
 kf5.framework_dependency    kwindowsystem libKF5WindowSystem
 kf5.framework_dependency    kcrash libKF5Crash
+set kf5.kapidox_dep         path:bin/kgenapidox:kf5-kapidox
 
 #########
 # to install kf5-frameworkintegration:
