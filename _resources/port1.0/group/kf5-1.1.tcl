@@ -266,6 +266,7 @@ kf5.framework_dependency    kdbusaddons libKF5DBusAddons
 kf5.framework_dependency    kdnssd libKF5DNSSD
 kf5.framework_dependency    kidletime libKF5IdleTime
 set kf5.kimageformats_dep   port:kf5-kimageformats
+kf5.framework_dependency    kitemmodels libKF5ItemModels
 
 #########
 # to install kf5-frameworkintegration:
