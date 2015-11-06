@@ -96,7 +96,8 @@ configure.args-append   -DECM_MKSPECS_INSTALL_DIR=${qt_mkspecs_dir}
 # set a best-compromise plugin destination directory, the one from Qt5.
 # this is also what Kubuntu does, and possibly the only way to ensure that Qt5
 # and KF5 find each other's (and their own...) plugins.
-configure.args-append   -DPLUGIN_INSTALL_DIR=${qt_plugins_dir}
+configure.args-append   -DPLUGIN_INSTALL_DIR=${qt_plugins_dir} \
+                        -DKDE_INSTALL_QTPLUGINDIR=${qt_plugins_dir}
 
 # # This is why we need destroo.violate_mtree set to "yes"
 # configure.args-append   -DCONFIG_INSTALL_DIR="/Library/Preferences" \
@@ -264,6 +265,7 @@ set kf5.kapidox_dep         path:bin/kgenapidox:kf5-kapidox
 kf5.framework_dependency    kdbusaddons libKF5DBusAddons
 kf5.framework_dependency    kdnssd libKF5DNSSD
 kf5.framework_dependency    kidletime libKF5IdleTime
+set kf5.kimageformats_dep   port:kf5-kimageformats
 
 #########
 # to install kf5-frameworkintegration:
