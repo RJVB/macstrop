@@ -229,6 +229,15 @@ post-build {
     }
 }
 
+proc kf5.add_test_library_path {path} {
+    global os.platform
+    if {${os.platform} eq "darwin"} {
+        test.env    DYLD_LIBRARY_PATH=${path}
+    } else {
+        test.env    LD_LIBRARY_PATH=${path}
+    }
+}
+
 # variables to facilitate setting up dependencies to KF5 frameworks that may (or not)
 # also exist as port:kf5-foo-devel .
 proc kf5.framework_dependency {name library} {
