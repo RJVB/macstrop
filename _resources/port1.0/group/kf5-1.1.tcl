@@ -262,6 +262,7 @@ kf5.framework_dependency    kwindowsystem libKF5WindowSystem
 kf5.framework_dependency    kcrash libKF5Crash
 set kf5.kapidox_dep         path:bin/kgenapidox:kf5-kapidox
 kf5.framework_dependency    kdbusaddons libKF5DBusAddons
+kf5.framework_dependency    kdnssd libKF5DNSSD
 
 #########
 # to install kf5-frameworkintegration:
