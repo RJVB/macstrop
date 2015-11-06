@@ -93,6 +93,11 @@ depends_lib-append      path:share/ECM/cmake/ECMConfig.cmake:kde-extra-cmake-mod
 # Use directory set by qt5-kde or qt5-mac
 configure.args-append   -DECM_MKSPECS_INSTALL_DIR=${qt_mkspecs_dir}
 
+# set a best-compromise plugin destination directory, the one from Qt5.
+# this is also what Kubuntu does, and possibly the only way to ensure that Qt5
+# and KF5 find each other's (and their own...) plugins.
+configure.args-append   -DPLUGIN_INSTALL_DIR=${qt_plugins_dir}
+
 # # This is why we need destroo.violate_mtree set to "yes"
 # configure.args-append   -DCONFIG_INSTALL_DIR="/Library/Preferences" \
 #                         -DDATA_INSTALL_DIR="/Library/Application Support"
@@ -314,6 +319,6 @@ kf5.framework_dependency    kcrash libKF5Crash
 # For kf5-kio: skipping org.macports.main (dry run)
 # For kf5-frameworkintegration: skipping org.macports.main (dry run)
 
-
+# see also http://api.kde.org/frameworks-api/frameworks5-apidocs/attica/html/index.html
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
