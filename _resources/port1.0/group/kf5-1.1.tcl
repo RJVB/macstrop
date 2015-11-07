@@ -240,18 +240,22 @@ proc kf5.add_test_library_path {path} {
 
 # variables to facilitate setting up dependencies to KF5 frameworks that may (or not)
 # also exist as port:kf5-foo-devel .
-proc kf5.framework_dependency {name library} {
+proc kf5.framework_dependency {name {library 0}} {
     upvar #0 kf5.${name}_dep dep
-    global os.platform os.arch
-    if {${os.platform} eq "darwin"} {
-        set kf5.lib_path    lib
-        set kf5.lib_ext     5.dylib
-    } elseif {${os.platform} eq "linux"} {
-        set kf5.lib_path    lib/${os.arch}-linux-gnu
-        set kf5.lib_ext     so.5
+    if {${library} ne 0} {
+        global os.platform os.arch
+        if {${os.platform} eq "darwin"} {
+            set kf5.lib_path    lib
+            set kf5.lib_ext     5.dylib
+        } elseif {${os.platform} eq "linux"} {
+            set kf5.lib_path    lib/${os.arch}-linux-gnu
+            set kf5.lib_ext     so.5
+        }
+        set dep                 path:${kf5.lib_path}/${library}.${kf5.lib_ext}:kf5-${name}
+        ui_debug "Dependency expression for KF5ramework ${name}: ${dep}"
+    } else {
+        return ${dep}
     }
-    set dep                 path:${kf5.lib_path}/${library}.${kf5.lib_ext}:kf5-${name}
-    ui_debug "Dependency expression for KF5ramework ${name}: ${dep}"
 }
 
 kf5.framework_dependency    attica libKF5Attica
@@ -276,6 +280,7 @@ kf5.framework_dependency    kdnssd libKF5DNSSD
 kf5.framework_dependency    kidletime libKF5IdleTime
 set kf5.kimageformats_dep   port:kf5-kimageformats
 kf5.framework_dependency    kitemmodels libKF5ItemModels
+kf5.framework_dependency    kplotting libKF5Plotting
 
 #########
 # to install kf5-frameworkintegration:
