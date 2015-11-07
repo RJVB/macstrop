@@ -114,11 +114,15 @@ configure.args-append   -DBUILD_doc=OFF \
                         -DBUILD_docs=OFF \
                         -DBUILD_SHARED_LIBS=ON
 if {${os.platform} eq "darwin"} {
+    set kf5.applications_dir \
+                        ${applications_dir}/KF5
     configure.args-append \
-                        -DBUNDLE_INSTALL_DIR=${applications_dir}/KF5 \
+                        -DBUNDLE_INSTALL_DIR=${kf5.applications_dir} \
                         -DCMAKE_DISABLE_FIND_PACKAGE_X11=ON \
                         -DAPPLE_SUPPRESS_X11_WARNING=ON
 } elseif {${os.platform} eq "linux"} {
+    set kf5.applications_dir \
+                        ${prefix}/bin
     configure.args-delete \
                         -DCMAKE_INSTALL_RPATH=${prefix}/lib
     configure.args-append \
