@@ -289,6 +289,7 @@ set kf5.oxygen-icons_dep    path:share/icons/oxygen/index.theme:kf5-oxygen-icons
 kf5.framework_dependency    solid libKF5Solid
 kf5.framework_dependency    sonnet libKF5SonnetCore
 kf5.framework_dependency    threadweaver libKF5ThreadWeaver
+kf5.framework_dependency    kcompletion libKF5Completion
 
 #########
 # to install kf5-frameworkintegration:
