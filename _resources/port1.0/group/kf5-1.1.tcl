@@ -292,6 +292,7 @@ kf5.framework_dependency    threadweaver libKF5ThreadWeaver
 kf5.framework_dependency    kcompletion libKF5Completion
 kf5.framework_dependency    kfilemetadata libKF5FileMetaData
 kf5.framework_dependency    kjobwidgets libKF5JobWidgets
+kf5.framework_dependency    knotifications libKF5Notifications
 
 #########
 # to install kf5-frameworkintegration:
