@@ -206,8 +206,13 @@ if {[info exists kf5.project]} {
                 ui_error "You haven't defined kf5.virtualPath, which is mandatory for any KF5 project using kf5.project."
                 return -code error "incomplete port definition"
             } else {
-                set kf5.folder \
+                if {${kf5.virtualPath} eq "plasma"} {
+                    set kf5.folder \
+                            "${kf5.virtualPath}/${kf5.release}"
+                } else {
+                    set kf5.folder \
                             "${kf5.virtualPath}/${kf5.release}/src"
+                }
                 distname    ${kf5.project}-${kf5.release}
                 version     ${kf5.release}
             }
