@@ -222,6 +222,12 @@ if {[info exists kf5.project]} {
 
 # maintainers             gmail.com:rjvbertin mk openmaintainer
 
+post-fetch {
+    if {[file exists ${worksrcpath}/examples] && [file isdirectory ${worksrcpath}/examples] && ![variant_exists examples]} {
+        ui_msg "This port could provide a +examples variant"
+    }
+}
+
 post-build {
     if {[file exists ${prefix}/bin/afsctool]} {
         ui_msg "--->  Compressing build directory ..."
@@ -293,6 +299,7 @@ kf5.framework_dependency    kcompletion libKF5Completion
 kf5.framework_dependency    kfilemetadata libKF5FileMetaData
 kf5.framework_dependency    kjobwidgets libKF5JobWidgets
 kf5.framework_dependency    knotifications libKF5Notifications
+kf5.framework_dependency    kunitconversion libKF5UnitConversion
 
 #########
 # to install kf5-frameworkintegration:
