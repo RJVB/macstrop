@@ -305,6 +305,7 @@ kf5.framework_dependency    kfilemetadata libKF5FileMetaData
 kf5.framework_dependency    kjobwidgets libKF5JobWidgets
 kf5.framework_dependency    knotifications libKF5Notifications
 kf5.framework_dependency    kunitconversion libKF5UnitConversion
+kf5.framework_dependency    kpackage libKF5Package
 
 #########
 # to install kf5-frameworkintegration:
