@@ -273,6 +273,16 @@ proc kf5.framework_dependency {name {library 0}} {
     }
 }
 
+# kf5.depends_frameworks appends the ports corresponding to the KF5 Frameworks
+# short names to depends_lib
+proc kf5.depends_frameworks {first args} {
+    depends_lib-append  [kf5.framework_dependency ${first}]
+    foreach f ${args} {
+        depends_lib-append \
+                        [kf5.framework_dependency ${f}]
+    }
+}
+
 kf5.framework_dependency    attica libKF5Attica
 kf5.framework_dependency    karchive libKF5Archive
 kf5.framework_dependency    kcoreaddons libKF5CoreAddons
@@ -306,6 +316,7 @@ kf5.framework_dependency    kjobwidgets libKF5JobWidgets
 kf5.framework_dependency    knotifications libKF5Notifications
 kf5.framework_dependency    kunitconversion libKF5UnitConversion
 kf5.framework_dependency    kpackage libKF5Package
+kf5.framework_dependency    kservice libKF5Service
 
 #########
 # to install kf5-frameworkintegration:
