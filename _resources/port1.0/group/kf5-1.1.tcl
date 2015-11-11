@@ -269,7 +269,14 @@ proc kf5.framework_dependency {name {library 0}} {
         set dep                 path:${kf5.lib_path}/${library}.${kf5.lib_ext}:kf5-${name}
         ui_debug "Dependency expression for KF5ramework ${name}: ${dep}"
     } else {
-        return ${dep}
+        if {[info exists dep]} {
+            return ${dep}
+        } else {
+            set allknown [info global "kf5.*_dep"]
+            ui_error "No KF5 framework is known corresponding to \"${name}\""
+            ui_msg "Known framework ports: ${allknown}"
+            return -code error "Unknown KF5 framework ${name}"
+        }
     }
 }
 
@@ -279,6 +286,14 @@ proc kf5.depends_frameworks {first args} {
     depends_lib-append  [kf5.framework_dependency ${first}]
     foreach f ${args} {
         depends_lib-append \
+                        [kf5.framework_dependency ${f}]
+    }
+}
+proc kf5.depends_build_frameworks {first args} {
+    depends_build-append \
+                        [kf5.framework_dependency ${first}]
+    foreach f ${args} {
+        depends_build-append \
                         [kf5.framework_dependency ${f}]
     }
 }
