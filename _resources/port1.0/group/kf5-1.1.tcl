@@ -332,6 +332,7 @@ kf5.framework_dependency    knotifications libKF5Notifications
 kf5.framework_dependency    kunitconversion libKF5UnitConversion
 kf5.framework_dependency    kpackage libKF5Package
 kf5.framework_dependency    kservice libKF5Service
+kf5.framework_dependency    ktextwidgets libKF5TextWidgets
 
 #########
 # to install kf5-frameworkintegration:
