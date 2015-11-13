@@ -334,6 +334,7 @@ kf5.framework_dependency    kpackage libKF5Package
 kf5.framework_dependency    kservice libKF5Service
 kf5.framework_dependency    ktextwidgets libKF5TextWidgets
 kf5.framework_dependency    kglobalaccel libKF5GlobalAccel
+kf5.framework_dependency    kxmlgui libKF5XmlGui
 
 #########
 # to install kf5-frameworkintegration:
