@@ -52,11 +52,11 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] && ![info exists qt5.prefe
     if {[file exists ${prefix}/libexec/qt5/plugins/platforms]} {
         # Qt5 has been installed through port:qt5 and is not the be reinstalled the other way
         ui_debug "Qt5 is provided by port:qt5"
-        PortGroup   qt5 1.1
+        PortGroup   qt5-mac 1.0
     } elseif {[file exists ${prefix}/libexec/qt5-mac/include/QtCore/QtCore]} {
         # Qt5 has been installed through port:qt5-mac and is not the be reinstalled the other way
         ui_debug "Qt5 is provided by port:qt5-mac"
-        PortGroup   qt5 1.1
+        PortGroup   qt5-mac 1.0
     }
 } elseif {[info exists qt5.prefer_kde]} {
     # The calling port has indicated a preference for port:qt5-kde and
@@ -66,7 +66,7 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] && ![info exists qt5.prefe
 } else {
     # default fall-back to mainstream port:qt5
     ui_debug "Qt5 will be provided by port:qt5 (default)"
-    PortGroup   qt5 1.1
+    PortGroup   qt5-mac 1.0
 }
 
 proc qt_branch {} {
