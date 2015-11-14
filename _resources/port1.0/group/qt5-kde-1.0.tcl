@@ -62,10 +62,12 @@ if {![variant_exists qt5kde]} {
     # define a variant that will be set default when port:qt5-kde or port:qt5-kde-devel is
     # installed. This means that a user doing a new install (or upgrade) of a port depending
     # on Qt5 and with port:qt5-kde installed will request a variant the build bots should not
-    # consider a default variant. This should protect against pulling in a binary build against
-    # the wrong Qt5 port.
+    # consider a default variant. This meant to protect against pulling in a binary build against
+    # the wrong Qt5 port, which was relevant in the time of port:qt5-mac, and hopefully no
+    # longer now that port:qt5 installs to the same place as we do (but as an all-inclusive prefix).
     variant qt5kde description {default variant set for port:qt5-kde* and ports that depend on them} {}
 }
+# it should no longer be necessary to set qt5kde but we will continue to do so for now.
 default_variants        +qt5kde
 
 # standard Qt5 name. This should be just "qt5" (or qt53 for instance when more
