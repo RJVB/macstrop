@@ -150,25 +150,31 @@ if {${os.platform} eq "darwin"} {
 }
 set kf5.docs_dir        ${prefix}/share/doc/kf5
 
+set kf5.allow_docs_generation \
+                        yes
 variant docs description {build and install the documentation, for use with Qt's Assistant and KDevelop} {
     configure.args-delete \
                         -DBUILD_doc=OFF \
                         -DBUILD_docs=OFF
     if {${subport} ne "kf5-kapidox"} {
-        kf5.depends_build_frameworks \
+        if {[info exists kf5.allow_docs_generation]} {
+            kf5.depends_build_frameworks \
                         kapidox
-        post-destroot {
-            # generate the documentation, working from ${build.dir}
-            system -W ${build.dir} "kgenapidox --qhp --searchengine --api-searchbox \
-                --qtdoc-dir ${qt_docs_dir} --kdedoc-dir ${kf5.docs_dir} \
-                --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"
-            xinstall -m 755 -d ${destroot}${kf5.docs_dir}
-            # after creating the destination, copy all generated qch documentation to it
-            foreach doc [glob -nocomplain ${build.dir}/apidocs/qch/*.qch] {
-                xinstall -m 644 ${doc} ${destroot}${kf5.docs_dir}
+            post-destroot {
+                # generate the documentation, working from ${build.dir}
+                system -W ${build.dir} "kgenapidox --qhp --searchengine --api-searchbox \
+                    --qtdoc-dir ${qt_docs_dir} --kdedoc-dir ${kf5.docs_dir} \
+                    --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"
+                xinstall -m 755 -d ${destroot}${kf5.docs_dir}
+                # after creating the destination, copy all generated qch documentation to it
+                foreach doc [glob -nocomplain ${build.dir}/apidocs/qch/*.qch] {
+                    if {${doc} ne "${build.dir}/apidocs/qch/None.qch"} {
+                        xinstall -m 644 ${doc} ${destroot}${kf5.docs_dir}
+                    }
+                }
+                # cleanup
+                file delete -force ${build.dir}/apidocs
             }
-            # cleanup
-            file delete -force ${build.dir}/apidocs
         }
     }
 }
