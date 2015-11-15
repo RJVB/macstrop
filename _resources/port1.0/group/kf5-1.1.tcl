@@ -50,7 +50,8 @@ PortGroup               qt5-kde 1.0
 #
 #  - or a regular KF5 project which requires setting
 #    + a virtual path in 'kf5.virtualPath' (e.g. "applications")
-#    + as well as a release in 'kf5.release' (e.g. "15.04.2")
+#    + as well as (optionally) a release in 'kf5.release' (e.g. "15.04.2")
+#    + or (optionally) a plasma version in 'kf5.plasma' (e.g. 5.4.3)
 #
 # otherwise the port will fail to build.
 ########################################################################
@@ -61,10 +62,26 @@ if { ![ info exists kf5.project ] } {
     name                kf5-${kf5.project}
 }
 
-platforms               darwin
-supported_archs         noarch
+# KF5 frameworks current version, which is the same for all frameworks
+if {![info exists kf5.version]} {
+    set kf5.version     5.15.0
+}
+
+# KF5 Applications version
+if {![ info exists kf5.release ]} {
+    set kf5.release     15.08.3
+}
+
+# KF5 Plasma version
+if {![ info exists kf5.plasma ]} {
+    set kf5.plasma      5.4.3
+}
+
+platforms               darwin linux
 categories              kde kf5 devel
 license                 GPL-2+
+
+set kf5.branch           [join [lrange [split ${kf5.version} .] 0 1] .]
 
 # Make sure to not use any already installed headers and libraries;
 # these are set in CPATH and LIBRARY_PATH anyway.
@@ -183,10 +200,6 @@ if {![info exists kf5.framework]} {
                         -DTIFF_LIBRARY=${prefix}/lib/libtiff.${kf5.libs_ext}
 }
 
-# KF5 frameworks are released with one version ATM:
-set kf5.version          5.15.0
-set kf5.branch           [join [lrange [split ${kf5.version} .] 0 1] .]
-
 if { [ info exists kf5.portingAid ] } {
     set kf5.virtualPath     "frameworks"
     set kf5.folder          "frameworks/${kf5.branch}/portingAids"
@@ -200,23 +213,29 @@ if { [ info exists kf5.framework ] } {
 if {[info exists kf5.project]} {
     if { ![ info exists kf5.framework ] && ![ info exists kf5.portingAid ] } {
         if { ![ info exists kf5.virtualPath ] } {
-            ui_error "You haven't defined kf5.virtualPath, which is mandatory for any KF5 project using kf5.project. \
+            ui_error "You haven't defined kf5.virtualPath, which is mandatory for any KF5 port that uses kf5.project. \
             (Or is this project perhaps a framework or porting aid?)"
             return -code error "incomplete port definition"
         } else {
-            if { ![ info exists kf5.release ] } {
-                ui_error "You haven't defined kf5.virtualPath, which is mandatory for any KF5 project using kf5.project."
+            if { ![info exists kf5.release] && ![info exists kf5.plasma]} {
+                ui_error "You haven't defined kf5.release or kf5.plasma, which is mandatory for any KF5 port that uses kf5.project."
                 return -code error "incomplete port definition"
             } else {
                 if {${kf5.virtualPath} eq "plasma"} {
                     set kf5.folder \
-                            "${kf5.virtualPath}/${kf5.release}"
+                            "${kf5.virtualPath}/${kf5.plasma}"
+                    distname \
+                            ${kf5.project}-${kf5.plasma}
+                    version \
+                            ${kf5.plasma}
                 } else {
                     set kf5.folder \
                             "${kf5.virtualPath}/${kf5.release}/src"
+                    distname \
+                            ${kf5.project}-${kf5.release}
+                    version \
+                            ${kf5.release}
                 }
-                distname    ${kf5.project}-${kf5.release}
-                version     ${kf5.release}
             }
         }
     } else {
