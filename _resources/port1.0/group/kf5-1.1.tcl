@@ -64,7 +64,7 @@ if { ![ info exists kf5.project ] } {
 
 # KF5 frameworks current version, which is the same for all frameworks
 if {![info exists kf5.version]} {
-    set kf5.version     5.15.0
+    set kf5.version     5.16.0
 }
 
 # KF5 Applications version
@@ -148,11 +148,25 @@ if {${os.platform} eq "darwin"} {
                         -DCMAKE_PREFIX_PATH=${prefix} \
                         -DCMAKE_INSTALL_RPATH="${prefix}/lib/${os.arch}-linux-gnu\;${prefix}/lib"
 }
+set kf5.docs_dir        ${prefix}/share/docs/kf5
 
 variant docs description {build and install the documentation} {
     configure.args-delete \
                         -DBUILD_doc=OFF \
                         -DBUILD_docs=OFF
+    if {${subport} ne "kf5-kapidox"} {
+        kf5.depends_build_frameworks \
+                        kapidox
+        post-destroot {
+            system -W ${build.dir} "kgenapidox --qhp --searchengine --api-searchbox \
+                --qtdoc-dir ${qt_docs_dir} --kdedoc-dir ${kf5.docs_dir} \
+                --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"
+            xinstall -m 755 -d ${destroot}${kf5.docs_dir}
+            foreach doc [glob -nocomplain ${build.dir}/apidocs/qch/*.qch] {
+                xinstall -m 644 ${doc} ${destroot}${kf5.docs_dir}
+            }
+        }
+    }
 }
 
 if {${os.platform} eq "darwin"} {
