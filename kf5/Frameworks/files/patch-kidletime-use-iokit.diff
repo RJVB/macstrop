@@ -1,11 +1,12 @@
 diff --git src/plugins/osx/CMakeLists.txt src/plugins/osx/CMakeLists.txt
-index e1b50b8..12ea1e0 100644
+index e1b50b8..3dfc7f3 100644
 --- src/plugins/osx/CMakeLists.txt
 +++ src/plugins/osx/CMakeLists.txt
-@@ -1,11 +1,13 @@
+@@ -1,11 +1,14 @@
  set(osx_plugin_SRCS
      macpoller.cpp
 +    macpoller_helper.mm
++    ../../logging.cpp
  )
  
  add_library(KF5IdleTimeOsxPlugin MODULE ${osx_plugin_SRCS})
@@ -18,18 +19,22 @@ index e1b50b8..12ea1e0 100644
  
  install(
 diff --git src/plugins/osx/macpoller.cpp src/plugins/osx/macpoller.cpp
-index ad9c10f..e3336fa 100644
+index ad9c10f..0647332 100644
 --- src/plugins/osx/macpoller.cpp
 +++ src/plugins/osx/macpoller.cpp
-@@ -1,4 +1,5 @@
- /* This file is part of the KDE libraries
-+   Copyright (C) 2015 René J.V. Bertin <rjvbertin at gmail.com>
-    Copyright (C) 2009 Dario Freddi <drf at kde.org>
+@@ -3,6 +3,7 @@
     Copyright (C) 2003 Tarkvara Design Inc.  (from KVIrc source code)
     Copyright (c) 2008 Roman Jarosz          <kedgedev at centrum.cz>
-@@ -20,111 +21,59 @@
+    Copyright (c) 2008 the Kopete developers <kopete-devel at kde.org>
++   Copyright (C) 2015 René J.V. Bertin <rjvbertin at gmail.com>
+ 
+    This library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Library General Public
+@@ -19,210 +20,358 @@
+    Boston, MA 02110-1301, USA.
  */
  
++#include "logging.h"
  #include "macpoller.h"
 +#include <CoreServices/CoreServices.h>
  
@@ -91,13 +96,11 @@ index ad9c10f..e3336fa 100644
 -    if (baseURL != nil) {
 -        CFRelease(baseURL);
 -    }
-+#include <QDebug>
-+#include <QTimer>
- 
+-
 -    return err;
 -}
-+// See http://stackoverflow.com/questions/19229777/how-to-detect-global-mouse-button-events for 
-+// background relative to using an approach based on WidgetBasedPoller.
++// #include <QDebug>
++#include <QTimer>
  
 -pascal void MacPoller::IdleTimerAction(EventLoopTimerRef, EventLoopIdleTimerMessage inState, void *inUserData)
 -{
@@ -129,7 +132,8 @@ index ad9c10f..e3336fa 100644
 +typedef OSErr(*UpdateSystemActivityPtr)(UInt8 activity);
 +static UpdateSystemActivityPtr updateSystemActivity;
  
- MacPoller::MacPoller(QObject *parent)
+-MacPoller::MacPoller(QObject *parent)
++OSXIdlePoller::OSXIdlePoller(QObject *parent)
      : AbstractSystemPoller(parent)
 -    , m_timerRef(0)
 -    , m_secondsIdle(0)
@@ -144,16 +148,19 @@ index ad9c10f..e3336fa 100644
 +    , m_NTimeouts(0)
 +    , m_pollResolution(-1)
      , m_catch(false)
++    , m_nativeGrabber(0)
  {
  }
  
- MacPoller::~MacPoller()
+-MacPoller::~MacPoller()
++OSXIdlePoller::~OSXIdlePoller()
  {
 +    unloadPoller();
 +    delete m_idleTimer;
  }
  
- void MacPoller::unloadPoller()
+-void MacPoller::unloadPoller()
++void OSXIdlePoller::unloadPoller()
  {
 -    RemoveEventLoopTimer(m_timerRef);
 +    if (m_idleTimer) {
@@ -174,9 +181,14 @@ index ad9c10f..e3336fa 100644
 +    m_nextTimeout = -1;
  }
  
- bool MacPoller::isAvailable()
-@@ -135,37 +84,84 @@ bool MacPoller::isAvailable()
- bool MacPoller::setUpPoller()
+-bool MacPoller::isAvailable()
++bool OSXIdlePoller::isAvailable()
+ {
+     return true;
+ }
+ 
+-bool MacPoller::setUpPoller()
++bool OSXIdlePoller::setUpPoller()
  {
      // May already be init'ed.
 -    if (m_timerRef) {
@@ -199,12 +211,11 @@ index ad9c10f..e3336fa 100644
 +    if (csBundle) {
 +        updateSystemActivity = (UpdateSystemActivityPtr) CFBundleGetFunctionPointerForName(csBundle, CFSTR("UpdateSystemActivity"));
 +        if (!updateSystemActivity) {
-+            qWarning() << "failed to load UpdateSystemActivity from CoreServices.framework";
++            qCWarning(KIDLETIME) << "failed to load UpdateSystemActivity from CoreServices.framework";
 +        }
-+    }
-+    else{
++    } else {
 +        updateSystemActivity = 0;
-+        qWarning() << "failed to load CoreServices.framework: UpdateSystemActivity not available";
++        qCWarning(KIDLETIME) << "failed to load CoreServices.framework: UpdateSystemActivity not available";
 +    }
  
 -    if (LoadFrameworkBundle(CFSTR("Carbon.framework"), &carbonBundle) != noErr) {
@@ -212,50 +223,50 @@ index ad9c10f..e3336fa 100644
 +    // establish the connection with I/O Kit, on the default port (MACH_PORT_NULL).
 +    status = IOMasterPort( MACH_PORT_NULL, &ioPort );
 +    if (status != KERN_SUCCESS) {
-+        qWarning() << "could not establish a connection with I/O Kit on the default port";
-         return false;
-     }
--
--    // Load the Mach-O function pointers for the routine we will be using.
--    InstallEventLoopIdleTimerPtr myInstallEventLoopIdleTimer =
--        (InstallEventLoopIdleTimerPtr)CFBundleGetFunctionPointerForName(carbonBundle, CFSTR("InstallEventLoopIdleTimer"));
--
--    if (myInstallEventLoopIdleTimer == 0) {
++        qCWarning(KIDLETIME) << "could not establish a connection with I/O Kit on the default port";
++        return false;
++    }
 +    // We will use the IOHID service which will allow us to know about user interaction.
 +    // Get an iterator on the I/O Kit services, so we can access IOHID:
 +    status = IOServiceGetMatchingServices( ioPort, IOServiceMatching("IOHIDSystem"), &ioIterator );
 +    if (status != KERN_SUCCESS) {
 +        ioIterator = 0;
-+        qWarning() << "could not get an iterator on the I/O Kit services, to access IOHID";
++        qCWarning(KIDLETIME) << "could not get an iterator on the I/O Kit services, to access IOHID";
 +        return false;
 +    }
 +    // get the actual IOHID service object:
 +    ioObject = IOIteratorNext(ioIterator);
 +    if (!ioObject) {
-+        qWarning() << "could not get the actual IOHID service object";
++        qCWarning(KIDLETIME) << "could not get the actual IOHID service object";
          return false;
      }
 +    IOObjectRetain(ioObject);
 +    IOObjectRetain(ioIterator);
-+
+ 
+-    // Load the Mach-O function pointers for the routine we will be using.
+-    InstallEventLoopIdleTimerPtr myInstallEventLoopIdleTimer =
+-        (InstallEventLoopIdleTimerPtr)CFBundleGetFunctionPointerForName(carbonBundle, CFSTR("InstallEventLoopIdleTimer"));
 +    m_idleTimer = new QTimer(this);
 +    connect(m_idleTimer, SIGNAL(timeout()), this, SLOT(checkForIdle()));
-+
-+    additionalSetUp();
+ 
+-    if (myInstallEventLoopIdleTimer == 0) {
++    if (!additionalSetUp()) {
++        qCWarning(KIDLETIME) << "failure installing the native Cocoa filter for detecting end-of-idle events";
+         return false;
+     }
  
 -    EventLoopIdleTimerUPP timerUPP = NewEventLoopIdleTimerUPP(IdleTimerAction);
 -    if ((*myInstallEventLoopIdleTimer)(GetMainEventLoop(), kEventDurationSecond, kEventDurationSecond, timerUPP, this, &m_timerRef)) {
-+    return false;
++    return true;
 +}
 +
-+bool MacPoller::setPollerResolution(int msecs)
++bool OSXIdlePoller::setPollerResolution(int msecs)
 +{
 +    if (msecs >= 0) {
 +        m_pollResolution = msecs;
 +        if (m_pollResolution < 5) {
 +            m_idleTimer->setTimerType(Qt::PreciseTimer);
-+        }
-+        else {
++        } else {
 +            m_idleTimer->setTimerType(Qt::CoarseTimer);
 +        }
 +        if (m_idleTimer->isActive()) {
@@ -267,22 +278,27 @@ index ad9c10f..e3336fa 100644
      return false;
  }
  
-+bool MacPoller::getPollerResolution(int &msecs)
-+{
+-QList<int> MacPoller::timeouts() const
++bool OSXIdlePoller::getPollerResolution(int &msecs)
+ {
+-    return m_timeouts;
 +    msecs = m_pollResolution;
 +    // this plugin supports setting the polling resolution so we return true
 +    return true;
-+}
-+
- QList<int> MacPoller::timeouts() const
- {
-     return m_timeouts;
-@@ -173,34 +169,149 @@ QList<int> MacPoller::timeouts() const
+ }
  
- void MacPoller::addTimeout(int nextTimeout)
+-void MacPoller::addTimeout(int nextTimeout)
++QList<int> OSXIdlePoller::timeouts() const
  {
 -    m_timeouts.append(nextTimeout);
 -    poll();
++    return m_timeouts;
+ }
+ 
+-int MacPoller::poll()
++void OSXIdlePoller::addTimeout(int nextTimeout)
+ {
+-    int idle = m_secondsIdle * 1000;
 +    if (!m_timeouts.contains(nextTimeout)) {
 +        m_timeouts.append(nextTimeout);
 +        std::sort(m_timeouts.begin(), m_timeouts.end());
@@ -295,14 +311,11 @@ index ad9c10f..e3336fa 100644
 +        poll(false);
 +    }
 +    m_NTimeouts = m_timeouts.count();
- }
++}
  
--int MacPoller::poll()
-+void MacPoller::removeTimeout(int timeout)
- {
--    int idle = m_secondsIdle * 1000;
--
 -    // Check if we reached a timeout..
++void OSXIdlePoller::removeTimeout(int timeout)
++{
 +    m_timeouts.removeOne(timeout);
 +    std::sort(m_timeouts.begin(), m_timeouts.end());
 +    m_minTimeout = -1, m_maxTimeout = -1;
@@ -312,31 +325,29 @@ index ad9c10f..e3336fa 100644
 -            emit timeoutReached(i);
 +        if (i < m_minTimeout || m_minTimeout < 0) {
 +            m_minTimeout = i;
-+        }
+         }
 +        if (i > m_maxTimeout) {
 +            m_maxTimeout = i;
-         }
-     }
++        }
++    }
 +    if (m_lastTimeout == timeout) {
 +        m_lastTimeout = -1;
 +        m_nextTimeout = -1;
-+    }
+     }
 +    m_NTimeouts = m_timeouts.count();
 +    poll(false);
 +}
  
 -    return idle;
-+int MacPoller::kickTimer(int64_t idle)
++int OSXIdlePoller::kickTimer(int64_t idle)
 +{
 +    if (!m_NTimeouts) {
 +        if (m_idleTimer->isActive()) {
 +            m_idleTimer->setInterval(0);
-+        }
-+        else {
++        } else {
 +            m_idleTimer->start(0);
 +        }
-+    }
-+    else {
++    } else {
 +        int64_t currentMinTimeout = (m_nextTimeout >= 0)? m_nextTimeout : m_minTimeout;
 +        if (idle < currentMinTimeout || m_pollResolution >= 0) {
 +            int interval = (m_pollResolution < 0)? (currentMinTimeout - idle) / 2 : m_pollResolution;
@@ -344,45 +355,49 @@ index ad9c10f..e3336fa 100644
 +//                      currentMinTimeout, idle, interval, m_nextTimeout);
 +            if (m_idleTimer->isActive()) {
 +                m_idleTimer->setInterval(interval);
-+            }
-+            else {
++            } else {
 +                m_idleTimer->start(interval);
 +            }
 +            return interval;
 +        }
 +    }
 +    return m_idleTimer->interval();
-+}
-+
-+int64_t MacPoller::poll(bool allowEmit, int64_t &idle)
-+{
+ }
+ 
+-int MacPoller::forcePollRequest()
++int64_t OSXIdlePoller::poll(bool allowEmit, int64_t &idle)
+ {
+-    return poll();
 +    kern_return_t status;
 +    CFTypeRef cfIdle;
 +    CFTypeID type;
 +    uint64_t time = 0;
 +    CFMutableDictionaryRef properties = 0;
-+    status = IORegistryEntryCreateCFProperties( ioObject, &properties, kCFAllocatorDefault, 0 );
++    status = IORegistryEntryCreateCFProperties(ioObject, &properties, kCFAllocatorDefault, 0);
 +    if (status == KERN_SUCCESS && properties) {
-+        cfIdle = CFDictionaryGetValue( properties, CFSTR("HIDIdleTime") );
++        cfIdle = CFDictionaryGetValue(properties, CFSTR("HIDIdleTime"));
 +        if (cfIdle) {
 +            CFRetain(cfIdle);
 +            // cfIdle can have different types: handle them properly:
 +            type = CFGetTypeID(cfIdle);
 +            if (type == CFDataGetTypeID()) {
-+                CFDataGetBytes( (CFDataRef)cfIdle, CFRangeMake( 0, sizeof(time) ), (UInt8*)&time );
-+            }
-+            else if (type == CFNumberGetTypeID()) {
-+                CFNumberGetValue( (CFNumberRef)cfIdle, kCFNumberSInt64Type, &time );
++                CFDataGetBytes((CFDataRef)cfIdle, CFRangeMake(0, sizeof(time) ), (UInt8*)&time);
++            } else if (type == CFNumberGetTypeID()) {
++                CFNumberGetValue((CFNumberRef)cfIdle, kCFNumberSInt64Type, &time);
 +            }
 +            CFRelease(cfIdle);
 +        }
-+        CFRelease( (CFTypeRef)properties );
++        CFRelease((CFTypeRef)properties);
 +        // convert nanoseconds to milliseconds:
 +        idle = int64_t(time / 1000000);
-+        if (idle < m_idleOffset) {
++        if (idle < m_realIdle) {
++            // an input event was missed, possibly because additionalSetUp() failed
++            resumedFromIdle();
++        } else if (idle < m_idleOffset) {
 +            // reset the idle offset if the idle time dropped below it
 +            m_idleOffset = 0;
 +        }
++        m_realIdle = idle;
 +    }
 +
 +    int64_t offsetIdle = idle - m_idleOffset;
@@ -394,7 +409,6 @@ index ad9c10f..e3336fa 100644
 +            // m_timeouts is sorted so we can simply check for offsetIdle>=i
 +            if (i != m_lastTimeout && i > m_lastTimeout && offsetIdle >= i) {
 +                // Bingo!
-+//                 qDebug() << "lastTimeOut=" << m_lastTimeout;
 +                m_lastTimeout = i;
 +                if (i < m_maxTimeout) {
 +                    m_nextTimeout = iter[1];
@@ -402,74 +416,90 @@ index ad9c10f..e3336fa 100644
 +//                 qDebug() << "timeout" << i << "hit at idle" << offsetIdle << "(offset,real idle=="
 +//                     << m_idleOffset << idle << "); next timeout:" << m_nextTimeout;
 +                emit timeoutReached(i);
-+                return idle;
++                return offsetIdle;
 +            }
 +        }
 +    }
 +    if (m_minTimeout > 0) {
 +        kickTimer(offsetIdle);
 +    } else {
++        // there are no valid timeout periods; stop the timer to avoid
++        // useless overhead
 +        m_idleTimer->stop();
 +    }
 +
 +    // return the "virtual" idle i.e. the time since the last simulateUserActivity(),
 +    // not the actual idle time!
 +    return offsetIdle;
-+}
-+
-+int64_t MacPoller::poll(bool allowEmits)
-+{
+ }
+ 
+-void MacPoller::removeTimeout(int timeout)
++int64_t OSXIdlePoller::poll(bool allowEmits)
+ {
+-    m_timeouts.removeOne(timeout);
+-    poll();
 +    int64_t idle;
 +    return poll(allowEmits, idle);
  }
  
- int MacPoller::forcePollRequest()
- {
--    return poll();
+-void MacPoller::catchIdleEvent()
++int OSXIdlePoller::forcePollRequest()
++{
 +    return int(poll(false));
- }
- 
--void MacPoller::removeTimeout(int timeout)
-+void MacPoller::detectedActivity()
- {
--    m_timeouts.removeOne(timeout);
--    poll();
++}
++
++void OSXIdlePoller::detectedActivity()
++{
 +    if (m_catch) {
 +        emit resumingFromIdle();
 +    }
 +    stopCatchingIdleEvents();
++}
++
++void OSXIdlePoller::catchIdleEvent()
+ {
+     m_catch = true;
  }
  
- void MacPoller::catchIdleEvent()
-@@ -210,19 +321,47 @@ void MacPoller::catchIdleEvent()
- 
- void MacPoller::stopCatchingIdleEvents()
+-void MacPoller::stopCatchingIdleEvents()
++void OSXIdlePoller::stopCatchingIdleEvents()
  {
-+    // this slot is called after resumingFromIdle, and thus should not stop the poll timer
-+    // because that also drives the timeout detection. Unsetting m_catch is enough
++    // this slot is called after resumingFromIdle, and should not stop the poll timer
++    // because that also drives the timeout detection. The m_catch state variable
++    // indicates whether resuming-from-idle events should be caught or not.
      m_catch = false;
-+    m_lastTimeout = -1;
++    // we are still resuming from idle, however, so any future idling timeout should
++    // be determined starting from the beginning of the timeouts list.
++    resumedFromIdle();
  }
  
 -void MacPoller::triggerResume()
-+void MacPoller::checkForIdle()
++void OSXIdlePoller::resumedFromIdle()
  {
 -    if (m_catch) {
 -        emit resumingFromIdle();
 -        stopCatchingIdleEvents();
++    m_idleOffset = 0;
++    m_lastTimeout = -1;
++    m_nextTimeout = -1;
++}
++
++void OSXIdlePoller::checkForIdle()
++{
 +    if (m_NTimeouts || m_catch) {
 +        int64_t idle = poll(true);
 +        if (idle == 0 && m_catch) {
-+            m_idleOffset = 0;
++            resumedFromIdle();
 +            emit resumingFromIdle();
 +        }
      }
  }
  
- void MacPoller::simulateUserActivity()
+-void MacPoller::simulateUserActivity()
++void OSXIdlePoller::simulateUserActivity()
  {
 -    // TODO
-+    // The alternative is to disable sleep using 
++    // The alternative is to disable sleep using
 +    //     IOReturn success = IOPMAssertionCreateWithName(kIOPMAssertionTypeNoDisplaySleep,
 +    //                                                    kIOPMAssertionLevelOn, CFSTR("simulated user activity"), &assertionID);
 +    // coupled with a timer to re-allow sleep, but there are reports that isn't very reliable.
@@ -489,42 +519,88 @@ index ad9c10f..e3336fa 100644
 +//     CFRelease(move1);
 +//     CFRelease(event);
 +    // store an idle offset in order to simulate a (software) reset
-+    m_lastTimeout = -1;
-+    m_nextTimeout = -1;
++    resumedFromIdle();
 +    poll(false, m_idleOffset);
  }
  
 diff --git src/plugins/osx/macpoller.h src/plugins/osx/macpoller.h
-index ef51ea5..007b5d8 100644
+index ef51ea5..a3f45aa 100644
 --- src/plugins/osx/macpoller.h
 +++ src/plugins/osx/macpoller.h
-@@ -21,7 +21,14 @@
+@@ -1,5 +1,6 @@
+ /* This file is part of the KDE libraries
+    Copyright (C) 2009 Dario Freddi <drf at kde.org>
++   Copyright (C) 2015 René J.V. Bertin <rjvbertin at gmail.com>
+ 
+    This library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Library General Public
+@@ -21,23 +22,60 @@
  
  #include "abstractsystempoller.h"
  
 -#include <Carbon/Carbon.h>
++#include <QAbstractNativeEventFilter>
+ 
+-class MacPoller: public AbstractSystemPoller
 +#include <QTimer>
 +
 +// Use IOKIT instead of the deprecated Carbon interface
 +#include <IOKit/IOKitLib.h>
 +
-+#include <QAbstractNativeEventFilter>
-+
 +class QWidget;
- 
- class MacPoller: public AbstractSystemPoller
++
++/**
++ * This is a modernised Macintosh backend (plugin) implementation for KIdleTime.
++ * It uses a Cocoa event filter to detect global and application user input events
++ * (which indicate absence/end of idling) and the HIDIdleTime property from IOKit
++ * to obtain the time since the last event.
++ * 
++ * Custom timeouts ("the system has not had input events for X milliseconds") are
++ * detected via a polling algorithm that uses an adaptive polling interval in the
++ * default configuration that limits its overhead as much as possible while maintaining
++ * good detection accuracy. The class does provide a mechanism to switch it to a
++ * fixed-frequency polling strategy of configurable resolution, but that mechanism
++ * isn't yet accessible via the KIdleTime class.
++ * 
++ * @note polling comes at a cost. This cost is minimised with the default, adaptive interval
++ * configuration, but applications should not let the KIdleTime instance active when it 
++ * is not needed. This OS X backend allows to deactivate KIdleTime by removing all timeouts;
++ * @see KIdleTime::removeAllIdleTimeouts.
++ */
++class OSXIdlePoller: public AbstractSystemPoller
  {
-@@ -37,7 +44,8 @@ public:
+     Q_OBJECT
+     Q_PLUGIN_METADATA(IID "org.kde.kidletime.AbstractSystemPoller" FILE "osx.json")
+     Q_INTERFACES(AbstractSystemPoller)
+ 
+ public:
+-    MacPoller(QObject *parent = 0);
+-    virtual ~MacPoller();
++    OSXIdlePoller(QObject *parent = 0);
++    virtual ~OSXIdlePoller();
+ 
+     bool isAvailable();
      bool setUpPoller();
      void unloadPoller();
  
 -    static pascal void IdleTimerAction(EventLoopTimerRef, EventLoopIdleTimerMessage inState, void *inUserData);
++    /**
++     * switch the idle time polling engine to the specified interval in milliseconds
++     * or back to the default adaptive engine.
++     * @param msecs : the desired polling interval in milliseconds, or -1 for the default
++     * algoritm. @see QTimer for the meaning of msec=0 .
++     * @returns true if the change to a fixed interval was successful.
++     */
 +    bool setPollerResolution(int msecs);
++    /**
++     * query the current polling interval, which will be -1 for the default adaptive interval
++     * @returns true (this class supports changing the interval)
++     */
 +    bool getPollerResolution(int &msecs);
  
  public Q_SLOTS:
      void addTimeout(int nextTimeout);
-@@ -47,16 +55,29 @@ public Q_SLOTS:
+@@ -47,16 +85,66 @@ public Q_SLOTS:
      void catchIdleEvent();
      void stopCatchingIdleEvents();
      void simulateUserActivity();
@@ -536,10 +612,40 @@ index ef51ea5..007b5d8 100644
 +    void detectedActivity();
  
  private:
++    /**
++     * Query IOKit for the current HIDIdleTime value, and return it. Also compares the current idle
++     * time to the registered list of timeouts, and emits a \c timeoutReached signal when
++     * a hit is found.
++     * @param allowEmits : should timeoutReached() signals be emitted?
++     * @param idle : returns the current true idle time (time without input events)
++     * @returns : the simulated idle time (time without input events and since the last
++     * call to simulateUserActivity).
++     */
 +    int64_t poll(bool allowEmits, int64_t &idle);
++    /**
++     * Query IOKit for the current HIDIdleTime value, and return it. Also compares the current idle
++     * time to the registered list of timeouts, and emits a \c timeoutReached signal when
++     * a hit is found.
++     * @param allowEmits : should timeoutReached() signals be emitted?
++     * @returns : the simulated idle time (time without input events and since the last
++     * call to simulateUserActivity).
++     */
 +    int64_t poll(bool allowEmits);
++    void resumedFromIdle();
++    /**
++     * when the adaptive interval is used, this function reconfigures the idle polling
++     * timer as a function of the current idle time. The timer is stopped when no timeouts
++     * are to be monitored.
++     */
 +    int kickTimer(int64_t idle);
++    /**
++     * sets up the Cocoa global events filter.
++     * @returns true in case of success
++     */
 +    bool additionalSetUp();
++    /**
++     * takes down the Cocoa global events filter.
++     */
 +    void additionalUnload();
      QList<int> m_timeouts;
 -    EventLoopTimerRef m_timerRef;
@@ -549,10 +655,17 @@ index ef51ea5..007b5d8 100644
 +    io_object_t ioObject;
 +    QTimer *m_idleTimer;
 +    int m_pollResolution;
-+    int m_minTimeout, m_maxTimeout, m_NTimeouts;
-+    int m_lastTimeout, m_nextTimeout;
-+    int64_t m_idleOffset;
++    int m_minTimeout,
++        m_maxTimeout,
++        m_NTimeouts;
++    int m_lastTimeout,
++        m_nextTimeout;
++    int64_t m_realIdle,
++        m_idleOffset;
      bool m_catch;
++    /**
++     * instance of a class that "contains" the Cocoa global event filter.
++     */
 +    QAbstractNativeEventFilter *m_nativeGrabber;
 +    friend class CocoaEventFilter;
  };
@@ -560,16 +673,16 @@ index ef51ea5..007b5d8 100644
  #endif /* MACPOLLER_H */
 diff --git src/plugins/osx/macpoller_helper.mm src/plugins/osx/macpoller_helper.mm
 new file mode 100644
-index 0000000..1145070
+index 0000000..3806da9
 --- /dev/null
 +++ src/plugins/osx/macpoller_helper.mm
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,98 @@
 +/* This file is part of the KDE libraries
-+   Copyright (C) 2015 René J.V. Bertin <rjvbertin at gmail.com>
 +   Copyright (C) 2009 Dario Freddi <drf at kde.org>
 +   Copyright (C) 2003 Tarkvara Design Inc.  (from KVIrc source code)
 +   Copyright (c) 2008 Roman Jarosz          <kedgedev at centrum.cz>
 +   Copyright (c) 2008 the Kopete developers <kopete-devel at kde.org>
++   Copyright (C) 2015 René J.V. Bertin <rjvbertin at gmail.com>
 +
 +   This library is free software; you can redistribute it and/or
 +   modify it under the terms of the GNU Library General Public
@@ -586,14 +699,14 @@ index 0000000..1145070
 +   Boston, MA 02110-1301, USA.
 +*/
 +
++#include "logging.h"
 +#include "macpoller.h"
 +#include <CoreServices/CoreServices.h>
 +
-+#include <QDebug>
 +#include <QApplication>
 +
 +// See http://stackoverflow.com/questions/19229777/how-to-detect-global-mouse-button-events for 
-+// background relative to using an approach based on WidgetBasedPoller.
++// background relative to using this approach inspired by WidgetBasedPoller.
 +
 +#import <AppKit/AppKit.h>
 +
@@ -604,35 +717,51 @@ index 0000000..1145070
 +                    | NSRightMouseUpMask | NSOtherMouseDownMask | NSOtherMouseUpMask
 +                    | NSLeftMouseDraggedMask | NSRightMouseDraggedMask | NSOtherMouseDraggedMask
 +                    | NSMouseMovedMask | NSScrollWheelMask | NSTabletPointMask | NSKeyDownMask;
-+    bool nativeEventFilter(const QByteArray &eventType, void *message, long *result) {
-+        Q_UNUSED(result) Q_UNUSED(message)
-+        qDebug() << "Global" << eventType << "detected natively";
-+        poller->detectedActivity();
++
++    bool nativeEventFilter(const QByteArray &eventType, void *message, long *result)
++    {
++        Q_UNUSED(eventType)
++        Q_UNUSED(result)
++        Q_UNUSED(message)
++        if (poller->m_catch) {
++            // don't call out of this function if unnecessary
++            poller->detectedActivity();
++        }
 +        return false;
 +    };
-+    MacPoller *poller;
++
++    OSXIdlePoller *poller;
 +    id m_monitorId;
 +};
 +
-+bool MacPoller::additionalSetUp()
++bool OSXIdlePoller::additionalSetUp()
 +{
 +    CocoaEventFilter *nativeGrabber = new CocoaEventFilter;
++    bool ret = false;
 +    if (nativeGrabber) {
 +        // quick and dirty, no real point in going through a setter
 +        nativeGrabber->poller = this;
++        nativeGrabber->m_monitorId = 0;
 +        m_nativeGrabber = nativeGrabber;
 +        QCoreApplication::processEvents();
 +        @autoreleasepool {
 +            nativeGrabber->m_monitorId = [NSEvent addGlobalMonitorForEventsMatchingMask:CocoaEventFilter::mask
 +                handler:^(NSEvent* event) { m_nativeGrabber->nativeEventFilter("NSEventFromGlobalMonitor", event, 0); }];
 +        }
-+        qApp->installNativeEventFilter(m_nativeGrabber);
-+        QCoreApplication::processEvents();
++        if (nativeGrabber->m_monitorId) {
++            qApp->installNativeEventFilter(m_nativeGrabber);
++            QCoreApplication::processEvents();
++            ret = true;
++        } else {
++            qCWarning(KIDLETIME) << "Failure installing the global native event filter";
++            delete nativeGrabber;
++            m_nativeGrabber = 0;
++        }
 +    }
-+    return true;
++    return ret;
 +}
 +
-+void MacPoller::additionalUnload()
++void OSXIdlePoller::additionalUnload()
 +{
 +    if (m_nativeGrabber) {
 +        CocoaEventFilter *nativeGrabber = static_cast<CocoaEventFilter*>(m_nativeGrabber);
@@ -641,9 +770,8 @@ index 0000000..1145070
 +            @autoreleasepool {
 +                 [NSEvent removeMonitor:nativeGrabber->m_monitorId];
 +            }
-+            nativeGrabber->m_monitorId = 0;
 +        }
 +        delete nativeGrabber;
++        m_nativeGrabber = 0;
 +    }
-+    m_nativeGrabber = 0;
 +}
