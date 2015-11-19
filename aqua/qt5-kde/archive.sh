@@ -12,3 +12,4 @@ EXTRAFILES="_resources/port1.0/group/qt5*-1.0.tcl _resources/port1.0/group/qmake
 
 # echo ${PORT} ${CATDIR} ${PORTDIR}
 tar -cvjf ${PORT}.tar.bz2 ${EXTRAFILES} ${CATDIR}/${PORTDIR}
+ll -h ${PORT}.tar.bz2
