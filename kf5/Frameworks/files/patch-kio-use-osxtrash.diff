@@ -44,10 +44,10 @@ index 79c2ca7..63e2769 100644
      if (map.count() != 1) {
          // If we have multiple trashes, we setup a widget to choose
 diff --git src/ioslaves/trash/tests/CMakeLists.txt src/ioslaves/trash/tests/CMakeLists.txt
-index 3e138f7..c6aa4ae 100644
+index 3e138f7..1434d9e 100644
 --- src/ioslaves/trash/tests/CMakeLists.txt
 +++ src/ioslaves/trash/tests/CMakeLists.txt
-@@ -21,10 +21,14 @@ target_link_libraries(testtrash
+@@ -21,6 +21,10 @@ target_link_libraries(testtrash
     KF5::Solid
     Qt5::Test
  )
@@ -58,16 +58,11 @@ index 3e138f7..c6aa4ae 100644
  
  ### next target ###
  
- add_executable(lockingtest lockingtest.cpp ../kinterprocesslock.cpp)
- ecm_mark_nongui_executable(lockingtest)
- 
--target_link_libraries(lockingtest Qt5::Core Qt5::DBus)
-+target_link_libraries(lockingtest Qt5::Core Qt5::DBus Qt5::QspXDG)
 diff --git src/ioslaves/trash/tests/testtrash.cpp src/ioslaves/trash/tests/testtrash.cpp
-index 339aa19..22d850f 100644
+index 339aa19..b171606 100644
 --- src/ioslaves/trash/tests/testtrash.cpp
 +++ src/ioslaves/trash/tests/testtrash.cpp
-@@ -137,12 +137,18 @@ void TestTrash::initTestCase()
+@@ -137,14 +137,22 @@ void TestTrash::initTestCase()
  
      QStandardPaths::setTestModeEnabled(true);
  
@@ -79,57 +74,79 @@ index 339aa19..22d850f 100644
      // Look for another writable partition than $HOME (not mandatory)
      TrashImpl impl;
      impl.init();
-+#ifdef Q_OS_OSX
-+    m_trashDir = impl.trashDirectories()[0];
-+    qDebug() << "setup: using trash directory " << m_trashDir;
-+#endif
  
      TrashImpl::TrashDirMap trashDirs = impl.trashDirectories();
++#ifdef Q_OS_OSX
++    QVERIFY(trashDirs.contains(0));
++    m_trashDir = trashDirs.value(0);
++    qDebug() << "setup: using trash directory " << m_trashDir;
++#endif
++
      TrashImpl::TrashDirMap topDirs = impl.topDirectories();
+     bool foundTrashDir = false;
+     m_otherPartitionId = 0;
 diff --git src/ioslaves/trash/trashimpl.cpp src/ioslaves/trash/trashimpl.cpp
-index 26d9ea8..db1a054 100644
+index 26d9ea8..1497295 100644
 --- src/ioslaves/trash/trashimpl.cpp
 +++ src/ioslaves/trash/trashimpl.cpp
+@@ -72,7 +72,7 @@ TrashImpl::TrashImpl() :
+     if (QT_LSTAT(QFile::encodeName(QDir::homePath()), &buff) == 0) {
+         m_homeDevice = buff.st_dev;
+     } else {
+-        qDebug() << "Should never happen: couldn't stat $HOME" << strerror(errno);
++        qWarning() << "Should never happen: couldn't stat $HOME" << strerror(errno);
+     }
+ }
+ 
+@@ -118,7 +118,7 @@ int TrashImpl::testDir(const QString &_name) const
+             qWarning() << "could not create" << name;
+             return KIO::ERR_COULD_NOT_MKDIR;
+         } else {
+-            qDebug() << name << "created.";
++            //qDebug() << name << "created.";
+         }
+     } else { // exists already
+         closedir(dp);
 @@ -126,6 +126,47 @@ int TrashImpl::testDir(const QString &_name) const
      return 0; // success
  }
  
-+void TrashImpl::deleteEmptyTrashInfraStructure()
++void TrashImpl::deleteEmptyTrashInfrastructure()
 +{
 +#ifdef Q_OS_OSX
 +    // For each known trash directory...
-+    if ( !m_trashDirectoriesScanned ) {
++    if (!m_trashDirectoriesScanned) {
 +        scanTrashDirectories();
 +    }
 +    TrashDirMap::const_iterator it = m_trashDirectories.constBegin();
-+    for ( ; it != m_trashDirectories.constEnd() ; ++it ) {
++    for (; it != m_trashDirectories.constEnd() ; ++it) {
 +        const QString trashPath = it.value();
 +        QString infoPath = trashPath + QLatin1String("/info");
 +
-+        qDebug() << "empty Trash" << trashPath << "; removing infrastructure";
++        //qDebug() << "empty Trash" << trashPath << "; removing infrastructure";
 +        synchronousDel(infoPath, false, true);
 +        synchronousDel(trashPath + QLatin1String("/files"), false, true);
-+        if ( trashPath.endsWith(QLatin1String("/KDE.trash")) ) {
++        if (trashPath.endsWith(QLatin1String("/KDE.trash"))) {
 +            synchronousDel(trashPath, false, true);
 +        }
 +    }
 +#endif
 +}
 +
-+bool TrashImpl::createTrashInfraStructure(int trashId, const QString &path)
++bool TrashImpl::createTrashInfrastructure(int trashId, const QString &path)
 +{
 +    int err;
-+    QString trashDir = (path.isEmpty())? trashDirectoryPath(trashId) : path;
-+    if ( ( err = testDir( trashDir ) ) ) {
-+        error( err, trashDir );
++    QString trashDir = path.isEmpty() ? trashDirectoryPath(trashId) : path;
++    if ((err = testDir(trashDir))) {
++        error(err, trashDir);
 +        return false;
 +    }
-+    if ( ( err = testDir( trashDir + QLatin1String("/info") ) ) ) {
-+        error( err, trashDir + QLatin1String("/info") );
++    if ((err = testDir(trashDir + QLatin1String("/info")))) {
++        error(err, trashDir + QLatin1String("/info"));
 +        return false;
 +    }
-+    if ( ( err = testDir( trashDir + QLatin1String("/files") ) ) ) {
-+        error( err, trashDir + QLatin1String("/files") );
++    if ((err = testDir(trashDir + QLatin1String("/files")))) {
++        error(err, trashDir + QLatin1String("/files"));
 +        return false;
 +    }
 +    return true;
@@ -142,101 +159,217 @@ index 26d9ea8..db1a054 100644
      // Check the trash directory and its info and files subdirs
      // see also kdesktop/init.cc for first time initialization
      m_initStatus = InitError;
-+#ifndef Q_OS_MAC
++#ifndef Q_OS_OSX
      // $XDG_DATA_HOME/Trash, i.e. ~/.local/share/Trash by default.
      const QString xdgDataDir = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QLatin1Char('/');
      if (!QDir().mkpath(xdgDataDir)) {
-@@ -146,19 +188,19 @@ bool TrashImpl::init()
+@@ -146,22 +188,22 @@ bool TrashImpl::init()
      }
  
      const QString trashDir = xdgDataDir + QLatin1String("Trash");
 -    int err;
 -    if ((err = testDir(trashDir))) {
 -        error(err, trashDir);
--        return false;
--    }
--    if ((err = testDir(trashDir + QLatin1String("/info")))) {
--        error(err, trashDir + QLatin1String("/info"));
-+    if (!createTrashInfraStructure(0, trashDir)) {
++    if (!createTrashInfrastructure(0, trashDir)) {
          return false;
      }
+-    if ((err = testDir(trashDir + QLatin1String("/info")))) {
+-        error(err, trashDir + QLatin1String("/info"));
+-        return false;
+-    }
 -    if ((err = testDir(trashDir + QLatin1String("/files")))) {
 -        error(err, trashDir + QLatin1String("/files"));
 +#else
 +    // we DO NOT create ~/.Trash on OS X, that's the operating system's privilege
 +    QString trashDir = QDir::homePath() + QLatin1String("/.Trash");
 +    if (!QFileInfo(trashDir).isDir()) {
-+        error( KIO::ERR_DOES_NOT_EXIST, trashDir );
++        error(KIO::ERR_DOES_NOT_EXIST, trashDir);
          return false;
      }
 +    trashDir += QLatin1String("/KDE.trash");
-+    // we don't have to call createTrashInfraStructure() here because it'll be called when needed.
++    // we don't have to call createTrashInfrastructure() here because it'll be called when needed.
 +#endif
      m_trashDirectories.insert(0, trashDir);
      m_initStatus = InitOK;
-     qDebug() << "initialization OK, home trash dir:" << trashDir;
-@@ -245,6 +287,9 @@ bool TrashImpl::createInfo(const QString &origPath, int &trashId, QString &fileI
+-    qDebug() << "initialization OK, home trash dir:" << trashDir;
++    //qDebug() << "initialization OK, home trash dir:" << trashDir;
+     return true;
+ }
+ 
+@@ -210,7 +252,7 @@ void TrashImpl::migrateOldTrash()
+ 
+ bool TrashImpl::createInfo(const QString &origPath, int &trashId, QString &fileId)
+ {
+-    qDebug() << origPath;
++    //qDebug() << origPath;
+     // Check source
+     const QByteArray origPath_c(QFile::encodeName(origPath));
+ 
+@@ -237,7 +279,7 @@ bool TrashImpl::createInfo(const QString &origPath, int &trashId, QString &fileI
+         qWarning() << "OUCH - internal error, TrashImpl::findTrashDirectory returned" << trashId;
+         return false; // ### error() needed?
+     }
+-    qDebug() << "trashing to" << trashId;
++    //qDebug() << "trashing to" << trashId;
+ 
+     // Grab original filename
+     QUrl url = QUrl::fromLocalFile(origPath);
+@@ -245,13 +287,16 @@ bool TrashImpl::createInfo(const QString &origPath, int &trashId, QString &fileI
      const QString origFileName = url.fileName();
  
      // Make destination file in info/
 +#ifdef Q_OS_OSX
-+    createTrashInfraStructure(trashId);
++    createTrashInfrastructure(trashId);
 +#endif
      url.setPath(infoPath(trashId, origFileName));     // we first try with origFileName
      QUrl baseDirectory = QUrl::fromLocalFile(url.path());
      // Here we need to use O_EXCL to avoid race conditions with other kioslave processes
+     int fd = 0;
+     QString fileName;
+     do {
+-        qDebug() << "trying to create" << url.path();
++        //qDebug() << "trying to create" << url.path();
+         fd = ::open(QFile::encodeName(url.path()), O_WRONLY | O_CREAT | O_EXCL, 0600);
+         if (fd < 0) {
+             if (errno == EEXIST) {
+@@ -303,7 +348,7 @@ bool TrashImpl::createInfo(const QString &origPath, int &trashId, QString &fileI
+ 
+     ::fclose(file);
+ 
+-    qDebug() << "info file created in trashId=" << trashId << ":" << fileId;
++    //qDebug() << "info file created in trashId=" << trashId << ":" << fileId;
+     return true;
+ }
+ 
 @@ -355,6 +400,9 @@ QString TrashImpl::filesPath(int trashId, const QString &fileId) const
  
  bool TrashImpl::deleteInfo(int trashId, const QString &fileId)
  {
 +#ifdef Q_OS_OSX
-+    createTrashInfraStructure(trashId);
++    createTrashInfrastructure(trashId);
 +#endif
      bool ok = QFile::remove(infoPath(trashId, fileId));
      if (ok) {
          fileRemoved();
-@@ -371,6 +419,9 @@ bool TrashImpl::moveToTrash(const QString &origPath, int trashId, const QString
+@@ -364,13 +412,16 @@ bool TrashImpl::deleteInfo(int trashId, const QString &fileId)
+ 
+ bool TrashImpl::moveToTrash(const QString &origPath, int trashId, const QString &fileId)
+ {
+-    qDebug() << "Trashing" << origPath << trashId << fileId;
++    //qDebug() << "Trashing" << origPath << trashId << fileId;
+     if (!adaptTrashSize(origPath, trashId)) {
+         return false;
+     }
  
      const qulonglong pathSize = DiscSpaceUtil::sizeOfPath(origPath);
  
 +#ifdef Q_OS_OSX
-+    createTrashInfraStructure(trashId);
++    createTrashInfrastructure(trashId);
 +#endif
      const QString dest = filesPath(trashId, fileId);
      if (!move(origPath, dest)) {
          // Maybe the move failed due to no permissions to delete source.
-@@ -451,6 +502,9 @@ bool TrashImpl::copyToTrash(const QString &origPath, int trashId, const QString
+@@ -424,7 +475,7 @@ bool TrashImpl::move(const QString &src, const QString &dest)
+     QUrl urlSrc = QUrl::fromLocalFile(src);
+     QUrl urlDest = QUrl::fromLocalFile(dest);
+ 
+-    qDebug() << urlSrc << "->" << urlDest;
++    //qDebug() << urlSrc << "->" << urlDest;
+     KIO::CopyJob *job = KIO::moveAs(urlSrc, urlDest, KIO::HideProgressInfo);
+     job->setUiDelegate(0);
+     connect(job, SIGNAL(result(KJob*)),
+@@ -436,7 +487,7 @@ bool TrashImpl::move(const QString &src, const QString &dest)
+ 
+ void TrashImpl::jobFinished(KJob *job)
+ {
+-    qDebug() << "error=" << job->error() << job->errorText();
++    //qDebug() << "error=" << job->error() << job->errorText();
+     error(job->error(), job->errorText());
+ 
+     emit leaveModality();
+@@ -444,13 +495,16 @@ void TrashImpl::jobFinished(KJob *job)
+ 
+ bool TrashImpl::copyToTrash(const QString &origPath, int trashId, const QString &fileId)
+ {
+-    qDebug();
++    //qDebug();
+     if (!adaptTrashSize(origPath, trashId)) {
+         return false;
+     }
  
      const qulonglong pathSize = DiscSpaceUtil::sizeOfPath(origPath);
  
 +#ifdef Q_OS_OSX
-+    createTrashInfraStructure(trashId);
++    createTrashInfrastructure(trashId);
 +#endif
      const QString dest = filesPath(trashId, fileId);
      if (!copy(origPath, dest)) {
          return false;
+@@ -481,7 +535,7 @@ bool TrashImpl::copy(const QString &src, const QString &dest)
+     m_lastErrorCode = 0;
+     QUrl urlSrc = QUrl::fromLocalFile(src);
+     QUrl urlDest = QUrl::fromLocalFile(dest);
+-    qDebug() << "copying" << src << "to" << dest;
++    //qDebug() << "copying" << src << "to" << dest;
+     KIO::CopyJob *job = KIO::copyAs(urlSrc, urlDest, KIO::HideProgressInfo);
+     job->setUiDelegate(0);
+     connect(job, SIGNAL(result(KJob*)),
+@@ -493,7 +547,7 @@ bool TrashImpl::copy(const QString &src, const QString &dest)
+ 
+ bool TrashImpl::directRename(const QString &src, const QString &dest)
+ {
+-    qDebug() << src << "->" << dest;
++    //qDebug() << src << "->" << dest;
+     // Do not use QFile::rename here, we need to be able to move broken symlinks too
+     // (and we need to make sure errno is set)
+     if (::rename(QFile::encodeName(src), QFile::encodeName(dest)) != 0) {
 @@ -539,6 +593,10 @@ bool TrashImplKDE_mkdir(int trashId, const QString &fileId, int permissions)
  
  bool TrashImpl::del(int trashId, const QString &fileId)
  {
 +#ifdef Q_OS_OSX
-+    createTrashInfraStructure(trashId);
++    createTrashInfrastructure(trashId);
 +#endif
 +
      QString info = infoPath(trashId, fileId);
      QString file = filesPath(trashId, fileId);
  
-@@ -837,6 +895,9 @@ void TrashImpl::fileAdded()
+@@ -577,7 +635,7 @@ bool TrashImpl::synchronousDel(const QString &path, bool setLastErrorCode, bool
+     // First ensure that all dirs have u+w permissions,
+     // otherwise we won't be able to delete files in them (#130780).
+     if (isDir) {
+-        qDebug() << "chmod'ing" << url;
++        //qDebug() << "chmod'ing" << url;
+         KFileItem fileItem(url, QLatin1String("inode/directory"), KFileItem::Unknown);
+         KFileItemList fileItemList;
+         fileItemList.append(fileItem);
+@@ -601,7 +659,7 @@ bool TrashImpl::synchronousDel(const QString &path, bool setLastErrorCode, bool
+ 
+ bool TrashImpl::emptyTrash()
+ {
+-    qDebug();
++    //qDebug();
+     // The naive implementation "delete info and files in every trash directory"
+     // breaks when deleted directories contain files owned by other users.
+     // We need to ensure that the .trashinfo file is only removed when the
+@@ -712,7 +770,7 @@ QStringList TrashImpl::listDir(const QString &physicalPath)
+ 
+ bool TrashImpl::infoForFile(int trashId, const QString &fileId, TrashedFileInfo &info)
+ {
+-    qDebug() << trashId << fileId;
++    //qDebug() << trashId << fileId;
+     info.trashId = trashId; // easy :)
+     info.fileId = fileId; // equally easy
+     info.physicalPath = filesPath(trashId, fileId);
+@@ -837,6 +895,7 @@ void TrashImpl::fileAdded()
  void TrashImpl::fileRemoved()
  {
      if (isEmpty()) {
-+#ifdef Q_OS_OSX
-+        deleteEmptyTrashInfraStructure();
-+#endif
++        deleteEmptyTrashInfrastructure();
          KConfigGroup group = m_config.group("Status");
          group.writeEntry("Empty", true);
          m_config.sync();
-@@ -846,6 +907,54 @@ void TrashImpl::fileRemoved()
+@@ -846,11 +905,59 @@ void TrashImpl::fileRemoved()
      // which will be done by the job soon after this.
  }
  
@@ -263,25 +396,25 @@ index 26d9ea8..db1a054 100644
 +                CFNumberRef cfMajor = (CFNumberRef)CFDictionaryGetValue(descDict, kDADiskDescriptionMediaBSDMajorKey);
 +                CFNumberRef cfMinor = (CFNumberRef)CFDictionaryGetValue(descDict, kDADiskDescriptionMediaBSDMinorKey);
 +                int major, minor;
-+                if ( CFNumberGetValue(cfMajor, kCFNumberIntType, &major) && CFNumberGetValue(cfMinor, kCFNumberIntType, &minor) ) {
-+                    qDebug() << "major=" << major << " minor=" << minor;
++                if (CFNumberGetValue(cfMajor, kCFNumberIntType, &major) && CFNumberGetValue(cfMinor, kCFNumberIntType, &minor)) {
++                    qWarning() << "major=" << major << " minor=" << minor;
 +                    devId = 1000 * major + minor;
 +                }
 +                CFRelease(cfMajor);
 +                CFRelease(cfMinor);
 +            }
 +            else {
-+                qDebug() << "couldn't get DADiskCopyDescription from" << disk;
++                qWarning() << "couldn't get DADiskCopyDescription from" << disk;
 +            }
 +            CFRelease(disk);
 +        }
 +        else {
-+            qDebug() << "DADiskCreateFromBSDName failed on statfs from" << mp;
++            qWarning() << "DADiskCreateFromBSDName failed on statfs from" << mp;
 +        }
 +        CFRelease(session);
 +    }
 +    else {
-+        qDebug() << "couldn't create DASession";
++        qWarning() << "couldn't create DASession";
 +    }
 +    return devId;
 +}
@@ -291,7 +424,22 @@ index 26d9ea8..db1a054 100644
  int TrashImpl::idForDevice(const Solid::Device &device) const
  {
      const Solid::Block *block = device.as<Solid::Block>();
-@@ -893,6 +1002,7 @@ void TrashImpl::refreshDevices() const
+     if (block) {
+-        qDebug() << "major=" << block->deviceMajor() << "minor=" << block->deviceMinor();
++        //qDebug() << "major=" << block->deviceMajor() << "minor=" << block->deviceMinor();
+         return block->deviceMajor() * 1000 + block->deviceMinor();
+     } else {
+         const Solid::NetworkShare *netshare = device.as<Solid::NetworkShare>();
+@@ -871,7 +978,7 @@ int TrashImpl::idForDevice(const Solid::Device &device) const
+ 
+             if (id == -1) {
+                 id = group.readEntry("NextID", 0);
+-                qDebug() << "new share=" << url << " id=" << id;
++                //qDebug() << "new share=" << url << " id=" << id;
+ 
+                 group.writeEntry(url, id);
+                 group.writeEntry("NextID", id + 1);
+@@ -893,10 +1000,11 @@ void TrashImpl::refreshDevices() const
      // otherwise we risk getting old device list
      qApp->processEvents(QEventLoop::ExcludeUserInputEvents);
  }
@@ -299,10 +447,23 @@ index 26d9ea8..db1a054 100644
  
  int TrashImpl::findTrashDirectory(const QString &origPath)
  {
-@@ -912,9 +1022,11 @@ int TrashImpl::findTrashDirectory(const QString &origPath)
+-    qDebug() << origPath;
++    //qDebug() << origPath;
+     // First check if same device as $HOME, then we use the home trash right away.
+     QT_STATBUF buff;
+     if (QT_LSTAT(QFile::encodeName(origPath), &buff) == 0
+@@ -906,18 +1014,20 @@ int TrashImpl::findTrashDirectory(const QString &origPath)
+ 
+     KMountPoint::Ptr mp = KMountPoint::currentMountPoints().findByPath(origPath);
+     if (!mp) {
+-        qDebug() << "KMountPoint found no mount point for" << origPath;
++        //qDebug() << "KMountPoint found no mount point for" << origPath;
+         return 0;
+     }
      QString mountPoint = mp->mountPoint();
      const QString trashDir = trashForMountPoint(mountPoint, true);
-     qDebug() << "mountPoint=" << mountPoint << "trashDir=" << trashDir;
+-    qDebug() << "mountPoint=" << mountPoint << "trashDir=" << trashDir;
++    //qDebug() << "mountPoint=" << mountPoint << "trashDir=" << trashDir;
 +#ifndef Q_OS_OSX
      if (trashDir.isEmpty()) {
          return 0;    // no trash available on partition
@@ -310,8 +471,12 @@ index 26d9ea8..db1a054 100644
 +#endif
      int id = idForTrashDirectory(trashDir);
      if (id > -1) {
-         qDebug() << "known with id" << id;
-@@ -933,6 +1045,9 @@ int TrashImpl::findTrashDirectory(const QString &origPath)
+-        qDebug() << "known with id" << id;
++        //qDebug() << "known with id" << id;
+         return id;
+     }
+     // new trash dir found, register it
+@@ -933,6 +1043,9 @@ int TrashImpl::findTrashDirectory(const QString &origPath)
      return m_lastId;
  #endif
  
@@ -321,7 +486,7 @@ index 26d9ea8..db1a054 100644
      refreshDevices();
      const QString query = QLatin1String("[StorageAccess.accessible == true AND StorageAccess.filePath == '") + mountPoint + QLatin1String("']");
      //qDebug() << "doing solid query:" << query;
-@@ -946,6 +1061,7 @@ int TrashImpl::findTrashDirectory(const QString &origPath)
+@@ -946,11 +1059,12 @@ int TrashImpl::findTrashDirectory(const QString &origPath)
  
      // new trash dir found, register it
      id = idForDevice(device);
@@ -329,7 +494,13 @@ index 26d9ea8..db1a054 100644
      if (id == -1) {
          return 0;
      }
-@@ -961,7 +1077,9 @@ int TrashImpl::findTrashDirectory(const QString &origPath)
+     m_trashDirectories.insert(id, trashDir);
+-    qDebug() << "found" << trashDir << "gave it id" << id;
++    //qDebug() << "found" << trashDir << "gave it id" << id;
+     if (!mountPoint.endsWith(QLatin1Char('/'))) {
+         mountPoint += QLatin1Char('/');
+     }
+@@ -961,7 +1075,9 @@ int TrashImpl::findTrashDirectory(const QString &origPath)
  
  void TrashImpl::scanTrashDirectories() const
  {
@@ -339,7 +510,7 @@ index 26d9ea8..db1a054 100644
  
      const QList<Solid::Device> lst = Solid::Device::listFromQuery(QStringLiteral("StorageAccess.accessible == true"));
      for (QList<Solid::Device>::ConstIterator it = lst.begin(); it != lst.end(); ++it) {
-@@ -972,7 +1090,11 @@ void TrashImpl::scanTrashDirectories() const
+@@ -972,12 +1088,16 @@ void TrashImpl::scanTrashDirectories() const
              int trashId = idForTrashDirectory(trashDir);
              if (trashId == -1) {
                  // new trash dir found, register it
@@ -351,7 +522,13 @@ index 26d9ea8..db1a054 100644
                  if (trashId == -1) {
                      continue;
                  }
-@@ -1008,7 +1130,11 @@ QString TrashImpl::trashForMountPoint(const QString &topdir, bool createIfNeeded
+                 m_trashDirectories.insert(trashId, trashDir);
+-                qDebug() << "found" << trashDir << "gave it id" << trashId;
++                //qDebug() << "found" << trashDir << "gave it id" << trashId;
+                 if (!topdir.endsWith(QLatin1Char('/'))) {
+                     topdir += QLatin1Char('/');
+                 }
+@@ -1008,7 +1128,11 @@ QString TrashImpl::trashForMountPoint(const QString &topdir, bool createIfNeeded
  {
      // (1) Administrator-created $topdir/.Trash directory
  
@@ -363,7 +540,7 @@ index 26d9ea8..db1a054 100644
      const QByteArray rootTrashDir_c = QFile::encodeName(rootTrashDir);
      // Can't use QFileInfo here since we need to test for the sticky bit
      uid_t uid = getuid();
-@@ -1020,13 +1146,20 @@ QString TrashImpl::trashForMountPoint(const QString &topdir, bool createIfNeeded
+@@ -1020,24 +1144,32 @@ QString TrashImpl::trashForMountPoint(const QString &topdir, bool createIfNeeded
                  && ((buff.st_mode & requiredBits) == requiredBits)
                  && (::access(rootTrashDir_c, W_OK) == 0) // must be user-writable
             ) {
@@ -379,12 +556,18 @@ index 26d9ea8..db1a054 100644
                          && (!S_ISLNK(buff.st_mode)) // not a symlink
                          && (buff.st_mode & 0777) == 0700) {  // rwx for user
 +#ifdef Q_OS_OSX
-+                    trashDir = trashDir + QLatin1String("/KDE.trash");
++                    trashDir += QStringLiteral("/KDE.trash");
 +#endif
                      return trashDir;
                  }
-                 qDebug() << "Directory" << trashDir << "exists but didn't pass the security checks, can't use it";
-@@ -1038,6 +1171,7 @@ QString TrashImpl::trashForMountPoint(const QString &topdir, bool createIfNeeded
+-                qDebug() << "Directory" << trashDir << "exists but didn't pass the security checks, can't use it";
++                qWarning() << "Directory" << trashDir << "exists but didn't pass the security checks, can't use it";
+             } else if (createIfNeeded && initTrashDirectory(trashDir_c)) {
+                 return trashDir;
+             }
+         } else {
+-            qDebug() << "Root trash dir" << rootTrashDir << "exists but didn't pass the security checks, can't use it";
++            qWarning() << "Root trash dir" << rootTrashDir << "exists but didn't pass the security checks, can't use it";
          }
      }
  
@@ -392,7 +575,15 @@ index 26d9ea8..db1a054 100644
      // (2) $topdir/.Trash-$uid
      const QString trashDir = topdir + QLatin1String("/.Trash-") + QString::number(uid);
      const QByteArray trashDir_c = QFile::encodeName(trashDir);
-@@ -1058,6 +1192,7 @@ QString TrashImpl::trashForMountPoint(const QString &topdir, bool createIfNeeded
+@@ -1051,13 +1183,14 @@ QString TrashImpl::trashForMountPoint(const QString &topdir, bool createIfNeeded
+                 return trashDir;
+             }
+         }
+-        qDebug() << "Directory" << trashDir << "exists but didn't pass the security checks, can't use it";
++        qWarning() << "Directory" << trashDir << "exists but didn't pass the security checks, can't use it";
+         // Exists, but not useable
+         return QString();
+     }
      if (createIfNeeded && initTrashDirectory(trashDir_c)) {
          return trashDir;
      }
@@ -400,18 +591,41 @@ index 26d9ea8..db1a054 100644
      return QString();
  }
  
-@@ -1225,6 +1360,9 @@ bool TrashImpl::adaptTrashSize(const QString &origPath, int trashId)
+@@ -1075,11 +1208,11 @@ int TrashImpl::idForTrashDirectory(const QString &trashDir) const
+ 
+ bool TrashImpl::initTrashDirectory(const QByteArray &trashDir_c) const
+ {
+-    qDebug() << trashDir_c;
++    //qDebug() << trashDir_c;
+     if (mkdir(trashDir_c, 0700) != 0) {
+         return false;
+     }
+-    qDebug();
++    //qDebug();
+     // This trash dir will be useable only if the directory is owned by user.
+     // In theory this is the case, but not on e.g. USB keys...
+     uid_t uid = getuid();
+@@ -1093,7 +1226,7 @@ bool TrashImpl::initTrashDirectory(const QByteArray &trashDir_c) const
+         return checkTrashSubdirs(trashDir_c);
+ 
+     } else {
+-        qDebug() << trashDir_c << "just created, by it doesn't have the right permissions, probably some strange unsupported filesystem";
++        qWarning() << trashDir_c << "just created, by it doesn't have the right permissions, probably some strange unsupported filesystem";
+         ::rmdir(trashDir_c);
+         return false;
+     }
+@@ -1225,6 +1358,9 @@ bool TrashImpl::adaptTrashSize(const QString &origPath, int trashId)
          // calculate size of the files to be put into the trash
          qulonglong additionalSize = DiscSpaceUtil::sizeOfPath(origPath);
  
 +#ifdef Q_OS_OSX
-+        createTrashInfraStructure(trashId);
++        createTrashInfrastructure(trashId);
 +#endif
          TrashSizeCache trashSize(trashPath);
          DiscSpaceUtil util(trashPath + QLatin1String("/files/"));
          if (util.usage(trashSize.calculateSize() + additionalSize) >= percent) {
 diff --git src/ioslaves/trash/trashimpl.h src/ioslaves/trash/trashimpl.h
-index 9886011..054a144 100644
+index 9886011..9318d50 100644
 --- src/ioslaves/trash/trashimpl.h
 +++ src/ioslaves/trash/trashimpl.h
 @@ -152,7 +152,11 @@ private:
@@ -433,10 +647,10 @@ index 9886011..054a144 100644
 +    // delete the files and info subdirectories from all known trash directories
 +    // (supposed to be empty!) to make sure OS X sees the trash as empty too.
 +    // Stub except on OS X.
-+    void deleteEmptyTrashInfraStructure();
++    void deleteEmptyTrashInfrastructure();
 +    // create the trash infrastructure; also called
 +    // to recreate it on OS X.
-+    bool createTrashInfraStructure(int trashId, const QString &path = QString());
++    bool createTrashInfrastructure(int trashId, const QString &path = QString());
 +
      /// Last error code stored in class to simplify API.
      /// Note that this means almost no method can be const.
