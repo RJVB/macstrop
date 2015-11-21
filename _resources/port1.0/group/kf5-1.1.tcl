@@ -384,6 +384,7 @@ kf5.framework_dependency    kbookmarks libKF5Bookmarks
 kf5.framework_dependency    kwallet libKF5Wallet
 kf5.framework_dependency    kio libKF5KIOCore
 kf5.framework_dependency    baloo libKF5Baloo
+kf5.framework_dependency    kdeclarative libKF5Declarative
 
 #########
 # to install kf5-frameworkintegration:
