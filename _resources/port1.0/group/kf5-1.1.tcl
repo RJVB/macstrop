@@ -161,6 +161,7 @@ variant docs description {build and install the documentation, for use with Qt's
             kf5.depends_build_frameworks \
                         kapidox
             post-destroot {
+                ui_msg "--->  Generating documentation for ${subport}"
                 # generate the documentation, working from ${build.dir}
                 system -W ${build.dir} "kgenapidox --qhp --searchengine --api-searchbox \
                     --qtdoc-dir ${qt_docs_dir} --kdedoc-dir ${kf5.docs_dir} \
@@ -387,6 +388,8 @@ kf5.framework_dependency    baloo libKF5Baloo
 kf5.framework_dependency    kdeclarative libKF5Declarative
 kf5.framework_dependency    kcmutils libKF5KCMUtils
 kf5.framework_dependency    kemoticons libKF5Emoticons
+# this is really a framework...
+kf5.framework_dependency    gpgmepp libKF5Gpgmepp
 
 #########
 # to install kf5-frameworkintegration:
