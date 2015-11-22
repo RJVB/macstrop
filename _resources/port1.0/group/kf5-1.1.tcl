@@ -386,6 +386,7 @@ kf5.framework_dependency    kio libKF5KIOCore
 kf5.framework_dependency    baloo libKF5Baloo
 kf5.framework_dependency    kdeclarative libKF5Declarative
 kf5.framework_dependency    kcmutils libKF5KCMUtils
+kf5.framework_dependency    kemoticons libKF5Emoticons
 
 #########
 # to install kf5-frameworkintegration:
