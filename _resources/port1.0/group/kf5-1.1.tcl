@@ -301,6 +301,9 @@ proc kf5.add_test_library_path {path} {
 
 # variables to facilitate setting up dependencies to KF5 frameworks that may (or not)
 # also exist as port:kf5-foo-devel .
+# This may be extended to provide path-style *runtime* dependencies on framework executables;
+# kf5.framework_runtime_dependency{name {executable 0}} and kf5.depends_run_frameworks
+# (which would have to add a library dependency if no executable dependency is defined).
 proc kf5.framework_dependency {name {library 0}} {
     upvar #0 kf5.${name}_dep dep
     if {${library} ne 0} {
@@ -390,6 +393,10 @@ kf5.framework_dependency    kcmutils libKF5KCMUtils
 kf5.framework_dependency    kemoticons libKF5Emoticons
 # this is really a framework...
 kf5.framework_dependency    gpgmepp libKF5Gpgmepp
+# kf5-kinit does install a library but it may not be the best choice as a dependency:
+# hard to tell at this moment how many dependents actually use that rather than
+# depending on one of the framework's executables.
+kf5.framework_dependency    kinit libkdeinit5_klauncher
 
 #########
 # to install kf5-frameworkintegration:
