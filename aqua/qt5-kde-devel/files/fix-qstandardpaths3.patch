@@ -93,10 +93,14 @@ index 5c0e08b..a39d414 100644
  
  #endif // QT_NO_STANDARDPATHS
 diff --git a/qtbase/src/corelib/io/qstandardpaths_mac.mm b/qtbase/src/corelib/io/qstandardpaths_mac.mm
-index d6126ce..239872d 100644
+index d6126ce..aca10f1 100644
 --- a/qtbase/src/corelib/io/qstandardpaths_mac.mm
 +++ b/qtbase/src/corelib/io/qstandardpaths_mac.mm
-@@ -38,6 +38,7 @@
+@@ -35,9 +35,11 @@
+ #include <qdir.h>
+ #include <qurl.h>
+ #include <private/qcore_mac_p.h>
++#include <private/qfilesystemengine_p.h>
  
  #ifndef QT_BOOTSTRAPPED
  #include <qcoreapplication.h>
@@ -104,7 +108,7 @@ index d6126ce..239872d 100644
  #endif
  
  #include <CoreFoundation/CoreFoundation.h>
-@@ -136,8 +137,110 @@ static QString macLocation(QStandardPaths::StandardLocation type, short domain)
+@@ -136,8 +138,151 @@ static QString macLocation(QStandardPaths::StandardLocation type, short domain)
      return path;
  }
  
@@ -182,6 +186,45 @@ index d6126ce..239872d 100644
 +    return dirs;
 +}
 +
++static QString xdgRuntimeDir()
++{
++    const uid_t myUid = geteuid();
++    // http://standards.freedesktop.org/basedir-spec/latest/
++    QString xdgRTDir = QFile::decodeName(qgetenv("XDG_RUNTIME_DIR"));
++    if (xdgRTDir.isEmpty()) {
++        const QString userName = QFileSystemEngine::resolveUserName(myUid);
++        xdgRTDir = QDir::tempPath() + QLatin1String("/runtime-") + userName;
++        QDir dir(xdgRTDir);
++        if (!dir.exists()) {
++            if (!QDir().mkdir(xdgRTDir)) {
++                qWarning("QStandardPaths: error creating runtime directory %s: %s",
++                         qPrintable(xdgRTDir), qPrintable(qt_error_string(errno)));
++                return QString();
++            }
++        }
++    } else {
++        qWarning("QStandardPaths: XDG_RUNTIME_DIR is set, using '%s'", qPrintable(xdgRTDir));
++    }
++    // "The directory MUST be owned by the user"
++    QFileInfo fileInfo(xdgRTDir);
++    if (fileInfo.ownerId() != myUid) {
++        qWarning("QStandardPaths: wrong ownership on runtime directory %s, %d instead of %d", qPrintable(xdgRTDir),
++                 fileInfo.ownerId(), myUid);
++        return QString();
++    }
++    // "and he MUST be the only one having read and write access to it. Its Unix access mode MUST be 0700."
++    // since the current user is the owner, set both xxxUser and xxxOwner
++    QFile file(xdgRTDir);
++    const QFile::Permissions wantedPerms = QFile::ReadUser | QFile::WriteUser | QFile::ExeUser
++                                           | QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner;
++    if (file.permissions() != wantedPerms && !file.setPermissions(wantedPerms)) {
++        qWarning("QStandardPaths: could not set correct permissions on runtime directory %s: %s",
++                 qPrintable(xdgRTDir), qPrintable(file.errorString()));
++        return QString();
++    }
++    return xdgRTDir;
++}
++
  QString QStandardPaths::writableLocation(StandardLocation type)
  {
 +    if (usingXDGLocations) {
@@ -207,6 +250,8 @@ index d6126ce..239872d 100644
 +        case ApplicationsLocation:
 +            path = writableLocation(GenericDataLocation) + QLatin1String("/applications");
 +            return path;
++        case RuntimeLocation:
++            return xdgRuntimeDir();
 +        default:
 +            break;
 +        }
@@ -215,7 +260,7 @@ index d6126ce..239872d 100644
      if (isTestModeEnabled()) {
          const QString qttestDir = QDir::homePath() + QLatin1String("/.qttest");
          QString path;
-@@ -162,6 +265,9 @@ QString QStandardPaths::writableLocation(StandardLocation type)
+@@ -162,6 +307,9 @@ QString QStandardPaths::writableLocation(StandardLocation type)
              if (type == AppConfigLocation)
                  appendOrganizationAndApp(path);
              return path;
@@ -225,7 +270,7 @@ index d6126ce..239872d 100644
          default:
              break;
          }
-@@ -190,6 +296,28 @@
+@@ -188,6 +338,28 @@ QStringList QStandardPaths::standardLocations(StandardLocation type)
  {
      QStringList dirs;
  
@@ -254,7 +299,7 @@ index d6126ce..239872d 100644
      if (type == GenericDataLocation || type == AppDataLocation || type == AppLocalDataLocation || type == GenericCacheLocation || type == CacheLocation) {
          const QString path = macLocation(type, kOnAppropriateDisk);
          if (!path.isEmpty())
-@@ -197,6 +325,14 @@
+@@ -195,6 +367,14 @@ QStringList QStandardPaths::standardLocations(StandardLocation type)
      }
  
      if (type == AppDataLocation || type == AppLocalDataLocation) {
