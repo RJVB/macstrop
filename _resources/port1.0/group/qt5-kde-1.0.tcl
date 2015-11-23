@@ -264,6 +264,13 @@ if {${os.platform} eq "darwin"} {
 
 # allow for depending on either qt5[-mac] or qt5[-mac]-devel or qt5[-mac]*-kde, simultaneously
 
+set qt5_stubports   {qtbase qtdeclarative qtserialport qtsensors qtwebkit \
+                qtquick1 qtwebchannel qtimageformats qtsvg qtmacextras \
+                qtlocation qtxmlpatterns qtcanvas3d qtgraphicaleffects qtmultimedia \
+                qtscript qt3d qtconnectivity qttools qtquickcontrols qtenginio \
+                qtwebkit-examples qtwebsockets qttranslations docs mysql-plugin \
+                sqlite-plugin}
+
 if {![info exists building_qt5]} {
     if {${os.platform} eq "darwin"} {
 
@@ -273,17 +280,18 @@ if {![info exists building_qt5]} {
         global qt5_dependency
         if {[info exists qt5_is_concurrent]} {
             if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
-                set qt5_dependency path:libexec/${qt_name}/Library/Frameworks/QtCore.framework/QtCore:qt5-kde
+                set qt5_pathlibspec path:libexec/${qt_name}/Library/Frameworks/QtCore.framework/QtCore
             } else {
-                set qt5_dependency path:libexec/${qt_name}/lib/libQtCore.${qt_libs_ext}:qt5-kde
+                set qt5_pathlibspec path:libexec/${qt_name}/lib/libQtCore.${qt_libs_ext}
             }
         } else {
             if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
-                set qt5_dependency path:Library/Frameworks/QtCore.framework/QtCore:qt5-kde
+                set qt5_pathlibspec path:Library/Frameworks/QtCore.framework/QtCore
             } else {
-                set qt5_dependency path:lib/libQtCore.${qt_libs_ext}:qt5-kde
+                set qt5_pathlibspec path:lib/libQtCore.${qt_libs_ext}
             }
         }
+        set qt5_dependency ${qt5_pathlibspec}:qt5-kde
         depends_lib-append ${qt5_dependency}
     }
 }
