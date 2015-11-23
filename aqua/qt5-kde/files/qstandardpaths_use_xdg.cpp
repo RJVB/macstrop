@@ -40,6 +40,8 @@
 
 const QString qspUsesXDGLocationsTag("$Id: @(#) " __FILE__ " - " __DATE__ " $");
 
+// defining a static instance works for now, but see
+// https://wiki.qt.io/Coding_Conventions#Compiler.2FPlatform_specific_issues
 static QStandardPathsConfiguration qspUsesXDGLocations(true);
 
 bool setXDGLocationsEnabled(bool useXDGLocations)
