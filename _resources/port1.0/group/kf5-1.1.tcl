@@ -397,6 +397,7 @@ kf5.framework_dependency    gpgmepp libKF5Gpgmepp
 # hard to tell at this moment how many dependents actually use that rather than
 # depending on one of the framework's executables.
 kf5.framework_dependency    kinit libkdeinit5_klauncher
+kf5.framework_dependency    kded libkdeinit5_kded5
 
 #########
 # to install kf5-frameworkintegration:
