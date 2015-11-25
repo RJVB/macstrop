@@ -398,64 +398,7 @@ kf5.framework_dependency    gpgmepp libKF5Gpgmepp
 # depending on one of the framework's executables.
 kf5.framework_dependency    kinit libkdeinit5_klauncher
 kf5.framework_dependency    kded libkdeinit5_kded5
-
-#########
-# to install kf5-frameworkintegration:
-#  kf5-attica
-#  kf5-karchive
-#  kf5-kauth
-#  kf5-kbookmarks
-#  kf5-kcodecs
-#  kf5-kcompletion
-#  kf5-kconfig
-#  kf5-kconfigwidgets
-#  kf5-kcoreaddons
-#  kf5-kcrash
-#  kf5-kdbusaddons
-#  kf5-kdoctools
-#  kf5-kglobalaccel
-#  kf5-kguiaddons
-#  kf5-ki18n
-#  kf5-kiconthemes
-#  kf5-kio
-#  kf5-kitemviews
-#  kf5-kjobwidgets
-#  kf5-knotifications
-#  kf5-kservice
-#  kf5-ktextwidgets
-#  kf5-kwallet
-#  kf5-kwidgetsaddons
-#  kf5-kwindowsystem
-#  kf5-kxmlgui
-#  kf5-solid
-#  kf5-sonnet
-# In this order:
-# kf5-attica, kf5-karchive, kf5-kcoreaddons, kf5-kauth
-# For kf5-kconfig: skipping org.macports.main (dry run)
-# For kf5-kcodecs: skipping org.macports.main (dry run)
-# For kf5-ki18n: skipping org.macports.main (dry run)
-# For kf5-kdoctools: skipping org.macports.main (dry run)
-# For kf5-kguiaddons: skipping org.macports.main (dry run)
-# For kf5-kwidgetsaddons: skipping org.macports.main (dry run)
-# For kf5-kconfigwidgets: skipping org.macports.main (dry run)
-# For kf5-kitemviews: skipping org.macports.main (dry run)
-# For kf5-kiconthemes: skipping org.macports.main (dry run)
-# For kf5-kwindowsystem: skipping org.macports.main (dry run)
-# For kf5-kcrash: skipping org.macports.main (dry run)
-# For kf5-kdbusaddons: skipping org.macports.main (dry run)
-# For kf5-kglobalaccel: skipping org.macports.main (dry run)
-# For kf5-kcompletion: skipping org.macports.main (dry run)
-# For kf5-kservice: skipping org.macports.main (dry run)
-# For kf5-sonnet: skipping org.macports.main (dry run)
-# For kf5-ktextwidgets: skipping org.macports.main (dry run)
-# For kf5-kxmlgui: skipping org.macports.main (dry run)
-# For kf5-kbookmarks: skipping org.macports.main (dry run)
-# For kf5-kjobwidgets: skipping org.macports.main (dry run)
-# For kf5-knotifications: skipping org.macports.main (dry run)
-# For kf5-kwallet: skipping org.macports.main (dry run)
-# For kf5-solid: skipping org.macports.main (dry run)
-# For kf5-kio: skipping org.macports.main (dry run)
-# For kf5-frameworkintegration: skipping org.macports.main (dry run)
+kf5.framework_dependency    kparts libKF5Parts
 
 # see also http://api.kde.org/frameworks-api/frameworks5-apidocs/attica/html/index.html
 
