@@ -1,0 +1,373 @@
+diff --git src/kdeinit/CMakeLists.txt src/kdeinit/CMakeLists.txt
+index f94db71..23255e3 100644
+--- src/kdeinit/CMakeLists.txt
++++ src/kdeinit/CMakeLists.txt
+@@ -11,14 +11,14 @@ include_directories(${KInit_BINARY_DIR}) # for kinit_version.h
+ # on win32 kdeinit5 has to be a console application
+ # to be able to catch stderr based --verbose output
+ add_executable(kdeinit5 ${kdeinit_SRCS})
+-if (APPLE)
+-  # this has to be GUI on OSX because it launches GUI apps and need a quartz context
+-  set_target_properties(kdeinit5 PROPERTIES MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.template)
+-  set_target_properties(kdeinit5 PROPERTIES MACOSX_BUNDLE_GUI_IDENTIFIER "org.kde.kdeinit5")
+-  set_target_properties(kdeinit5 PROPERTIES MACOSX_BUNDLE_BUNDLE_NAME "KDE Init")
+-else ()
+-  ecm_mark_nongui_executable(kdeinit5)
+-endif ()
++ecm_mark_nongui_executable(kdeinit5)
++# There doesn't appear to be any reason for the code below, but I'm leaving it in for reference for now
++# if (APPLE)
++#   # this has to be GUI on OSX because it launches GUI apps and need a quartz context
++#   set_target_properties(kdeinit5 PROPERTIES MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.template)
++#   set_target_properties(kdeinit5 PROPERTIES MACOSX_BUNDLE_GUI_IDENTIFIER "org.kde.kdeinit5")
++#   set_target_properties(kdeinit5 PROPERTIES MACOSX_BUNDLE_BUNDLE_NAME "KDE Init")
++# endif ()
+ 
+ target_link_libraries(kdeinit5 ${kdeinit_LIBS} ${KINIT_SOCKET_LIBRARY}
+     Qt5::Gui #QFont::initialize
+@@ -41,6 +41,15 @@ endif()
+ 
+ install(TARGETS kdeinit5 ${KF5_INSTALL_TARGETS_DEFAULT_ARGS} )
+ 
++if (APPLE)
++    ########### kdeinit5 helper app ###############
++    set(kdeinit5_proxy_SRCS kdeinit5_proxy.cpp)
++    add_executable(kdeinit5_proxy ${kdeinit5_proxy_SRCS})
++    ecm_mark_nongui_executable(kdeinit5_proxy)
++    target_link_libraries(kdeinit5_proxy Qt5::Core)
++    install(TARGETS kdeinit5_proxy DESTINATION ${CMAKE_INSTALL_FULL_LIBEXECDIR_KF5} )
++endif ()
++
+ if (NOT WIN32)
+   # kdeinit5_shutdown
+   add_executable(kdeinit5_shutdown ../wrapper.cpp)
+diff --git src/kdeinit/kdeinit5_proxy.cpp src/kdeinit/kdeinit5_proxy.cpp
+new file mode 100644
+index 0000000..0b84c88
+--- /dev/null
++++ src/kdeinit/kdeinit5_proxy.cpp
+@@ -0,0 +1,37 @@
++#include <stdlib.h>
++
++#include <QtCore/QLibrary>
++#include <QtCore/QString>
++#include <QtCore/QFile>
++#include <QDebug>
++
++typedef int (*handler) (int, char *[]);
++
++int main(int argc, char *argv[])
++{
++    if (argc < 2) {
++        qWarning() << "Too few arguments";
++        exit(1);
++    }
++
++    QString libpath = QFile::decodeName(argv[argc-1]);
++    QLibrary l(libpath);
++
++    if (!libpath.isEmpty() && (!l.load() || !l.isLoaded())) {
++        qWarning() << "Could not open library" << libpath << ":" << l.errorString();
++        exit(1);
++    }
++
++    QFunctionPointer sym = l.resolve( "kdeinitmain");
++    if (!sym) {
++        sym = l.resolve( "kdemain" );
++        if ( !sym ) {
++            qWarning() << "Could not find the kdemain function:" << l.errorString();
++            exit(1);
++        }
++    }
++
++    handler func = (int (*)(int, char *[])) sym;
++    exit( func(argc - 1, argv)); /* Launch! */
++}
++
+diff --git src/kdeinit/kinit.cpp src/kdeinit/kinit.cpp
+index a18008a..b019b40 100644
+--- src/kdeinit/kinit.cpp
++++ src/kdeinit/kinit.cpp
+@@ -64,7 +64,7 @@
+ #endif
+ #endif
+ 
+-#ifdef Q_OS_MAC
++#ifdef Q_OS_OSX
+ #include <CoreFoundation/CFBundle.h>
+ #include <CoreFoundation/CFString.h>
+ #include <CoreFoundation/CFURL.h>
+@@ -85,7 +85,7 @@
+ #include <qstandardpaths.h>
+ 
+ #ifdef Q_OS_UNIX
+-#ifdef Q_OS_MAC
++#ifdef Q_OS_OSX
+ static const char *extra_libs[] = {
+     "libKF5KIOCore.5.dylib",
+     "libKF5Parts.5.dylib",
+@@ -126,7 +126,7 @@ static const char* displayEnvVarName_c()
+     // Can't use QGuiApplication::platformName() here, there is no app instance.
+ #if HAVE_X11
+     return "DISPLAY";
+-#elif defined(Q_OS_MACX)
++#elif defined(Q_OS_OSX)
+     return "MAC_DISPLAY";
+ #elif defined(Q_OS_WIN)
+     return "WIN_DISPLAY";
+@@ -550,8 +550,15 @@ static pid_t launch(int argc, const char *_name, const char *args,
+ #endif
+     // find out this path before forking, doing it afterwards
+     // crashes on some platforms, notably OSX
+-#ifdef Q_OS_MAC
++#ifdef Q_OS_OSX
+     const QString bundlepath = QStandardPaths::findExecutable(QFile::decodeName(execpath));
++
++    // Don't run this inside the child process, it crashes on OS/X 10.6 and higher;
++    // use an additional helper proxy instead, one that will not have used any
++    // non-POSIX APIs.
++    // Find the helper using our own function that will be able to find it for us.
++    const QByteArray helperexe = execpath_avoid_loops("kdeinit5_proxy", envc, envs, avoid_loops);
++    const QString argvexe = QStandardPaths::findExecutable(QString::fromLatin1(_name));
+ #endif
+ 
+     d.errorMsg = 0;
+@@ -611,17 +618,19 @@ static pid_t launch(int argc, const char *_name, const char *args,
+         }
+ #endif
+         {
+-            int r;
+             QByteArray procTitle;
+-            d.argv = (char **) malloc(sizeof(char *) * (argc + 1));
+-            d.argv[0] = (char *) _name;
+-#ifdef Q_OS_MAC
+-            QString argvexe = QStandardPaths::findExecutable(QString::fromLatin1(d.argv[0]));
++#ifdef Q_OS_OSX
++            d.argv = (char **) malloc(sizeof(char *) * (argc + 2));
++            // set argv[0] to execpath instead of _name so the full path shows in `ps`
++            // this is just a convenience to users who may also be running the KDE4 klauncher.
++            d.argv[0] = (char *) execpath.constData();
+             if (!argvexe.isEmpty()) {
+                 QByteArray cstr = argvexe.toLocal8Bit();
+-                // qDebug() << "kdeinit5: launch() setting argv: " << cstr.data();
+                 d.argv[0] = strdup(cstr.data());
+             }
++#else
++            d.argv = (char **) malloc(sizeof(char *) * (argc + 1));
++            d.argv[0] = (char *) _name;
+ #endif
+             for (int i = 1;  i < argc; i++) {
+                 d.argv[i] = (char *) args;
+@@ -638,7 +647,7 @@ static pid_t launch(int argc, const char *_name, const char *args,
+             /** Give the process a new name **/
+ #ifdef Q_OS_LINUX
+             /* set the process name, so that killall works like intended */
+-            r = prctl(PR_SET_NAME, (unsigned long) name.data(), 0, 0, 0);
++            int r = prctl(PR_SET_NAME, (unsigned long) name.data(), 0, 0, 0);
+             if (r == 0) {
+                 proctitle_set("-%s [kdeinit5]%s", name.data(), procTitle.data() ? procTitle.data() : "");
+             } else {
+@@ -699,7 +708,7 @@ static pid_t launch(int argc, const char *_name, const char *args,
+             setup_tty(tty);
+ 
+             QByteArray executable = execpath;
+-#ifdef Q_OS_MAC
++#ifdef Q_OS_OSX
+             if (!bundlepath.isEmpty()) {
+                 executable = QFile::encodeName(bundlepath);
+             }
+@@ -715,6 +724,7 @@ static pid_t launch(int argc, const char *_name, const char *args,
+             exit(255);
+         }
+ 
++#ifndef Q_OS_OSX
+         QFunctionPointer sym = l.resolve("kdeinitmain");
+         if (!sym) {
+             sym = l.resolve("kdemain");
+@@ -732,6 +742,12 @@ static pid_t launch(int argc, const char *_name, const char *args,
+         close(d.fd[1]);
+ 
+         d.func = (int (*)(int, char *[])) sym;
++#else
++        d.result = 2; // Try exec'ing
++        // We set the close on exec flag.
++        // Closing of d.fd[1] indicates that the execvp succeeded.
++        fcntl(d.fd[1], F_SETFD, FD_CLOEXEC);
++#endif
+         if (d.debug_wait) {
+             fprintf(stderr, "kdeinit5: Suspending process\n"
+                     "kdeinit5: 'gdb kdeinit5 %d' to debug\n"
+@@ -742,7 +758,24 @@ static pid_t launch(int argc, const char *_name, const char *args,
+             setup_tty(tty);
+         }
+ 
++#ifndef Q_OS_OSX
+         exit(d.func(argc, d.argv));  /* Launch! */
++#else
++        QByteArray libpathbytes = QFile::encodeName(libpath);
++        d.argv[argc] = libpathbytes.data();
++        d.argv[argc+1] = 0;
++
++        if (!helperexe.isEmpty()) {
++            execvp(helperexe.constData(), d.argv);
++        } else {
++            qWarning() << "Failed to find kdeinit5 helper application \"kdeinit5_proxy\"";
++        }
++
++        d.result = 1; // Error
++        write(d.fd[1], &d.result, 1);
++        close(d.fd[1]);
++        exit(255);
++#endif
+ 
+         break;
+     }
+@@ -1576,14 +1609,16 @@ static QString findSharedLib(const QString &lib)
+     return QString();
+ }
+ 
+-#ifdef Q_OS_MAC
++#ifdef Q_OS_OSX
+ /**
+- Calling CoreFoundation APIs (which is unavoidable in Qt/Mac) has always had issues
+- on Mac OS X, but as of 10.5 is explicitly disallowed with an exception.  As a
++ Calling CoreFoundation and other non-POSIX APIs (which is unavoidable) has always caused issues
++ with fork/exec on Mac OS X, but as of 10.5 is explicitly disallowed with an exception. As a
+  result, in the case where we would normally fork and then dlopen code, or continue
+- to run other code, we must now fork-and-exec.
+-
+- See "CoreFoundation and fork()" at http://developer.apple.com/releasenotes/CoreFoundation/CoreFoundation.html
++ to run other code, we must now fork-and-exec, and even then we need to use a helper (proxy)
++ to launch the actual application we wish to launch, a proxy that will only have used POSIX APIs.
++ This probably cancels the whole idea of preloading libraries, but it is as it is.
++ Note that this function is called only when kdeinit5 is forking itself,
++ in order to disappear into the background.
+ */
+ // Copied from kkernel_mac.cpp
+ void
+@@ -1595,14 +1630,13 @@ mac_fork_and_reexec_self()
+     char progname[PATH_MAX];
+     uint32_t buflen = PATH_MAX;
+     _NSGetExecutablePath(progname, &buflen);
+-    bool found_psn = false;
+ 
+     for (int i = 0; i < argc; i++) {
+         newargv[i] = argv[i];
+     }
+ 
+-    newargv[argc] = "--nofork";
+-    newargv[argc + 1] = NULL;
++    newargv[argc] = (char*)"--nofork";
++    newargv[argc + 1] = 0;
+ 
+     int x_fork_result = fork();
+     switch (x_fork_result) {
+@@ -1704,7 +1738,7 @@ int main(int argc, char **argv)
+     (void)dup2(2, 1);
+ 
+     if (do_fork) {
+-#ifdef Q_OS_MAC
++#ifdef Q_OS_OSX
+         mac_fork_and_reexec_self();
+ #else
+         if (pipe(d.initpipe) != 0) {
+diff --git src/klauncher/CMakeLists.txt src/klauncher/CMakeLists.txt
+index 746edfa..8037053 100644
+--- src/klauncher/CMakeLists.txt
++++ src/klauncher/CMakeLists.txt
+@@ -23,6 +23,9 @@ target_link_libraries(kdeinit_klauncher ${X11_LIBRARIES}
+    KF5::I18n   # i18n()
+    Qt5::DBus
+ )
++if (APPLE)
++    target_link_libraries(kdeinit_klauncher "-framework CoreFoundation")
++endif()
+ 
+ install(TARGETS kdeinit_klauncher ${KF5_INSTALL_TARGETS_DEFAULT_ARGS})
+ install(TARGETS klauncher DESTINATION ${CMAKE_INSTALL_FULL_LIBEXECDIR_KF5} )
+diff --git src/klauncher/klauncher.cpp src/klauncher/klauncher.cpp
+index 8b3d343..60871cf 100644
+--- src/klauncher/klauncher.cpp
++++ src/klauncher/klauncher.cpp
+@@ -571,7 +571,7 @@ KLauncher::requestStart(KLaunchRequest *request)
+     }
+ 
+     QString executable = request->name;
+-#ifdef Q_OS_MAC
++#ifdef Q_OS_OSX
+     const QString bundlepath = QStandardPaths::findExecutable(executable);
+     if (!bundlepath.isEmpty()) {
+         executable = bundlepath;
+diff --git src/klauncher/klauncher.h src/klauncher/klauncher.h
+index e155f72..4220c12 100644
+--- src/klauncher/klauncher.h
++++ src/klauncher/klauncher.h
+@@ -31,7 +31,7 @@
+ #include <fixx11h.h>
+ #endif
+ 
+-#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
++#if defined(Q_OS_WIN) || defined(Q_OS_OSX)
+ #define USE_KPROCESS_FOR_KIOSLAVES
+ #endif
+ #ifdef Q_CC_MSVC
+diff --git src/klauncher/klauncher_main.cpp src/klauncher/klauncher_main.cpp
+index f69aaa5..ebe9089 100644
+--- src/klauncher/klauncher_main.cpp
++++ src/klauncher/klauncher_main.cpp
+@@ -35,6 +35,10 @@
+ #include <QDBusConnectionInterface>
+ #include <QThread>
+ 
++#ifdef Q_OS_OSX
++#include <CoreFoundation/CoreFoundation.h>
++#endif
++
+ #ifndef USE_KPROCESS_FOR_KIOSLAVES
+ static int sigpipe[ 2 ];
+ static void sig_handler(int sig_num)
+@@ -48,7 +52,7 @@ static void sig_handler(int sig_num)
+ }
+ #endif
+ 
+-#if defined(Q_OS_DARWIN) || defined (Q_OS_MAC)
++#if defined(Q_OS_DARWIN) || defined (Q_OS_OSX)
+ // Copied from kkernel_mac.cpp
+ bool dbus_initialized = false;
+ 
+@@ -145,7 +149,19 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
+     }
+ #endif
+ 
+-#if defined(Q_OS_DARWIN) || defined (Q_OS_MAC)
++#if defined(Q_OS_DARWIN) || defined (Q_OS_OSX)
++    CFBundleRef mainBundle = CFBundleGetMainBundle();
++    if (mainBundle) {
++        // get the application's Info Dictionary. For app bundles this would live in the bundle's Info.plist,
++        // for regular executables it is obtained in another way.
++        CFMutableDictionaryRef infoDict = (CFMutableDictionaryRef) CFBundleGetInfoDictionary(mainBundle);
++        if (infoDict) {
++            // Add or set the "LSUIElement" key with/to value "1". This can simply be a CFString.
++            CFDictionarySetValue(infoDict, CFSTR("LSUIElement"), CFSTR("1"));
++            // That's it. We're now considered as an "agent" by the window server, and thus will have
++            // neither menubar nor presence in the Dock or App Switcher.
++        }
++    }
+     mac_initialize_dbus();
+ #endif
+ 
+diff --git src/start_kdeinit/CMakeLists.txt src/start_kdeinit/CMakeLists.txt
+index 46d6cb3..74fddc5 100644
+--- src/start_kdeinit/CMakeLists.txt
++++ src/start_kdeinit/CMakeLists.txt
+@@ -1,8 +1,10 @@
+ add_executable(start_kdeinit start_kdeinit.c)
++ecm_mark_nongui_executable(start_kdeinit)
+ if (Libcap_FOUND)
+    target_link_libraries(start_kdeinit ${Libcap_LIBRARIES})
+ endif()
+ add_executable(start_kdeinit_wrapper start_kdeinit_wrapper.c)
++ecm_mark_nongui_executable(start_kdeinit_wrapper)
+ 
+ install(TARGETS start_kdeinit DESTINATION ${CMAKE_INSTALL_FULL_LIBEXECDIR_KF5})
+ install(TARGETS start_kdeinit_wrapper DESTINATION ${CMAKE_INSTALL_FULL_LIBEXECDIR_KF5})
