@@ -400,6 +400,7 @@ kf5.framework_dependency    kinit libkdeinit5_klauncher
 kf5.framework_dependency    kded libkdeinit5_kded5
 kf5.framework_dependency    kparts libKF5Parts
 kf5.framework_dependency    kdewebkit libKF5WebKit
+set kf5.kdesignerplugin_dep path:bin/kgendesignerplugin:kf5-kdesignerplugin
 
 # see also http://api.kde.org/frameworks-api/frameworks5-apidocs/attica/html/index.html
 
