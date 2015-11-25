@@ -399,6 +399,7 @@ kf5.framework_dependency    gpgmepp libKF5Gpgmepp
 kf5.framework_dependency    kinit libkdeinit5_klauncher
 kf5.framework_dependency    kded libkdeinit5_kded5
 kf5.framework_dependency    kparts libKF5Parts
+kf5.framework_dependency    kdewebkit libKF5WebKit
 
 # see also http://api.kde.org/frameworks-api/frameworks5-apidocs/attica/html/index.html
 
