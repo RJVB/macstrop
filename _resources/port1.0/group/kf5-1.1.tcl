@@ -188,7 +188,7 @@ if {${os.platform} eq "darwin"} {
    set kf5.libs_ext    so
 }
 
-if {![info exists kf5.framework]} {
+if {![info exists kf5.framework] && ![info exists kf5.portingAid]} {
     # explicitly define certain headers and libraries, to avoid
     # conflicts with those installed into system paths by the user.
     configure.args-append \
@@ -225,17 +225,50 @@ if {![info exists kf5.framework]} {
                         -DTIFF_LIBRARY=${prefix}/lib/libtiff.${kf5.libs_ext}
 }
 
-if { [ info exists kf5.portingAid ] } {
-    set kf5.virtualPath     "frameworks"
-    set kf5.folder          "frameworks/${kf5.branch}/portingAids"
+proc kf5.set_paths {} {
+    upvar #0 kf5.virtualPath vp
+    upvar #0 kf5.folder f
+    global kf5.portingAid
+    global kf5.framework
+    global kf5.branch
+    if { [ info exists kf5.portingAid ] } {
+        set vp          "frameworks"
+        set f           "frameworks/${kf5.branch}/portingAids"
+    }
+
+    if { [ info exists kf5.framework ] } {
+        set vp          "frameworks"
+        set f           "frameworks/${kf5.branch}"
+    }
+}
+kf5.set_paths
+
+proc kf5.is_framework {} {
+    upvar #0 kf5.portingAid pa
+    upvar #0 kf5.framework f
+    unset pa
+    set f yes
+    kf5.set_paths
 }
 
-if { [ info exists kf5.framework ] } {
-    set kf5.virtualPath     "frameworks"
-    set kf5.folder          "frameworks/${kf5.branch}"
+proc kf5.is_portingAid {} {
+    upvar #0 kf5.portingAid pa
+    upvar #0 kf5.framework f
+    unset f
+    set pa yes
+    kf5.set_paths
 }
 
-if {[info exists kf5.project]} {
+proc kf5.set_project {project} {
+    upvar #0 kf5.project p
+    upvar #0 kf5.folder f
+    global kf5.framework
+    global kf5.portingAid
+    global kf5.release
+    global kf5.plasma
+    global kf5.virtualPath
+    global kf5.version
+    set p ${project}
     if { ![ info exists kf5.framework ] && ![ info exists kf5.portingAid ] } {
         if { ![ info exists kf5.virtualPath ] } {
             ui_error "You haven't defined kf5.virtualPath, which is mandatory for any KF5 port that uses kf5.project. \
@@ -247,30 +280,30 @@ if {[info exists kf5.project]} {
                 return -code error "incomplete port definition"
             } else {
                 if {${kf5.virtualPath} eq "plasma"} {
-                    set kf5.folder \
-                            "${kf5.virtualPath}/${kf5.plasma}"
+                    set f   "${kf5.virtualPath}/${kf5.plasma}"
                     distname \
-                            ${kf5.project}-${kf5.plasma}
+                            ${project}-${kf5.plasma}
                     version \
                             ${kf5.plasma}
                 } else {
-                    set kf5.folder \
-                            "${kf5.virtualPath}/${kf5.release}/src"
+                    set f   "${kf5.virtualPath}/${kf5.release}/src"
                     distname \
-                            ${kf5.project}-${kf5.release}
+                            ${project}-${kf5.release}
                     version \
                             ${kf5.release}
                 }
             }
         }
     } else {
-        distname            ${kf5.project}-${kf5.version}
+        distname            ${project}-${kf5.version}
     }
-    homepage                http://projects.kde.org/projects/${kf5.virtualPath}/${kf5.project}
-    master_sites            http://download.kde.org/stable/${kf5.folder}
+    homepage                http://projects.kde.org/projects/${kf5.virtualPath}/${project}
+    master_sites            http://download.kde.org/stable/${f}
     use_xz                  yes
 }
-
+if {[info exists kf5.project]} {
+    kf5.set_project     ${kf5.project}
+}
 # maintainers             gmail.com:rjvbertin mk openmaintainer
 
 post-fetch {
