@@ -91,10 +91,16 @@ configure.cppflags-delete -I${prefix}/include
 # setup all KF5 ports to build in a separate directory from the source:
 cmake.out_of_source     yes
 
-# NOTE: Many kf5 ports violate MacPorts' ports file systems,
-#       but it is a must due to Qt5's QStandardPaths logic,
-#       so we'll quieten the warning.
-# destroot.violate_mtree  yes
+set kf5.pyversion       2.7
+set kf5.pybranch        [join [lrange [split ${kf5.pyversion} .] 0 1] ""]
+if {${os.platform} eq "darwin"} {
+    # this should probably become under control of a variant
+    set kf5.pythondep   port:python27
+    set kf5.pylibdir    ${frameworks_dir}/Python.framework/Versions/${kf5.pyversion}/lib/python${kf5.pyversion}
+} elseif {${os.platform} eq "linux"} {
+    # for personal use: don't add a python dependency.
+    set kf5.pythondep   bin:python:python27
+}
 
 # TODO:
 #
