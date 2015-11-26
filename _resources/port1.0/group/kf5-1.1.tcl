@@ -133,15 +133,17 @@ configure.args-append   -DBUILD_doc=OFF \
 if {${os.platform} eq "darwin"} {
     set kf5.applications_dir \
                         ${applications_dir}/KF5
+    set kf5.libexec_dir ${prefix}/libexec/kde5
     configure.args-append \
                         -DBUNDLE_INSTALL_DIR=${kf5.applications_dir} \
                         -DCMAKE_DISABLE_FIND_PACKAGE_X11=ON \
                         -DAPPLE_SUPPRESS_X11_WARNING=ON \
                         -DCMAKE_INSTALL_LIBEXECDIR=${prefix}/libexec \
-                        -DKDE_INSTALL_LIBEXECDIR=${prefix}/libexec/kde5
+                        -DKDE_INSTALL_LIBEXECDIR=${kf5.libexec_dir}
 } elseif {${os.platform} eq "linux"} {
     set kf5.applications_dir \
                         ${prefix}/bin
+    set kf5.libexec_dir ${prefix}/lib/${os.arch}-linux-gnu/libexec/kf5
     configure.args-delete \
                         -DCMAKE_INSTALL_RPATH=${prefix}/lib
     configure.args-append \
@@ -435,6 +437,7 @@ kf5.framework_dependency    kparts libKF5Parts
 kf5.framework_dependency    kdewebkit libKF5WebKit
 set kf5.kdesignerplugin_dep path:bin/kgendesignerplugin:kf5-kdesignerplugin
 kf5.framework_dependency    kpty libKF5Pty
+kf5.framework_dependency    kdelibs4support libKF5KDELibs4Support
 
 # see also http://api.kde.org/frameworks-api/frameworks5-apidocs/attica/html/index.html
 
