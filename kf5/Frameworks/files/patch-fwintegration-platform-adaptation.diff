@@ -1,0 +1,264 @@
+diff --git src/kstyle/kstyle.cpp src/kstyle/kstyle.cpp
+index 6ba5d51..6eb69e4 100644
+--- src/kstyle/kstyle.cpp
++++ src/kstyle/kstyle.cpp
+@@ -419,7 +419,11 @@ int KStyle::styleHint(StyleHint hint, const QStyleOption *option, const QWidget
+     case SH_DialogButtonBox_ButtonsHaveIcons: {
+         // was KGlobalSettings::showIconsOnPushButtons() :
+         KConfigGroup g(KSharedConfig::openConfig(), "KDE");
++#ifdef Q_OS_OSX
++        return g.readEntry("ShowIconsOnPushButtons", false);
++#else
+         return g.readEntry("ShowIconsOnPushButtons", true);
++#endif
+     }
+ 
+     case SH_ItemView_ArrowKeysNavigateIntoChildren:
+diff --git src/platformtheme/kdeplatformtheme.cpp src/platformtheme/kdeplatformtheme.cpp
+index 80dbcb7..f546904 100644
+--- src/platformtheme/kdeplatformtheme.cpp
++++ src/platformtheme/kdeplatformtheme.cpp
+@@ -33,6 +33,10 @@
+ #include <QStringList>
+ #include <QVariant>
+ #include <QDebug>
++#ifdef Q_OS_OSX
++#include <QtGui/private/qguiapplication_p.h>
++#include <QtGui/qpa/qplatformintegration.h>
++#endif
+ 
+ #include <kiconengine.h>
+ #include <kiconloader.h>
+@@ -40,8 +44,23 @@
+ #include <KStandardGuiItem>
+ #include <KLocalizedString>
+ 
++#ifdef Q_OS_OSX
++static void warnNoNativeTheme()
++{
++    qWarning() << "The KdePlatformTheme is being used and the native Cocoa theme failed to load.";
++    qWarning() << "Applications will function but lack functionality obtained through the native theme,";
++    qWarning() << "like the Mac-style menu bar.";
++}
++#endif
++
+ KdePlatformTheme::KdePlatformTheme()
+ {
++#ifdef Q_OS_OSX
++    nativeTheme = QGuiApplicationPrivate::platform_integration->createPlatformTheme(QString::fromLatin1("cocoa"));
++    if (!nativeTheme) {
++        warnNoNativeTheme();
++    }
++#endif
+     loadSettings();
+ }
+ 
+@@ -49,14 +68,54 @@ KdePlatformTheme::~KdePlatformTheme()
+ {
+     delete m_fontsData;
+     delete m_hints;
++#ifdef Q_OS_OSX
++    delete nativeTheme;
++#endif
++}
++
++#ifdef Q_OS_OSX
++QPlatformMenuItem* KdePlatformTheme::createPlatformMenuItem() const
++{
++    if (nativeTheme) {
++        return nativeTheme->createPlatformMenuItem();
++    } else {
++        warnNoNativeTheme();
++        return QPlatformTheme::createPlatformMenuItem();
++    }
++}
++
++QPlatformMenu* KdePlatformTheme::createPlatformMenu() const
++{
++    if (nativeTheme) {
++        return nativeTheme->createPlatformMenu();
++    } else {
++        warnNoNativeTheme();
++        return QPlatformTheme::createPlatformMenu();
++    }
+ }
+ 
++QPlatformMenuBar* KdePlatformTheme::createPlatformMenuBar() const
++{
++    if (nativeTheme) {
++        return nativeTheme->createPlatformMenuBar();
++    } else {
++        warnNoNativeTheme();
++        return QPlatformTheme::createPlatformMenuBar();
++    }
++}
++#endif
++
+ QVariant KdePlatformTheme::themeHint(QPlatformTheme::ThemeHint hintType) const
+ {
+     QVariant hint = m_hints->hint(hintType);
+     if (hint.isValid()) {
+         return hint;
+     } else {
++#ifdef Q_OS_OSX
++        if (nativeTheme) {
++            return nativeTheme->themeHint(hintType);
++        }
++#endif
+         return QPlatformTheme::themeHint(hintType);
+     }
+ }
+@@ -67,6 +126,11 @@ const QPalette *KdePlatformTheme::palette(Palette type) const
+     if (palette) {
+         return palette;
+     } else {
++#ifdef Q_OS_OSX
++        if (nativeTheme) {
++            return nativeTheme->palette(type);
++        }
++#endif
+         return QPlatformTheme::palette(type);
+     }
+ }
+@@ -104,6 +168,7 @@ const QFont *KdePlatformTheme::font(Font type) const
+     case FixedFont:
+         fdtype = KFontSettingsData::FixedFont; break;
+     default:
++        // here we do not use the OS X native theme for a fallback value
+         fdtype = KFontSettingsData::GeneralFont; break;
+     }
+ 
+@@ -203,12 +268,22 @@ QList<QKeySequence> KdePlatformTheme::keyBindings(QKeySequence::StandardKey key)
+     case QKeySequence::PreviousChild:
+         return KStandardShortcut::shortcut(KStandardShortcut::TabPrev);
+     default:
++#ifdef Q_OS_OSX
++        if (nativeTheme) {
++            return nativeTheme->keyBindings(key);
++        }
++#endif
+         return QPlatformTheme::keyBindings(key);
+     }
+ }
+ 
+ bool KdePlatformTheme::usePlatformNativeDialog(QPlatformTheme::DialogType type) const
+ {
++#ifdef Q_OS_OSX
++    if (nativeTheme) {
++        return nativeTheme->usePlatformNativeDialog(type);
++    }
++#endif
+     return type == QPlatformTheme::FileDialog;
+ }
+ 
+@@ -257,6 +332,11 @@ QString KdePlatformTheme::standardButtonText(int button) const
+     case QPlatformDialogHelper::RestoreDefaults:
+         return KStandardGuiItem::defaults().text();
+     default:
++#ifdef Q_OS_OSX
++        if (nativeTheme) {
++            return nativeTheme->standardButtonText(button);
++        }
++#endif
+         return QPlatformTheme::defaultStandardButtonText(button);
+     }
+ }
+@@ -264,6 +344,12 @@ QString KdePlatformTheme::standardButtonText(int button) const
+ 
+ QPlatformDialogHelper *KdePlatformTheme::createPlatformDialogHelper(QPlatformTheme::DialogType type) const
+ {
++#ifdef Q_OS_OSX
++    // always prefer native dialogs
++    if (nativeTheme) {
++        return nativeTheme->createPlatformDialogHelper(type);
++    }
++#endif
+     switch (type) {
+     case QPlatformTheme::FileDialog:
+         return new KDEPlatformFileDialogHelper;
+@@ -277,5 +363,10 @@ QPlatformDialogHelper *KdePlatformTheme::createPlatformDialogHelper(QPlatformThe
+ 
+ QPlatformSystemTrayIcon *KdePlatformTheme::createPlatformSystemTrayIcon() const
+ {
++#ifdef Q_OS_OSX
++    if (nativeTheme) {
++        return nativeTheme->createPlatformSystemTrayIcon();
++    }
++#endif
+     return new KDEPlatformSystemTrayIcon;
+ }
+diff --git src/platformtheme/kdeplatformtheme.h src/platformtheme/kdeplatformtheme.h
+index 97d09df..9f05630 100644
+--- src/platformtheme/kdeplatformtheme.h
++++ src/platformtheme/kdeplatformtheme.h
+@@ -37,6 +37,12 @@ public:
+     KdePlatformTheme();
+     ~KdePlatformTheme();
+ 
++#ifdef Q_OS_OSX
++    QPlatformMenuItem* createPlatformMenuItem() const Q_DECL_OVERRIDE;
++    QPlatformMenu* createPlatformMenu() const Q_DECL_OVERRIDE;
++    QPlatformMenuBar* createPlatformMenuBar() const Q_DECL_OVERRIDE;
++#endif
++
+     QVariant themeHint(ThemeHint hint) const Q_DECL_OVERRIDE;
+     const QPalette *palette(Palette type = SystemPalette) const Q_DECL_OVERRIDE;
+     const QFont *font(Font type) const Q_DECL_OVERRIDE;
+@@ -57,6 +63,9 @@ private:
+ 
+     KHintsSettings *m_hints;
+     KFontSettingsData *m_fontsData;
++#ifdef Q_OS_OSX
++    QPlatformTheme *nativeTheme;
++#endif
+ };
+ 
+ #endif // KDEPLATFORMTHEME_H
+diff --git src/platformtheme/khintssettings.cpp src/platformtheme/khintssettings.cpp
+index 8adf6c5..06a8fff 100644
+--- src/platformtheme/khintssettings.cpp
++++ src/platformtheme/khintssettings.cpp
+@@ -91,6 +91,9 @@ KHintsSettings::KHintsSettings() : QObject(0)
+                << "breeze"
+                << "oxygen"
+                << "fusion"
++#ifdef Q_OS_OSX
++                << "Macintosh (aqua)"
++#endif
+                << "windows";
+     const QString lnfStyle = readConfigValue(QStringLiteral("KDE"), QStringLiteral("widgetStyle"), QString()).toString();
+     if (!lnfStyle.isEmpty()) {
+@@ -100,7 +103,11 @@ KHintsSettings::KHintsSettings() : QObject(0)
+     m_hints[QPlatformTheme::StyleNames] = styleNames;
+ 
+     m_hints[QPlatformTheme::DialogButtonBoxLayout] = QDialogButtonBox::KdeLayout;
++#ifdef Q_OS_OSX
++    m_hints[QPlatformTheme::DialogButtonBoxButtonsHaveIcons] = cg.readEntry("ShowIconsOnPushButtons", false);
++#else
+     m_hints[QPlatformTheme::DialogButtonBoxButtonsHaveIcons] = cg.readEntry("ShowIconsOnPushButtons", true);
++#endif
+     m_hints[QPlatformTheme::UseFullScreenForPopupMenu] = true;
+     m_hints[QPlatformTheme::KeyboardScheme] = QPlatformTheme::KdeKeyboardScheme;
+     m_hints[QPlatformTheme::UiEffects] = cg.readEntry("GraphicEffectsLevel", 0) != 0 ? QPlatformTheme::GeneralUiEffect : 0;
+@@ -235,7 +242,11 @@ void KHintsSettings::slotNotifyChange(int type, int arg)
+         if (category == SETTINGS_QT || category == SETTINGS_MOUSE) {
+             updateQtSettings(cg);
+         } else if (category == SETTINGS_STYLE) {
++#ifdef Q_OS_OSX
++            m_hints[QPlatformTheme::DialogButtonBoxButtonsHaveIcons] = cg.readEntry("ShowIconsOnPushButtons", false);
++#else
+             m_hints[QPlatformTheme::DialogButtonBoxButtonsHaveIcons] = cg.readEntry("ShowIconsOnPushButtons", true);
++#endif
+             m_hints[QPlatformTheme::UiEffects] = cg.readEntry("GraphicEffectsLevel", 0) != 0 ? QPlatformTheme::GeneralUiEffect : 0;
+         }
+         break;
+@@ -266,6 +277,9 @@ void KHintsSettings::slotNotifyChange(int type, int arg)
+                 << "breeze"
+                 << "oxygen"
+                 << "fusion"
++#ifdef Q_OS_OSX
++                << "Macintosh (aqua)"
++#endif
+                 << "windows";
+         const QString lnfStyle = readConfigValue(QStringLiteral("KDE"), QStringLiteral("widgetStyle"), QString()).toString();
+         if (!lnfStyle.isEmpty() && !styleNames.contains(lnfStyle)) {
