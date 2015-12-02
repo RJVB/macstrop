@@ -445,6 +445,7 @@ set kf5.kdesignerplugin_dep path:bin/kgendesignerplugin:kf5-kdesignerplugin
 kf5.framework_dependency    kpty libKF5Pty
 kf5.framework_dependency    kdelibs4support libKF5KDELibs4Support
 kf5.framework_dependency    frameworkintegration libKF5Style
+kf5.framework_dependency    kpeople libKF5People
 
 # see also http://api.kde.org/frameworks-api/frameworks5-apidocs/attica/html/index.html
 
