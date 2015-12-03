@@ -488,10 +488,10 @@ index 23f590e..ab4eb30 100644
  install(TARGETS KDEPlatformTheme DESTINATION ${KDE_INSTALL_QTPLUGINDIR}/platformthemes)
 diff --git src/platformtheme/kdemactheme.h src/platformtheme/kdemactheme.h
 new file mode 100644
-index 0000000..640a8e3
+index 0000000..a4b4aba
 --- /dev/null
 +++ src/platformtheme/kdemactheme.h
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,66 @@
 +/*  This file is part of the KDE libraries
 + *  Copyright 2013 Kevin Ottens <ervin+bluesystems@kde.org>
 + *  Copyright 2015 René J.V. Bertin <rjvbertin@gmail.com>
@@ -517,7 +517,7 @@ index 0000000..640a8e3
 +#define KDEMACTHEME_H
 +
 +#include "kdeplatformtheme.h"
-+#include "kfontsettingsdata.h"
++#include "kfontsettingsdatamac.h"
 +
 +class KHintsSettingsMac;
 +class QIconEngine;
@@ -549,9 +549,10 @@ index 0000000..640a8e3
 +
 +protected:
 +    void loadSettings();
++    KFontSettingsDataMac::FontTypes fontType(Font type) const;
 +
 +    KHintsSettingsMac *m_hints;
-+    KFontSettingsData *m_fontsData;
++    KFontSettingsDataMac *m_fontsData;
 +    // this will hold the instance of the native theme that will be used as a fallback
 +    QPlatformTheme *nativeTheme;
 +};
@@ -559,10 +560,10 @@ index 0000000..640a8e3
 +#endif // KDEMACTHEME_H
 diff --git src/platformtheme/kdemactheme.mm src/platformtheme/kdemactheme.mm
 new file mode 100644
-index 0000000..b96522b
+index 0000000..60593d2
 --- /dev/null
 +++ src/platformtheme/kdemactheme.mm
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,271 @@
 +/*  This file is part of the KDE libraries
 + *  Copyright 2013 Kevin Ottens <ervin+bluesystems@kde.org>
 + *  Copyright 2013 Aleix Pol Gonzalez <aleixpol@blue-systems.com>
@@ -630,7 +631,12 @@ index 0000000..b96522b
 +        NSLog(@"Warning: the KDE Platform Plugin for Mac was built against Qt %s but is running with Qt %s!",
 +            QT_VERSION_STR, qVersion());
 +    }
-+    nativeTheme = QGuiApplicationPrivate::platform_integration->createPlatformTheme(QString::fromLatin1("cocoa"));
++    QPlatformIntegration *pi = QGuiApplicationPrivate::platformIntegration();
++    if (pi) {
++        nativeTheme = pi->createPlatformTheme(QString::fromLatin1("cocoa"));
++    } else {
++        nativeTheme = 0;
++    }
 +    if (!nativeTheme) {
 +        warnNoNativeTheme();
 +    }
@@ -700,9 +706,24 @@ index 0000000..b96522b
 +    }
 +}
 +
++KFontSettingsDataMac::FontTypes KdeMacTheme::fontType(QPlatformTheme::Font type) const
++{
++    KFontSettingsDataMac::FontTypes ftype;
++    switch (type) {
++        default:
++            ftype = KFontSettingsDataMac::FontTypes(KdePlatformTheme::fontType(type));
++            break;
++        case MessageBoxFont:
++            ftype = KFontSettingsDataMac::MessageBoxFont;
++            break;
++    }
++    return ftype;
++}
 +
 +const QFont *KdeMacTheme::font(Font type) const
 +{
++    // when using the platform-default fonts, try returning a bold version of the 
++    // standard system font; it's the only one where Qt/OS X really deviates.
 +    return m_fontsData->font(fontType(type));
 +}
 +
@@ -792,6 +813,9 @@ index 0000000..b96522b
 +QPlatformDialogHelper *KdeMacTheme::createPlatformDialogHelper(QPlatformTheme::DialogType type) const
 +{
 +    // always prefer native dialogs
++    // NOTE: somehow, the "don't use native dialog" option that Qt's example "standarddialogs"
++    // provides does not modify our usePlatformNativeDialog() return value, but *does* cause
++    // a Qt dialog to be created instead of the native one. Weird.
 +    if (nativeTheme) {
 +        return nativeTheme->createPlatformDialogHelper(type);
 +    }
@@ -925,10 +949,10 @@ index 4b92c7d..3a23f7e 100644
  };
 diff --git src/platformtheme/kfontsettingsdatamac.h src/platformtheme/kfontsettingsdatamac.h
 new file mode 100644
-index 0000000..1dc77a5
+index 0000000..70f1c59
 --- /dev/null
 +++ src/platformtheme/kfontsettingsdatamac.h
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,61 @@
 +/* This file is part of the KDE libraries
 +   Copyright (C) 2000, 2006 David Faure <faure@kde.org>
 +   Copyright 2008 Friedrich W. H. Kossebau <kossebau@kde.org>
@@ -959,8 +983,19 @@ index 0000000..1dc77a5
 +{
 +    Q_OBJECT
 +public:
++    // if adding a new type here also add an entry to DefaultFontData
++    enum FontTypes {
++        GeneralFont = 0,
++        FixedFont,
++        ToolbarFont,
++        MenuFont,
++        WindowTitleFont,
++        TaskbarFont,
++        SmallestReadableFont,
++        MessageBoxFont,
++        FontTypesCount
++    };
 +
-+public:
 +    KFontSettingsDataMac();
 +    virtual ~KFontSettingsDataMac();
 +
@@ -970,18 +1005,21 @@ index 0000000..1dc77a5
 +protected Q_SLOTS:
 +    virtual void delayedDBusConnects();
 +
-+public: // access, is not const due to caching
++public:
 +    virtual QFont *font(FontTypes fontType);
-+
++protected:
++    // do I have to redefine mFonts here or will KFontSettingsData::mFonts
++    // automagically have KFontSettingsDataMac::FontTypesCont elements?
++    QFont *mFonts[FontTypesCount];
 +};
 +
 +#endif // KFONTSETTINGSDATAMAC_H
 diff --git src/platformtheme/kfontsettingsdatamac.mm src/platformtheme/kfontsettingsdatamac.mm
 new file mode 100644
-index 0000000..433e36b
+index 0000000..719b0fc
 --- /dev/null
 +++ src/platformtheme/kfontsettingsdatamac.mm
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,214 @@
 +/* This file is part of the KDE libraries
 +   Copyright (C) 2000, 2006 David Faure <faure@kde.org>
 +   Copyright 2008 Friedrich W. H. Kossebau <kossebau@kde.org>
@@ -1036,17 +1074,46 @@ index 0000000..433e36b
 +    Help tags: <system>,11pt
 +    Window title bars: <system>
 +    Utility window title bars: <system>,11pt
++    --- Dumped from the native QPlatformTheme::themeFont() function:
++    (themeFont QPlatformTheme::Font : CoreText font role)
++    themeFont 0 : 2 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,13,-1,5,50,0,0,0,0,0"
++    themeFont 1 : 12 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,14,-1,5,50,0,0,0,0,0"
++    themeFont 2 : 12 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,14,-1,5,50,0,0,0,0,0"
++    themeFont 3 : 12 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,14,-1,5,50,0,0,0,0,0"
++    themeFont 4 : 3 = ".Lucida Grande UI" style "Bold" NSFont weight@12pt= 9 QFont= ".Lucida Grande UI,13,-1,5,75,0,0,0,0,0"
++    themeFont 5 : 2 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,13,-1,5,50,0,0,0,0,0"
++    themeFont 6 : 25 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,11,-1,5,50,0,0,0,0,0"
++    themeFont 7 : 2 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,13,-1,5,50,0,0,0,0,0"
++    themeFont 8 : 15 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,13,-1,5,50,0,0,0,0,0"
++    themeFont 9 : 2 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,13,-1,5,50,0,0,0,0,0"
++    themeFont 10 : 2 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,13,-1,5,50,0,0,0,0,0"
++    themeFont 11 : 16 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,13,-1,5,50,0,0,0,0,0"
++    themeFont 12 : 2 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,13,-1,5,50,0,0,0,0,0"
++    themeFont 13 : 2 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,13,-1,5,50,0,0,0,0,0"
++    themeFont 14 : 22 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,10,-1,5,50,0,0,0,0,0"
++    themeFont 15 : 2 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,13,-1,5,50,0,0,0,0,0"
++    themeFont 16 : 8 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,12,-1,5,50,0,0,0,0,0"
++    themeFont 17 : 4 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,11,-1,5,50,0,0,0,0,0"
++    themeFont 18 : 8 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,12,-1,5,50,0,0,0,0,0"
++    themeFont 19 : 2 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,13,-1,5,50,0,0,0,0,0"
++    themeFont 20 : 8 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,12,-1,5,50,0,0,0,0,0"
++    themeFont 21 : 4 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,11,-1,5,50,0,0,0,0,0"
++    themeFont 22 : 6 = ".Lucida Grande UI" style "Regular" NSFont weight@12pt= 5 QFont= ".Lucida Grande UI,9,-1,5,50,0,0,0,0,0"
++    themeFont 23 : 1 = "Monaco" style "Regular" NSFont weight@12pt= 5 QFont= "Monaco,10,-1,5,50,0,0,0,0,0"
 + */
 +
 +static KFontData DefaultFontData[KFontSettingsDataMac::FontTypesCount] = {
 +    // Note: we use 
 +    { GeneralId, "font",                 DefaultFont,  12, -1, QFont::SansSerif },
 +    { GeneralId, "fixed",                "Monaco",     10, -1, QFont::Monospace },
-+    { GeneralId, "toolBarFont",          DefaultFont,   9, -1, QFont::SansSerif },
++    { GeneralId, "toolBarFont",          DefaultFont,  11, -1, QFont::SansSerif },
 +    { GeneralId, "menuFont",             DefaultFont,  14, -1, QFont::SansSerif },
 +    { "WM",      "activeFont",           DefaultFont,  13, -1, QFont::SansSerif },
 +    { GeneralId, "taskbarFont",          DefaultFont,   9, -1, QFont::SansSerif },
-+    { GeneralId, "smallestReadableFont", DefaultFont,   8, -1, QFont::SansSerif }
++    { GeneralId, "smallestReadableFont", DefaultFont,   9, -1, QFont::SansSerif },
++    // this one is to accomodate for the MessageBoxFont which should be bold on OS X
++    // when using the native theme fonts.
++    { GeneralId, "messageBoxFont",       DefaultFont,  13, QFont::Bold, QFont::SansSerif }
 +};
 +
 +static const char *fontNameFor(QFontDatabase::SystemFont role)
@@ -1072,13 +1139,13 @@ index 0000000..433e36b
 +    for (int i = 0 ; i < KFontSettingsDataMac::FontTypesCount ; ++i) {
 +        const char *fn;
 +        switch(i) {
-+            case 1:
++            case FixedFont:
 +                fn = strdup(fontNameFor(QFontDatabase::FixedFont));
 +                break;
-+            case 4:
++            case WindowTitleFont:
 +                fn = strdup(fontNameFor(QFontDatabase::TitleFont));
 +                break;
-+            case 6:
++            case SmallestReadableFont:
 +                fn = strdup(fontNameFor(QFontDatabase::SmallestReadableFont));
 +                break;
 +            default:
@@ -1087,16 +1154,16 @@ index 0000000..433e36b
 +        }
 +        DefaultFontData[i].FontName = fn;
 +    }
-+    // remove any information that already have been cached
 +    for (int i = 0; i < FontTypesCount; ++i) {
-+        delete mFonts[i];
++        // remove any information that already have been cached by our parent
++        // IFF we don't have our own mFonts copy
++        // delete mFonts[i];
 +        mFonts[i] = 0;
 +    }
 +}
 +
 +KFontSettingsDataMac::~KFontSettingsDataMac()
 +{
-+    qDebug() << "KFontSettingsDataMac::~KFontSettingsDataMac()";
 +    for (int i = 0 ; i < KFontSettingsDataMac::FontTypesCount ; ++i) {
 +        if (DefaultFontData[i].FontName != DefaultFont) {
 +            if (DefaultFontData[i].FontName != LocalDefaultFont) {
@@ -1114,18 +1181,35 @@ index 0000000..433e36b
 +    QFont *cachedFont = mFonts[fontType];
 +
 +    if (!cachedFont) {
-+        const KFontData &fontData = DefaultFontData[fontType];
-+        cachedFont = new QFont(fontData.FontName, fontData.Size, fontData.Weight);
-+        cachedFont->setStyleHint(fontData.StyleHint);
-+
 +        if (!mKdeGlobals) {
 +            mKdeGlobals = KSharedConfig::openConfig(QStringLiteral("kdeglobals"), KConfig::NoGlobals);
 +        }
-+        const KConfigGroup configGroup(mKdeGlobals, fontData.ConfigGroupKey);
-+        QString fontInfo = configGroup.readEntry(fontData.ConfigKey, QString());
 +
-+        //If we have serialized information for this font, restore it
-+        //NOTE: We are not using KConfig directly because we can't call QFont::QFont from here
++        const KConfigGroup configGroup(mKdeGlobals, DefaultFontData[fontType].ConfigGroupKey);
++        QString fontInfo;
++        bool forceBold = false;
++
++        if (fontType == MessageBoxFont) {
++            // OS X special: the MessageBoxFont is by default a bold version of the GeneralFont
++            // and that's what is cached in DefaultFontData[MessageBoxFont].
++            // NB: we can use a single configGroup for this hack as long as MessageBoxFont and
++            // GeneralFont share the same ConfigGroupKey (or MessageBoxFont cannot be configured).
++            fontInfo = configGroup.readEntry(DefaultFontData[GeneralFont].ConfigKey, QString());
++            if (!fontInfo.isEmpty()) {
++                // However, if the user has configured a GeneralFont (MessageBoxFont cannot be configured),
++                // we respect his/her choice but maintain the bold aspect dictated by the platform.
++                fontType = GeneralFont;
++                forceBold = true;
++            }
++        }
++
++        const KFontData &fontData = DefaultFontData[fontType];
++
++        cachedFont = new QFont(fontData.FontName, fontData.Size, forceBold? QFont::Bold : fontData.Weight);
++        cachedFont->setStyleHint(fontData.StyleHint);
++
++        fontInfo = configGroup.readEntry(fontData.ConfigKey, QString());
++
 +        if (!fontInfo.isEmpty()) {
 +            cachedFont->fromString(fontInfo);
 +        }
@@ -1239,10 +1323,10 @@ index 0000000..87abe3c
 +#endif //KHINTS_SETTINGS_MAC_H
 diff --git src/platformtheme/khintssettingsmac.mm src/platformtheme/khintssettingsmac.mm
 new file mode 100644
-index 0000000..5ce5e3d
+index 0000000..15cbf77
 --- /dev/null
 +++ src/platformtheme/khintssettingsmac.mm
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,184 @@
 +/*  This file is part of the KDE libraries
 + *  Copyright 2013 Kevin Ottens <ervin+bluesystems@kde.org>
 + *  Copyright 2013 Aleix Pol Gonzalez <aleixpol@blue-systems.com>
@@ -1296,6 +1380,8 @@ index 0000000..5ce5e3d
 +KHintsSettingsMac::KHintsSettingsMac()
 +{
 +    KConfigGroup cg(mKdeGlobals, "KDE");
++    // we're overriding whatever the parent class configured
++    m_hints.clear();
 +    // The new default Breeze icon theme is svg based and looks more out of place than the older Oxygen theme
 +    // which is PNG-based, and thus easier to use with/in the Finder.
 +    m_hints[QPlatformTheme::SystemIconThemeName] = readConfigValue(QStringLiteral("Icons"), QStringLiteral("Theme"), "oxygen");
@@ -1317,6 +1403,13 @@ index 0000000..5ce5e3d
 +    m_hints[QPlatformTheme::DialogButtonBoxLayout] = QDialogButtonBox::MacLayout;
 +    m_hints[QPlatformTheme::DialogButtonBoxButtonsHaveIcons] = cg.readEntry("ShowIconsOnPushButtons", false);
 +    m_hints[QPlatformTheme::KeyboardScheme] = QPlatformTheme::MacKeyboardScheme;
++//     qreal devicePixelRatio = qGuiApp->devicePixelRatio();
++//     QList<int> sizes;
++//     sizes << 16 * devicePixelRatio
++//           << 32 * devicePixelRatio
++//           << 64 * devicePixelRatio
++//           << 128 * devicePixelRatio;
++//     m_hints[QPlatformTheme::IconPixmapSizes] = QVariant::fromValue(sizes);
 +
 +    loadPalettes();
 +}
