@@ -447,6 +447,7 @@ kf5.framework_dependency    kdelibs4support libKF5KDELibs4Support
 kf5.framework_dependency    frameworkintegration libKF5Style
 kf5.framework_dependency    kpeople libKF5People
 kf5.framework_dependency    ktexteditor libKF5TextEditor
+kf5.framework_dependency    kxmlrcpclient libKF5XmlRpcClient
 
 # see also http://api.kde.org/frameworks-api/frameworks5-apidocs/attica/html/index.html
 
