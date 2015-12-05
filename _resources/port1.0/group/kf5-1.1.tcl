@@ -456,7 +456,15 @@ kf5.framework_dependency    kpeople libKF5People
 kf5.framework_dependency    ktexteditor libKF5TextEditor
 kf5.framework_dependency    kxmlrpcclient libKF5XmlRpcClient
 kf5.framework_dependency    kactivities libKF5Activities
+kf5.framework_dependency    kdesu libKF5Su
 
 # see also http://api.kde.org/frameworks-api/frameworks5-apidocs/attica/html/index.html
+
+notes "
+Don't forget that dbus needs to be started as the local\
+user (not with sudo) before any KDE programs will launch.
+To start it run the following command:
+ launchctl load -w /Library/LaunchAgents/org.freedesktop.dbus-session.plist
+"
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
