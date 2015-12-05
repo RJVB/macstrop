@@ -155,6 +155,13 @@ post-build {
     }
 }
 
+post-activate {
+    if {[file exists ${prefix}/bin/kbuildsycoca4]} {
+        ui_msg "--->  Updating KDE's global desktop file system configuration cache ..."
+        system "${prefix}/bin/kbuildsycoca4 --global"
+    }
+}
+
 notes "
 Don't forget that dbus needs to be started as the local\
 user (not with sudo) before any KDE programs will launch.
