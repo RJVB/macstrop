@@ -331,6 +331,13 @@ post-build {
     }
 }
 
+post-activate {
+    if {[file exists ${prefix}/bin/kbuildsycoca5]} {
+        ui_msg "--->  Updating KDE's global desktop file system configuration cache ..."
+        system "${prefix}/bin/kbuildsycoca5 --global"
+    }
+}
+
 proc kf5.add_test_library_path {path} {
     global os.platform
     if {${os.platform} eq "darwin"} {
