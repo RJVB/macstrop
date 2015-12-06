@@ -458,6 +458,7 @@ kf5.framework_dependency    kxmlrpcclient libKF5XmlRpcClient
 kf5.framework_dependency    kactivities libKF5Activities
 kf5.framework_dependency    kdesu libKF5Su
 kf5.framework_dependency    knewstuff libKF5NewStuff
+kf5.framework_dependency    knotifyconfig libKF5NotifyConfig
 
 # see also http://api.kde.org/frameworks-api/frameworks5-apidocs/attica/html/index.html
 
