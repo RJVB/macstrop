@@ -457,6 +457,7 @@ kf5.framework_dependency    ktexteditor libKF5TextEditor
 kf5.framework_dependency    kxmlrpcclient libKF5XmlRpcClient
 kf5.framework_dependency    kactivities libKF5Activities
 kf5.framework_dependency    kdesu libKF5Su
+kf5.framework_dependency    knewstuff libKF5NewStuff
 
 # see also http://api.kde.org/frameworks-api/frameworks5-apidocs/attica/html/index.html
 
