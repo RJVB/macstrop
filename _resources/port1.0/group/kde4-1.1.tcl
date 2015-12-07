@@ -74,7 +74,8 @@ configure.args-append   -DCMAKE_BUILD_TYPE:STRING=MacPorts \
                         -DCMAKE_USE_RELATIVE_PATHS:BOOL=ON
 
 # Install the kdelibs headerfiles in their own directory to prevent clashes with KF5 headers
-set kde4.include_dirs   ${prefix}/include/KDE4
+set kde4.include_prefix KDE4
+set kde4.include_dirs   ${prefix}/include/${kde4.include_prefix}
 
 # augment the CMake module lookup path, if necessary depending on
 # where Qt4 is installed.
