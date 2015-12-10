@@ -276,6 +276,8 @@ proc kf5.set_project {project} {
     global kf5.plasma
     global kf5.virtualPath
     global kf5.version
+    global fetch.type
+    global filespath
     set p ${project}
     if { ![ info exists kf5.framework ] && ![ info exists kf5.portingAid ] } {
         if { ![ info exists kf5.virtualPath ] } {
@@ -306,7 +308,16 @@ proc kf5.set_project {project} {
         distname            ${project}-${kf5.version}
     }
     homepage                http://projects.kde.org/projects/${kf5.virtualPath}/${project}
-    master_sites            http://download.kde.org/stable/${f}
+    if {${fetch.type} eq "git"} {
+        if {[file exists ${filespath}/${project}-git/.git]} {
+            git.url         ${filespath}/${project}-git
+        } else {
+            git.url         git://anongit.kde.org/${project}
+        }
+        distname            ${project}-${kf5.version}.git
+    } else {
+        master_sites        http://download.kde.org/stable/${f}
+    }
     use_xz                  yes
 }
 if {[info exists kf5.project]} {
