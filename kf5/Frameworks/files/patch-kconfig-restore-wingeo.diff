@@ -1,0 +1,166 @@
+diff --git src/gui/CMakeLists.txt src/gui/CMakeLists.txt
+index 9663e09..057584a 100644
+--- src/gui/CMakeLists.txt
++++ src/gui/CMakeLists.txt
+@@ -1,4 +1,5 @@
+ 
++find_package(Qt5Widgets ${REQUIRED_QT_VERSION} REQUIRED NO_MODULE)
+ find_package(Qt5Gui ${REQUIRED_QT_VERSION} REQUIRED NO_MODULE)
+ find_package(Qt5Xml ${REQUIRED_QT_VERSION} REQUIRED NO_MODULE)
+ 
+@@ -18,7 +19,7 @@ add_library(KF5::ConfigGui ALIAS KF5ConfigGui)
+ 
+ target_include_directories(KF5ConfigGui INTERFACE "$<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR_KF5}/KConfigGui>")
+ 
+-target_link_libraries(KF5ConfigGui PUBLIC Qt5::Gui Qt5::Xml KF5::ConfigCore)
++target_link_libraries(KF5ConfigGui PUBLIC Qt5::Widgets Qt5::Gui Qt5::Xml KF5::ConfigCore)
+ 
+ set_target_properties(KF5ConfigGui PROPERTIES VERSION   ${KCONFIG_VERSION_STRING}
+                                               SOVERSION ${KCONFIG_SOVERSION}
+diff --git src/gui/kwindowconfig.cpp src/gui/kwindowconfig.cpp
+index d2f355c..c290fa7 100644
+--- src/gui/kwindowconfig.cpp
++++ src/gui/kwindowconfig.cpp
+@@ -1,6 +1,7 @@
+ /*
+    This file is part of the KDE libraries
+    Copyright (c) 2012 Benjamin Port <benjamin.port@ben2367.fr>
++   Copyright (c) 2015 René J.V. Bertin <rjvbertin@gmail.com>
+ 
+    This library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Lesser General Public
+@@ -24,6 +25,95 @@
+ #include <QScreen>
+ #include <QWindow>
+ 
++#ifdef Q_OS_WIN
++
++#include <QApplication>
++#include <QDesktopWidget>
++
++void KWindowConfig::saveWindowSize(const QWindow *window, KConfigGroup &config, KConfigGroup::WriteConfigFlags options)
++{
++    // QWindow::screen() shouldn't return null, but it sometimes does due to bugs.
++    if (!window || !window->screen()) {
++        return;
++    }
++    QWidget *w = QWidget::find(window->winId());
++
++    if (w) {
++        int scnum = QApplication::desktop()->screenNumber(w);
++        QRect desk = QApplication::desktop()->screenGeometry(scnum);
++        // geometry is saved separately for each resolution
++        QString geometryKey = QStringLiteral("geometry-%1-%2").arg(desk.width()).arg(desk.height());
++        QByteArray geometry = w->saveGeometry();
++        config.writeEntry( geometryKey, geometry.toBase64(), options );
++    }
++}
++
++void KWindowConfig::restoreWindowSize(QWindow *window, const KConfigGroup &config)
++{
++    if (!window) {
++        return;
++    }
++    QWidget *w = QWidget::find(window->winId());
++
++    if (w) {
++        int scnum = QApplication::desktop()->screenNumber(w);
++        QRect desk = QApplication::desktop()->screenGeometry(scnum);
++        QString geometryKey = QStringLiteral("geometry-%1-%2").arg(desk.width()).arg(desk.height());
++        QByteArray geometry = config.readEntry( geometryKey, QByteArray() );
++        // if first time run, centre the window
++        if (!w->restoreGeometry( QByteArray::fromBase64(geometry) )) {
++            w->move( (desk.width() - w->width()) / 2, (desk.height() - w->height()) / 2 );
++        }
++    }
++}
++
++#elif defined(Q_OS_OSX)
++
++#include <QApplication>
++#include <QDesktopWidget>
++#include <QDebug>
++
++void KWindowConfig::saveWindowSize(const QWindow *window, KConfigGroup &config, KConfigGroup::WriteConfigFlags options)
++{
++    // QWindow::screen() shouldn't return null, but it sometimes does due to bugs.
++    if (!window || !window->screen()) {
++        return;
++    }
++    QWidget *w = QWidget::find(window->winId());
++
++    if (w) {
++        // geometry is saved separately for each resolution
++        QString geometryKey = QStringLiteral("geometry");
++        QByteArray geometry = w->saveGeometry();
++        config.writeEntry( geometryKey, geometry.toBase64(), options );
++    } else {
++        qDebug() << Q_FUNC_INFO << "cannot determine QWidget for window" << window;
++    }
++}
++
++void KWindowConfig::restoreWindowSize(QWindow *window, const KConfigGroup &config)
++{
++    if (!window) {
++        return;
++    }
++    QWidget *w = QWidget::find(window->winId());
++
++    if (w) {
++        int scnum = QApplication::desktop()->screenNumber(w);
++        QRect desk = QApplication::desktop()->screenGeometry(scnum);
++        QString geometryKey = QStringLiteral("geometry");
++        QByteArray geometry = config.readEntry( geometryKey, QByteArray() );
++        // if first time run, centre the window
++        if (!w->restoreGeometry( QByteArray::fromBase64(geometry) )) {
++            w->move( (desk.width() - w->width()) / 2, (desk.height() - w->height()) / 2 );
++        }
++    } else {
++        qDebug() << Q_FUNC_INFO << "cannot determine QWidget for window" << window;
++    }
++}
++
++#else
++
+ static const char s_initialSizePropertyName[] = "_kconfig_initial_size";
+ static const char s_initialScreenSizePropertyName[] = "_kconfig_initial_screen_size";
+ 
+@@ -85,3 +175,5 @@ void KWindowConfig::restoreWindowSize(QWindow *window, const KConfigGroup &confi
+         window->setWindowState(Qt::WindowMaximized);
+     }
+ }
++
++#endif
+\ No newline at end of file
+diff --git src/gui/kwindowconfig.h src/gui/kwindowconfig.h
+index 48a8f3c..027e852 100644
+--- src/gui/kwindowconfig.h
++++ src/gui/kwindowconfig.h
+@@ -1,6 +1,7 @@
+ /*
+    This file is part of the KDE libraries
+    Copyright (c) 2012 Benjamin Port <benjamin.port@ben2367.fr>
++   Copyright (c) 2015 René J.V. Bertin <rjvbertin@gmail.com>
+ 
+    This library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Lesser General Public
+@@ -34,7 +35,8 @@ namespace KWindowConfig
+ {
+ /**
+  * Saves the window's size dependent on the screen dimension either to the
+- * global or application config file.
++ * global or application config file. On MS Windows and Mac OS X this also
++ * saves the window position.
+  *
+  * @note the group must be set before calling
+  *
+@@ -47,7 +49,8 @@ KCONFIGGUI_EXPORT void saveWindowSize(const QWindow *window, KConfigGroup &confi
+ 
+ /**
+  * Restores the dialog's size from the configuration according to
+- * the screen size.
++ * the screen size. On MS Windows and Mac OS X this also restores
++ * the dialog position.
+  *
+  * @note the group must be set before calling
+  *
