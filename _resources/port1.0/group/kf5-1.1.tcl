@@ -78,7 +78,7 @@ if {![ info exists kf5.plasma ]} {
 }
 
 platforms               darwin linux
-categories              kde kf5 devel
+categories              kf5 kde devel
 license                 GPL-2+
 
 set kf5.branch           [join [lrange [split ${kf5.version} .] 0 1] .]
