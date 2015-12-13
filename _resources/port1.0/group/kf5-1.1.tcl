@@ -474,6 +474,20 @@ kf5.framework_dependency    plasma-framework libKF5Plasma
 
 # see also http://api.kde.org/frameworks-api/frameworks5-apidocs/attica/html/index.html
 
+# provide links to icons from an installed theme in a format that is acceptable for ecm_add_app_icon
+# iconDir : the full path to the icon theme directory (no trailing slash!)
+# category : the category to which the icon belongs (ex: actions, or apps; no trailing slash!)
+# iconName : the name of the icon file (must be a .png)
+# destination: the full path to the destination directory
+# see port:kf5-kdelibs4support (post-patch) for an example on how to use this.
+proc kf5.link_icons {iconDir category iconName destination} {
+    foreach icon [glob -nocomplain ${iconDir}/*/${category}/${iconName}] {
+        set ifile [strsed ${icon} "s|${iconDir}/||"]
+        set ifile [strsed ${ifile} "s|x\[0-9\]*/${category}/|-|"]
+        ui_msg "ln -s ${icon} ${destination}/${ifile}"
+    }
+}
+
 notes "
 Don't forget that dbus needs to be started as the local\
 user (not with sudo) before any KDE programs will launch.
