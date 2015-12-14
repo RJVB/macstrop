@@ -1,24 +1,5 @@
-diff --git src/gui/CMakeLists.txt src/gui/CMakeLists.txt
-index 9663e09..057584a 100644
---- src/gui/CMakeLists.txt
-+++ src/gui/CMakeLists.txt
-@@ -1,4 +1,5 @@
- 
-+find_package(Qt5Widgets ${REQUIRED_QT_VERSION} REQUIRED NO_MODULE)
- find_package(Qt5Gui ${REQUIRED_QT_VERSION} REQUIRED NO_MODULE)
- find_package(Qt5Xml ${REQUIRED_QT_VERSION} REQUIRED NO_MODULE)
- 
-@@ -18,7 +19,7 @@ add_library(KF5::ConfigGui ALIAS KF5ConfigGui)
- 
- target_include_directories(KF5ConfigGui INTERFACE "$<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR_KF5}/KConfigGui>")
- 
--target_link_libraries(KF5ConfigGui PUBLIC Qt5::Gui Qt5::Xml KF5::ConfigCore)
-+target_link_libraries(KF5ConfigGui PUBLIC Qt5::Widgets Qt5::Gui Qt5::Xml KF5::ConfigCore)
- 
- set_target_properties(KF5ConfigGui PROPERTIES VERSION   ${KCONFIG_VERSION_STRING}
-                                               SOVERSION ${KCONFIG_SOVERSION}
 diff --git src/gui/kwindowconfig.cpp src/gui/kwindowconfig.cpp
-index d2f355c..209386f 100644
+index d2f355c..2cdf801 100644
 --- src/gui/kwindowconfig.cpp
 +++ src/gui/kwindowconfig.cpp
 @@ -1,6 +1,7 @@
@@ -29,73 +10,119 @@ index d2f355c..209386f 100644
  
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
-@@ -24,6 +25,95 @@
+@@ -24,6 +25,139 @@
  #include <QScreen>
  #include <QWindow>
  
-+#ifdef Q_WS_WIN
++#if defined(Q_OS_WIN) || defined(Q_OS_OSX)
 +
-+#include <QApplication>
-+#include <QDesktopWidget>
-+
-+void KWindowConfig::saveWindowSize(const QWindow *window, KConfigGroup &config, KConfigGroup::WriteConfigFlags options)
-+{
-+    // QWindow::screen() shouldn't return null, but it sometimes does due to bugs.
-+    if (!window || !window->screen()) {
-+        return;
-+    }
-+    QWidget *w = QWidget::find(window->winId());
-+
-+    if (w) {
-+        int scnum = QApplication::desktop()->screenNumber(w);
-+        QRect desk = QApplication::desktop()->screenGeometry(scnum);
-+        // geometry is saved separately for each resolution
-+        QString geometryKey = QStringLiteral("geometry-%1-%2").arg(desk.width()).arg(desk.height());
-+        QByteArray geometry = w->saveGeometry();
-+        config.writeEntry( geometryKey, geometry.toBase64(), options );
-+    }
-+}
-+
-+void KWindowConfig::restoreWindowSize(QWindow *window, const KConfigGroup &config)
-+{
-+    if (!window) {
-+        return;
-+    }
-+    QWidget *w = QWidget::find(window->winId());
-+
-+    if (w) {
-+        int scnum = QApplication::desktop()->screenNumber(w);
-+        QRect desk = QApplication::desktop()->screenGeometry(scnum);
-+        QString geometryKey = QStringLiteral("geometry-%1-%2").arg(desk.width()).arg(desk.height());
-+        QByteArray geometry = config.readEntry( geometryKey, QByteArray() );
-+        // if first time run, centre the window
-+        if (!w->restoreGeometry( QByteArray::fromBase64(geometry) )) {
-+            w->move( (desk.width() - w->width()) / 2, (desk.height() - w->height()) / 2 );
-+        }
-+    }
-+}
-+
-+#elif defined(Q_OS_OSX)
-+
-+#include <QApplication>
-+#include <QDesktopWidget>
++#include <QGuiApplication>
 +#include <QDebug>
 +
++class GeometryData
++{
++public:
++    // create an instance and initialise it with geometry data from the given window
++    GeometryData(const QWindow *window)
++    {
++        geometryData.clear();
++        if (window) {
++            QDataStream geoDStream(&geometryData, QIODevice::WriteOnly);
++            quint32 magic = 0xDADACAFE;
++            geoDStream << magic
++                    << window->frameGeometry()
++                    << window->geometry()
++                    << quint8(window->windowState());
++        }
++        associatedWindow = window;
++    }
++    // create an instance from already encoded geometry data. As a convenience,
++    // this constructor attempts to determine if the entry QByteArray
++    // is encoded in Base64, and if so, decode it automatically.
++    GeometryData(const QByteArray &data)
++    {
++        if (data.size() > 4) {
++            geometryData = data;
++            quint32 magic;
++            bool ok = false;
++            while (geometryData.size() > 0 && !ok) {
++                QDataStream dstream(geometryData);
++                dstream >> magic;
++                if (magic == 0xDADACAFE) {
++                    ok = true;
++                } else if(geometryData == data) {
++                    geometryData = QByteArray::fromBase64(data);
++                } else {
++                    geometryData.clear();
++                    qDebug() << Q_FUNC_INFO << "magic=" << magic << "invalid data; dstream=" << dstream;
++                }
++            }
++        } else {
++            geometryData.clear();
++        }
++        associatedWindow = 0;
++    }
++
++    QByteArray data()
++    {
++        return geometryData;
++    }
++
++    bool applyToWindow(QWindow *window)
++    {
++        bool ret = false;
++        if (window && geometryData.size() > 4) {
++            QDataStream geoDStream(geometryData);
++            QRect frameGeo,
++                winGeo;
++            quint32 magic;
++            quint8 winState;
++            geoDStream >> magic
++                    >> frameGeo
++                    >> winGeo
++                    >> winState;
++            if (frameGeo.isValid() && winGeo.isValid()) {
++                // there can be interplay between window position and size; at least on OS X
++                // the window server can apply a different size as a result of window position,
++                // or it could refuse to move the window to its exact position.
++                // Therefore, first move the window to its intended position, then resize it,
++                // and ultimately set the position once more (hoping it will be a noop).
++                // If needed, further inspiration can be obtained from the QWidget::restoreGeometry code.
++                window->setFramePosition(frameGeo.topLeft());
++                window->resize(winGeo.size());
++                window->setFramePosition(frameGeo.topLeft());
++                if (winState) {
++                    window->setWindowState(Qt::WindowState(winState));
++                }
++                associatedWindow = window;
++                ret = true;
++            }
++        }
++        return ret;
++    }
++private:
++    QByteArray geometryData;
++    // a pointer to the source of the data, or the window to which
++    // the data have last been applied.
++    const QWindow *associatedWindow;
++};
++
 +void KWindowConfig::saveWindowSize(const QWindow *window, KConfigGroup &config, KConfigGroup::WriteConfigFlags options)
 +{
 +    // QWindow::screen() shouldn't return null, but it sometimes does due to bugs.
 +    if (!window || !window->screen()) {
 +        return;
 +    }
-+    QWidget *w = QWidget::find(window->winId());
-+
-+    if (w) {
++    if (!(window->windowState() & Qt::WindowMaximized)) {
++#ifdef Q_OS_WIN
++        const QRect desk = window->screen()->geometry();
 +        // geometry is saved separately for each resolution
++        QString geometryKey = QStringLiteral("geometry-%1-%2").arg(desk.width()).arg(desk.height());
++#else
++        // geometry is saved separately for each supported/used platform
 +        QString geometryKey = QStringLiteral("geometry-") + QGuiApplication::platformName();
-+        QByteArray geometry = w->saveGeometry();
-+        config.writeEntry( geometryKey, geometry.toBase64(), options );
-+    } else {
-+        qDebug() << Q_FUNC_INFO << "cannot determine QWidget for window" << window;
++#endif
++        config.writeEntry(geometryKey, GeometryData(window).data().toBase64(), options );
 +    }
 +}
 +
@@ -104,19 +131,17 @@ index d2f355c..209386f 100644
 +    if (!window) {
 +        return;
 +    }
-+    QWidget *w = QWidget::find(window->winId());
 +
-+    if (w) {
-+        int scnum = QApplication::desktop()->screenNumber(w);
-+        QRect desk = QApplication::desktop()->screenGeometry(scnum);
-+        QString geometryKey = QStringLiteral("geometry-") + QGuiApplication::platformName();
-+        QByteArray geometry = config.readEntry( geometryKey, QByteArray() );
++    const QRect desk = window->screen()->geometry();
++#ifdef Q_OS_WIN
++    QString geometryKey = QStringLiteral("geometry-%1-%2").arg(desk.width()).arg(desk.height());
++#else
++    QString geometryKey = QStringLiteral("geometry-") + QGuiApplication::platformName();
++#endif
++    if (!GeometryData::GeometryData(config.readEntry(geometryKey, QByteArray())).applyToWindow(window)) {
 +        // if first time run, centre the window
-+        if (!w->restoreGeometry( QByteArray::fromBase64(geometry) )) {
-+            w->move( (desk.width() - w->width()) / 2, (desk.height() - w->height()) / 2 );
-+        }
-+    } else {
-+        qDebug() << Q_FUNC_INFO << "cannot determine QWidget for window" << window;
++        window->setFramePosition(QPoint((desk.width() - window->frameGeometry().width()) / 2,
++                                      (desk.height() - window->frameGeometry().height()) / 2));
 +    }
 +}
 +
@@ -125,7 +150,7 @@ index d2f355c..209386f 100644
  static const char s_initialSizePropertyName[] = "_kconfig_initial_size";
  static const char s_initialScreenSizePropertyName[] = "_kconfig_initial_screen_size";
  
-@@ -85,3 +175,5 @@ void KWindowConfig::restoreWindowSize(QWindow *window, const KConfigGroup &confi
+@@ -85,3 +219,5 @@ void KWindowConfig::restoreWindowSize(QWindow *window, const KConfigGroup &confi
          window->setWindowState(Qt::WindowMaximized);
      }
  }
