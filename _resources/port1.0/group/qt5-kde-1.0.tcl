@@ -293,6 +293,10 @@ if {![info exists building_qt5]} {
         }
         set qt5_dependency ${qt5_pathlibspec}:qt5-kde
         depends_lib-append ${qt5_dependency}
+    } elseif {${os.platform} eq "linux"} {
+        set qt5_pathlibspec path:libexec/${qt_name}/lib/libQtCore.${qt_libs_ext}
+        set qt5_dependency ${qt5_pathlibspec}:qt5-kde
+        depends_lib-append ${qt5_dependency}
     }
 }
 
