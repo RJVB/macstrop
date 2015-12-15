@@ -388,11 +388,21 @@ proc kf5.framework_dependency {name {library 0}} {
     }
 }
 
+proc kf5.has_translations {} {
+    global kf5.pythondep
+    ui_debug "Adding gettext and ${kf5.pythondep} build dependencies because of KI18n"
+    depends_build-append \
+                        port:gettext \
+                        ${kf5.pythondep}
+}
+
 # kf5.depends_frameworks appends the ports corresponding to the KF5 Frameworks
 # short names to depends_lib
 # This procedure also adds the build dependencies that KI18n imposes
+# Caution though: some KF5 packages will let the KI18n dependency be added
+# through cmake's public link interface handling, rather than declaring an
+# explicit dependency themselves that is listed in the printed summary.
 proc kf5.depends_frameworks {first args} {
-    global kf5.pythondep
     # join ${first} and (the optional) ${args}
     set args [linsert $args[set list {}] 0 ${first}]
 #     depends_lib-append  [kf5.framework_dependency ${first}]
@@ -401,15 +411,11 @@ proc kf5.depends_frameworks {first args} {
                         [kf5.framework_dependency ${f}]
     }
     if {[lsearch -exact ${args} "ki18n"] ne "-1"} {
-        ui_debug "Adding gettext and ${kf5.pythondep} build dependencies because of KI18n"
-        depends_build-append \
-                        port:gettext \
-                        ${kf5.pythondep}
+        kf5.has_translations
     }
 }
 # the equivalent to kf5.depends_frameworks for declaring build dependencies.
 proc kf5.depends_build_frameworks {first args} {
-    global kf5.pythondep
     # join ${first} and (the optional) ${args}
     set args [linsert $args[set list {}] 0 ${first}]
     foreach f ${args} {
@@ -417,10 +423,7 @@ proc kf5.depends_build_frameworks {first args} {
                         [kf5.framework_dependency ${f}]
     }
     if {[lsearch -exact ${args} "ki18n"] ne "-1"} {
-        ui_debug "Adding gettext and ${kf5.pythondep} build dependencies because of KI18n"
-        depends_build-append \
-                        port:gettext \
-                        ${kf5.pythondep}
+        kf5.has_translations
     }
 }
 
