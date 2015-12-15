@@ -64,7 +64,7 @@ if { ![ info exists kf5.project ] } {
 
 # KF5 frameworks current version, which is the same for all frameworks
 if {![info exists kf5.version]} {
-    set kf5.version     5.16.0
+    set kf5.version     5.17.0
 }
 
 # KF5 Applications version
@@ -365,6 +365,7 @@ proc kf5.add_test_library_path {path} {
 # (which would have to add a library dependency if no executable dependency is defined).
 proc kf5.framework_dependency {name {library 0}} {
     upvar #0 kf5.${name}_dep dep
+    upvar #0 kf5.${name}_lib lib
     if {${library} ne 0} {
         global os.platform os.arch
         if {${os.platform} eq "darwin"} {
@@ -374,7 +375,8 @@ proc kf5.framework_dependency {name {library 0}} {
             set kf5.lib_path    lib/${os.arch}-linux-gnu
             set kf5.lib_ext     so.5
         }
-        set dep                 path:${kf5.lib_path}/${library}.${kf5.lib_ext}:kf5-${name}
+        set lib                 ${kf5.lib_path}/${library}.${kf5.lib_ext}
+        set dep                 path:${lib}:kf5-${name}
         ui_debug "Dependency expression for KF5ramework ${name}: ${dep}"
     } else {
         if {[info exists dep]} {
@@ -405,7 +407,6 @@ proc kf5.has_translations {} {
 proc kf5.depends_frameworks {first args} {
     # join ${first} and (the optional) ${args}
     set args [linsert $args[set list {}] 0 ${first}]
-#     depends_lib-append  [kf5.framework_dependency ${first}]
     foreach f ${args} {
         depends_lib-append \
                         [kf5.framework_dependency ${f}]
