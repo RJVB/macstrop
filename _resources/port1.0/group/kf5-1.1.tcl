@@ -363,17 +363,25 @@ proc kf5.add_test_library_path {path} {
 # This may be extended to provide path-style *runtime* dependencies on framework executables;
 # kf5.framework_runtime_dependency{name {executable 0}} and kf5.depends_run_frameworks
 # (which would have to add a library dependency if no executable dependency is defined).
-proc kf5.framework_dependency {name {library 0}} {
+proc kf5.framework_dependency {name {library 0} {soversion 5}} {
     upvar #0 kf5.${name}_dep dep
     upvar #0 kf5.${name}_lib lib
     if {${library} ne 0} {
         global os.platform os.arch
         if {${os.platform} eq "darwin"} {
             set kf5.lib_path    lib
-            set kf5.lib_ext     5.dylib
+            if {${soversion} ne ""} {
+                set kf5.lib_ext 5.dylib
+            } else {
+                set kf5.lib_ext dylib
+            }
         } elseif {${os.platform} eq "linux"} {
             set kf5.lib_path    lib/${os.arch}-linux-gnu
-            set kf5.lib_ext     so.5
+            if {${soversion} ne ""} {
+                set kf5.lib_ext so.5
+            } else {
+                set kf5.lib_ext so
+            }
         }
         set lib                 ${kf5.lib_path}/${library}.${kf5.lib_ext}
         set dep                 path:${lib}:kf5-${name}
@@ -477,7 +485,7 @@ kf5.framework_dependency    gpgmepp libKF5Gpgmepp
 # kf5-kinit does install a library but it may not be the best choice as a dependency:
 # hard to tell at this moment how many dependents actually use that rather than
 # depending on one of the framework's executables.
-kf5.framework_dependency    kinit libkdeinit5_klauncher
+kf5.framework_dependency    kinit libkdeinit5_klauncher ""
 kf5.framework_dependency    kded libkdeinit5_kded5
 kf5.framework_dependency    kparts libKF5Parts
 kf5.framework_dependency    kdewebkit libKF5WebKit
