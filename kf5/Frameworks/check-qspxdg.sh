@@ -67,17 +67,17 @@ if [ "${PORT}" != "" ] ;then
 					else
 						otool -L ${b} | fgrep lib/libKF5 2>&1 > /dev/null
 						if [ $? = 0 ] ;then
-							echo "\tdestroot:${b} does not link to the QtQspXDG activator but links to other KF5 libs!!!"
+							echo "\tdestroot:${b} does not link to the QtQspXDG activator nor ${QSPXDGLIB} but links to other KF5 libs"
 						else
-							echo "\t\tdestroot:${b}: OK (?!)"
+							echo "\t\tdestroot:${b}: will use native QSPs!"
 						fi
 					fi
 				else
 					otool -L ${b} | fgrep lib/libKF5 2>&1 > /dev/null
 					if [ $? = 0 ] ;then
-						echo "\tdestroot:${b} does not link to the QtQspXDG activator but links to other KF5 libs!!!"
+						echo "\tdestroot:${b} does not link to the QtQspXDG activator but links to other KF5 libs!"
 					else
-						echo "\t\tdestroot:${b}: OK (?!)"
+						echo "\t\tdestroot:${b}: will use native QSPs!"
 					fi
 				fi
 			fi
