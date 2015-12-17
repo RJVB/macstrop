@@ -69,7 +69,8 @@ if {![info exists kf5.version]} {
 
 # KF5 Applications version
 if {![ info exists kf5.release ]} {
-    set kf5.release     15.08.3
+#     set kf5.release     15.08.3
+    set kf5.release     15.12.0
 }
 
 # KF5 Plasma version
@@ -514,7 +515,7 @@ proc kf5.link_icons {iconDir category iconName destination} {
     foreach icon [glob -nocomplain ${iconDir}/*/${category}/${iconName}] {
         set ifile [strsed ${icon} "s|${iconDir}/||"]
         set ifile [strsed ${ifile} "s|x\[0-9\]*/${category}/|-|"]
-        ui_msg "ln -s ${icon} ${destination}/${ifile}"
+        ln -s ${icon} ${destination}/${ifile}
     }
 }
 
