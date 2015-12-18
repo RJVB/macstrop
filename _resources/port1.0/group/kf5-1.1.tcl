@@ -419,6 +419,15 @@ proc kf5.depends_frameworks {first args} {
     foreach f ${args} {
         depends_lib-append \
                         [kf5.framework_dependency ${f}]
+        if {[lsearch {"baloo" "kactivities" "kdbusaddons" "kded" "kdelibs4support-devel" "kglobalaccel" "kio"
+                        "kservice" "kwallet" "kwalletmanager" "plasma-framework"} ${f}] ne "-1"} {
+            notes "
+                Don't forget that dbus needs to be started as the local\
+                user (not with sudo) before any KDE programs will launch.
+                To start it run the following command:
+                 launchctl load -w /Library/LaunchAgents/org.freedesktop.dbus-session.plist
+                "
+        }
     }
     if {[lsearch -exact ${args} "ki18n"] ne "-1"} {
         kf5.has_translations
@@ -518,12 +527,5 @@ proc kf5.link_icons {iconDir category iconName destination} {
         ln -s ${icon} ${destination}/${ifile}
     }
 }
-
-notes "
-Don't forget that dbus needs to be started as the local\
-user (not with sudo) before any KDE programs will launch.
-To start it run the following command:
- launchctl load -w /Library/LaunchAgents/org.freedesktop.dbus-session.plist
-"
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
