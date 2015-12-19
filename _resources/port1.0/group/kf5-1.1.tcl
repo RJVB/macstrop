@@ -52,6 +52,7 @@ PortGroup               qt5-kde 1.0
 #    + a virtual path in 'kf5.virtualPath' (e.g. "applications")
 #    + as well as (optionally) a release in 'kf5.release' (e.g. "15.04.2")
 #    + or (optionally) a plasma version in 'kf5.plasma' (e.g. 5.4.3)
+#    + and a category for applications (kf5.category).
 #
 # otherwise the port will fail to build.
 ########################################################################
@@ -276,6 +277,7 @@ proc kf5.set_project {project} {
     global kf5.release
     global kf5.plasma
     global kf5.virtualPath
+    global kf5.category
     global kf5.version
     global fetch.type
     global filespath
@@ -308,7 +310,11 @@ proc kf5.set_project {project} {
     } else {
         distname            ${project}-${kf5.version}
     }
-    homepage                http://projects.kde.org/projects/${kf5.virtualPath}/${project}
+    if {[info exists kf5.category]} {
+        homepage            http://www.kde.org/${kf5.virtualPath}/${kf5.category}/${project}
+    } else {
+        homepage            http://projects.kde.org/projects/${kf5.virtualPath}/${project}
+    }
     if {${fetch.type} eq "git"} {
         if {[file exists ${filespath}/${project}-git/.git]} {
             git.url         ${filespath}/${project}-git
