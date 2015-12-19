@@ -189,6 +189,12 @@ variant docs description {build and install the documentation, for use with Qt's
         }
     }
 }
+if {![variant_isset docs]} {
+    pre-patch {
+        reinplace "/add_subdirectory.*(\[ ]*docs\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
+        reinplace "/add_subdirectory.*(\[ \]*doc\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
+    }
+}
 
 if {${os.platform} eq "darwin"} {
    set kf5.libs_dir    ${prefix}/lib
