@@ -100,8 +100,12 @@ proc kde4.restore_from_legacy_prefix {} {
     global destroot
     global prefix
     global kde4.legacy_prefix
+    if {[file exists ${destroot}${kde4.legacy_prefix}/lib/cmake]} {
+        # move back the cmake modules to where they should be
+        file rename ${destroot}${kde4.legacy_prefix}/lib/cmake ${destroot}${prefix}/lib/cmake
+    }
     if {[file exists ${destroot}${kde4.legacy_prefix}/lib/kde4]} {
-        # move back the kparts to where they should be
+        # move back the kparts, libexec etc. to where they should be
         file rename ${destroot}${kde4.legacy_prefix}/lib/kde4 ${destroot}${prefix}/lib/kde4
     }
     if {[file exists ${destroot}${kde4.legacy_prefix}/share]} {
