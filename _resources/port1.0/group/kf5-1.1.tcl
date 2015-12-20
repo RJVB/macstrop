@@ -93,6 +93,8 @@ configure.cppflags-delete -I${prefix}/include
 # setup all KF5 ports to build in a separate directory from the source:
 cmake.out_of_source     yes
 
+use_xz                  yes
+
 set kf5.pyversion       2.7
 set kf5.pybranch        [join [lrange [split ${kf5.pyversion} .] 0 1] ""]
 if {${os.platform} eq "darwin"} {
@@ -331,7 +333,6 @@ proc kf5.set_project {project} {
     } else {
         master_sites        http://download.kde.org/stable/${f}
     }
-    use_xz                  yes
 }
 if {[info exists kf5.project]} {
     kf5.set_project     ${kf5.project}
