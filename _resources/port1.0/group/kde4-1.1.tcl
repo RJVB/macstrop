@@ -76,6 +76,41 @@ configure.args-append   -DCMAKE_BUILD_TYPE:STRING=MacPorts \
 # Install the kdelibs headerfiles in their own directory to prevent clashes with KF5 headers
 set kde4.include_prefix KDE4
 set kde4.include_dirs   ${prefix}/include/${kde4.include_prefix}
+set kde4.legacy_prefix  ${prefix}/libexec/kde4-legacy
+
+# Certain ports will need to be installed in "KF5 compatibility mode" if they are to co-exist
+# with their KF5 counterparts. Call `kde4.use_legacy_prefix` to activate this mode, *before*
+# the configure step is executed and taking care not to undo the effects
+proc kde4.use_legacy_prefix {} {
+    global prefix
+    global kde4.legacy_prefix
+    configure.pre_args-replace \
+                    -DCMAKE_INSTALL_PREFIX=${prefix} -DCMAKE_INSTALL_PREFIX=${kde4.legacy_prefix}
+    configure.args-replace \
+                    -DCMAKE_INSTALL_RPATH=${prefix}/lib -DCMAKE_INSTALL_RPATH="${prefix}/lib\;${kde4.legacy_prefix}/lib"
+}
+
+# Call kde4.restore_from_legacy_prefix from the post-destroot phase of a port that uses
+# KF5 compatibility mode. That mode is very indiscriminate, installing everything into the
+# legacy_prefix initially. Most things will actually have to be moved back out into the
+# regular prefix. This procedure automates what can be automated, but may also overshoot
+# its goal.
+# This procedure is bound to evolve.
+proc kde4.restore_from_legacy_prefix {} {
+    global destroot
+    global prefix
+    global kde4.legacy_prefix
+    if {[file exists ${destroot}${kde4.legacy_prefix}/lib/kde4]} {
+        # move back the kparts to where they should be
+        file rename ${destroot}${kde4.legacy_prefix}/lib/kde4 ${destroot}${prefix}/lib/kde4
+    }
+    if {[file exists ${destroot}${kde4.legacy_prefix}/share]} {
+        # move back the share directory to where it should be;
+        # first delete the share directory that was created for us and should be empty:
+        file delete -force ${destroot}${prefix}/share
+        file rename ${destroot}${kde4.legacy_prefix}/share ${destroot}${prefix}/share
+    }
+}
 
 # augment the CMake module lookup path, if necessary depending on
 # where Qt4 is installed.
