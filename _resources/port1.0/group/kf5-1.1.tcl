@@ -540,4 +540,22 @@ proc kf5.link_icons {iconDir category iconName destination} {
     }
 }
 
+# rename icon files, for use with the kde4compat variant, in the post-destroot
+# example:
+# kf5.rename_icons ${destroot}${prefix}/share/icons/hicolor apps kate kate5
+proc kf5.rename_icons {iconDir category iconOld iconNew {destination 0}} {
+    if {${destination} eq "0"} {
+        set destination ${iconDir}
+    }
+    foreach icon [glob -nocomplain ${iconDir}/*/${category}/${iconOld}.*] {
+        set ipath [strsed ${icon} "s|${iconDir}/||"]
+        # get the extention (png or svg or svgz)
+        set ext [strsed ${ipath} "s|.*${iconOld}\.||"]
+        # remove the original icon name
+        set ipath [strsed ${ipath} "s|${iconOld}\.${ext}||"]
+        file rename ${icon} ${destination}/${ipath}${iconNew}.${ext}
+    }
+}
+
+
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
