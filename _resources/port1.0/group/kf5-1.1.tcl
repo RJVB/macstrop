@@ -525,6 +525,9 @@ kf5.framework_dependency    knewstuff libKF5NewStuff
 kf5.framework_dependency    knotifyconfig libKF5NotifyConfig
 kf5.framework_dependency    plasma-framework libKF5Plasma
 
+# not a framework; use the procedure to define the path-style dependency
+kf5.framework_dependency    cli-tools libkdeinit5_kcmshell5 ""
+
 # see also http://api.kde.org/frameworks-api/frameworks5-apidocs/attica/html/index.html
 
 # provide links to icons from an installed theme in a format that is acceptable for ecm_add_app_icon
