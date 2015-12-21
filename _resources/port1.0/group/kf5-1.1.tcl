@@ -418,6 +418,8 @@ proc kf5.has_translations {} {
     depends_build-append \
                         port:gettext \
                         ${kf5.pythondep}
+    configure.args-append \
+                        -DPYTHON_EXECUTABLE=${prefix}/bin/python${kf5.pyversion}
 }
 
 # kf5.depends_frameworks appends the ports corresponding to the KF5 Frameworks
