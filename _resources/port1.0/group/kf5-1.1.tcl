@@ -414,6 +414,8 @@ proc kf5.framework_dependency {name {library 0} {soversion 5}} {
 
 proc kf5.has_translations {} {
     global kf5.pythondep
+    global kf5.pyversion
+    global prefix
     ui_debug "Adding gettext and ${kf5.pythondep} build dependencies because of KI18n"
     depends_build-append \
                         port:gettext \
