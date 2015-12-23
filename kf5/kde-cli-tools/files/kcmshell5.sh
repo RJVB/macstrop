@@ -3,19 +3,8 @@
 @KDEAPPDIR@/kcmshell5.app/Contents/MacOS/kcmshell5 "$@" &
 PID=$!
 
-# give it some time
-sleep 1
-
-# check if kcmshell5 is running
-kill -0 ${PID} 2>1 > /dev/null
-if [ $? = 0 ] ;then
-     # bring the application to the front
-     echo 'tell application "kcmshell5" to activate' | osascript
-     wait ${PID}
-     exit $?
-else
-     exit 0
-fi
+wait ${PID}
+exit $?
 
 # # cache current KDE_SESSION_VERSION setting
 # KSV="`launchctl getenv KDE_SESSION_VERSION`"
