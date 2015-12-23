@@ -33,7 +33,7 @@ index f94db71..500fc32 100644
      Qt5::DBus
  )
 +if (APPLE)
-+    target_link_libraries(kdeinit5 PUBLIC "-framework Foundation")
++    target_link_libraries(kdeinit5 PUBLIC "-framework Foundation -framework AppKit")
 +endif ()
  
  target_compile_definitions(kdeinit5 PRIVATE
@@ -305,10 +305,10 @@ index a18008a..bbe7b63 100644
      /** Make process group leader (for shutting down children later) **/
 diff --git src/kdeinit/kinit_mac.mm src/kdeinit/kinit_mac.mm
 new file mode 100644
-index 0000000..901bce6
+index 0000000..62d3329
 --- /dev/null
 +++ src/kdeinit/kinit_mac.mm
-@@ -0,0 +1,1781 @@
+@@ -0,0 +1,1474 @@
 +/*
 + * This file is part of the KDE libraries
 + * Copyright (c) 1999-2000 Waldo Bastian <bastian@kde.org>
@@ -370,6 +370,7 @@ index 0000000..901bce6
 +#include <qsavefile.h>
 +
 +#import <Foundation/Foundation.h>
++#import <AppKit/AppKit.h>
 +#include <CoreFoundation/CFBundle.h>
 +#include <CoreFoundation/CFString.h>
 +#include <CoreFoundation/CFURL.h>
@@ -380,12 +381,6 @@ index 0000000..901bce6
 +
 +#include "klauncher_cmds.h"
 +
-+#if HAVE_X11
-+#include <X11/Xlib.h>
-+#include <X11/Xatom.h>
-+#include <fixx11h.h>
-+#include <kstartupinfo.h>
-+#endif
 +#include <qstandardpaths.h>
 +
 +static const char *extra_libs[] = {
@@ -403,25 +398,13 @@ index 0000000..901bce6
 +
 +extern char **environ;
 +
-+// Mac OS X is unlikely to be built against/for X11, but it shouldn't be impossible at the moment.
-+// So let's leave in the X11 code for now.
-+#if HAVE_X11
-+static int X11fd = -1;
-+static Display *X11display = 0;
-+static int X11_startup_notify_fd = -1;
-+static Display *X11_startup_notify_display = 0;
-+#endif
 +#define MAX_SOCK_FILE 255
 +static char sock_file[MAX_SOCK_FILE];
 +
 +static const char* displayEnvVarName_c()
 +{
 +    // Can't use QGuiApplication::platformName() here, there is no app instance.
-+#if HAVE_X11
-+    return "DISPLAY";
-+#else
 +    return "MAC_DISPLAY";
-+#endif
 +}
 +
 +/* Group data */
@@ -455,13 +438,6 @@ index 0000000..901bce6
 +};
 +
 +static struct child *children;
-+
-+#if HAVE_X11
-+extern "C" {
-+    int kdeinit_xio_errhandler(Display *);
-+    int kdeinit_x_errhandler(Display *, XErrorEvent *err);
-+}
-+#endif
 +
 +#if KDEINIT_OOM_PROTECT
 +static int oom_pipe = -1;
@@ -533,16 +509,6 @@ index 0000000..901bce6
 +        close(d.accepted_fd);
 +        d.accepted_fd = -1;
 +    }
-+#if HAVE_X11
-+    if (X11fd >= 0) {
-+        close(X11fd);
-+        X11fd = -1;
-+    }
-+    if (X11_startup_notify_fd >= 0 && X11_startup_notify_fd != X11fd) {
-+        close(X11_startup_notify_fd);
-+        X11_startup_notify_fd = -1;
-+    }
-+#endif
 +
 +    signal(SIGCHLD, SIG_DFL);
 +    signal(SIGPIPE, SIG_DFL);
@@ -610,30 +576,6 @@ index 0000000..901bce6
 +    close(fd);
 +}
 +
-+#if HAVE_X11 // Only X11 supports multiple desktops
-+// from kdecore/netwm.cpp
-+static int get_current_desktop(Display *disp)
-+{
-+    int desktop = 0; // no desktop by default
-+    Atom net_current_desktop = XInternAtom(disp, "_NET_CURRENT_DESKTOP", False);
-+    Atom type_ret;
-+    int format_ret;
-+    unsigned char *data_ret;
-+    unsigned long nitems_ret, unused;
-+    if (XGetWindowProperty(disp, DefaultRootWindow(disp), net_current_desktop,
-+                           0l, 1l, False, XA_CARDINAL, &type_ret, &format_ret, &nitems_ret, &unused, &data_ret)
-+            == Success) {
-+        if (type_ret == XA_CARDINAL && format_ret == 32 && nitems_ret == 1) {
-+            desktop = *((long *) data_ret) + 1;
-+        }
-+        if (data_ret) {
-+            XFree((char *) data_ret);
-+        }
-+    }
-+    return desktop;
-+}
-+#endif
-+
 +// var has to be e.g. "DISPLAY=", i.e. with =
 +const char *get_env_var(const char *var, int envc, const char *envs)
 +{
@@ -653,46 +595,6 @@ index 0000000..901bce6
 +    }
 +    return NULL;
 +}
-+
-+#if HAVE_X11
-+static void init_startup_info(KStartupInfoId &id, const QByteArray &bin,
-+                              int envc, const char *envs)
-+{
-+    QByteArray envname = displayEnvVarName() + "=";
-+    const char *dpy = get_env_var(envname.constData(), envc, envs);
-+    // this may be called in a child, so it can't use display open using X11display
-+    // also needed for multihead
-+    X11_startup_notify_display = XOpenDisplay(dpy);
-+    if (X11_startup_notify_display == NULL) {
-+        return;
-+    }
-+    X11_startup_notify_fd = XConnectionNumber(X11_startup_notify_display);
-+    KStartupInfoData data;
-+    int desktop = get_current_desktop(X11_startup_notify_display);
-+    data.setDesktop(desktop);
-+    data.setBin(QFile::decodeName(bin));
-+    KStartupInfo::sendChangeX(X11_startup_notify_display, id, data);
-+    XFlush(X11_startup_notify_display);
-+}
-+
-+static void complete_startup_info(KStartupInfoId &id, pid_t pid)
-+{
-+    if (X11_startup_notify_display == NULL) {
-+        return;
-+    }
-+    if (pid == 0) { // failure
-+        KStartupInfo::sendFinishX(X11_startup_notify_display, id);
-+    } else {
-+        KStartupInfoData data;
-+        data.addPid(pid);
-+        data.setHostname();
-+        KStartupInfo::sendChangeX(X11_startup_notify_display, id, data);
-+    }
-+    XCloseDisplay(X11_startup_notify_display);
-+    X11_startup_notify_display = NULL;
-+    X11_startup_notify_fd = -1;
-+}
-+#endif
 +
 +QByteArray execpath_avoid_loops(const QByteArray &exec, int envc, const char *envs, bool avoid_loops)
 +{
@@ -829,13 +731,6 @@ index 0000000..901bce6
 +        return d.fork;
 +    }
 +
-+#if HAVE_X11
-+    KStartupInfoId startup_id;
-+    startup_id.initId(startup_id_str);
-+    if (!startup_id.none()) {
-+        init_startup_info(startup_id, name, envc, envs);
-+    }
-+#endif
 +    // find out this path before forking, doing it afterwards
 +    // crashes on some platforms, notably OSX
 +    const QString bundlepath = QStandardPaths::findExecutable(QFile::decodeName(execpath));
@@ -896,13 +791,6 @@ index 0000000..901bce6
 +            envs++;
 +        }
 +
-+#if HAVE_X11
-+        if (startup_id.none()) {
-+            KStartupInfo::resetStartupEnv();
-+        } else {
-+            startup_id.setupStartupEnv();
-+        }
-+#endif
 +        {
 +            QByteArray procTitle;
 +            if (execpath.isEmpty()) {
@@ -974,6 +862,7 @@ index 0000000..901bce6
 +                QFileInfo fi(QString::fromUtf8(executable));
 +                [[NSProcessInfo processInfo] setProcessName:(NSString*)fi.baseName().toCFString()];
 +                qApp->setApplicationName(fi.baseName());
++                [NSApp activateIgnoringOtherApps:YES];
 +                execvp(executable.constData(), d.argv);
 +            }
 +
@@ -1081,15 +970,6 @@ index 0000000..901bce6
 +        }
 +        close(d.fd[0]);
 +    }
-+#if HAVE_X11
-+    if (!startup_id.none()) {
-+        if (d.fork && d.result == 0) { // launched successfully
-+            complete_startup_info(startup_id, d.fork);
-+        } else { // failure, cancel ASN
-+            complete_startup_info(startup_id, 0);
-+        }
-+    }
-+#endif
 +    return d.fork;
 +}
 +
@@ -1519,9 +1399,6 @@ index 0000000..901bce6
 +#ifndef NDEBUG
 +        fprintf(stderr, "kdeinit5: terminate KDE.\n");
 +#endif
-+#if HAVE_X11
-+        kdeinit_xio_errhandler(0L);
-+#endif
 +    } else if (request_header.cmd == LAUNCHER_TERMINATE_KDEINIT) {
 +#ifndef NDEBUG
 +        fprintf(stderr, "kdeinit5: Got termination request (PID %ld).\n", (long) getpid());
@@ -1563,11 +1440,6 @@ index 0000000..901bce6
 +    if (d.launcher[0] > max_sock) {
 +        max_sock = d.launcher[0];
 +    }
-+#if HAVE_X11
-+    if (X11fd > max_sock) {
-+        max_sock = X11fd;
-+    }
-+#endif
 +    max_sock++;
 +
 +    while (1) {
@@ -1622,11 +1494,6 @@ index 0000000..901bce6
 +            FD_SET(d.wrapper, &rd_set);
 +        }
 +        FD_SET(d.deadpipe[0], &rd_set);
-+#if HAVE_X11
-+        if (X11fd >= 0) {
-+            FD_SET(X11fd, &rd_set);
-+        }
-+#endif
 +
 +        result = select(max_sock, &rd_set, &wr_set, &e_set, 0);
 +        if (result < 0) {
@@ -1660,17 +1527,6 @@ index 0000000..901bce6
 +            }
 +        }
 +
-+#if HAVE_X11
-+        /* Look for incoming X11 events */
-+        if (X11fd >= 0 && FD_ISSET(X11fd, &rd_set)) {
-+            if (X11display != 0) {
-+                XEvent event_return;
-+                while (XPending(X11display)) {
-+                    XNextEvent(X11display, &event_return);
-+                }
-+            }
-+        }
-+#endif
 +    }
 +}
 +
@@ -1678,12 +1534,6 @@ index 0000000..901bce6
 +{
 +
 +    QByteArray display = qgetenv(displayEnvVarName_c());
-+    if (display.isEmpty()) {
-+#if HAVE_X11 // qt5: see displayEnvVarName_c()
-+        fprintf(stderr, "kdeinit5: Aborting. $%s is not set. \n", displayEnvVarName_c());
-+        exit(255);
-+#endif
-+    }
 +    int i;
 +    if ((i = display.lastIndexOf('.')) > display.lastIndexOf(':') && i >= 0) {
 +        display.truncate(i);
@@ -1703,147 +1553,6 @@ index 0000000..901bce6
 +    }
 +    strcpy(sock_file, socketName.data());
 +}
-+
-+#if HAVE_X11
-+int kdeinit_xio_errhandler(Display *disp)
-+{
-+    // disp is 0L when KDE shuts down. We don't want those warnings then.
-+
-+    if (disp) {
-+        qWarning("kdeinit5: Fatal IO error: client killed");
-+    }
-+
-+    if (sock_file[0]) {
-+        /** Delete any stale socket file **/
-+        unlink(sock_file);
-+    }
-+
-+    // Don't kill our children in suicide mode, they may still be in use
-+    if (d.suicide) {
-+        if (d.launcher_pid) {
-+            kill(d.launcher_pid, SIGTERM);
-+        }
-+        if (d.kded_pid) {
-+            kill(d.kded_pid, SIGTERM);
-+        }
-+        exit(0);
-+    }
-+
-+    if (disp) {
-+        qWarning("kdeinit5: sending SIGHUP to children.");
-+    }
-+
-+    /* this should remove all children we started */
-+    signal(SIGHUP, SIG_IGN);
-+    kill(0, SIGHUP);
-+
-+    sleep(2);
-+
-+    if (disp) {
-+        qWarning("kdeinit5: sending SIGTERM to children.");
-+    }
-+
-+    /* and if they don't listen to us, this should work */
-+    signal(SIGTERM, SIG_IGN);
-+    kill(0, SIGTERM);
-+
-+    if (disp) {
-+        qWarning("kdeinit5: Exit.");
-+    }
-+
-+    exit(0);
-+    return 0;
-+}
-+
-+int kdeinit_x_errhandler(Display *dpy, XErrorEvent *err)
-+{
-+#ifndef NDEBUG
-+    char errstr[256];
-+    // kdeinit almost doesn't use X, and therefore there shouldn't be any X error
-+    XGetErrorText(dpy, err->error_code, errstr, 256);
-+    fprintf(stderr, "kdeinit5(%d) : KDE detected X Error: %s %d\n"
-+            "         Major opcode: %d\n"
-+            "         Minor opcode: %d\n"
-+            "         Resource id:  0x%lx\n",
-+            getpid(), errstr, err->error_code, err->request_code, err->minor_code, err->resourceid);
-+
-+#else
-+    Q_UNUSED(dpy);
-+    Q_UNUSED(err);
-+#endif
-+    return 0;
-+}
-+#endif
-+
-+#if HAVE_X11
-+// needs to be done sooner than initXconnection() because of also opening
-+// another X connection for startup notification purposes
-+static void setupX()
-+{
-+    XSetIOErrorHandler(kdeinit_xio_errhandler);
-+    XSetErrorHandler(kdeinit_x_errhandler);
-+    /*
-+        Handle the tricky case of running via kdesu/su/sudo/etc. There the usual case
-+        is that kdesu (etc.) creates a file with xauth information, sets XAUTHORITY,
-+        runs the command and removes the xauth file after the command finishes. However,
-+        dbus and kdeinit daemon currently don't clean up properly and keeping running.
-+        Which means that running a KDE app via kdesu the second time talks to kdeinit
-+        with obsolete xauth information, which makes it unable to connect to X or launch
-+        any X11 applications.
-+        Even fixing the cleanup probably wouldn't be sufficient, since it'd be possible to
-+        launch one kdesu session, another one, exit the first one and the app from the second
-+        session would be using kdeinit from the first one.
-+        So the trick here is to duplicate the xauth file to another file in KDE's tmp
-+        location, make the file have a consistent name so that future sessions will use it
-+        as well, point XAUTHORITY there and never remove the file (except for possible
-+        tmp cleanup).
-+    */
-+    if (!qgetenv("XAUTHORITY").isEmpty()) {
-+        QByteArray display = qgetenv(displayEnvVarName_c());
-+        int i;
-+        if ((i = display.lastIndexOf('.')) > display.lastIndexOf(':') && i >= 0) {
-+            display.truncate(i);
-+        }
-+        display.replace(':', '_');
-+#ifdef __APPLE__
-+        display.replace('/', '_');
-+#endif
-+        QString xauth = QDir::tempPath() + QLatin1String("/xauth-")
-+                        + QString::number(getuid()) + QLatin1Char('-') + QString::fromLocal8Bit(display);
-+        QSaveFile xauthfile(xauth);
-+        QFile xauthfrom(QFile::decodeName(qgetenv("XAUTHORITY")));
-+        if (!xauthfrom.open(QFile::ReadOnly) || !xauthfile.open(QFile::WriteOnly)
-+                || xauthfile.write(xauthfrom.readAll()) != xauthfrom.size() || !xauthfile.commit()) {
-+            // error
-+        } else {
-+            qputenv("XAUTHORITY", QFile::encodeName(xauth));
-+        }
-+    }
-+}
-+
-+// Borrowed from kdebase/kaudio/kaudioserver.cpp
-+static int initXconnection()
-+{
-+    X11display = XOpenDisplay(NULL);
-+    if (X11display != 0) {
-+        XCreateSimpleWindow(X11display, DefaultRootWindow(X11display), 0, 0, 1, 1, \
-+                            0,
-+                            BlackPixelOfScreen(DefaultScreenOfDisplay(X11display)),
-+                            BlackPixelOfScreen(DefaultScreenOfDisplay(X11display)));
-+#ifndef NDEBUG
-+        fprintf(stderr, "kdeinit5: opened connection to %s\n", DisplayString(X11display));
-+#endif
-+        int fd = XConnectionNumber(X11display);
-+        int on = 1;
-+        (void) setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (char *) &on, (int) sizeof(on));
-+        return fd;
-+    } else
-+        fprintf(stderr, "kdeinit5: Can not connect to the X Server.\n" \
-+                "kdeinit5: Might not terminate at end of session.\n");
-+
-+    return -1;
-+}
-+#endif
 +
 +/**
 + Calling CoreFoundation and other non-POSIX APIs (which is unavoidable) has always caused issues
@@ -1999,9 +1708,6 @@ index 0000000..901bce6
 +    d.launcher_ok = false;
 +    children = NULL;
 +    init_signals();
-+#if HAVE_X11
-+    setupX();
-+#endif
 +
 +    generate_socket_name();
 +    if (keep_running) {
@@ -2016,20 +1722,7 @@ index 0000000..901bce6
 +        handle_requests(d.launcher_pid); // Wait for klauncher to be ready
 +    }
 +
-+#if HAVE_X11
-+    X11fd = initXconnection();
-+#endif
-+
-+    {
-+        QFont::initialize();
-+#if HAVE_X11
-+        if (XSupportsLocale()) {
-+            // Similar to QApplication::create_xim()
-+            // but we need to use our own display
-+            XOpenIM(X11display, 0, 0, 0);
-+        }
-+#endif
-+    }
++    QFont::initialize();
 +
 +    if (launch_kded) {
 +        qputenv("KDED_STARTED_BY_KDEINIT", "1");
