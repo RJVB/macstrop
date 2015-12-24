@@ -175,10 +175,10 @@ variant docs description {build and install the documentation, for use with Qt's
             post-destroot {
                 ui_msg "--->  Generating documentation for ${subport}"
                 # generate the documentation, working from ${build.dir}
+                xinstall -m 755 -d ${destroot}${kf5.docs_dir}
                 system -W ${build.dir} "kgenapidox --qhp --searchengine --api-searchbox \
                     --qtdoc-dir ${qt_docs_dir} --kdedoc-dir ${kf5.docs_dir} \
                     --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"
-                xinstall -m 755 -d ${destroot}${kf5.docs_dir}
                 # after creating the destination, copy all generated qch documentation to it
                 foreach doc [glob -nocomplain ${build.dir}/apidocs/qch/*.qch] {
                     if {${doc} ne "${build.dir}/apidocs/qch/None.qch"} {
