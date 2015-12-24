@@ -289,6 +289,7 @@ proc kf5.set_project {project} {
     global kf5.version
     global fetch.type
     global filespath
+    global version
     set p ${project}
     if { ![ info exists kf5.framework ] && ![ info exists kf5.portingAid ] } {
         if { ![ info exists kf5.virtualPath ] } {
@@ -302,22 +303,30 @@ proc kf5.set_project {project} {
             } else {
                 if {${kf5.virtualPath} eq "plasma"} {
                     set f   "${kf5.virtualPath}/${kf5.plasma}"
-                    distname \
-                            ${project}-${kf5.plasma}
-                    version \
+#                     distname \
+#                             ${project}-${kf5.plasma}
+                    if {![info exists version]} {
+                        version \
                             ${kf5.plasma}
+                    }
                 } else {
                     set f   "${kf5.virtualPath}/${kf5.release}/src"
-                    distname \
-                            ${project}-${kf5.release}
-                    version \
+#                     distname \
+#                             ${project}-${kf5.release}
+                    if {![info exists version]} {
+                        version \
                             ${kf5.release}
+                    }
                 }
             }
         }
     } else {
-        distname            ${project}-${kf5.version}
+        if {![info exists version]} {
+            version         ${kf5.version}
+        }
+#         distname            ${project}-${kf5.version}
     }
+    distname                ${project}-${version}
     if {[info exists kf5.category]} {
         homepage            http://www.kde.org/${kf5.virtualPath}/${kf5.category}/${project}
     } else {
