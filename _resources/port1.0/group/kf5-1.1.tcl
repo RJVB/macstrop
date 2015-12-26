@@ -541,6 +541,7 @@ kf5.framework_dependency    knotifyconfig libKF5NotifyConfig
 kf5.framework_dependency    plasma-framework libKF5Plasma
 kf5.framework_dependency    kjs libKF5JS
 kf5.framework_dependency    khtml libKF5KHtml
+kf5.framework_dependency    krunner libKF5Runner
 
 # not a framework; use the procedure to define the path-style dependency
 kf5.framework_dependency    cli-tools libkdeinit5_kcmshell5 ""
