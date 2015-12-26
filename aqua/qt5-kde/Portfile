@@ -58,12 +58,14 @@ long_description    Qt Tool Kit: A cross-platform framework \
                     (headers, data, and libraries) for writing \
                     cross-platform GUI-based applications. This port uses an installation layout \
                     and includes a number of patches \
-                    aimed at improving the KF5 experience, \
+                    aimed at improving the KF5 experience (by supporting the selected KDE theme for instance), \
                     and enables useful backtraces into Qt code for debugging.\
                     It provides most of Qt in a single port rather than using port:qt5's one-component-per-subport approach because \
                     it is believed most components would be installed anyway, which wouldn't justify the additional port complexity. \
-                    It does provide the same subports port:qt5 provides, as stubs. \n\
-                    Installs to ${qt_dir}.
+                    It does provide the same subports port:qt5 provides, as stubs. Installs to ${qt_dir}.
+
+notes-append        "Install port:kf5-frameworkintegration and set KDE_SESSION_VERSION to 4 or 5 in order to \
+                    apply the theme/style selected for KF5 applications automatically."
 
 distname            qt-everywhere-opensource-src-${version}
 
@@ -225,7 +227,7 @@ if {${subport} eq ${name}} {
     select.group        qt
     select.file         ${filespath}/qt5-kde
     if {${os.platform} eq "darwin"} {
-	    variant abort description {this variant provides qFatal's standard behaviour of calling abort(2) instead of quitting with an alert dialog} {}
+        variant abort description {this variant provides qFatal's standard behaviour of calling abort(2) instead of quitting with an alert dialog} {}
     }
 }
 
@@ -279,6 +281,12 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         patchfiles-append   fix-qstandardpaths3.patch \
                             fix-qstandardpaths-headerspri.patch \
                             fix-qstandardpaths-linux.patch
+        if {${os.platform} eq "linux"} {
+            post-patch {
+                # build the QspXDG activator CMake stuff even if it doesn't do anything on Linux
+                reinplace "s|mac : SUBDIRS += src_qsp_xdg|SUBDIRS += src_qsp_xdg|g" ${worksrcpath}/qtbase/src/src.pro
+            }
+        }
 #         patchfiles-append   patch-QSP-multiple-conventions.diff
         # patch qtpaths and qtdiag:
         if {${subport} eq "${name}"} {
@@ -291,21 +299,31 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         }
         # https://bugreports.qt.io/browse/QTBUG-31034 and https://bugreports.qt.io/browse/QTBUG-31034?focusedCommentId=277009
         patchfiles-append   patch-missing-autoreleasepools.diff
+
+        # these enable automatic loading of a KDE platform theme plugin
         patchfiles-append   patch-enable-qgenericunixthemes.diff \
+                            patch-enable-qgenericunixservices.diff
+
+        # 2 more reported bugs
+        patchfiles-append   patch-nonull-setAsDockMenu.diff \
                             patch-qkqueuefilesystemwatcher_addPaths.diff
+        # https://bugreports.qt.io/browse/QTBUG-49887 ; a bit overzealous!
+        patchfiles-append   patch-qpbutton-noshowicon.diff
     } else {
         patchfiles-append   qt532/fix-qsp_fontlocations.patch
         ## TODO : backport the qsp_xdg (qmake) / QspXDG (cmake) activators ##
         patchfiles-append   qt532/fix-qstandardpaths3.patch
         patchfiles-append   qt532/patch-missing-autoreleasepools.diff
     }
+    # don't unload plugins on exit: https://codereview.qt-project.org/140750
+    patchfiles-append   patch-dont-unload-plugins.diff
 
     # make sure the private headers are always found through the CMake files,
     # even in an out-of-tree build
     patchfiles-append always_include_private_headers.diff
 
     # print out some more info when warning about a menu item already added somewhere else
-    patchfiles-append debug-menuItem-already-in-menu.patch
+    patchfiles-append patch-better-menuitem-insert-warning.diff
 
     # it's not Qt's role to inform the user constantly if s/he removed fonts that are in Apple's fallback font list
     patchfiles-append dont-warn-missing-fallback-fonts.patch
@@ -361,6 +379,9 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         patchfiles-append   qt532/patch-improve-fontweight-support8.diff \
                             patch-fontpanel.diff
     }
+
+    # For KDE: support XDG icon themes when QSP is in XDG-compliant mode
+    patchfiles-append       patch-cocoatheme-icontheme-support.diff
 
     # --prefix is not recognised.
     configure.pre_args-delete       --prefix=${prefix}
@@ -508,6 +529,10 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
     if {${subport} eq "${name}-x11"} {
         patchfiles-delete       patch-fontpanel.diff
         patchfiles-append       patch-to-build-xcb.diff
+        post-patch {
+            # this may already have been done in patch-enable-qgenericunixservices.diff
+            reinplace "s|unix:!mac|unix|g" ${worksrcpath}/qtbase/src/platformsupport/services/services.pri
+        }
         configure.args-delete   -no-xinput2 -no-xcb -no-xcb-xlib
         configure.args-append   -xcb -xcb-xlib -qpa xcb
         if {${QT53}} {
@@ -1037,6 +1062,21 @@ if { (${subport} eq ${name}) \
             file rename ${destroot}-tmp/${qt_mkspecs_dir}/modules/qt_lib_x11extras.pri ${destroot}/${qt_mkspecs_dir}/modules
             file rename ${destroot}-tmp/${qt_mkspecs_dir}/modules/qt_lib_x11extras_private.pri ${destroot}/${qt_mkspecs_dir}/modules
             file delete -force ${destroot}-tmp
+        } elseif {${subport} eq "${name}"} {
+            # set up hardcoded links to places where the mainstream port:qt5-* install things
+            ln -s ${qt_docs_dir} ${destroot}${qt_dir}/doc
+            ln -s ${qt_includes_dir} ${destroot}${qt_dir}/include
+            ln -s ${qt_pkg_config_dir} ${destroot}${qt_dir}/lib/pkgconfig
+            foreach l [exec find ${destroot}${qt_frameworks_dir} \
+                                 -name "*.framework" | \
+                                 sed -e "s@${destroot}@@g"] {
+                 ln -s ${l} ${destroot}${qt_dir}/lib/
+            }
+            ln -s ${qt_mkspecs_dir} ${destroot}${qt_dir}/mkspecs
+            ln -s ${qt_plugins_dir} ${destroot}${qt_dir}/plugins
+            foreach d {imports phrasebooks qml translations} {
+                ln -s ${qt_data_dir}/${d} ${destroot}${qt_dir}/${d}
+            }
         }
     }
 
