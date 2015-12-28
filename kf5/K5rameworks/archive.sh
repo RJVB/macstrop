@@ -12,4 +12,5 @@ EXTRAFILES="_resources/port1.0/group/kf5-1.1.tcl"
 
 # echo ${PORT} ${CATDIR} ${PORTDIR}
 tar -cvjf ${PORT}.tar.bz2 ${EXTRAFILES} ${CATDIR}/${PORTDIR}
-ll -h ${PORT}.tar.bz2
+mv ${PORT}.tar.bz2 Frameworks.tar.bz2
+ll -h Frameworks.tar.bz2
