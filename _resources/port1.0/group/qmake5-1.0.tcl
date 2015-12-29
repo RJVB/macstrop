@@ -36,21 +36,105 @@
 #
 # Usage:
 # PortGroup                     qmake5 1.0
+#
+# or
+# set qt5.prefer_kde            yes
+# PortGroup                     qmake5 1.0
 
 PortGroup                       qt5 1.0
 
-configure.cmd                   ${qt_qmake_cmd} -r
-configure.pre_args-replace      --prefix=${prefix} PREFIX=${prefix}
-configure.universal_args-delete --disable-dependency-tracking
-
-# qmake defaults to -mmacosx-version-min=10.6, which implies stdlib is libstdc++, which caused problems
-#    (see https://trac.macports.org/wiki/FAQ#libcpp)
-configure.pre_args-append       "QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}"
-
-if {[variant_exists universal] && [variant_isset universal]} {
-    set merger_configure_args(i386)     "CONFIG+=\"x86\" -spec ${qt_qmake_spec_32}"
-    set merger_configure_args(x86_64)   "-spec ${qt_qmake_spec_64}"
+if {![info exists qt5.using_kde]} {
+    set qt5.using_kde   no
 }
 
-# qt5-mac does not currently support debug.
-configure.pre_args-append       "CONFIG+=release"   
+if {${qt5.using_kde}} {
+
+    configure.cmd                   ${qt_qmake_cmd} -r
+    configure.pre_args-replace      --prefix=${prefix} PREFIX=${prefix}
+    configure.universal_args-delete --disable-dependency-tracking
+
+    # qmake defaults to -mmacosx-version-min=10.6, which implies stdlib is libstdc++, which caused problems
+    #    (see https://trac.macports.org/wiki/FAQ#libcpp)
+    configure.pre_args-append       "QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}"
+
+    if {[variant_exists universal] && [variant_isset universal]} {
+        set merger_configure_args(i386)     "CONFIG+=\"x86\" -spec ${qt_qmake_spec_32}"
+        set merger_configure_args(x86_64)   "-spec ${qt_qmake_spec_64}"
+    }
+
+    # qt5-kde does not currently support a debug variant, but does provide (some) debugging information
+    configure.pre_args-append       "CONFIG+=release"   
+
+} else {
+
+    # using the mainstream port:qt5
+
+    PortGroup                       active_variants 1.1
+
+    # with the -r option, the examples do not install correctly (no source code)
+    #     the install_sources target is not created in the Makefile(s)
+    configure.cmd                   ${qt_qmake_cmd}
+    #configure.cmd                   ${qt_qmake_cmd} -r
+
+    configure.pre_args-replace      --prefix=${prefix} "PREFIX=${prefix}"
+    configure.universal_args-delete --disable-dependency-tracking
+
+    # specify build configuration (compiler, 32-bit/64-bit, etc.)
+    if { ![option universal_variant] || ![variant_isset universal] } {
+        configure.args-append -spec ${qt_qmake_spec}
+    } else {
+        lappend merger_configure_args(i386)   -spec ${qt_qmake_spec_32}
+        lappend merger_configure_args(x86_64) -spec ${qt_qmake_spec_64}
+    }
+
+    # if qtbase was build as a universal,
+    #    QT_ARCH and QT_TARGET_ARCH may be set incorrectly in ${qt_mkspecs_dir}/qconfig.pri,
+    #    so set them manually
+    if { ![option universal_variant] || ![variant_isset universal] } {
+        pre-configure {
+            if {[active_variants qt5-qtbase universal ""]} {
+                configure.args-append \
+                    QT_ARCH=${build_arch} \
+                    QT_TARGET_ARCH=${build_arch}
+            }
+        }
+    } else {
+        foreach arch ${configure.universal_archs} {
+            lappend merger_configure_args(${arch}) \
+                QT_ARCH=${arch} \
+                QT_TARGET_ARCH=${arch}
+        }
+    }
+
+    if {![info exists qt5_qmake_request_no_debug]} {
+        variant debug description {Build both release and debug libraries} {}
+
+        # accommodating variant request varies depending on how qtbase was built
+        pre-configure {
+
+            # determine if qmake builds debug libraries by default (set via variants)
+            if {[active_variants qt5-qtbase debug ""]} {
+                set base_debug true
+            } else {
+                set base_debug false
+            }
+
+            # determine if the user wants to build debug libraries
+            if { [variant_exists debug] && [variant_isset debug] } {
+                set this_debug true
+            } else {
+                set this_debug false
+            }
+
+            # determine of qmake's default and user requests are compatible; override qmake if necessary
+            if { ${this_debug} && !${base_debug}  } {
+                configure.args-append "QT_CONFIG+=\"debug_and_release build_all\""
+            }
+
+            if { !${this_debug} && ${base_debug}  } {
+                configure.args-append "QT_CONFIG-=\"debug_and_release build_all\" CONFIG-=\"debug\""
+            }
+        }
+    }
+
+}
