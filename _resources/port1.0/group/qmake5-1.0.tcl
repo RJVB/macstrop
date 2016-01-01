@@ -44,7 +44,8 @@
 PortGroup                       qt5 1.0
 
 if {![info exists qt5.using_kde]} {
-    set qt5.using_kde   no
+    ui_debug "qmake5 PortGroup : no qt5-kde info was provided by the Qt5 PortGroup"
+    set qt5.using_kde           no
 }
 
 if {${qt5.using_kde}} {
