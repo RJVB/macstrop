@@ -114,6 +114,12 @@ proc kde4.restore_from_legacy_prefix {} {
         file delete -force ${destroot}${prefix}/share
         file rename ${destroot}${kde4.legacy_prefix}/share ${destroot}${prefix}/share
     }
+    # check if the "share" symlink is present: it's installed by port:kdelibs4 (which itself doesn't
+    # have need for a kf5compat variant or the legacy_prefix).
+    if {![file exists ${kde4.legacy_prefix}/share]} {
+        ui_msg "WARNING: the installed port:kdelibs4 does not provide ${kde4.legacy_prefix}/share!"
+        notes-append "WARNING: the installed port:kdelibs4 does not provide ${kde4.legacy_prefix}/share!"
+    }
 }
 
 # augment the CMake module lookup path, if necessary depending on
@@ -202,7 +208,7 @@ post-activate {
     }
 }
 
-notes "
+notes-append "
 Don't forget that dbus needs to be started as the local\
 user (not with sudo) before any KDE programs will launch.
 To start it run the following command:
