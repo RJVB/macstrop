@@ -1,0 +1,177 @@
+diff --git projectmanagers/cmake/cmakecommitchangesjob.cpp projectmanagers/cmake/cmakecommitchangesjob.cpp
+index 7ce24fb..796812e 100644
+--- projectmanagers/cmake/cmakecommitchangesjob.cpp
++++ projectmanagers/cmake/cmakecommitchangesjob.cpp
+@@ -31,6 +31,7 @@
+ #include <KUrl>
+ 
+ #include <QThread>
++#include <QDebug>
+ 
+ using namespace KDevelop;
+ 
+@@ -219,17 +220,44 @@ void CMakeCommitChangesJob::start()
+ 
+ void CMakeCommitChangesJob::makeChanges()
+ {
++#ifndef QT_NO_DEBUG
+     Q_ASSERT(m_project->thread() == QThread::currentThread());
++#else
++    if(m_project->thread() != QThread::currentThread()){
++        qFatal( "In the wrong thread, %s:%d", __FILE__, __LINE__ );
++        abort();
++    }
++#endif
+     ProjectFolderItem* f = m_parentItem;
++    errno = 0;
+     m_manager->addWatcher(m_project, m_path.toLocalFile());
++    int addWatcherErrNo = errno;
+ 
+     if(!m_projectDataAdded) {
+         reloadFiles();
+         return;
+     }
+ 
+-    CMakeFolderItem* folder = dynamic_cast<CMakeFolderItem*>(f);
++    CMakeFolderItem* folder = NULL;
++    bool freeFolder = false;
++    if (addWatcherErrNo) {
++        qDebug() << "Error for path" << m_path << strerror(addWatcherErrNo) << "totalWatchedPaths=" << CMakeManager::totalWatchedPaths();
++        if (f) {
++            folder = new CMakeFolderItem( f->project(), f->path(), f->path().lastPathSegment(), NULL);
++            freeFolder = true;
++        }
++    }
++    else {
++        folder = dynamic_cast<CMakeFolderItem*>(f);
++    }
++#ifndef QT_NO_DEBUG
+     Q_ASSERT(folder);
++#else
++    if(!folder){
++        qFatal( "\nNULL CMakeFolderItem, %s:%d (this=%p, m_parentItem=%p, f=%p)", __FILE__, __LINE__, this, m_parentItem, f );
++        abort();
++    }
++#endif
+     qDeleteAll(cleanupBuildFolders(folder, m_subdirectories));
+     foreach(const Subdirectory& subf, m_subdirectories)
+     {
+@@ -331,6 +359,9 @@ void CMakeCommitChangesJob::makeChanges()
+ 
+     CTestUtils::createTestSuites(m_tests, folder);
+     reloadFiles();
++    if (freeFolder) {
++        delete folder;
++    }
+ }
+ 
+ void CMakeCommitChangesJob::setTargetFiles(ProjectTargetItem* target, const Path::List& files)
+@@ -422,8 +453,15 @@ void CMakeCommitChangesJob::folderAvailable(ProjectFolderItem* item)
+ }
+ void CMakeCommitChangesJob::reloadFiles()
+ {
++#ifndef QT_NO_DEBUG
+     Q_ASSERT(m_project->thread() == QThread::currentThread());
+     Q_ASSERT(m_parentItem);
++#else
++    if(!m_parentItem || m_project->thread() != QThread::currentThread()){
++        qFatal( "In the wrong thread and/or NULL CMakeFolderItem, %s:%d", __FILE__, __LINE__ );
++        abort();
++    }
++#endif
+     reloadFiles(m_parentItem);
+     emitResult();
+ }
+diff --git projectmanagers/cmake/cmakemanager.cpp projectmanagers/cmake/cmakemanager.cpp
+index 2caecdb..fbf8e21 100644
+--- projectmanagers/cmake/cmakemanager.cpp
++++ projectmanagers/cmake/cmakemanager.cpp
+@@ -106,6 +106,7 @@ CMakeManager::CMakeManager( QObject* parent, const QVariantList& )
+     m_fileSystemChangeTimer->setSingleShot(true);
+     m_fileSystemChangeTimer->setInterval(100);
+     connect(m_fileSystemChangeTimer,SIGNAL(timeout()),SLOT(filesystemBuffererTimeout()));
++    m_watchedPaths.clear();
+ }
+ 
+ bool CMakeManager::hasError() const
+@@ -199,6 +200,7 @@ KDevelop::ProjectFolderItem* CMakeManager::import( KDevelop::IProject *project )
+     connect(w, SIGNAL(fileChanged(QString)), SLOT(dirtyFile(QString)));
+     connect(w, SIGNAL(directoryChanged(QString)), SLOT(directoryChanged(QString)));
+     m_watchers[project] = w;
++    m_watchedPaths[project] = 0;
+     kDebug(9042) << "Added watcher for project " << project << project->name();
+     m_filter->add(project);
+     
+@@ -208,6 +210,8 @@ KDevelop::ProjectFolderItem* CMakeManager::import( KDevelop::IProject *project )
+     } else {
+         cachefile.addPath("CMakeCache.txt");
+         w->addPath(cachefile.toLocalFile());
++        m_watchedPaths[project] += 1;
++        m_TotalWatchedPaths += 1;
+     }
+     
+     Q_ASSERT(rootItem->rowCount()==0);
+@@ -832,10 +836,17 @@ QPair<QString, QString> CMakeManager::cacheValue(KDevelop::IProject* project, co
+     return ret;
+ }
+ 
++size_t CMakeManager::m_MaxAllowedWatchedPaths = 1900;
++size_t CMakeManager::m_TotalWatchedPaths = 0;
++
+ void CMakeManager::projectClosing(IProject* p)
+ {
+     delete m_projectsData.take(p); 
+     delete m_watchers.take(p);
++    if (m_watchedPaths.contains(p)) {
++        int n = m_watchedPaths.take(p);
++        m_TotalWatchedPaths -= n;
++    }
+ 
+     m_filter->remove(p);
+ 
+@@ -870,11 +881,15 @@ CMakeFolderItem* CMakeManager::takePending(const Path& path)
+ 
+ void CMakeManager::addWatcher(IProject* p, const QString& path)
+ {
+-    if (QFileSystemWatcher* watcher = m_watchers.value(p)) {
+-        watcher->addPath(path);
+-    } else {
+-        kWarning() << "Could not find a watcher for project" << p << p->name() << ", path " << path;
+-        Q_ASSERT(false);
++    if (m_TotalWatchedPaths < m_MaxAllowedWatchedPaths) {
++        if (QFileSystemWatcher* watcher = m_watchers.value(p)) {
++            watcher->addPath(path);
++            m_watchedPaths[p] += 1;
++            m_TotalWatchedPaths += 1;
++        } else {
++            kWarning() << "Could not find a watcher for project" << p << p->name() << ", path " << path;
++            Q_ASSERT(false);
++        }
+     }
+ }
+ 
+diff --git projectmanagers/cmake/cmakemanager.h projectmanagers/cmake/cmakemanager.h
+index 19fc0c1..b6ed77a 100644
+--- projectmanagers/cmake/cmakemanager.h
++++ projectmanagers/cmake/cmakemanager.h
+@@ -134,6 +134,10 @@ public:
+ 
+     KDevelop::ProjectFilterManager* filterManager() const;
+ 
++    inline static size_t totalWatchedPaths() {
++        return m_TotalWatchedPaths;
++    }
++
+ signals:
+     void folderRenamed(const KDevelop::Path& oldFolder, KDevelop::ProjectFolderItem* newFolder);
+     void fileRenamed(const KDevelop::Path& oldFile, KDevelop::ProjectFileItem* newFile);
+@@ -167,6 +171,9 @@ private:
+     QTimer* m_fileSystemChangeTimer;
+     QSet<QString> m_fileSystemChangedBuffer;
+     KDevelop::ProjectFilterManager* const m_filter;
++
++    QHash<KDevelop::IProject*, int> m_watchedPaths;
++    static size_t m_MaxAllowedWatchedPaths, m_TotalWatchedPaths;
+ };
+ 
+ #endif
