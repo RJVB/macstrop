@@ -88,6 +88,10 @@ proc kde4.use_legacy_prefix {} {
                     -DCMAKE_INSTALL_PREFIX=${prefix} -DCMAKE_INSTALL_PREFIX=${kde4.legacy_prefix}
     configure.args-replace \
                     -DCMAKE_INSTALL_RPATH=${prefix}/lib -DCMAKE_INSTALL_RPATH="${prefix}/lib\;${kde4.legacy_prefix}/lib"
+    # changing the install prefix will override the KDE4_INCLUDE_INSTALL_DIR path normally set
+    # to ${kde4.include_dirs} by kdelibs4's cmake modules. Make sure to override it back to that setting.
+    configure.args-append \
+                    -DINCLUDE_INSTALL_DIR=${kde4.include_dirs}
 }
 
 # Call kde4.restore_from_legacy_prefix from the post-destroot phase of a port that uses
@@ -107,6 +111,13 @@ proc kde4.restore_from_legacy_prefix {} {
     if {[file exists ${destroot}${kde4.legacy_prefix}/lib/kde4]} {
         # move back the kparts, libexec etc. to where they should be
         file rename ${destroot}${kde4.legacy_prefix}/lib/kde4 ${destroot}${prefix}/lib/kde4
+    }
+    if {[file exists ${destroot}${kde4.legacy_prefix}/include]} {
+        ui_msg "WARNING: include directory \"${destroot}${kde4.legacy_prefix}/include\" exists!"
+#         # move back the include directory to where it should be;
+#         # first delete the include directory that was created for us and should be empty:
+#         file delete -force ${destroot}${prefix}/include
+#         file rename ${destroot}${kde4.legacy_prefix}/include ${destroot}${prefix}/include
     }
     if {[file exists ${destroot}${kde4.legacy_prefix}/share]} {
         # move back the share directory to where it should be;
