@@ -1,8 +1,8 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
-# $Id: cmake-1.0.tcl 135668 2015-04-29 13:41:29Z michaelld@macports.org $
+# $Id: cmake-1.0.tcl 143801 2015-12-22 01:37:59Z ryandesign@macports.org $
 #
 # Copyright (c) 2009 Orville Bennett <illogical1 at gmail.com>
-# Copyright (c) 2010-2014 The MacPorts Project
+# Copyright (c) 2010-2015 The MacPorts Project
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -157,10 +157,30 @@ pre-configure {
         ui_debug "CFLAGS=\"${configure.cflags}\" CXXFLAGS=\"${configure.cxxflags}\""
         configure.args-append   -DINCLUDE_DIRECTORIES:PATH="${configure.cppflags}"
     }
+}
 
-    platform darwin {
+post-configure {
+    if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
+        foreach var [array names ::env] {
+            puts ${fd} "${var}=$::env(${var})"
+        }
+        puts ${fd} "[join [lrange [split ${configure.env} " "] 0 end] "\n"]\n"
+        puts ${fd} "cd ${worksrcpath}"
+        puts ${fd} "${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}"
+        close ${fd}
+        unset fd
+    }
+}
+
+platform darwin {
+    set cmake._archflag_vars {cc_archflags cxx_archflags ld_archflags objc_archflags objcxx_archflags \
+        universal_cflags universal_cxxflags universal_ldflags universal_objcflags universal_objcxxflags}
+    pre-configure {
+        # cmake will add the correct -arch flag(s) based on the value of CMAKE_OSX_ARCHITECTURES.
         if {[variant_exists universal] && [variant_isset universal]} {
             if {[info exists universal_archs_supported]} {
+                merger_arch_compiler no
+                merger_arch_flag no
                 global merger_configure_args
                 foreach arch ${universal_archs_to_use} {
                     lappend merger_configure_args(${arch}) -DCMAKE_OSX_ARCHITECTURES=${arch}
@@ -174,12 +194,33 @@ pre-configure {
                 -DCMAKE_OSX_ARCHITECTURES="${configure.build_arch}"
         }
 
+        # Setting our own -arch flags is unnecessary (in the case of a non-universal build) or even
+        # harmful (in the case of a universal build, because it causes the compiler identification to
+        # fail; see http://public.kitware.com/pipermail/cmake-developers/2015-September/026586.html).
+        # Save all archflag-containing variables before changing any of them, because some of them
+        # declare their default value based on the value of another.
+        foreach archflag_var ${cmake._archflag_vars} {
+            global cmake._saved_${archflag_var}
+            set cmake._saved_${archflag_var} [option configure.${archflag_var}]
+        }
+        foreach archflag_var ${cmake._archflag_vars} {
+            configure.${archflag_var}
+        }
+
         configure.args-append -DCMAKE_OSX_DEPLOYMENT_TARGET="${macosx_deployment_target}"
 
         if {${configure.sdkroot} != ""} {
             configure.args-append -DCMAKE_OSX_SYSROOT="${configure.sdkroot}"
         } else {
             configure.args-append -DCMAKE_OSX_SYSROOT="/"
+        }
+    }
+    post-configure {
+        # Although cmake wants us not to set -arch flags ourselves when we run cmake,
+        # ports might have need to access these variables at other times.
+        foreach archflag_var ${cmake._archflag_vars} {
+            global cmake._saved_${archflag_var}
+            configure.${archflag_var} [set cmake._saved_${archflag_var}]
         }
     }
 }
