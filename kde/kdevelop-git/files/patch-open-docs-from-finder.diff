@@ -178,15 +178,18 @@ diff --git app/main.cpp app/main.cpp
 index 05576ac..ea1dc65 100644
 --- app/main.cpp
 +++ app/main.cpp
-@@ -67,6 +67,7 @@
+@@ -67,7 +67,10 @@
  #include "splash.h"
  
  #ifdef Q_OS_MAC
 +#include <QFileOpenEvent>
  #include <CoreFoundation/CoreFoundation.h>
++#include <unistd.h>
++#include <stdio.h>
  #endif
  
-@@ -76,9 +77,14 @@ using KDevelop::Core;
+ using KDevelop::Core;
+@@ -76,9 +79,15 @@ using KDevelop::Core;
  typedef QPair<QString, int> File;
  
  class KDevelopApplication: public KApplication {
@@ -196,12 +199,13 @@ index 05576ac..ea1dc65 100644
  
 +    void startFilteringEvents() {
 +        installEventFilter(this);
++        processEvents();
 +    }
 +
      void saveState( QSessionManager& sm ) {
          if (KDevelop::Core::self() && KDevelop::Core::self()->sessionController()) {
              QString x11SessionId = QString("%1_%2").arg(sm.sessionId()).arg(sm.sessionKey());
-@@ -89,6 +95,11 @@ public:
+@@ -89,6 +98,13 @@ public:
  
          KApplication::saveState(sm);
      }
@@ -210,13 +214,38 @@ index 05576ac..ea1dc65 100644
 +     * Event filter for QApplication to handle Mac OS X like file open
 +     */
 +    bool eventFilter(QObject *obj, QEvent *event);
++public:
++    QString session;
  };
  
  /// Tries to find a session identified by @p data in @p sessions.
-@@ -181,8 +192,33 @@ static int getRunningSessionPid()
-     return KDevelop::SessionController::sessionRunInfo(sessionUuid).holderPid;
- }
+@@ -158,7 +174,7 @@ static int openFilesInRunningInstance(const QVector<File>& files, int pid)
  
+ /// Gets the PID of a running KDevelop instance, eventually asking the user if there is more than one.
+ /// Returns -1 in case there are no running sessions.
+-static int getRunningSessionPid()
++static int getRunningSessionPid(QString &sessionName)
+ {
+     QList<KDevelop::SessionInfo> candidates;
+     foreach( const KDevelop::SessionInfo& si, KDevelop::SessionController::availableSessionInfo() ) {
+@@ -170,19 +186,44 @@ static int getRunningSessionPid()
+         return -1;
+     }
+ 
+-    QString sessionUuid;
+     if ( candidates.size() == 1 ) {
+-        sessionUuid = candidates.first().uuid.toString();
++        sessionName = candidates.first().uuid.toString();
+     }
+     else {
+         const QString title = i18n("Select the session to open the document in");
+-        sessionUuid = KDevelop::SessionController::showSessionChooserDialog(title, true);
++        sessionName = KDevelop::SessionController::showSessionChooserDialog(title, true);
+     }
+-    return KDevelop::SessionController::sessionRunInfo(sessionUuid).holderPid;
++    return KDevelop::SessionController::sessionRunInfo(sessionName).holderPid;
++}
++
 +bool KDevelopApplication::eventFilter(QObject *obj, QEvent *event)
 +{
 +    if (event->type() == QEvent::FileOpen) {
@@ -226,8 +255,9 @@ index 05576ac..ea1dc65 100644
 +        fileList.append(parseFilename(foe->file()));
 +        if ( ! fileList.isEmpty() )
 +        {
-+            int pid = getRunningSessionPid();
++            int pid = getRunningSessionPid(session);
 +            if ( pid > 0 ) {
++                qDebug() << "\topening file in session" << session << "pid=" << pid;
 +                openFilesInRunningInstance(fileList, pid);
 +            }
 +        }
@@ -239,26 +269,70 @@ index 05576ac..ea1dc65 100644
 +     * else: pass over to default implementation
 +     */
 +    return QObject::eventFilter(obj, event);
-+}
-+
+ }
+ 
  int main( int argc, char *argv[] )
  {
 +    bool simulatePS = false;
  #ifdef Q_OS_MAC
      CFBundleRef mainBundle = CFBundleGetMainBundle();
      if (mainBundle) {
-@@ -195,6 +231,10 @@ int main( int argc, char *argv[] )
+@@ -195,6 +236,17 @@ int main( int argc, char *argv[] )
              CFDictionarySetValue(infoDict, CFSTR("NSSupportsAutomaticTermination"), kCFBooleanFalse);
          }
      }
-+    if (argc == 2 && qstrncmp(argv[1], "-psn_", 5) == 0) {
++    if ((argc == 2 && qstrncmp(argv[1], "-psn_", 5) == 0)
++        || (argc== 1 && !isatty(fileno(stdin)))){
 +        // this is a pure start from the Finder or Dock, without any arguments to open.
-+        simulatePS = true;
++        // Present the session selection dialog (= simulate the --ps option) if the user
++        // holds the Command (sic) key while we start. Without that modified we'd also
++        // be doing this instead of handling the FileOpen event associate with a file-open
++        // request from the Finder or the Dock.
++        if (QApplication::queryKeyboardModifiers() & Qt::ControlModifier) {
++            simulatePS = true;
++        }
 +    }
  #endif
  
      static const char description[] = I18N_NOOP( "The KDevelop Integrated Development Environment" );
-@@ -391,7 +431,7 @@ int main( int argc, char *argv[] )
+@@ -347,7 +399,7 @@ int main( int argc, char *argv[] )
+     }
+     if ( ! initialFiles.isEmpty() && ! args->isSet("open-session") && ! args->isSet("new-session") )
+     {
+-        int pid = getRunningSessionPid();
++        int pid = getRunningSessionPid(app.session);
+         if ( pid > 0 ) {
+             return openFilesInRunningInstance(initialFiles, pid);
+         }
+@@ -355,7 +407,8 @@ int main( int argc, char *argv[] )
+     }
+ 
+     // if empty, restart kdevelop with last active session, see SessionController::defaultSessionId
+-    QString session;
++    // Replaced the local QString session var. with app.session so the FileOpen event handler
++    // can override the selected session
+ 
+     if(args->isSet("pss"))
+     {
+@@ -374,7 +427,7 @@ int main( int argc, char *argv[] )
+         
+         if(candidates.size() == 1 && args->isSet("pid"))
+         {
+-            session = candidates[0].uuid.toString();
++            app.session = candidates[0].uuid.toString();
+         }else{
+             for(int i = 0; i < candidates.size(); ++i)
+                 qerr << "[" << i << "]: " << candidates[i].description << endl;
+@@ -383,7 +436,7 @@ int main( int argc, char *argv[] )
+             std::cin >> chosen;
+             if(std::cin.good() && (chosen >= 0 && chosen < candidates.size()))
+             {
+-                session = candidates[chosen].uuid.toString();
++                app.session = candidates[chosen].uuid.toString();
+             }else{
+                 qerr << "invalid selection" << endl;
+                 return 1;
+@@ -391,12 +444,12 @@ int main( int argc, char *argv[] )
          }
      }
      
@@ -266,15 +340,117 @@ index 05576ac..ea1dc65 100644
 +    if(args->isSet("ps") || simulatePS)
      {
          bool onlyRunning = args->isSet("pid");
-         session = KDevelop::SessionController::showSessionChooserDialog(i18n("Select the session you would like to use"), onlyRunning);
-@@ -579,5 +619,11 @@ int main( int argc, char *argv[] )
+-        session = KDevelop::SessionController::showSessionChooserDialog(i18n("Select the session you would like to use"), onlyRunning);
+-        if(session.isEmpty())
+-            return 1;
++        app.session = KDevelop::SessionController::showSessionChooserDialog(i18n("Select the session you would like to use"), onlyRunning);
++        if(app.session.isEmpty())
++            return simulatePS ? 0 : 1;
+     }
+ 
+     if ( args->isSet("debug") ) {
+@@ -406,28 +459,28 @@ int main( int argc, char *argv[] )
+             return 1;
+         }
+         debugeeName = i18n("Debug %1", KUrl( debugArgs.first() ).fileName());
+-        session = debugeeName;
++        app.session = debugeeName;
+     } else if ( args->isSet("cs") || args->isSet("new-session") )
+     {
+-        session = args->isSet("cs") ? args->getOption("cs") : args->getOption("new-session");
++        app.session = args->isSet("cs") ? args->getOption("cs") : args->getOption("new-session");
+         foreach(const KDevelop::SessionInfo& si, KDevelop::SessionController::availableSessionInfo())
+         {
+-            if ( session == si.name ) {
++            if ( app.session == si.name ) {
+                 QTextStream qerr(stderr);
+-                qerr << endl << i18n("A session with the name %1 exists already. Use the -s switch to open it.", session) << endl;
++                qerr << endl << i18n("A session with the name %1 exists already. Use the -s switch to open it.", app.session) << endl;
+                 return 1;
+             }
+         }
+         // session doesn't exist, we can create it
+     } else if ( args->isSet("open-session") ) {
+-        session = args->getOption("open-session");
++        app.session = args->getOption("open-session");
+         //If there is a session and a project with the same name, always open the session
+         //regardless of the order encountered
+         QString projectAsSession;
+         bool found = false;
+         foreach(const KDevelop::SessionInfo& si, KDevelop::SessionController::availableSessionInfo())
+         {
+-            if ( session == si.name || session == si.uuid.toString() ) {
++            if ( app.session == si.name || app.session == si.uuid.toString() ) {
+                 found = true;
+                 break;
+             }
+@@ -436,7 +489,7 @@ int main( int argc, char *argv[] )
+                 {
+                     QString fn(k.fileName());
+                     fn = fn.left(fn.indexOf('.'));
+-                    if ( session == fn )
++                    if ( app.session == fn )
+                         projectAsSession = si.uuid;
+                 }
+             }
+@@ -444,16 +497,16 @@ int main( int argc, char *argv[] )
+         if ( !found ) {
+             if ( projectAsSession.isEmpty() ) {
+                 QTextStream qerr(stderr);
+-                qerr << endl << i18n("Cannot open unknown session %1. See --sessions switch for available sessions or use -cs to create a new one.", session) << endl;
++                qerr << endl << i18n("Cannot open unknown session %1. See --sessions switch for available sessions or use -cs to create a new one.", app.session) << endl;
+                 return 1;
+             }
+             else
+-                session = projectAsSession;
++                app.session = projectAsSession;
+         }
+     }
+ 
+     QList<KDevelop::SessionInfo> sessions = KDevelop::SessionController::availableSessionInfo();
+-    const KDevelop::SessionInfo* sessionData = findSessionInList( sessions, session );
++    const KDevelop::SessionInfo* sessionData = findSessionInList( sessions, app.session );
+ 
+     if(args->isSet("pid")) {
+         if( !sessionData ) {
+@@ -463,7 +516,7 @@ int main( int argc, char *argv[] )
+ 
+         KDevelop::SessionRunInfo sessionInfo = KDevelop::SessionController::sessionRunInfo( sessionData->uuid.toString() );
+         if (!sessionInfo.isRunning) {
+-            kError() << session << sessionData->name << "is not running";
++            kError() << app.session << sessionData->name << "is not running";
+             return 5;
+         } else {
+             // Print the PID and we're ready
+@@ -474,6 +527,14 @@ int main( int argc, char *argv[] )
+ 
+     KDevIDEExtension::init();
+ 
++    // start filtering events, so that on OS X we can handle file open requests
++    // sent through LaunchServices (i.e. the Finder)
++    // startFilteringEvents() will call processEvents(), and if a FileOpen event
++    // was already queued it may present a session selection dialog and thus change
++    // app.session. This happens on OS X when we were started because the user asked
++    // the Finder or Dock to open a file with KDevelop.
++    app.startFilteringEvents();
++
+     KDevSplashScreen* splash = 0;
+     if ( !QProcessEnvironment::systemEnvironment().contains("KDEV_DISABLE_SPLASH") ) {
+         splash = new KDevSplashScreen;
+@@ -482,7 +543,7 @@ int main( int argc, char *argv[] )
+         app.processEvents();
+     }
+ 
+-    if(!Core::initialize(splash, Core::Default, session))
++    if(!Core::initialize(splash, Core::Default, app.session))
+         return 5;
+ 
+     KGlobal::locale()->insertCatalog( Core::self()->componentData().catalogName() );
+@@ -579,5 +640,8 @@ int main( int argc, char *argv[] )
          trySetupWelcomePageView();
      }
  #endif
 +
-+    // start filtering events, so that on OS X we can handle file open requests
-+    // sent through LaunchServices (i.e. the Finder)
-+    app.startFilteringEvents();
      return app.exec();
  }
 +
