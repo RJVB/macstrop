@@ -74,7 +74,7 @@ configure.args      -DCMAKE_VERBOSE_MAKEFILE=ON \
                     -DCMAKE_SYSTEM_PREFIX_PATH="${prefix}\;/usr" \
                     -DCMAKE_MODULE_PATH=${cmake_share_module_dir} \
                     -DCMAKE_FIND_FRAMEWORK=LAST \
-				-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+                    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
                     -Wno-dev
 
 default configure.post_args {${worksrcpath}}
