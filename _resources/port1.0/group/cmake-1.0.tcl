@@ -74,6 +74,7 @@ configure.args      -DCMAKE_VERBOSE_MAKEFILE=ON \
                     -DCMAKE_SYSTEM_PREFIX_PATH="${prefix}\;/usr" \
                     -DCMAKE_MODULE_PATH=${cmake_share_module_dir} \
                     -DCMAKE_FIND_FRAMEWORK=LAST \
+				-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
                     -Wno-dev
 
 default configure.post_args {${worksrcpath}}
@@ -160,6 +161,11 @@ pre-configure {
 }
 
 post-configure {
+    # either compile_commands.json was created because of -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    # in which case touch'ing it won't change anything. Or else it wasn't created, in which case
+    # touch will create it, so that certain IDEs like KDevelop won't attempt to rerun cmake in order
+    # to create it.
+    touch ${build.dir}/compile_commands.json
     if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
         foreach var [array names ::env] {
             puts ${fd} "${var}=$::env(${var})"
