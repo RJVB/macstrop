@@ -311,7 +311,12 @@ if {![info exists building_qt5] && [variant_exists LTO] && [variant_isset LTO]} 
     configure.cxxflags-append   -flto
     configure.objcflags-append  -flto
     configure.objcxxflags-append  -flto
-    configure.ldflags-append    ${configure.optflags} -flto
+    # ${configure.optflags} is a list, and that can lead to strange effects
+    # in certain situations if we don't treat it as such here.
+    foreach opt ${configure.optflags} {
+        configure.ldflags-append ${opt}
+    }
+    configure.ldflags-append    -flto
     # assume any compiler not clang will be gcc
     if {![string match "*clang*" ${configure.compiler}]} {
         configure.cflags-append         -fuse-linker-plugin -ffat-lto-objects
