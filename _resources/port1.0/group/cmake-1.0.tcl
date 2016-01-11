@@ -163,9 +163,13 @@ pre-configure {
 post-configure {
     # either compile_commands.json was created because of -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
     # in which case touch'ing it won't change anything. Or else it wasn't created, in which case
-    # touch will create it, so that certain IDEs like KDevelop won't attempt to rerun cmake in order
-    # to create it.
-    touch ${build.dir}/compile_commands.json
+    # we'll create a file that corresponds, i.e. containing an empty json array.
+    if {![file exists ${build.dir}/compile_commands.json]} {
+	    if {![catch {set fd [open "${build.dir}/compile_commands.json" "w"]} err]} {
+		    puts ${fd} "\[\n\]"
+		    close ${fd}
+	    }
+    }
     if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
         foreach var [array names ::env] {
             puts ${fd} "${var}=$::env(${var})"
