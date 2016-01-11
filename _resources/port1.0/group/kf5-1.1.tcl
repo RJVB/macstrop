@@ -123,8 +123,10 @@ configure.args-append   -DECM_MKSPECS_INSTALL_DIR=${qt_mkspecs_dir}
 # set a best-compromise plugin destination directory, the one from Qt5.
 # this is also what Kubuntu does, and possibly the only way to ensure that Qt5
 # and KF5 find each other's (and their own...) plugins.
+# The QML install location also has to be set
 configure.args-append   -DPLUGIN_INSTALL_DIR=${qt_plugins_dir} \
-                        -DKDE_INSTALL_QTPLUGINDIR=${qt_plugins_dir}
+                        -DKDE_INSTALL_QTPLUGINDIR=${qt_plugins_dir} \
+                        -DQML_INSTALL_DIR=${qt_qml_dir}
 
 # # This is why we need destroo.violate_mtree set to "yes"
 # configure.args-append   -DCONFIG_INSTALL_DIR="/Library/Preferences" \
