@@ -55,6 +55,14 @@ PortGroup               qt5-kde 1.0
 #    + and a category for applications (kf5.category).
 #
 # otherwise the port will fail to build.
+#
+# Given the KDE release schedule with its linked versioning across all
+# members of a "family" (applications, plasma, frameworks), an attempt
+# is made to reduce the frequency of updates by providing "kf5.latest_*"
+# variables which should never be anterior to the main version.
+# Usage:
+# After the regular command sequency leading up to the PortGroup include
+# call kf5.use_latest kf5.release|kf5.version|kf5.plasma .
 ########################################################################
 
 if { ![ info exists kf5.project ] } {
@@ -66,17 +74,22 @@ if { ![ info exists kf5.project ] } {
 # KF5 frameworks current version, which is the same for all frameworks
 if {![info exists kf5.version]} {
     set kf5.version     5.17.0
+    set kf5.latest_version \
+                        5.17.0
 }
 
 # KF5 Applications version
 if {![ info exists kf5.release ]} {
-#     set kf5.release     15.08.3
     set kf5.release     15.12.0
+    set kf5.latest_release \
+                        15.12.1
 }
 
 # KF5 Plasma version
 if {![ info exists kf5.plasma ]} {
     set kf5.plasma      5.5.1
+    set kf5.latest_plasma \
+                        5.5.1
 }
 
 platforms               darwin linux
@@ -348,6 +361,31 @@ proc kf5.set_project {project} {
 if {[info exists kf5.project]} {
     kf5.set_project     ${kf5.project}
 }
+
+proc kf5.use_latest {lversion} {
+    global kf5.latest_release kf5.latest_version kf5.latest_plasma kf5.project kf5.set_project
+    global version
+    upvar #0 kf5.version v
+    upvar #0 kf5.release r
+    upvar #0 kf5.plasma p
+    switch -nocase ${lversion} {
+        kf5.version     {set v ${kf5.latest_version}}
+        kf5.release     {set r ${kf5.latest_release}}
+        kf5.plasma      {set p ${kf5.latest_plasma}}
+        frameworks      {set v ${kf5.latest_version}}
+        applications    {set r ${kf5.latest_release}}
+        plasma          {set p ${kf5.latest_plasma}}
+        default {
+            ui_error "Illegal argument ${lversion} to kf5.use_latest"
+            return -code error "Illegal argument to kf5.use_latest"
+        }
+    }
+    unset version
+    if {[info exists kf5.project]} {
+        kf5.set_project ${kf5.project}
+    }
+}
+
 # maintainers             gmail.com:rjvbertin mk openmaintainer
 
 post-fetch {
