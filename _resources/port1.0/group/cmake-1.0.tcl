@@ -65,17 +65,38 @@ configure.cmd       ${prefix}/bin/cmake
 
 configure.pre_args  -DCMAKE_INSTALL_PREFIX=${prefix}
 
+set cmake_install_rpath ${prefix}/lib
+
 configure.args      -DCMAKE_VERBOSE_MAKEFILE=ON \
                     -DCMAKE_COLOR_MAKEFILE=ON \
                     -DCMAKE_BUILD_TYPE=MacPorts \
                     -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-                    -DCMAKE_INSTALL_RPATH=${prefix}/lib \
+                    -DCMAKE_INSTALL_RPATH="${cmake_install_rpath}" \
                     -DCMAKE_INSTALL_NAME_DIR=${prefix}/lib \
                     -DCMAKE_SYSTEM_PREFIX_PATH="${prefix}\;/usr" \
                     -DCMAKE_MODULE_PATH=${cmake_share_module_dir} \
                     -DCMAKE_FIND_FRAMEWORK=LAST \
                     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
                     -Wno-dev
+
+proc cmake.install_rpath {mode path} {
+    upvar #0 cmake_install_rpath rpath
+    if {${path} ne ""} {
+        switch -nocase ${mode} {
+            append  {set newpath "${rpath}\;${path}"}
+            prepend {set newpath "${path}\;${rpath}"}
+            reset   {set newpath "${path}"}
+            default {
+                ui_error "Usage: cmake.install_rpath <append|prepend|reset> <path>"
+                return -code error "Invalid invocation of cmake.install_rpath"
+            }
+        }
+        configure.args-replace \
+                    -DCMAKE_INSTALL_RPATH="${rpath}" \
+                    -DCMAKE_INSTALL_RPATH="${newpath}"
+        set rpath ${newpath}
+    }
+}
 
 default configure.post_args {${worksrcpath}}
 
