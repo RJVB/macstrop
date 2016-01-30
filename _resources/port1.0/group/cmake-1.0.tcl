@@ -186,10 +186,10 @@ post-configure {
     # in which case touch'ing it won't change anything. Or else it wasn't created, in which case
     # we'll create a file that corresponds, i.e. containing an empty json array.
     if {![file exists ${build.dir}/compile_commands.json]} {
-	    if {![catch {set fd [open "${build.dir}/compile_commands.json" "w"]} err]} {
-		    puts ${fd} "\[\n\]"
-		    close ${fd}
-	    }
+        if {![catch {set fd [open "${build.dir}/compile_commands.json" "w"]} err]} {
+            puts ${fd} "\[\n\]"
+            close ${fd}
+        }
     }
     if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
         foreach var [array names ::env] {
