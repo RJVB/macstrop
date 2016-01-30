@@ -50,7 +50,7 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] && ![info exists qt5.prefe
     PortGroup   qt5-kde 1.0
     set qt5.using_kde   yes
 } elseif {![info exists qt5.prefer_kde]} {
-    if {[file exists ${prefix}/libexec/qt5/plugins/platforms]} {
+    if {[file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
         # Qt5 has been installed through port:qt5 and is not the be reinstalled the other way
         ui_debug "Qt5 is provided by port:qt5"
         PortGroup   qt5-mac 1.0
