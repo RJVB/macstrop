@@ -35,6 +35,21 @@
 # Usage:
 # PortGroup     qt4 1.0
 
+# check if by chance we're being loaded while the user has the mainstream qt4 port installed
+if {![info exists building_qt4] || ![info exists name] || (${name} ne "qt4-mac" && ${name} ne "qt4-mac-devel")
+    || ${subport} eq "${name}-transitional"} {
+    # we're not building Qt4, and aren't a Qt4 port either; we must be included by a port depending on Qt4
+    # Use the pkgconfig files as an indicator which Qt4 port flavour is installed:
+    if {![file exists ${prefix}/lib/pkgconfig/QtCore.pc]} {
+        PortGroup   qt4-mac 1.0
+        ui_info "Using the mainstream/official Qt4 portgroup"
+        return -code ok
+        ui_msg "This should never print!"
+    }
+}
+
+
+
 # check for +debug variant of this port, and make sure Qt was
 # installed with +debug as well; if not, error out.
 platform darwin {
