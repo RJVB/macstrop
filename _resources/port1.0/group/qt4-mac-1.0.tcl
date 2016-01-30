@@ -1,5 +1,5 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
-# $Id: qt4-1.0.tcl 138365 2015-07-06 13:22:12Z michaelld@macports.org $
+# $Id: qt4-1.0.tcl 144789 2016-01-18 16:15:32Z mcalhoun@macports.org $
 
 # Copyright (c) 2010-2015 The MacPorts Project
 # All rights reserved.
@@ -57,7 +57,7 @@ set qt_name             qt4
 
 # standard install directory
 global qt_dir
-set qt_dir              ${prefix}
+set qt_dir              ${prefix}/libexec/qt4
 
 # standard Qt includes directory
 global qt_includes_dir
@@ -88,7 +88,7 @@ global qt_docs_dir
 if {${qt_dir} ne ${prefix}} {
     set qt_docs_dir         ${qt_share_dir}/doc
 } else {
-    set qt_docs_dir         ${qt_share_dir}/share/doc/${qt_name}
+    set qt_docs_dir         ${qt_share_dir}/doc/${qt_name}
 }
 
 # standard Qt plugins directory
@@ -116,11 +116,12 @@ if {${qt_dir} ne ${prefix}} {
 }
 
 # standard Qt data directory
+# Don't append /data. Here be dragons.
 global qt_data_dir
 if {${qt_dir} ne ${prefix}} {
-    set qt_data_dir         ${qt_share_dir}/data
+    set qt_data_dir         ${qt_share_dir}
 } else {
-    set qt_data_dir         ${qt_share_dir}/${qt_name}/data
+    set qt_data_dir         ${qt_share_dir}/${qt_name}
 }
 
 # standard Qt translations directory
@@ -178,6 +179,10 @@ set qt_uic_cmd          ${qt_bins_dir}/uic
 # standard lrelease command location
 global qt_lrelease_cmd
 set qt_lrelease_cmd     ${qt_bins_dir}/lrelease
+
+# standard lupdate command location
+global qt_lupdate_cmd
+set qt_lupdate_cmd     ${qt_dir}/bin/lupdate
 
 # standard PKGCONFIG path
 global qt_pkg_config_dir
