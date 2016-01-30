@@ -277,6 +277,7 @@ if {![info exists building_qt4]} {
 
     if {${qt_dir} ne ${prefix}} {
         build.env-append    PATH=${qt_dir}/bin:$env(PATH)
+        configure.pkg_config_path-append ${qt_pkg_config_dir}
     }
 } else {
     build.env-append QMAKE_NO_DEFAULTS=""
