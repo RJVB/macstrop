@@ -15,7 +15,6 @@ if {[catch {mportinit ui_options global_options global_variations} result]} {
 }
 
 # open the port in corresponding to the directory we're living in
-mportopen "file://[file dirname [info script]]"
 if {[catch {set mport [mportopen "file://[file dirname [info script]]"]} result]} {
     global errorInfo
     ui_debug $errorInfo
