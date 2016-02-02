@@ -1,7 +1,5 @@
 #!/opt/local/libexec/macports/bin/tclsh8.5
 
-set porturl [info script]
-
 package require Tclx
 package require macports
 package require Pextlib
