@@ -56,7 +56,7 @@ proc inject {name} {
 
 # the code we want to run, written exactly like it would inside the Portfile:
 proc fix_cmake_modules {} {
-    global qt_cmake_module_dir qt_frameworks_dir qt_libs_dir destroot subport
+    global qt_cmake_module_dir qt_frameworks_dir qt_libs_dir qt_dir_rel destroot subport
     ui_msg ${qt_cmake_module_dir}
     ui_msg ${qt_frameworks_dir}
     ui_msg ${qt_libs_dir}
