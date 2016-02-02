@@ -62,7 +62,6 @@ proc fix_cmake_modules {} {
     ui_msg ${qt_libs_dir}
     ui_msg ${destroot}
     if {[info exists qt_cmake_module_dir]} {
-        xinstall -m 775 -d ${destroot}${qt_cmake_module_dir}
         if {[file exists ${destroot}${qt_frameworks_dir}/cmake]} {
             set srcdir ${qt_frameworks_dir}
             # replace the *_install_prefix path with the correct path, but "take a detour" through ${qt_dir}
