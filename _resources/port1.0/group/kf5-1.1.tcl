@@ -121,6 +121,17 @@ if {${os.platform} eq "darwin"} {
     set kf5.pythondep   bin:python:python27
 }
 
+# variant nativeQSP conflicts qspXDG description {use the native Apple-style QStandardPaths locations} {}
+#
+# if {![file exists ${qt_includes_dir}/QtCore/qextstandardpaths.h]} {
+#     default_variants    +nativeQSP
+# }
+#
+# if {![variant_isset nativeQSP]} {
+#     configure.cppflags-append \
+#                         -DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_XDG_DEFAULT
+# }
+
 # TODO:
 #
 # Phonon added as library dependency here as most, if not all KDE
