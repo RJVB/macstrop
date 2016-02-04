@@ -1,0 +1,291 @@
+diff --git drkonqi/backtracegenerator.cpp drkonqi/backtracegenerator.cpp
+index 5215585..9f0b637 100644
+--- drkonqi/backtracegenerator.cpp
++++ drkonqi/backtracegenerator.cpp
+@@ -56,9 +56,12 @@ BacktraceGenerator::~BacktraceGenerator()
+         m_proc->terminate();
+         if (!m_proc->waitForFinished(10000)) {
+             m_proc->kill();
+-            m_proc->waitForFinished();
++            // lldb can become "stuck" on OS X; just mark m_proc as to be deleted later rather
++            // than waiting a potentially very long time for it to heed the kill() request.
++            m_proc->deleteLater();
++        } else {
++            delete m_proc;
+         }
+-        delete m_proc;
+         delete m_temp;
+     }
+ }
+@@ -95,6 +98,13 @@ bool BacktraceGenerator::start()
+     *m_proc << KShell::splitArgs(str);
+     m_proc->setOutputChannelMode(KProcess::OnlyStdoutChannel);
+     m_proc->setNextOpenMode(QIODevice::ReadWrite | QIODevice::Text);
++    // check if the debugger should take its input from a file we'll generate,
++    // and take the appropriate steps if so
++    QString stdinFile = m_debugger.backendValueOfParameter(QStringLiteral("ExecInputFile"));
++    Debugger::expandString(stdinFile, Debugger::ExpansionUsageShell, m_temp->fileName());
++    if (!stdinFile.isEmpty()) {
++        m_proc->setStandardInputFile(stdinFile);
++    }
+     connect(m_proc, &KProcess::readyReadStandardOutput, this, &BacktraceGenerator::slotReadInput);
+     connect(m_proc, static_cast<void (KProcess::*)(int, QProcess::ExitStatus)>(&KProcess::finished), this, &BacktraceGenerator::slotProcessExited);
+ 
+@@ -120,11 +130,17 @@ void BacktraceGenerator::slotReadInput()
+     m_output += m_proc->readAllStandardOutput();
+ 
+     int pos;
+-    while ((pos = m_output.indexOf('\n')) != -1) {
++    while ((pos = m_output.indexOf('\n')) != -1 && m_proc->state() == QProcess::Running) {
+         QString line = QString::fromLocal8Bit(m_output, pos + 1);
+         m_output.remove(0, pos + 1);
+ 
+         emit newLine(line);
++        if (line == QStringLiteral("(lldb) detach")) {
++            // Anything following this line doesn't interest us, and lldb has been known
++            // to turn into a zombie instead of exitting, thereby blocking us.
++            m_proc->disconnect();
++            slotProcessExited(0, QProcess::NormalExit);
++        }
+     }
+ }
+ 
+diff --git drkonqi/data/debuggers/external/lldbrc drkonqi/data/debuggers/external/lldbrc
+new file mode 100644
+index 0000000..c8ef63b
+--- /dev/null
++++ drkonqi/data/debuggers/external/lldbrc
+@@ -0,0 +1,8 @@
++[General]
++Name=lldb
++TryExec=lldb
++Backends=KCrash
++
++[KCrash]
++Exec=konsole --nofork -e lldb -p %pid
++Terminal=true
+diff --git drkonqi/data/debuggers/internal/lldbrc drkonqi/data/debuggers/internal/lldbrc
+new file mode 100644
+index 0000000..2b102dd
+--- /dev/null
++++ drkonqi/data/debuggers/internal/lldbrc
+@@ -0,0 +1,9 @@
++[General]
++Name=lldb
++TryExec=lldb
++Backends=KCrash
++
++[KCrash]
++Exec=lldb -p %pid
++ExecInputFile=%tempfile
++BatchCommands=set set term-width 200\nthread info\nbt all\ndetach
+diff --git drkonqi/debugger.cpp drkonqi/debugger.cpp
+index 04c0083..b4b504f 100644
+--- drkonqi/debugger.cpp
++++ drkonqi/debugger.cpp
+@@ -104,6 +104,15 @@ bool Debugger::runInTerminal() const
+     }
+ }
+ 
++QString Debugger::backendValueOfParameter(const QString &key) const
++{
++    if (!isValid() || !m_config->hasGroup(m_backend)) {
++        return QString();
++    } else {
++        return m_config->group(m_backend).readEntry(key, QString());
++    }
++}
++
+ //static
+ void Debugger::expandString(QString & str, ExpandStringUsage usage, const QString & tempFile)
+ {
+diff --git drkonqi/debugger.h drkonqi/debugger.h
+index 69cf958..932cc7f 100644
+--- drkonqi/debugger.h
++++ drkonqi/debugger.h
+@@ -70,6 +70,8 @@ public:
+     /** If this is an external debugger, it returns whether it should be run in a terminal or not */
+     bool runInTerminal() const;
+ 
++    /** Returns the value of the arbitrary configuration parameter @param key, or an empty QString if @param key isn't defined */
++    QString backendValueOfParameter(const QString &key) const;
+ 
+     enum ExpandStringUsage {
+         ExpansionUsagePlainText,
+diff --git drkonqi/drkonqibackends.cpp drkonqi/drkonqibackends.cpp
+index d02d3e9..b755371 100644
+--- drkonqi/drkonqibackends.cpp
++++ drkonqi/drkonqibackends.cpp
+@@ -36,6 +36,10 @@
+ #include "backtracegenerator.h"
+ #include "drkonqi.h"
+ 
++#ifdef Q_OS_OSX
++#include <AvailabilityMacros.h>
++#endif
++
+ AbstractDrKonqiBackend::~AbstractDrKonqiBackend()
+ {
+ }
+@@ -158,7 +162,9 @@ DebuggerManager *KCrashBackend::constructDebuggerManager()
+ {
+     QList<Debugger> internalDebuggers = Debugger::availableInternalDebuggers(QStringLiteral("KCrash"));
+     KConfigGroup config(KSharedConfig::openConfig(), "DrKonqi");
+-#ifndef Q_OS_WIN
++#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED > 1070
++    QString defaultDebuggerName = config.readEntry("Debugger", QString("lldb"));
++#elif !defined(Q_OS_WIN)
+     QString defaultDebuggerName = config.readEntry("Debugger", QStringLiteral("gdb"));
+ #else
+     QString defaultDebuggerName = config.readEntry("Debugger", QString("kdbgwin"));
+diff --git drkonqi/parser/CMakeLists.txt drkonqi/parser/CMakeLists.txt
+index 0c16e55..c5accd5 100644
+--- drkonqi/parser/CMakeLists.txt
++++ drkonqi/parser/CMakeLists.txt
+@@ -3,6 +3,7 @@ set(BACKTRACEPARSER_SRCS
+     backtraceparsergdb.cpp
+     backtraceparserkdbgwin.cpp
+     backtraceparsernull.cpp
++    backtraceparserlldb.cpp
+ )
+ 
+ add_library(drkonqi_backtrace_parser STATIC ${BACKTRACEPARSER_SRCS})
+diff --git drkonqi/parser/backtraceparser.cpp drkonqi/parser/backtraceparser.cpp
+diff --git drkonqi/parser/backtraceparserlldb.cpp drkonqi/parser/backtraceparserlldb.cpp
+new file mode 100644
+index 0000000..8916b6f
+--- /dev/null
++++ drkonqi/parser/backtraceparserlldb.cpp
+@@ -0,0 +1,57 @@
++/*
++    Copyright (C) 2014 Ren� J.V. Bertin <rjvbertin@gmail.com>
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License along
++    with this program; if not, write to the Free Software Foundation, Inc.,
++    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++*/
++#include "backtraceparserlldb.h"
++#include "backtraceparser_p.h"
++
++//BEGIN BacktraceParserLldb
++
++class BacktraceLineLldb : public BacktraceLine
++{
++public:
++    BacktraceLineLldb(const QString & line);
++};
++
++BacktraceLineLldb::BacktraceLineLldb(const QString & line)
++    : BacktraceLine()
++{
++    d->m_line = line;
++    // For now we'll have faith that lldb provides useful information, and that it would
++    // be unwarranted to give it a rating of "MissingEverything".
++    d->m_rating = Good;
++}
++
++//END BacktraceLineLldb
++
++//BEGIN BacktraceParserLldb
++
++BacktraceParserLldb::BacktraceParserLldb(QObject *parent) : BacktraceParser(parent) {}
++
++BacktraceParserPrivate *BacktraceParserLldb::constructPrivate() const
++{
++    BacktraceParserPrivate *d = BacktraceParser::constructPrivate();
++    d->m_usefulness = MayBeUseful;
++    return d;
++}
++
++void BacktraceParserLldb::newLine(const QString & lineStr)
++{
++    d_ptr->m_linesList.append(BacktraceLineLldb(lineStr));
++}
++
++
++//END BacktraceParserLldb
+diff --git drkonqi/parser/backtraceparserlldb.h drkonqi/parser/backtraceparserlldb.h
+new file mode 100644
+index 0000000..a29cedb
+--- /dev/null
++++ drkonqi/parser/backtraceparserlldb.h
+@@ -0,0 +1,37 @@
++/*
++    Copyright (C) 2014-2016 Ren� J.V. Bertin <rjvbertin@gmail.com>
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License along
++    with this program; if not, write to the Free Software Foundation, Inc.,
++    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++*/
++#ifndef BACKTRACEPARSERLLDB_H
++#define BACKTRACEPARSERLLDB_H
++
++#include "backtraceparser.h"
++
++class BacktraceParserLldb : public BacktraceParser
++{
++    Q_OBJECT
++    Q_DECLARE_PRIVATE(BacktraceParser)
++public:
++    explicit BacktraceParserLldb(QObject *parent = 0);
++
++protected Q_SLOTS:
++    virtual void newLine(const QString & lineStr);
++
++protected:
++    virtual BacktraceParserPrivate *constructPrivate() const;
++};
++
++#endif // BACKTRACEPARSERLLDB_H
+
+index 23d2741..f7723dc 100644
+--- drkonqi/parser/backtraceparser.cpp
++++ drkonqi/parser/backtraceparser.cpp
+@@ -18,6 +18,7 @@
+ #include "backtraceparser_p.h"
+ #include "backtraceparsergdb.h"
+ #include "backtraceparserkdbgwin.h"
++#include "backtraceparserlldb.h"
+ #include "backtraceparsernull.h"
+ #include <QtCore/QRegExp>
+ #include <QtCore/QMetaEnum>
+@@ -30,6 +31,8 @@ BacktraceParser *BacktraceParser::newParser(const QString & debuggerName, QObjec
+         return new BacktraceParserGdb(parent);
+     } else if (debuggerName == QLatin1String("kdbgwin")) {
+         return new BacktraceParserKdbgwin(parent);
++    } else if (debuggerName == QLatin1String("lldb")) {
++        return new BacktraceParserLldb(parent);
+     } else {
+         return new BacktraceParserNull(parent);
+     }
+@@ -198,6 +201,10 @@ static bool lineShouldBeIgnored(const BacktraceLine & line)
+         || line.functionName().startsWith(QLatin1String("*__GI_")) //glibc2.9 uses *__GI_ as prefix
+         || line.libraryName().contains(QStringLiteral("libpthread.so"))
+         || line.libraryName().contains(QStringLiteral("libglib-2.0.so"))
++#ifdef Q_OS_OSX
++        || (line.libraryName().startsWith(QStringLiteral("libsystem_")) && line.libraryName().endsWith(QStringLiteral(".dylib")))
++        || line.libraryName().contains(QStringLiteral("Foundation`"))
++#endif
+         || line.libraryName().contains(QStringLiteral("ntdll.dll"))
+         || line.libraryName().contains(QStringLiteral("kernel32.dll"))
+         || line.functionName().contains(QStringLiteral("_tmain"))
