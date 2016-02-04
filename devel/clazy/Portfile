@@ -1,0 +1,94 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+# $Id:$
+
+PortSystem          1.0
+PortGroup           cmake 1.0
+PortGroup           github 1.0
+
+github.setup        KDE clazy 3bf56cbf65f5b6fa9ba1defba3f2f770b88a9548
+fetch.type          git
+
+name                clazy
+version             0
+categories          devel
+maintainers         gmail.com:rjvbertin
+license             GPL-2
+description         Qt oriented code checker based on LLVM.
+long_description    The clazy static checker provides an LLVM plugin that can check and sometimes fix issues in C++ code. \
+                    The included checks are oriented at development using Qt.
+platforms           darwin
+
+# fetching via git means a more convenient constant distname can be used.
+distname            ${name}-git
+checksums           rmd160  e7d71b5ead2e2a79e16af8a9cace4656061b278a \
+                    sha256  13781f00ce90b4abdc6441033e1b2e9f9854b862b3adfe1674a2c61c6cd7b889
+
+variant system_cxx description {build using the system C++ compiler instead of the target clang++ version} {}
+
+patchfiles-append   patch-CMakeLists.diff \
+                    patch-wrapper.diff
+
+cmake.out_of_source yes
+
+# define subports for the supported/available Clang versions. Those are not complete
+# definitions, post-patch and post-destroot operations have to be done outside of
+# the definition loop.
+foreach lv {3.6 3.7 3.8} {
+    subport ${name}-${lv} {
+        depends_lib-append \
+                port:llvm-${lv} port:clang-${lv}
+        configure.args-append \
+                -DLLVM_ROOT=${prefix}/libexec/llvm-${lv}
+        if {![variant_isset system_cxx]} {
+            configure.args-append \
+                -DCMAKE_C_COMPILER=${prefix}/bin/clang-mp-${lv} \
+                -DCMAKE_CXX_COMPILER=${prefix}/bin/clang++-mp-${lv}
+        }
+    }
+}
+
+if {${subport} eq "${name}"} {
+    pre-fetch {
+        ui_error "This port provides the LLVM version-specific subports and is not supposed to be installed"
+        return -code error "This port is not installable"
+    }
+} else {
+    array set lip {
+        clazy-3.6 libexec/llvm-3.6
+        clazy-3.7 libexec/llvm-3.7
+        clazy-3.8 libexec/llvm-3.8
+    }
+    array set ccxx {
+        clazy-3.6 clang++-mp-3.6
+        clazy-3.7 clang++-mp-3.7
+        clazy-3.8 clang++-mp-3.8
+    }
+    post-patch {
+        # cmake's "find_package(clang ...)" command will provide an LLVM_INSTALL_PREFIX
+        # variable, but that variable will be the normalised (resolved) full path if ever
+        # ${prefix} is a symlink to, say, a directory on a different partition.
+        # Ultimately the ClangClazy plugin would end up at the same location, but "base"
+        # will complain about a destroot violation.
+        # We avoid this by ensuring the file gets installed going through the symlink.
+        # This is done outside of the subport-definition loop above because that would
+        # set the install prefix to the one for the last defined subport ...
+        if {[info exists lip(${subport})]} {
+            reinplace "s|@LLVM_INSTALL_PREFIX@|${prefix}/$lip(${subport})|g" \
+                ${worksrcpath}/CMakeLists.txt
+        } else {
+            # this should only happen when a subport for a clang version was added or removed
+            # above, and $lip wasn't updated.
+            ui_error "post-patch for unknown subport ${subport}"
+            return -code error "outdated Portfile"
+        }
+    }
+    post-destroot {
+        # reuse $lip(${subport}) without further need for testing if it exists
+        system "install_name_tool -id ${prefix}/$lip(${subport})/lib/ClangLazy.dylib \
+            ${destroot}${prefix}/$lip(${subport})/lib/ClangLazy.dylib"
+        reinplace "s|@CLANGPP@|$ccxx(${subport})|g" ${destroot}${prefix}/bin/clazy
+        xinstall -m 755 -d ${destroot}${prefix}/share/doc/${subport}
+        xinstall -m 644 ${worksrcpath}/README ${worksrcpath}/HOWTO \
+            ${destroot}${prefix}/share/doc/${subport}
+    }
+}
