@@ -150,7 +150,7 @@ pre-configure {
     if {${configure.cppflags} ne ""} {
         set cppflags [split ${configure.cppflags}]
         # reset configure.cppflags; we don't want options in double in CPPFLAGS and CFLAGS/CXXFLAGS
-        configure.cppflags-delete   ${configure.cppflags}
+        set configure.cppflags ""
         set next_is_path 0
         foreach flag ${cppflags} {
             if {${next_is_path}} {
@@ -175,9 +175,11 @@ pre-configure {
                 }
             }
         }
-        ui_debug "-DINCLUDE_DIRECTORIES=${configure.cppflags}"
+        if {${configure.cppflags} ne ""} {
+            ui_debug "-DINCLUDE_DIRECTORIES=${configure.cppflags}"
+            configure.args-append   -DINCLUDE_DIRECTORIES:PATH="${configure.cppflags}"
+        }
         ui_debug "CFLAGS=\"${configure.cflags}\" CXXFLAGS=\"${configure.cxxflags}\""
-        configure.args-append   -DINCLUDE_DIRECTORIES:PATH="${configure.cppflags}"
     }
 }
 
