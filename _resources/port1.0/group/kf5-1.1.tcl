@@ -73,9 +73,9 @@ if { ![ info exists kf5.project ] } {
 
 # KF5 frameworks current version, which is the same for all frameworks
 if {![info exists kf5.version]} {
-    set kf5.version     5.17.0
+    set kf5.version     5.19.0
     set kf5.latest_version \
-                        5.17.0
+                        5.19.0
 }
 
 # KF5 Applications version
