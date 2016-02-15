@@ -613,7 +613,9 @@ proc kf5.link_icons {iconDir category iconName destination} {
     foreach icon [glob -nocomplain ${iconDir}/*/${category}/${iconName}] {
         set ifile [strsed ${icon} "s|${iconDir}/||"]
         set ifile [strsed ${ifile} "s|x\[0-9\]*/${category}/|-|"]
-        ln -s ${icon} ${destination}/${ifile}
+        if {![file exists ${destination}/${ifile}]} {
+            ln -s ${icon} ${destination}/${ifile}
+        }
     }
 }
 
@@ -630,7 +632,11 @@ proc kf5.rename_icons {iconDir category iconOld iconNew {destination 0}} {
         set ext [strsed ${ipath} "s|.*${iconOld}\.||"]
         # remove the original icon name
         set ipath [strsed ${ipath} "s|${iconOld}\.${ext}||"]
-        file rename ${icon} ${destination}/${ipath}${iconNew}.${ext}
+        if {[file exists ${icon}]} {
+            # remove dest. file if already present
+            file delete -force ${destination}/${ipath}${iconNew}.${ext}
+            file rename ${icon} ${destination}/${ipath}${iconNew}.${ext}
+        }
     }
 }
 
