@@ -11,6 +11,7 @@ METAPORT="KF5-Frameworks"
 PORTFILE=`port file ${METAPORT}`
 FRAMEWORKS="`grep '^subport ' ${PORTFILE} | sed -e 's|subport \(.*\) {|\1|g'`"
 MASTERSITE="http://download.kde.org/stable/frameworks/${branch}"
+MASTERSITEPA="${MASTERSITE}/portingAids"
 
 echo "# checksums for KF5 Frameworks ${version}"
 echo "\narray set checksumtable {"
@@ -24,6 +25,10 @@ for F in ${FRAMEWORKS} ;do
     DISTFILE="${DISTDIR}/${FW}-${version}.tar.xz"
     if [ ! -e "${DISTFILE}" ] ;then
         wget -P "${DISTDIR}" "${MASTERSITE}/${FW}-${version}.tar.xz"
+        if [ $? != 0 ] ;then
+            # could have been a portingAid framework; try here:
+            wget -P "${DISTDIR}" "${MASTERSITEPA}/${FW}-${version}.tar.xz"
+        fi
     fi
     if [ -r "${DISTFILE}" ] ;then
         echo "\t${F} {"
