@@ -55,6 +55,8 @@ if {${qt5.using_kde}} {
 
     # qmake defaults to -mmacosx-version-min=10.6, which implies stdlib is libstdc++, which caused problems
     #    (see https://trac.macports.org/wiki/FAQ#libcpp)
+    # override QMAKE_MACOSX_DEPLOYMENT_TARGET set in ${prefix}/libexec/qt5/mkspecs/macx-clang/qmake.conf
+    # see #50249
     configure.pre_args-append       "QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}"
 
     if {[variant_exists universal] && [variant_isset universal]} {
@@ -106,6 +108,10 @@ if {${qt5.using_kde}} {
         }
     }
 
+    # override QMAKE_MACOSX_DEPLOYMENT_TARGET set in ${prefix}/libexec/qt5/mkspecs/macx-clang/qmake.conf
+    # see #50249
+    configure.args-append QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}
+
     if {![info exists qt5_qmake_request_no_debug]} {
         variant debug description {Build both release and debug libraries} {}
 
@@ -138,10 +144,6 @@ if {${qt5.using_kde}} {
     }
 
 }
-
-# override QMAKE_MACOSX_DEPLOYMENT_TARGET set in ${prefix}/libexec/qt5/mkspecs/macx-clang/qmake.conf
-# see #50249
-configure.args-append QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}
 
 # override C++11 flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
 #    so value of ${configure.cxx_stdlib} can always be used
