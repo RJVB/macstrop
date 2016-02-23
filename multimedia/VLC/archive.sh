@@ -8,7 +8,7 @@ cd ..
 CATDIR=`basename ${PWD}`
 cd ..
 
-EXTRAFILES=""
+EXTRAFILES="_resources/port1.0/group/locale_select-1.0.tcl"
 
 # echo ${PORT} ${CATDIR} ${PORTDIR}
-tar -cvjf ${PORT}.tar.bz2 ${EXTRAFILES} ${CATDIR}/${PORTDIR}
+tar -cvj --exclude .kdev4 --exclude "*.kdev4" -f ${PORT}.tar.bz2 ${EXTRAFILES} ${CATDIR}/${PORTDIR}
