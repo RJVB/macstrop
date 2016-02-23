@@ -1,6 +1,5 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
-# kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
-# $Id: qmake-1.0.tcl 106930 2013-06-12 03:13:56Z ryandesign@macports.org $
+# $Id: qmake5-1.0.tcl 145157 2016-01-27 04:47:20Z mcalhoun@macports.org $
 
 #
 # Copyright (c) 2013 The MacPorts Project
@@ -139,3 +138,22 @@ if {${qt5.using_kde}} {
     }
 
 }
+
+# override QMAKE_MACOSX_DEPLOYMENT_TARGET set in ${prefix}/libexec/qt5/mkspecs/macx-clang/qmake.conf
+# see #50249
+configure.args-append QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}
+
+# override C++11 flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
+#    so value of ${configure.cxx_stdlib} can always be used
+configure.args-append \
+    QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++ \
+    QMAKE_LFLAGS_CXX11-=-stdlib=libc++   \
+    QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib} \
+    QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
+
+# ensure ${configure.cxx_stdlib} is used for C++ stdlib
+configure.args-append \
+    QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib} \
+    QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
+
+# kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
