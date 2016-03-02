@@ -14,7 +14,6 @@ if {[file exists ${prefix}/etc/macports/locales.tcl]} {
 }
 
 name                VLC-devel
-version             3.0.0-160229
 
 categories          multimedia devel
 maintainers         nomaintainer
@@ -29,17 +28,30 @@ long_description    VLC media player is a highly portable multimedia player for 
 homepage            http://www.videolan.org
 
 subport             lib${name} {
-    maintainers         gmail.com:rjvbertin openmaintainer
-    description         the core engine and interface to VLC's multimedia framework
-    long_description    libVLC is the core engine and the interface to the multimedia \
-                        framework on which VLC media player is based.  It allows developers \
-                        to create a wide range of multimedia applications using the VLC features.
-    conflicts           ${name} VLC libVLC
-    homepage            http://www.videolan.org/vlc/libvlc.html
+    maintainers     gmail.com:rjvbertin openmaintainer
+    description     the core engine and interface to VLC's multimedia framework
+    long_description \
+                    libVLC is the core engine and the interface to the multimedia \
+                    framework on which VLC media player is based.  It allows developers \
+                    to create a wide range of multimedia applications using the VLC features.
+    conflicts       ${name} VLC libVLC
+    homepage        http://www.videolan.org/vlc/libvlc.html
 }
 
 if {${subport} eq ${name}} {
-    conflicts           lib${name} libVLC VLC
+    conflicts       lib${name} libVLC VLC
+    if {${os.major} < 14} {
+        version     3.0.0-160204
+        # on 10.9 and earlier we cannot go beyond one of the last commits from Feb. 4th 2016
+        # since that would require at least Xcode 7 for the .xib interface files
+        git.branch  d373a946
+    } else {
+        version     3.0.0-160229
+        git.branch  39c8ea3dce89e73e32df0459511d662523101e56
+    }
+} else {
+    version         3.0.0-160229
+    git.branch      39c8ea3dce89e73e32df0459511d662523101e56
 }
 
 license             GPL-2
@@ -52,7 +64,6 @@ if {[file exists ${filespath}/vlc-git/.git]} {
 } else {
     git.url         git://git.videolan.org/vlc/vlc.git
 }
-git.branch          39c8ea3dce89e73e32df0459511d662523101e56
 
 distname            vlc-git
 
@@ -168,21 +179,19 @@ patchfiles          buildfix-package.mak.patch \
                     PR-34741-no__clang_version__.patch \
                     patch-opencv_includes.diff \
                     patch_no_nonnull.diff \
-                    patch_no_nullable.diff \
-                    patch_coredialogs_indeterminate_getter.diff \
+                    patch_no_nullable.diff
+if {${os.major} > 13} {
+    patchfiles-append \
+                    patch_no_nullable2.diff
+}
+patchfiles-append   patch_coredialogs_indeterminate_getter.diff \
                     patch_no_dispatch_release_with_arc.diff
 
 # The opencv example apparently builds on 10.11 but I'm having issues with it on 10.9
 # it doesn't appear to be indispensable, so simply skip it.
 patchfiles-append   patch-no-opencv_example.diff
 
-# platform darwin {
-#     if {${os.major} < 14} {
-#         # AddonManager.xib won't open or compile with Xcode < 7 ; many if not all of the other .xibs ditto in fact.
-#         patchfiles-append \
-#                     patch_no_addonmanager_xib.diff
-#     }
-# }
+patchfiles-append   patch-vlc-for-macports.diff
 
 post-patch {
     reinplace "s:librsvg-2/librsvg:librsvg:" \
@@ -264,7 +273,6 @@ configure.args-append \
 # Interface Plugins
 configure.args-append \
                     --disable-macosx \
-                    --disable-macosx-dialog-provider \
                     --disable-qt \
                     --enable-ncurses \
                     --disable-skins2 \
@@ -342,8 +350,7 @@ variant x11 {
 if {${subport} ne "lib${name}"} {
     variant qt4 conflicts qt5 description {Build using Qt4 UI. This will use qt4-mac. Experimental and probably dysfunctional} {
         patchfiles-append       patch-vlc-no-qt5.diff \
-                                patch-vlc-qt-configureac.diff \
-                                patch-simplepreferences.diff
+                                patch-vlc-qt-configureac.diff
 
         configure.args-replace  --disable-qt --enable-qt
 
@@ -351,7 +358,7 @@ if {${subport} ne "lib${name}"} {
     }
     variant qt5 conflicts qt4 description {Build using Qt5 UI. This will use qt5-mac. Experimental and probably dysfunctional} {
         patchfiles-append       patch-vlc-qt-configureac.diff \
-                                patch-simplepreferences.diff
+                                patch-qt5-no-x11.diff
 
         configure.args-replace  --disable-qt --enable-qt
 
@@ -362,8 +369,6 @@ if {${subport} ne "lib${name}"} {
 variant quartz {
     depends_lib-delete      port:libsamplerate
     depends_lib-append      port:BGHUDAppKit
-
-    patchfiles-append       patch-vlc-for-macports.diff
 
     configure.args-delete   --disable-macosx \
                             --enable-samplerate \
@@ -406,10 +411,19 @@ if {${subport} ne "lib${name}"} {
 platform macosx {
     default_variants-append +quartz +qtkit
 
-    configure.args-replace  --disable-macosx-eyetv --enable-macosx-eyetv
+    configure.args-append \
+                --with-macosx-version-min="10.[expr ${os.major} - 4]"
+    configure.args-replace \
+                --disable-macosx-eyetv --enable-macosx-eyetv
 
-    if {${subport} ne "lib${name}"} {
-        configure.args-replace  --disable-macosx-vlc-app --enable-macosx-vlc-app
+    if {(${subport} ne "lib${name}")} {
+        if {[variant_isset quartz]} {
+            configure.args-replace \
+                --disable-macosx-vlc-app --enable-macosx-vlc-app
+        } else {
+            configure.args-append \
+                --enable-minimal-macosx
+        }
     }
 
     if {[variant_isset x11]} {
@@ -456,30 +470,32 @@ platform macosx {
 
         if {[variant_isset qt4] || [variant_isset qt5] || [variant_isset quartz]} {
             if {${subport} ne "lib${name}"} {
-                copy ${worksrcpath}/VLC.app ${destroot}${applications_dir}/VLC.app
+                if {[file exists ${worksrcpath}/VLC.app]} {
+                    copy ${worksrcpath}/VLC.app ${destroot}${applications_dir}/VLC.app
 
-                # These are already in ${prefix}, so we don't need to bundle them as well
-                delete ${destroot}${applications_dir}/VLC.app/Contents/Frameworks
-                delete ${destroot}${applications_dir}/VLC.app/Contents/lib
+                    # These are already in ${prefix}, so we don't need to bundle them as well
+                    delete ${destroot}${applications_dir}/VLC.app/Contents/Frameworks
+                    delete ${destroot}${applications_dir}/VLC.app/Contents/lib
 
-                # There's no need to install these into the bundle and the prefix
-                delete ${destroot}${applications_dir}/VLC.app/Contents/MacOS/include
-                delete ${destroot}${applications_dir}/VLC.app/Contents/MacOS/lib
-                delete ${destroot}${applications_dir}/VLC.app/Contents/MacOS/plugins
-                delete ${destroot}${applications_dir}/VLC.app/Contents/MacOS/share/locale
-                delete ${destroot}${applications_dir}/VLC.app/Contents/MacOS/share/lua
+                    # There's no need to install these into the bundle and the prefix
+                    delete ${destroot}${applications_dir}/VLC.app/Contents/MacOS/include
+                    delete ${destroot}${applications_dir}/VLC.app/Contents/MacOS/lib
+                    delete ${destroot}${applications_dir}/VLC.app/Contents/MacOS/plugins
+                    delete ${destroot}${applications_dir}/VLC.app/Contents/MacOS/share/locale
+                    delete ${destroot}${applications_dir}/VLC.app/Contents/MacOS/share/lua
 
-                # http://trac.macports.org/ticket/35131
-                ln -s ${prefix}/lib ${destroot}${applications_dir}/VLC.app/Contents/MacOS/lib
-                ln -s ${prefix}/lib/vlc/plugins ${destroot}${applications_dir}/VLC.app/Contents/MacOS/plugins
-                ln -s ${prefix}/lib/vlc/lua ${destroot}${applications_dir}/VLC.app/Contents/MacOS/share/lua
-                ln -s ${prefix}/share/locale ${destroot}${applications_dir}/VLC.app/Contents/MacOS/share/locale
+                    # http://trac.macports.org/ticket/35131
+                    ln -s ${prefix}/lib ${destroot}${applications_dir}/VLC.app/Contents/MacOS/lib
+                    ln -s ${prefix}/lib/vlc/plugins ${destroot}${applications_dir}/VLC.app/Contents/MacOS/plugins
+                    ln -s ${prefix}/lib/vlc/lua ${destroot}${applications_dir}/VLC.app/Contents/MacOS/share/lua
+                    ln -s ${prefix}/share/locale ${destroot}${applications_dir}/VLC.app/Contents/MacOS/share/locale
 
-                # the vlc executable needs to be started with a full path to the app bundle executable
-                # or else the Mac OS X interface will hang beyond even a ^C or ^\ :
-                move ${destroot}${prefix}/bin/vlc ${destroot}${prefix}/bin/vlc.exe
-                system "echo \"#!/bin/sh\nexec \\\"${applications_dir}/VLC.app/Contents/MacOS/VLC\\\" \\\"\\\$\@\\\"\" > ${destroot}${prefix}/bin/vlc"
-                system "chmod 755 ${destroot}${prefix}/bin/vlc"
+                    # the vlc executable needs to be started with a full path to the app bundle executable
+                    # or else the Mac OS X interface will hang beyond even a ^C or ^\ :
+                    move ${destroot}${prefix}/bin/vlc ${destroot}${prefix}/bin/vlc.exe
+                    system "echo \"#!/bin/sh\nexec \\\"${applications_dir}/VLC.app/Contents/MacOS/VLC\\\" \\\"\\\$\@\\\"\" > ${destroot}${prefix}/bin/vlc"
+                    system "chmod 755 ${destroot}${prefix}/bin/vlc"
+                }
             } else {
                 delete ${destroot}${prefix}/bin
                 delete ${destroot}${prefix}/share/applications
