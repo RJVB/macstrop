@@ -132,6 +132,18 @@ if {${os.platform} eq "darwin"} {
 #                         -DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_XDG_DEFAULT
 # }
 
+# A transitional procedure that adds definitions that are likely to become the default
+proc kf5.use_QExtStandardPaths {} {
+    # 20160214 : switch from QStandardPaths to the experimental QExtStandardPaths
+    configure.cppflags-append \
+                    -DQT_USE_EXTSTANDARDPATHS
+    # configure QExtStandardPaths to use the QSP/XDG mode set by the QSP activator.
+    # alternatives are false (use native QSP) and true (use XDG-compliant QS).
+    # This will be set to "true" if it is decided to dump the QSP activator.
+    configure.cppflags-append \
+                    -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=runtime
+}
+
 # TODO:
 #
 # Phonon added as library dependency here as most, if not all KDE
@@ -640,5 +652,21 @@ proc kf5.rename_icons {iconDir category iconOld iconNew {destination 0}} {
     }
 }
 
+# check how the named framework is installed, +qspXDG or
+# (in some future) +nativeQSP
+# use of this procedure requires the active_variants 1.1 PortGroup!
+proc kf5.check_qspXDG {name} {
+    if {![catch {set nativeQSP [active_variants "kf5-${name}" nativeQSP]}]
+            && ![catch {set qspXDG [active_variants "kf5-${name}" qspXDG]}]} {
+        if {${nativeQSP}} {
+            ui_debug "kf5-${name} is installed +nativeQSP; check_qspXDG returns false"
+            return no
+        } elseif {${qspXDG}} {
+            ui_debug "kf5-${name} is installed +qspQSP; check_qspXDG returns true"
+            return yes
+        }
+    }
+    return no
+}
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
