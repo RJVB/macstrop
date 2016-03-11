@@ -197,8 +197,27 @@ post-configure {
         foreach var [array names ::env] {
             puts ${fd} "${var}=$::env(${var})"
         }
-        puts ${fd} "[join [lrange [split ${configure.env} " "] 0 end] "\n"]\n"
-        puts ${fd} "cd ${worksrcpath}"
+        puts ${fd} "[join [lrange [split ${configure.env} " "] 0 end] "\n"]"
+        # the following variables are no longer set in the environment at this point:
+        puts ${fd} "CPP=\"${configure.cpp}\""
+        puts ${fd} "CC=\"${configure.cc}\""
+        puts ${fd} "CXX=\"${configure.cxx}\""
+        if {${configure.objcxx} ne ${configure.cxx}} {
+            puts ${fd} "OBJCXX=\"${configure.objcxx}\""
+        }
+        puts ${fd} "CFLAGS=\"${configure.cflags}\""
+        puts ${fd} "CXXFLAGS=\"${configure.cxxflags}\""
+        if {${configure.objcflags} ne ${configure.cflags}} {
+            puts ${fd} "OBJCFLAGS=\"${configure.objcflags}\""
+        }
+        if {${configure.objcxxflags} ne ${configure.cxxflags}} {
+            puts ${fd} "OBJCXXFLAGS=\"${configure.objcxxflags}\""
+        }
+        puts ${fd} "LDFLAGS=\"${configure.ldflags}\""
+        if {${configure.optflags} ne ""} {
+            puts ${fd} "configure.optflags=\"${configure.optflags}\""
+        }
+        puts ${fd} "\ncd ${worksrcpath}"
         puts ${fd} "${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}"
         close ${fd}
         unset fd
