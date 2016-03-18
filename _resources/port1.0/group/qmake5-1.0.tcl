@@ -147,11 +147,13 @@ if {${qt5.using_kde}} {
 
 # override C++11 flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
 #    so value of ${configure.cxx_stdlib} can always be used
-configure.args-append \
-    QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++ \
-    QMAKE_LFLAGS_CXX11-=-stdlib=libc++   \
-    QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib} \
-    QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
+if {${configure.cxx_stdlib} ne "libc++"} {
+    configure.args-append \
+        QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++ \
+        QMAKE_LFLAGS_CXX11-=-stdlib=libc++   \
+        QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib} \
+        QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
+}
 
 # ensure ${configure.cxx_stdlib} is used for C++ stdlib
 configure.args-append \
