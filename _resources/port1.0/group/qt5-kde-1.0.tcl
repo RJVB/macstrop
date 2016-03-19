@@ -35,7 +35,13 @@
 # This portgroup defines standard settings when using Qt5.
 #
 # Usage:
+# set qt5.prefer_kde 1
 # PortGroup     qt5 1.0
+# or
+# PortGroup     qt5-kde 1.0
+#
+# Define qt5.depends_qtwebengine before including the portgroup to add
+# a dependency on qt5-kde-qtwebengine .
 
 if { ![exists universal_variant] || [option universal_variant] } {
     PortGroup muniversal 1.0
@@ -132,19 +138,20 @@ set qt_name             qt5
 global qt5_is_concurrent
 # check if we're building qt5 itself. We're aiming to phase out exclusive installs, but we
 # keep the this block for now that handles detection of the nature of the installed port.
-if {![info exists building_qt5] || ![info exists name] \
-    || (${name} ne "qt5-mac" && ${name} ne "qt5-mac-devel" && ${name} ne "qt5-kde" && ${name} ne "qt5-kde-devel")} {
-    # no, this must be a dependent port: check the qt5 install:
-    if {[file exists ${prefix}/libexec/${qt_name}/bin/qmake]} {
-        # we have a "concurrent" install, which means we must look for the various components
-        # in different locations (esp. qmake)
-        set qt5_is_concurrent   1
-    }
-} else {
-    # we're building qt5, qt5-mac or one of its subports/variants
-    # we're asking for the standard concurrent install. No need to guess anything, give the user what s/he wants
-    set qt5_is_concurrent   1
-}
+# if {![info exists building_qt5] || ![info exists name] \
+#     || (${name} ne "qt5-mac" && ${name} ne "qt5-mac-devel" && ${name} ne "qt5-kde" && ${name} ne "qt5-kde-devel")} {
+#     # no, this must be a dependent port: check the qt5 install:
+#     if {[file exists ${prefix}/libexec/${qt_name}/bin/qmake]} {
+#         # we have a "concurrent" install, which means we must look for the various components
+#         # in different locations (esp. qmake)
+#         set qt5_is_concurrent   1
+#     }
+# } else {
+#     # we're building qt5, qt5-mac or one of its subports/variants
+#     # we're asking for the standard concurrent install. No need to guess anything, give the user what s/he wants
+#     set qt5_is_concurrent   1
+# }
+set qt5_is_concurrent       1
 
 set qt_dir                  ${prefix}/libexec/${qt_name}
 set qt_dir_rel              libexec/${qt_name}
@@ -264,7 +271,7 @@ if {${os.platform} eq "darwin"} {
 
 # allow for depending on either qt5[-mac] or qt5[-mac]-devel or qt5[-mac]*-kde, simultaneously
 
-set qt5_stubports   {qtbase qtdeclarative qtserialport qtsensors qtwebkit \
+set qt5_stubports   {qtbase qtdeclarative qtserialport qtsensors \
                 qtquick1 qtwebchannel qtimageformats qtsvg qtmacextras \
                 qtlocation qtxmlpatterns qtcanvas3d qtgraphicaleffects qtmultimedia \
                 qtscript qt3d qtconnectivity qttools qtquickcontrols qtenginio \
@@ -278,25 +285,34 @@ if {![info exists building_qt5]} {
         # if not, depend on the library version
 
         global qt5_dependency
-        if {[info exists qt5_is_concurrent]} {
+#         if {[info exists qt5_is_concurrent]} {
             if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
                 set qt5_pathlibspec path:libexec/${qt_name}/Library/Frameworks/QtCore.framework/QtCore
             } else {
                 set qt5_pathlibspec path:libexec/${qt_name}/lib/libQtCore.${qt_libs_ext}
             }
-        } else {
-            if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
-                set qt5_pathlibspec path:Library/Frameworks/QtCore.framework/QtCore
-            } else {
-                set qt5_pathlibspec path:lib/libQtCore.${qt_libs_ext}
-            }
-        }
+#         } else {
+#             if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
+#                 set qt5_pathlibspec path:Library/Frameworks/QtCore.framework/QtCore
+#             } else {
+#                 set qt5_pathlibspec path:lib/libQtCore.${qt_libs_ext}
+#             }
+#         }
         set qt5_dependency ${qt5_pathlibspec}:qt5-kde
-        depends_lib-append ${qt5_dependency}
+        depends_lib-append ${qt5_dependency} \
+                path:libexec/${qt_name}/Library/Frameworks/QtWebKitCore.framework/QtWebKitCore:qt5-kde-qtwebkit
+        if {[info exists qt5.depends_qtwebengine] && ${qt5.depends_qtwebengine}} {
+            depends_lib-append \
+                path:libexec/${qt_name}/Library/Frameworks/QtWebEngineCore.framework/QtWebEngineCore:qt5-kde-qtwebengine
+        }
     } elseif {${os.platform} eq "linux"} {
         set qt5_pathlibspec path:libexec/${qt_name}/lib/libQt5Core.${qt_libs_ext}
         set qt5_dependency ${qt5_pathlibspec}:qt5-kde
         depends_lib-append ${qt5_dependency}
+        if {[info exists qt5.depends_qtwebengine] && ${qt5.depends_qtwebengine}} {
+            depends_lib-append \
+                path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext}:qt5-kde-qtwebengine
+        }
     }
 }
 
