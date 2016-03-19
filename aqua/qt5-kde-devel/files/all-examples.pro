@@ -15,7 +15,6 @@ SUBDIRS = qtbase/examples       \
 	qtsvg/examples             \
 	qttools/examples           \
 	qtwebengine/examples       \
-	qtwebkit-examples/examples \
 	qtxmlpatterns/examples     \
     qt3d/examples              \
     qtcanvas3d/examples
