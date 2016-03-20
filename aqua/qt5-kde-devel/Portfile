@@ -16,11 +16,11 @@ if {${os.platform} eq "darwin" && ${os.major} <= 10} {
     if {[variant_isset legacy]} {
         version     5.3.2
     } else {
-        version     5.5.1
-#         version     5.6.0
+#         version     5.5.1
+        version     5.6.0
     }
 }
-revision            1
+# revision            1
 
 #====================================================================
 # If Qt 5.7 will drop support for 10.7 and earlier, and by then we may wish
@@ -88,6 +88,7 @@ if {${QT53}} {
                     sha256  7f5bf93344cb57bac374ea4a32c8eda87f1357f998f14278e717cf84d0289bf0
 } else {
     if {${QT56}} {
+        set qtwebkit_is_stub yes
         if {${subport} eq "${name}-qtwebkit"} {
             master_sites \
                     http://download.qt.io/community_releases/${branch}/${version}/
@@ -95,9 +96,16 @@ if {${QT53}} {
                     qtwebkit-opensource-src-${version}
             distfiles \
                     ${distname}${extract.suffix}
+            # the official tarball currently doesn't build; see the custom fetch/extract
+            # in the subport definition.
+#             checksums \
+#                     rmd160  9bfec4ed98fc0638c36a226891a96a7d4d1c67a3 \
+#                     sha256  d5c4daac8eef1b24290cda59db432ccc390761af17661f64f3028482647521a1
             checksums \
-                    rmd160  9bfec4ed98fc0638c36a226891a96a7d4d1c67a3 \
-                    sha256  d5c4daac8eef1b24290cda59db432ccc390761af17661f64f3028482647521a1
+                    rmd160  331178fc60330e24ac47bac9ece84ec25cc6600c \
+                    sha256  93823670769cdc459ca11bc9223101c8efc00e2d6b398936a22d792f69f5c2b2
+            # sadly the qtwebkit git checkout also doesn't build "standalone" for me ATM
+            # hence the qtwebkit_is_stub above
         } else {
             distfiles \
                     ${distname}${extract.suffix}
@@ -260,17 +268,36 @@ if {${subport} eq ${name}} {
     if {${os.platform} eq "darwin"} {
         variant abort description {this variant provides qFatal's standard behaviour of calling abort(2) instead of quitting with an alert dialog} {}
     }
-#     if {${QT56}} {
-#         # QtWebKit was deprecated and removed from the official distribution with 5.6.0, but is still required
-#         # by numerous dependencies. For now, a compatible (= building) version is maintained that can be obtained
-#         # separately, and must be moved into the main source tree.
-#         post-extract {
-#             file rename ${workpath}/qtwebkit-opensource-src-${version} ${worksrcpath}/qtwebkit
-#             # generate the header tree allowing the component to be built "in-tree"
-#             system -W ${worksrcpath}/qtwebkit/Source \
-#                         "${prefix}/bin/perl5 ../../qtbase/bin/syncqt.pl -version ${version} QtWebKit -private"
-#         }
-#     }
+    if {${QT56} && [info exists qtwebkit_is_stub]} {
+        # QtWebKit was deprecated and removed from the official distribution with 5.6.0, but is still required
+        # by numerous dependencies. For now, a compatible (= building) version is maintained that can be obtained
+        # separately, and must be moved into the main source tree. That version is broken for 5.6.0 but the git
+        # repo can be used instead. We archive it after fetching, so that any subsequent extractions will be
+        # faster.
+        post-extract {
+            set qtwkdistname qtwebkit-opensource-src-${version}
+            set qtwkdistfile ${qtwkdistname}.tbz2
+            if {![file exists ${distpath}/${qtwkdistfile}]} {
+                ui_msg "--->  Fetching qtwebkit"
+                system -W ${worksrcpath} "git clone --depth=1 --no-single-branch -b ${version} -n git://code.qt.io/qt/qtwebkit.git ${qtwkdistname}"
+                system -W ${workpath}/${qtwkdistname} "git checkout 81f43efbb2112b693b21d8f95cd627e9fd1032b9"
+                # replace .git with an empty directory
+                file delete -force ${worksrcpath}/${qtwkdistname}/.git
+                file mkdir ${worksrcpath}/${qtwkdistname}/.git
+                ui_msg "--->  Archiving qtwebkit"
+                system -W ${worksrcpath} "tar -cjf ${distpath}/${qtwkdistfile} ${qtwkdistname}"
+            } elseif {![file exists ${worksrcpath}/${qtwkdistname}/.git] && [file exists ${distpath}/${qtwkdistfile}]} {
+                ui_msg "--->  Extracting ${qtwkdistfile}"
+                if {[file exists ${prefix}/bin/bsdtar]} {
+                    system -W ${worksrcpath} "bsdtar -x -k --hfsCompression -f ${distpath}/${qtwkdistfile}"
+                } else {
+                    system -W ${worksrcpath} "tar -xf ${distpath}/${qtwkdistfile}"
+                }
+            }
+            # rename the source tree
+            file rename ${worksrcpath}/${qtwkdistname} ${worksrcpath}/qtwebkit
+        }
+    }
 }
 
 if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "${name}-x11"} {
@@ -1289,6 +1316,10 @@ post-configure {
             close $qfp
         }
     }
+    if {${QT56} && [file exists ${worksrcpath}/qtwebkit/.git]} {
+        # Do what qmake would do during an in-tree build:
+        system -W ${worksrcpath}/qtwebkit "../qtbase/bin/syncqt.pl Source -version ${version}"
+    }
 #     if {![file exists ${build.dir}/qtquickcontrols/.qmake.cache]} {
 #         xinstall -d -m 755 ${build.dir}/qtquickcontrols
 #         touch ${build.dir}/qtquickcontrols/.qmake.cache
@@ -1409,6 +1440,10 @@ subport ${name}-zz-docs {
 # See http://qt-project.org/doc/qt-5/sql-driver.html for info on building SQL Database Drivers
 
 if {${QT56}} {
+  if {[info exists qtwebkit_is_stub]} {
+    # add this one to the list of stub ports
+    set qt5_stubports [lappend qt5_stubports qtwebkit]
+  } else {
     subport ${name}-qtwebkit {
         description Qt5 WebKit
         long_description \
@@ -1422,18 +1457,47 @@ if {${QT56}} {
         if {[variant_isset debug]} {
             universal_variant   no
         }
-        post-extract {
-            # create an empty .git dir so that qmake will invoke syncqt.pl
-            file mkdir ${worksrcpath}/.git
+        # we'll make our own archive after fetching from git
+        # using bzip2 because it's so much faster and hardly bigger here.
+        distfiles   ${distname}.tbz2
+        fetch {
+            if {![file exists ${distpath}/${distfiles}]} {
+                ui_msg "--->  Fetching qtwebkit"
+                system -W ${workpath} "git clone --depth=1 --no-single-branch -b ${version} -n git://code.qt.io/qt/qtwebkit.git ${distname}"
+                system -W ${workpath}/${distname} "git checkout 81f43efbb2112b693b21d8f95cd627e9fd1032b9"
+                # replace .git with an empty directory
+                file delete -force ${worksrcpath}/.git
+                file mkdir ${worksrcpath}/.git
+                ui_msg "--->  Archiving qtwebkit"
+                system -W ${workpath} "tar -cjf ${distpath}/${distfiles} ${distname}"
+            }
         }
-        configure.pre_args ""
+        extract {
+            if {![file exists ${worksrcpath}/.git] && [file exists ${distpath}/${distfiles}]} {
+                ui_msg "--->  Extracting ${distfiles}"
+                if {[file exists ${prefix}/bin/bsdtar]} {
+                    system -W ${workpath} "bsdtar -x -k --hfsCompression -f ${distpath}/${distfiles}"
+                } else {
+                    system -W ${workpath} "tar -xf ${distpath}/${distfiles}"
+                }
+            }
+        }
         configure.args  ""
+        default configure.dir       {${workpath}/build}
+        configure.pre_args          ../${worksrcdir}/WebKit.pro
+        default build.dir           {${workpath}/build}
         post-configure {
+            system -W ${worksrcpath} "${qt_bins_dir}/syncqt.pl Source -version ${version}"
+            system -W ${worksrcpath}/Source "${qt_bins_dir}/syncqt.pl . -version ${version}"
+            system -W ${build.dir} "${qt_bins_dir}/syncqt.pl ${worksrcpath}/Source -version ${version}"
+            file mkdir ${build.dir}/Source
+            system -W ${build.dir}/Source "${qt_bins_dir}/syncqt.pl ${worksrcpath}/Source -version ${version}"
             system -W ${worksrcpath} "echo 'QMAKE_CXXFLAGS -= -O3' >> .qmake.conf"
             system -W ${worksrcpath} "echo 'QMAKE_CXXFLAGS += -Os' >> .qmake.conf"
-            system -W ${worksrcpath} "${configure.cmd}"
+            system -W ${worksrcpath} "${configure.cmd} ${configure.pre_args}"
         }
     }
+  }
 }
 
 if {${QT54}} {
@@ -1470,17 +1534,6 @@ if {${QT54}} {
 
         # extract only the qtwebengine component
         extract.post_args-append    ${distname}/qtwebengine
-        post-configure {
-            # try to detect and handle an issue with building out-of-tree
-    #         if {![file exists ${build.dir}/config.log]} {
-    #             if {[variant_isset universal]} {
-    #                 ui_error "\nConfiguration error; please retry\n"
-    #                 return -code error "Configuration error"
-    #             } else {
-    #                 system -W ${configure.dir} "${configure.cmd} ${configure.pre_args} ${configure.args}"
-    #             }
-    #         }
-        }
     }
 }
 
@@ -1630,6 +1683,7 @@ subport ${name}-examples {
 
 subport ${name}-settingseditor {
     PortGroup                   qmake5 1.0
+#     qt5.depends_component qtbase qtsvg qtwebkit
 
     description                 ${description} - the settings editor from the examples
     long_description            The settings editor from the examples of port:${name}. \
