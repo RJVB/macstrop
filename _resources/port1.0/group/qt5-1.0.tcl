@@ -43,27 +43,19 @@
 # PortGroup             qt5 1.0
 
 # Check what Qt5 installation flavour already exists, or if not if the port calling us
-# indicated a preference. If not, use the default/mainstream port:qt5-mac .
+# indicated a preference. If not, use the default/mainstream port:qt5 .
 if {[file exists ${prefix}/include/qt5/QtCore/QtCore] && ![info exists qt5.prefer_default]} {
     # Qt5 has been installed through port:qt5-kde and is not the be reinstalled the other way
     ui_debug "Qt5 is provided by port:qt5-kde"
     PortGroup   qt5-kde 1.0
     set qt5.using_kde   yes
-} elseif {![info exists qt5.prefer_kde]} {
-    if {[file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
-        # Qt5 has been installed through port:qt5 and is not the be reinstalled the other way
-        ui_debug "Qt5 is provided by port:qt5"
-        PortGroup   qt5-mac 1.0
-        set qt5.using_kde   no
-    } elseif {[file exists ${prefix}/libexec/qt5-mac/include/QtCore/QtCore]} {
-        # Qt5 has been installed through port:qt5-mac and is not the be reinstalled the other way
-        ui_debug "Qt5 is provided by port:qt5-mac"
-        PortGroup   qt5-mac 1.0
-        set qt5.using_kde   no
-    }
+} elseif {[file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
+    # Qt5 has been installed through port:qt5 and is not to be reinstalled the other way
+    ui_debug "Qt5 is provided by port:qt5"
+    PortGroup   qt5-mac 1.0
+    set qt5.using_kde   no
 } elseif {[info exists qt5.prefer_kde]} {
-    # The calling port has indicated a preference for port:qt5-kde and
-    # Qt5 has hopefully not been installed through the outdated, exclusive port:qt5-mac (5.3.2)
+    # The calling port has indicated a preference and no Qt5 port is installed already
     ui_debug "Qt5 will be provided by port:qt5-kde, by request"
     PortGroup   qt5-kde 1.0
     set qt5.using_kde   yes
@@ -74,7 +66,36 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] && ![info exists qt5.prefe
     set qt5.using_kde   no
 }
 
+if {!${qt5.using_kde} && [info exists qt5.prefer_kde]} {
+    # this is a port that prefers port:qt5-kde and thus expects most of Qt5 to be installed
+    # through that single port rather than enumerate all components it depends on.
+    depends_lib-append  port:qt5
+}
+
 proc qt_branch {} {
     global version
     return [join [lrange [split ${version} .] 0 1] .]
+}
+
+# a procedure for declaring dependencies on Qt5 components, which will expand them
+# into the appropriate subports for the Qt5 flavour installed
+# e.g. qt5.depends_component qtbase qtsvg qtdeclarative
+proc qt5.depends_component {first args} {
+    global qt5_component_lib
+    global qt5.using_kde
+    # join ${first} and (the optional) ${args}
+    set args [linsert $args[set list {}] 0 ${first}]
+    foreach comp ${args} {
+        if {${qt5.using_kde}} {
+            set portname "qt5-kde-${comp}"
+        } else {
+            set portname "qt5-${comp}"
+        }
+        if {[info exists qt5_component_lib] && [info exists qt5_component_lib(${comp})]} {
+            # an explicit dependency pattern was given, e.g. path:foo
+            depends_lib-append "$qt5_component_lib(${comp}):${portname}"
+        } else {
+            depends_lib-append port:${portname}
+        }
+    }
 }

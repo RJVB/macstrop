@@ -134,6 +134,7 @@ set qt_name             qt5
     global qt_uic_cmd
 # standard lrelease command location
     global qt_lrelease_cmd
+    global qt_lupdate_cmd
 
 global qt5_is_concurrent
 # check if we're building qt5 itself. We're aiming to phase out exclusive installs, but we
@@ -176,6 +177,7 @@ set qt_qmake_cmd            ${qt_dir}/bin/qmake
 set qt_moc_cmd              ${qt_dir}/bin/moc
 set qt_uic_cmd              ${qt_dir}/bin/uic
 set qt_lrelease_cmd         ${qt_dir}/bin/lrelease
+set qt_lupdate_cmd          ${qt_dir}/bin/lupdate
 
 if {${os.platform} eq "darwin"} {
     set qt_apps_dir         ${applications_dir}/Qt5
@@ -464,3 +466,7 @@ post-destroot {
         }
     }
 }
+
+# array set qt5_component_lib {
+#     qtwebkit path:libexec/${qt_name}/Library/Frameworks/QtWebKitCore.framework/QtWebKitCore
+# }

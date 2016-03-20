@@ -35,6 +35,22 @@
 # Usage:
 # PortGroup     qt5 1.0
 
+# Qt has what is calls reference configurations, which are said to be thoroughly tested
+# Qt also has configurations which are occasionally tested
+# see http://doc.qt.io/qt-5/supported-platforms.html#reference-configurations
+global qt5_min_tested_version
+global qt5_max_tested_version
+global qt5_min_reference_version
+global qt5_max_reference_version
+set qt5_min_tested_version     11
+set qt5_max_tested_version     14
+set qt5_min_reference_version  12
+set qt5_max_reference_version  14
+
+if {[tbool just_want_qt5_version_info]} {
+    return
+}
+
 # no universal binary support in Qt 5
 #     see http://lists.qt-project.org/pipermail/interest/2012-December/005038.html
 #     and https://bugreports.qt.io/browse/QTBUG-24952
@@ -143,6 +159,10 @@ set qt_uic_cmd          ${qt_dir}/bin/uic
 global qt_lrelease_cmd
 set qt_lrelease_cmd     ${qt_dir}/bin/lrelease
 
+# standard lupdate command location
+global qt_lupdate_cmd
+set qt_lupdate_cmd     ${qt_dir}/bin/lupdate
+
 # standard PKGCONFIG path
 global qt_pkg_config_dir
 set qt_pkg_config_dir   ${qt_libs_dir}/pkgconfig
@@ -151,7 +171,7 @@ set qt_pkg_config_dir   ${qt_libs_dir}/pkgconfig
 # other platforms required
 #     see http://doc.qt.io/qt-5/supported-platforms.html
 #     and http://doc.qt.io/QtSupportedPlatforms/index.html
-global qt_qmake_spe
+global qt_qmake_spec
 global qt_qmake_spec_32
 global qt_qmake_spec_64
 compiler.whitelist clang
@@ -176,6 +196,15 @@ if { ![option universal_variant] || ![variant_isset universal] } {
 #     -DQT_QMAKESPEC=${qt_qmake_spec} \
 #     -DQT_ZLIB_LIBRARY=${prefix}/lib/libz.dylib \
 #     -DQT_PNG_LIBRARY=${prefix}/lib/libpng.dylib"
+
+# do not try to install if qt5-qtbase dependency will fail to build
+# warn about non-reference configurations
+if { ${os.major} < ${qt5_min_tested_version} } {
+    pre-fetch {
+        ui_error "Qt dependency will not build on this platform"
+        return -code error "unsupported OS"
+    }
+}
 
 if {![info exists building_qt5]} {
     depends_lib-append port:qt5-qtbase
