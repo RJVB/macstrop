@@ -461,6 +461,10 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
     if {${QT56}} {
         # https://codereview.qt-project.org/124643/
         patchfiles-append   ${PPREF}patch-fix-build-when-system-freetype-is-detected.diff
+        # fix font colour due to inappropriate gamma
+        patchfiles-append   ${PPREF}patch-freetype-gamma-cocoa.diff
+        # fix font colour due to inappropriate gamma
+        patchfiles-append   ${PPREF}patch-silence-qnsview-warnings.diff
     }
 
     # --prefix is not recognised.
@@ -1388,9 +1392,9 @@ subport ${name}-zz-docs {
                         and has a -zz- in its name to ensure it's the last one to be \
                         processed during upgrading an existing install.
 
-    variant html description {Install the HTML documentation in addition to the Qt help (.qch) files} {}
+    variant html description {Install the HTML documentation in addition to the Qt help (.qch) files (obsolete variant for default behaviour)} {}
+    variant qch conflicts html description {Install only the Qt help (.qch) files} {}
     variant qtwebengine description {build the qtwebengine documentation too} {}
-    default_variants    +html
 
     depends_lib-append \
         path:${qt_bins_dir}/qdoc:${name} \
@@ -1399,10 +1403,11 @@ subport ${name}-zz-docs {
     supported_archs   noarch
 
     build.target      docs
-    if {[variant_isset html]} {
-        destroot.target   install_docs
+    if {[variant_isset qch]} {
+        destroot.target     install_qch_docs
     } else {
-        destroot.target   install_qch_docs
+        default_variants    +html
+        destroot.target     install_docs
     }
 
     if {![variant_isset qtwebengine]} {
@@ -1410,14 +1415,25 @@ subport ${name}-zz-docs {
     }
 
     post-extract {
-        # For the most part, generated makefiles use ${qt_bins_dir}/qdoc.
-        # There are a couple of places that look in ${worksrcpath}/qtbase/src/tools/qdoc/.
-        ln -s ${qt_bins_dir}/qdoc ${worksrcpath}/qtbase/src/tools/qdoc/
-        ln -s ${qt_bins_dir}/qdoc ${worksrcpath}/qtbase/bin
-
-        # Similarly, location of qhelpgenerator is expected in ${worksrcpath}
+        # we'll be doing a doc build as if it were part of a full Qt build,
+        # but building only the "doc" target.
+        # ensure that the required binaries are available where they'd be
+        # when doing a full build, as symlinks to the installed binaries.
+        # This saves us from having to rebuild them.
+        #
+        # qhelpgenerator is expected in ${worksrcpath}
         xinstall -d -m 755 ${worksrcpath}/qttools/bin/
         ln -s ${qt_bins_dir}/qhelpgenerator ${worksrcpath}/qttools/bin/
+
+        # For the most part, generated makefiles use ${qt_bins_dir}/qdoc.
+        # There are a couple of places that look in ${worksrcpath}/qtbase/src/tools/qdoc/.
+        if {${QT56}} {
+            ln -s ${qt_bins_dir}/qdoc ${worksrcpath}/qttools/src/qdoc/
+            ln -s ${qt_bins_dir}/qdoc ${worksrcpath}/qttools/bin
+        } else {
+            ln -s ${qt_bins_dir}/qdoc ${worksrcpath}/qtbase/src/tools/qdoc/
+            ln -s ${qt_bins_dir}/qdoc ${worksrcpath}/qtbase/bin
+        }
 
         # Without this file, the makefile ${worksrcpath}/qtwebkit/Source/WebCore/Makefile.WebCore.Target
         #    keeps generating itself over and over again.
@@ -1427,14 +1443,6 @@ subport ${name}-zz-docs {
             touch ${worksrcpath}/qtwebkit/Source/WebCore/generated/InspectorBackendCommands.qrc
         }
     }
-#     post-destroot {
-#         if {![variant_isset html]} {
-#             foreach f [glob -nocomplain -directory ${destroot}${qt_docs_dir} -types d *] {
-#                 file delete -force ${f}
-#             }
-#         }
-#     }
-
 }
 
 # See http://qt-project.org/doc/qt-5/sql-driver.html for info on building SQL Database Drivers
@@ -1486,16 +1494,18 @@ if {${QT56}} {
         default configure.dir       {${workpath}/build}
         configure.pre_args          ../${worksrcdir}/WebKit.pro
         default build.dir           {${workpath}/build}
-        post-configure {
-            system -W ${worksrcpath} "${qt_bins_dir}/syncqt.pl Source -version ${version}"
-            system -W ${worksrcpath}/Source "${qt_bins_dir}/syncqt.pl . -version ${version}"
-            system -W ${build.dir} "${qt_bins_dir}/syncqt.pl ${worksrcpath}/Source -version ${version}"
-            file mkdir ${build.dir}/Source
-            system -W ${build.dir}/Source "${qt_bins_dir}/syncqt.pl ${worksrcpath}/Source -version ${version}"
-            system -W ${worksrcpath} "echo 'QMAKE_CXXFLAGS -= -O3' >> .qmake.conf"
-            system -W ${worksrcpath} "echo 'QMAKE_CXXFLAGS += -Os' >> .qmake.conf"
-            system -W ${worksrcpath} "${configure.cmd} ${configure.pre_args}"
-        }
+        # make sure qmake is called without unwanted arguments!
+        configure.cmd               ${qt_qmake_cmd}
+#         post-configure {
+#             system -W ${worksrcpath} "${qt_bins_dir}/syncqt.pl Source -version ${version}"
+#             system -W ${worksrcpath}/Source "${qt_bins_dir}/syncqt.pl . -version ${version}"
+# #             system -W ${build.dir} "${qt_bins_dir}/syncqt.pl ${worksrcpath}/Source -version ${version}"
+# #             file mkdir ${build.dir}/Source
+# #             system -W ${build.dir}/Source "${qt_bins_dir}/syncqt.pl ${worksrcpath}/Source -version ${version}"
+#             system -W ${worksrcpath} "echo 'QMAKE_CXXFLAGS -= -O3' >> .qmake.conf"
+#             system -W ${worksrcpath} "echo 'QMAKE_CXXFLAGS += -Os' >> .qmake.conf"
+#             system -W ${worksrcpath} "${configure.cmd} ${configure.pre_args}"
+#         }
     }
   }
 }
@@ -1558,9 +1568,12 @@ foreach sp ${qt5_stubports} {
         depends_run
         depends_lib         port:${name}
         if {${sp} eq "docs"} {
+            variant html description {passed on to ${name}-zz-docs} {}
+            variant qch conflicts html description {passed on to ${name}-zz-docs} {}
             description     stub\; provided by port:${name}-zz-docs
             long_description \
                             this is a stub for port:${name}-zz-docs
+            depends_lib     port:${name}-zz-docs
             depends_run     port:${name}-zz-docs
             replaced_by     port:${name}-zz-docs
         } elseif {${sp} eq "qtwebkit-examples"} {
