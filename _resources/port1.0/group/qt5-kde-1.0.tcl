@@ -302,7 +302,7 @@ if {![info exists building_qt5]} {
 #         }
         set qt5_dependency ${qt5_pathlibspec}:qt5-kde
         depends_lib-append ${qt5_dependency} \
-                path:libexec/${qt_name}/Library/Frameworks/QtWebKitCore.framework/QtWebKitCore:qt5-kde-qtwebkit
+                path:libexec/${qt_name}/Library/Frameworks/QtWebKit.framework/QtWebKit:qt5-kde-qtwebkit
         if {[info exists qt5.depends_qtwebengine] && ${qt5.depends_qtwebengine}} {
             depends_lib-append \
                 path:libexec/${qt_name}/Library/Frameworks/QtWebEngineCore.framework/QtWebEngineCore:qt5-kde-qtwebengine
