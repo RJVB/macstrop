@@ -36,6 +36,7 @@
 PortGroup               cmake 1.0
 # set qt5.prefer_kde      1
 PortGroup               qt5-kde 1.0
+PortGroup               active_variants 1.1
 
 ########################################################################
 # Projects including the 'kf5' port group can optionally set
@@ -87,9 +88,9 @@ if {![ info exists kf5.release ]} {
 
 # KF5 Plasma version
 if {![ info exists kf5.plasma ]} {
-    set kf5.plasma      5.5.5
+    set kf5.plasma      5.6.0
     set kf5.latest_plasma \
-                        5.5.5
+                        5.6.0
 }
 
 platforms               darwin linux
@@ -121,27 +122,28 @@ if {${os.platform} eq "darwin"} {
     set kf5.pythondep   bin:python:python27
 }
 
-# variant nativeQSP conflicts qspXDG description {use the native Apple-style QStandardPaths locations} {}
-#
-# if {![file exists ${qt_includes_dir}/QtCore/qextstandardpaths.h]} {
-#     default_variants    +nativeQSP
-# }
-#
-# if {![variant_isset nativeQSP]} {
-#     configure.cppflags-append \
-#                         -DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_XDG_DEFAULT
-# }
+variant nativeQSP conflicts qspXDG description {use the native Apple-style QStandardPaths locations} {}
+
+if {![file exists ${qt_includes_dir}/QtCore/qextstandardpaths.h]} {
+    default_variants    +nativeQSP
+}
+
+if {![variant_isset nativeQSP]} {
+    configure.cppflags-append \
+                        -DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=true
+}
 
 # A transitional procedure that adds definitions that are likely to become the default
 proc kf5.use_QExtStandardPaths {} {
-    # 20160214 : switch from QStandardPaths to the experimental QExtStandardPaths
-    configure.cppflags-append \
-                    -DQT_USE_EXTSTANDARDPATHS
-    # configure QExtStandardPaths to use the QSP/XDG mode set by the QSP activator.
-    # alternatives are false (use native QSP) and true (use XDG-compliant QS).
-    # This will be set to "true" if it is decided to dump the QSP activator.
-    configure.cppflags-append \
-                    -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=runtime
+# 20160324 : remove payload because -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=true is becoming the default
+#     # 20160214 : switch from QStandardPaths to the experimental QExtStandardPaths
+#     configure.cppflags-append \
+#                     -DQT_USE_EXTSTANDARDPATHS
+#     # configure QExtStandardPaths to use the QSP/XDG mode set by the QSP activator.
+#     # alternatives are false (use native QSP) and true (use XDG-compliant QS).
+#     # This will be set to "true" if it is decided to dump the QSP activator.
+#     configure.cppflags-append \
+#                     -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=runtime
 }
 
 # TODO:
@@ -510,8 +512,21 @@ proc kf5.depends_frameworks {first args} {
     # join ${first} and (the optional) ${args}
     set args [linsert $args[set list {}] 0 ${first}]
     foreach f ${args} {
+        set kdep [kf5.framework_dependency ${f}]
+        if {![catch {set nativeQSP [active_variants "${kdep}" nativeQSP]}]} {
+            global subport
+            if {${nativeQSP}} {
+                # dependency is built for native QSP locations but the dependent port wants XDG locations
+                if {([variant_isset qspXDG] || ![variant_isset nativeQSP])} {
+                    ui_msg "Warning: ${subport} potential mismatch with kf5-${f}+nativeQSP"
+                }
+            } elseif {[variant_isset nativeQSP]} {
+                # dependency is built for XDG QSP locations but the dependent port wants to use native locations
+                ui_msg "Warning: ${subport}+nativeQSP potential mismatch with kf5-${f} (-nativeQSP)"
+            }
+        }
         depends_lib-append \
-                        [kf5.framework_dependency ${f}]
+                        ${kdep}
         platform darwin {
             if {[lsearch {"baloo" "kactivities" "kdbusaddons" "kded" "kdelibs4support-devel" "kglobalaccel" "kio"
                             "kservice" "kwallet" "kwalletmanager" "plasma-framework"} ${f}] ne "-1"} {
@@ -528,6 +543,7 @@ proc kf5.depends_frameworks {first args} {
         kf5.has_translations
     }
 }
+
 # the equivalent to kf5.depends_frameworks for declaring build dependencies.
 proc kf5.depends_build_frameworks {first args} {
     # join ${first} and (the optional) ${args}
