@@ -234,7 +234,9 @@ variant docs description {build and install the documentation, for use with Qt's
     }
 }
 if {![variant_isset docs]} {
-    pre-patch {
+    # 20160325 : do this in the post-patch so patches around the targeted won't need to be
+    # specific for +docs and -docs !
+    post-patch {
         if {[file exists ${worksrcpath}/CMakeLists.txt]} {
             reinplace "/add_subdirectory.*(\[ ]*docs\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
             reinplace "/add_subdirectory.*(\[ \]*doc\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
