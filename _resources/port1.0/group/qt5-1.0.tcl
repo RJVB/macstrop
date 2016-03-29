@@ -44,12 +44,14 @@
 
 # Check what Qt5 installation flavour already exists, or if not if the port calling us
 # indicated a preference. If not, use the default/mainstream port:qt5 .
-if {[file exists ${prefix}/include/qt5/QtCore/QtCore] && ![info exists qt5.prefer_default]} {
+if {[file exists ${prefix}/include/qt5/QtCore/QtCore]
+        && ![info exists qt5.prefer_default]} {
     # Qt5 has been installed through port:qt5-kde and is not the be reinstalled the other way
     ui_debug "Qt5 is provided by port:qt5-kde"
     PortGroup   qt5-kde 1.0
     set qt5.using_kde   yes
-} elseif {[file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
+} elseif {[file exists ${prefix}/libexec/qt5/plugins]
+        && [file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
     # Qt5 has been installed through port:qt5 and is not to be reinstalled the other way
     ui_debug "Qt5 is provided by port:qt5"
     PortGroup   qt5-mac 1.0
