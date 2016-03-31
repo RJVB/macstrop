@@ -75,6 +75,8 @@ if { ![ info exists kf5.project ] } {
 # KF5 frameworks current version, which is the same for all frameworks
 if {![info exists kf5.version]} {
     set kf5.version     5.19.0
+    # kf5.latest_version is supposed to be used only in the KF5-Frameworks Portfile
+    # when updating it to the new version (=kf5.latest_version).
     set kf5.latest_version \
                         5.19.0
 }
@@ -394,11 +396,12 @@ if {[info exists kf5.project]} {
 }
 
 proc kf5.use_latest {lversion} {
-    global kf5.latest_release kf5.latest_version kf5.latest_plasma kf5.project kf5.set_project
+    global kf5.latest_release kf5.latest_version kf5.latest_plasma kf5.project kf5.set_project kf5.branch
     global version
     upvar #0 kf5.version v
     upvar #0 kf5.release r
     upvar #0 kf5.plasma p
+    upvar #0 kf5.branch b
     switch -nocase ${lversion} {
         kf5.version     {set v ${kf5.latest_version}}
         kf5.release     {set r ${kf5.latest_release}}
@@ -411,6 +414,10 @@ proc kf5.use_latest {lversion} {
             return -code error "Illegal argument to kf5.use_latest"
         }
     }
+    # be sure that kf5.branch is set correctly too
+    set b               [join [lrange [split ${v} .] 0 1] .]
+    # and ditto for the paths.
+    kf5.set_paths
     unset version
     if {[info exists kf5.project]} {
         kf5.set_project ${kf5.project}
