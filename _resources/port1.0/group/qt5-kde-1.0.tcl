@@ -310,7 +310,8 @@ if {![info exists building_qt5]} {
     } elseif {${os.platform} eq "linux"} {
         set qt5_pathlibspec path:libexec/${qt_name}/lib/libQt5Core.${qt_libs_ext}
         set qt5_dependency ${qt5_pathlibspec}:qt5-kde
-        depends_lib-append ${qt5_dependency}
+        depends_lib-append ${qt5_dependency} \
+                path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext}:qt5-kde-qtwebkit
         if {[info exists qt5.depends_qtwebengine] && ${qt5.depends_qtwebengine}} {
             depends_lib-append \
                 path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext}:qt5-kde-qtwebengine
