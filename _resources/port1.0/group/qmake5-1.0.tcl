@@ -148,17 +148,18 @@ if {${qt5.using_kde}} {
 
 # override C++11 flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
 #    so value of ${configure.cxx_stdlib} can always be used
-if {${configure.cxx_stdlib} ne "libc++"} {
+if {${configure.cxx_stdlib} ne ""} {
+    if {${configure.cxx_stdlib} ne "libc++"} {
+        configure.args-append \
+            QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++ \
+            QMAKE_LFLAGS_CXX11-=-stdlib=libc++   \
+            QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib} \
+            QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
+    }
+    # ensure ${configure.cxx_stdlib} is used for C++ stdlib
     configure.args-append \
-        QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++ \
-        QMAKE_LFLAGS_CXX11-=-stdlib=libc++   \
-        QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib} \
-        QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
+        QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib} \
+        QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
 }
-
-# ensure ${configure.cxx_stdlib} is used for C++ stdlib
-configure.args-append \
-    QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib} \
-    QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
