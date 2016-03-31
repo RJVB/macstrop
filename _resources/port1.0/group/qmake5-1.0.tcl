@@ -49,7 +49,8 @@ if {![info exists qt5.using_kde]} {
 
 if {${qt5.using_kde}} {
 
-    configure.cmd                   ${qt_qmake_cmd} -r
+    #configure.cmd                   ${qt_qmake_cmd} -r
+    configure.cmd                   ${qt_qmake_cmd}
     configure.pre_args-replace      --prefix=${prefix} PREFIX=${prefix}
     configure.universal_args-delete --disable-dependency-tracking
 
