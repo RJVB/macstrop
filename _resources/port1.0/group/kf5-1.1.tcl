@@ -199,7 +199,7 @@ if {${os.platform} eq "darwin"} {
                         ${prefix}/bin
     set kf5.libexec_dir ${prefix}/lib/${os.arch}-linux-gnu/libexec
     configure.args-delete \
-                        -DCMAKE_INSTALL_RPATH=${prefix}/lib
+                        -DCMAKE_INSTALL_RPATH="${prefix}/lib"
     configure.args-append \
                         -DCMAKE_PREFIX_PATH=${prefix} \
                         -DCMAKE_INSTALL_RPATH="${prefix}/lib/${os.arch}-linux-gnu\;${prefix}/lib"
