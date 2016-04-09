@@ -589,7 +589,7 @@ kf5.framework_dependency    kidletime libKF5IdleTime
 set kf5.kimageformats_dep   port:kf5-kimageformats
 kf5.framework_dependency    kitemmodels libKF5ItemModels
 kf5.framework_dependency    kplotting libKF5Plotting
-set kf5.oxygen-icons_dep    path:share/icons/oxygen/index.theme:kf5-oxygen-icons
+set kf5.oxygen-icons_dep    path:share/icons/oxygen/index.theme:kf5-oxygen-icons5
 kf5.framework_dependency    solid libKF5Solid
 kf5.framework_dependency    sonnet libKF5SonnetCore
 kf5.framework_dependency    threadweaver libKF5ThreadWeaver
