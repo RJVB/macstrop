@@ -141,9 +141,10 @@ proc kde4.restore_from_legacy_prefix {} {
     }
     if {[file exists ${destroot}${kde4.legacy_prefix}/share]} {
         # move back the share directory to where it should be;
-        # first delete the share directory that was created for us and should be empty:
-        file delete -force ${destroot}${prefix}/share
-        file rename ${destroot}${kde4.legacy_prefix}/share ${destroot}${prefix}/share
+        foreach J [glob -nocomplain ${destroot}${kde4.legacy_prefix}/share/*] {
+            set d [file tail ${J}]
+            file rename ${J} ${destroot}${prefix}/share/${d}
+        }
     }
     if {[file exists ${destroot}${kde4.legacy_prefix}/lib/cmake]} {
         # move back the cmake modules to where they should be
