@@ -213,6 +213,10 @@ variant docs description {build and install the documentation, for use with Qt's
                         -DBUILD_doc=OFF \
                         -DBUILD_docs=OFF
     if {${subport} ne "kf5-kapidox"} {
+        if {${subport} ne "kf5-kdoctools"} {
+            kf5.depends_frameworks \
+                        kdoctools
+        }
         if {[info exists kf5.allow_docs_generation]} {
             kf5.depends_build_frameworks \
                         kapidox
