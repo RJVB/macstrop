@@ -159,7 +159,7 @@ proc kf5.use_QExtStandardPaths {} {
 # This is used by all KF5 frameworks
 depends_lib-append      path:share/ECM/cmake/ECMConfig.cmake:kde-extra-cmake-modules
 
-configure.args-append   -G "\"CodeBlocks - Unix Makefiles\""
+# configure.args-append   -G "\"CodeBlocks - Unix Makefiles\""
 
 # Use directory set by qt5-kde or qt5-mac
 configure.args-append   -DECM_MKSPECS_INSTALL_DIR=${qt_mkspecs_dir}
