@@ -1,5 +1,5 @@
 diff --git src/kdeinit/CMakeLists.txt src/kdeinit/CMakeLists.txt
-index ae619f7..3284ca3 100644
+index ae619f7..d9876f1 100644
 --- src/kdeinit/CMakeLists.txt
 +++ src/kdeinit/CMakeLists.txt
 @@ -1,6 +1,9 @@
@@ -7,7 +7,7 @@ index ae619f7..3284ca3 100644
    set(kdeinit_SRCS kinit_win.cpp ../klauncher_cmds.cpp )
    set(kdeinit_LIBS psapi)
 +elseif (APPLE)
-+  set(kdeinit_SRCS kinit_mac.mm proctitle.cpp ../klauncher_cmds.cpp )
++  set(kdeinit_SRCS kinit.cpp kinit_mac.mm proctitle.cpp ../klauncher_cmds.cpp )
 +  set(kdeinit_LIBS "")
  else ()
    set(kdeinit_SRCS kinit.cpp proctitle.cpp ../klauncher_cmds.cpp )
@@ -39,7 +39,7 @@ index ae619f7..3284ca3 100644
  target_compile_definitions(kdeinit5 PRIVATE
      CMAKE_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
 diff --git src/kdeinit/kinit.cpp src/kdeinit/kinit.cpp
-index ca18603..14c4d2d 100644
+index ca18603..142be31 100644
 --- src/kdeinit/kinit.cpp
 +++ src/kdeinit/kinit.cpp
 @@ -64,14 +64,6 @@
@@ -57,38 +57,160 @@ index ca18603..14c4d2d 100644
  #include <kinit_version.h>
  
  #include "klauncher_cmds.h"
-@@ -92,13 +84,6 @@
+@@ -91,23 +83,26 @@
+ 
  #include <qstandardpaths.h>
  
++#include "kinit.h"
++#ifdef Q_OS_OSX
++#include "kinit_mac.h"
++#endif
++
  #ifdef Q_OS_UNIX
 -#ifdef Q_OS_MAC
--static const char *extra_libs[] = {
--    "libKF5KIOCore.5.dylib",
--    "libKF5Parts.5.dylib",
--    "libKF5Plasma.5.dylib"
--};
--#else
- //TODO: make sure what libraries we want here...
++//TODO: make sure what libraries we want here...
  static const char *extra_libs[] = {
++#ifdef Q_OS_OSX
+     "libKF5KIOCore.5.dylib",
+     "libKF5Parts.5.dylib",
+     "libKF5Plasma.5.dylib"
+-};
+ #else
+-//TODO: make sure what libraries we want here...
+-static const char *extra_libs[] = {
      "libKF5KIOCore.so.5",
-@@ -108,7 +93,6 @@ static const char *extra_libs[] = {
+     "libKF5Parts.so.5",
+ //#ifdef __KDE_HAVE_GCC_VISIBILITY // Removed for KF5, we'll see.
+     "libKF5Plasma.so.5"
  //#endif
- };
+-};
  #endif
--#endif
++};
+ #endif
  
  // #define SKIP_PROCTITLE 1
+@@ -133,51 +128,17 @@ static int s_startup_notify_screen = 0;
+ #define MAX_SOCK_FILE (sizeof(struct sockaddr_un) - offsetof(struct sockaddr_un,sun_path))
+ static char sock_file[MAX_SOCK_FILE];
  
-@@ -138,8 +122,6 @@ static const char* displayEnvVarName_c()
++#if HAVE_X11 || HAVE_XCB
+ static const char* displayEnvVarName_c()
+ {
      // Can't use QGuiApplication::platformName() here, there is no app instance.
- #if HAVE_X11
+-#if HAVE_X11
      return "DISPLAY";
 -#elif defined(Q_OS_MACX)
 -    return "MAC_DISPLAY";
- #elif defined(Q_OS_WIN)
-     return "WIN_DISPLAY";
+-#elif defined(Q_OS_WIN)
+-    return "WIN_DISPLAY";
+-#endif
+ }
+ static inline QByteArray displayEnvVarName()
+ {
+     return QByteArray::fromRawData(displayEnvVarName_c(), strlen(displayEnvVarName_c()));
+ }
+-
+-/* Group data */
+-static struct {
+-    int maxname;
+-    int fd[2];
+-    int launcher[2]; /* socket pair for launcher communication */
+-    int deadpipe[2]; /* pipe used to detect dead children */
+-    int initpipe[2];
+-    int wrapper; /* socket for wrapper communication */
+-    int accepted_fd; /* socket accepted and that must be closed in the child process */
+-    char result;
+-    int exit_status;
+-    pid_t fork;
+-    pid_t launcher_pid;
+-    pid_t kded_pid;
+-    int n;
+-    char **argv;
+-    int (*func)(int, char *[]);
+-    int (*launcher_func)(int);
+-    bool debug_wait;
+-    QByteArray errorMsg;
+-    bool launcher_ok;
+-    bool suicide;
+-} d;
+-
+-struct child {
+-    pid_t pid;
+-    int sock; /* fd to write message when child is dead*/
+-    struct child *next;
+-};
++#endif
+ 
+ static struct child *children;
+ 
+@@ -218,7 +179,7 @@ static void cleanup_fds()
+  * Close fd's which are only useful for the parent process.
+  * Restore default signal handlers.
+  */
+-static void close_fds()
++void close_fds()
+ {
+     while (struct child *child = children) {
+         close(child->sock);
+@@ -300,20 +261,7 @@ static void child_died(pid_t exit_pid, int exit_status)
+     }
+ }
+ 
+-static void exitWithErrorMsg(const QString &errorMsg)
+-{
+-    fprintf(stderr, "%s\n", errorMsg.toLocal8Bit().data());
+-    QByteArray utf8ErrorMsg = errorMsg.toUtf8();
+-    d.result = 3; // Error with msg
+-    write(d.fd[1], &d.result, 1);
+-    int l = utf8ErrorMsg.length();
+-    write(d.fd[1], &l, sizeof(int));
+-    write(d.fd[1], utf8ErrorMsg.data(), l);
+-    close(d.fd[1]);
+-    exit(255);
+-}
+-
+-static void setup_tty(const char *tty)
++void setup_tty(const char *tty)
+ {
+     if (tty == NULL || *tty == '\0') {
+         return;
+@@ -436,7 +384,7 @@ static void oom_protect_sighandler(int)
+ {
+ }
+ 
+-static void reset_oom_protect()
++void reset_oom_protect()
+ {
+     if (oom_pipe <= 0) {
+         return;
+@@ -464,11 +412,25 @@ static void reset_oom_protect()
+     oom_pipe = -1;
+ }
+ #else
+-static void reset_oom_protect()
++void reset_oom_protect()
+ {
+ }
  #endif
-@@ -544,9 +526,6 @@ static pid_t launch(int argc, const char *_name, const char *args,
+ 
++#ifndef Q_OS_OSX
++static void exitWithErrorMsg(const QString &errorMsg)
++{
++    fprintf(stderr, "%s\n", errorMsg.toLocal8Bit().data());
++    QByteArray utf8ErrorMsg = errorMsg.toUtf8();
++    d.result = 3; // Error with msg
++    write(d.fd[1], &d.result, 1);
++    int l = utf8ErrorMsg.length();
++    write(d.fd[1], &l, sizeof(int));
++    write(d.fd[1], utf8ErrorMsg.data(), l);
++    close(d.fd[1]);
++    exit(255);
++}
++
+ static pid_t launch(int argc, const char *_name, const char *args,
+                     const char *cwd = 0, int envc = 0, const char *envs = 0,
+                     bool reset_env = false,
+@@ -544,9 +506,6 @@ static pid_t launch(int argc, const char *_name, const char *args,
  #endif
      // find out this path before forking, doing it afterwards
      // crashes on some platforms, notably OSX
@@ -98,7 +220,7 @@ index ca18603..14c4d2d 100644
  
      d.errorMsg = 0;
      d.fork = fork();
-@@ -609,14 +588,6 @@ static pid_t launch(int argc, const char *_name, const char *args,
+@@ -609,14 +568,6 @@ static pid_t launch(int argc, const char *_name, const char *args,
              QByteArray procTitle;
              d.argv = (char **) malloc(sizeof(char *) * (argc + 1));
              d.argv[0] = (char *) _name;
@@ -113,7 +235,7 @@ index ca18603..14c4d2d 100644
              for (int i = 1;  i < argc; i++) {
                  d.argv[i] = (char *) args;
                  procTitle += ' ';
-@@ -698,11 +669,6 @@ static pid_t launch(int argc, const char *_name, const char *args,
+@@ -698,11 +649,6 @@ static pid_t launch(int argc, const char *_name, const char *args,
              setup_tty(tty);
  
              QByteArray executable = execpath;
@@ -125,10 +247,101 @@ index ca18603..14c4d2d 100644
  
              if (!executable.isEmpty()) {
                  execvp(executable.constData(), d.argv);
-@@ -1575,58 +1541,6 @@ static QString findSharedLib(const QString &lib)
+@@ -810,6 +756,7 @@ static pid_t launch(int argc, const char *_name, const char *args,
+ #endif
+     return d.fork;
+ }
++#endif // !Q_OS_OSX
+ 
+ extern "C" {
+ 
+@@ -1029,7 +976,7 @@ static void start_klauncher()
+     char args[32];
+     strcpy(args, "--fd=");
+     sprintf(args + 5, "%d", d.launcher[1]);
+-    d.launcher_pid = launch(2, "klauncher", args);
++    d.launcher_pid = launch(2, CMAKE_INSTALL_FULL_LIBEXECDIR_KF5 "/klauncher", args);
+     close(d.launcher[1]);
+ #ifndef NDEBUG
+     fprintf(stderr, "kdeinit5: Launched KLauncher, pid = %ld, result = %d\n",
+@@ -1168,6 +1115,7 @@ static bool handle_launcher_request(int sock, const char *who)
+             return true; // sure?
+         }
+ 
++#if HAVE_X11 || HAVE_XCB
+         // support for the old a bit broken way of setting DISPLAY for multihead
+         QByteArray olddisplay = qgetenv(displayEnvVarName_c());
+         QByteArray kdedisplay = qgetenv("KDE_DISPLAY");
+@@ -1178,15 +1126,17 @@ static bool handle_launcher_request(int sock, const char *who)
+         if (reset_display) {
+             qputenv(displayEnvVarName_c(), kdedisplay);
+         }
+-
++#endif
+         pid = launch(argc, name, args, cwd, envc, envs,
+                      request_header.cmd == LAUNCHER_SHELL || request_header.cmd == LAUNCHER_KWRAPPER,
+                      tty, avoid_loops, startup_id_str);
+ 
++#if HAVE_X11 || HAVE_XCB
+         if (reset_display) {
+             unsetenv("KDE_DISPLAY");
+             qputenv(displayEnvVarName_c(), olddisplay);
+         }
++#endif
+ 
+         if (pid && (d.result == 0)) {
+             response_header.cmd = LAUNCHER_OK;
+@@ -1395,12 +1345,11 @@ static void handle_requests(pid_t waitForPid)
+ static void generate_socket_name()
+ {
+ 
++#if HAVE_X11 || HAVE_XCB // qt5: see displayEnvVarName_c()
+     QByteArray display = qgetenv(displayEnvVarName_c());
+     if (display.isEmpty()) {
+-#if HAVE_X11 // qt5: see displayEnvVarName_c()
+         fprintf(stderr, "kdeinit5: Aborting. $%s is not set. \n", displayEnvVarName_c());
+         exit(255);
+-#endif
+     }
+     int i;
+     if ((i = display.lastIndexOf('.')) > display.lastIndexOf(':') && i >= 0) {
+@@ -1409,8 +1358,13 @@ static void generate_socket_name()
+ 
+     display.replace(':', '_');
+ #ifdef __APPLE__
++    // not entirely impossible, so let's leave it
+     display.replace('/', '_');
+ #endif
++#else
++    // not using a DISPLAY variable; use an empty string instead
++    QByteArray display = "";
++#endif
+     // WARNING, if you change the socket name, adjust kwrapper too
+     const QString socketFileName = QStringLiteral("kdeinit5_%1").arg(QLatin1String(display));
+     const QByteArray socketName = QFile::encodeName(QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation) + QLatin1Char('/') + socketFileName);
+@@ -1491,9 +1445,7 @@ int kdeinit_x_errhandler(Display *dpy, XErrorEvent *err)
+ #endif
+     return 0;
+ }
+-#endif
+ 
+-#if HAVE_X11
+ // needs to be done sooner than initXconnection() because of also opening
+ // another X connection for startup notification purposes
+ static void setupX()
+@@ -1563,6 +1515,7 @@ static int initXconnection()
+ }
+ #endif
+ 
++#ifndef Q_OS_OSX
+ // Find a shared lib in the lib dir, e.g. libkio.so.
+ // Completely unrelated to plugins.
+ static QString findSharedLib(const QString &lib)
+@@ -1574,57 +1527,6 @@ static QString findSharedLib(const QString &lib)
+     // We could also look in LD_LIBRARY_PATH, but really, who installs the main libs in different prefixes?
      return QString();
  }
- 
+-
 -#ifdef Q_OS_MAC
 -/**
 - Calling CoreFoundation APIs (which is unavoidable in Qt/Mac) has always had issues
@@ -179,40 +392,150 @@ index ca18603..14c4d2d 100644
 -
 -    }
 -}
--#endif
--
- extern "C" {
+ #endif
  
-     static void secondary_child_handler(int)
-@@ -1703,9 +1617,6 @@ int main(int argc, char **argv)
+ extern "C" {
+@@ -1703,7 +1605,7 @@ int main(int argc, char **argv)
      (void)dup2(2, 1);
  
      if (do_fork) {
 -#ifdef Q_OS_MAC
--        mac_fork_and_reexec_self();
--#else
++#ifdef Q_OS_OSX
+         mac_fork_and_reexec_self();
+ #else
          if (pipe(d.initpipe) != 0) {
-             perror("kdeinit5: pipe failed");
-             return 1;
-@@ -1729,7 +1640,6 @@ int main(int argc, char **argv)
-         }
-         close(d.initpipe[0]);
-         d.initpipe[0] = -1;
--#endif
+@@ -1768,7 +1670,7 @@ int main(int argc, char **argv)
+          */
+         init_kdeinit_socket();
      }
- 
-     /** Make process group leader (for shutting down children later) **/
-diff --git src/kdeinit/kinit_mac.mm src/kdeinit/kinit_mac.mm
+-#ifdef Q_OS_UNIX
++#if defined(Q_OS_UNIX) && !defined(Q_OS_OSX)
+     if (!d.suicide && qEnvironmentVariableIsEmpty("KDE_IS_PRELINKED")) {
+         const int extrasCount = sizeof(extra_libs) / sizeof(extra_libs[0]);
+         for (int i = 0; i < extrasCount; i++) {
+diff --git src/kdeinit/kinit.h src/kdeinit/kinit.h
 new file mode 100644
-index 0000000..ef695f3
+index 0000000..03e55ed
 --- /dev/null
-+++ src/kdeinit/kinit_mac.mm
-@@ -0,0 +1,1447 @@
++++ src/kdeinit/kinit.h
+@@ -0,0 +1,65 @@
 +/*
 + * This file is part of the KDE libraries
 + * Copyright (c) 1999-2000 Waldo Bastian <bastian@kde.org>
 + *           (c) 1999 Mario Weilguni <mweilguni@sime.com>
 + *           (c) 2001 Lubos Lunak <l.lunak@kde.org>
++ *           (c) 2016 René J.V. Bertin <rjvbertin@gmail.com>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License version 2 as published by the Free Software Foundation.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public License
++ * along with this library; see the file COPYING.LIB.  If not, write to
++ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ */
++
++#ifndef _KINIT_H
++
++/* Group data */
++static struct {
++    int maxname;
++    int fd[2];
++    int launcher[2]; /* socket pair for launcher communication */
++    int deadpipe[2]; /* pipe used to detect dead children */
++    int initpipe[2];
++    int wrapper; /* socket for wrapper communication */
++    int accepted_fd; /* socket accepted and that must be closed in the child process */
++    char result;
++    int exit_status;
++    pid_t fork;
++    pid_t launcher_pid;
++    pid_t kded_pid;
++    int n;
++    char **argv;
++    int (*func)(int, char *[]);
++    int (*launcher_func)(int);
++    bool debug_wait;
++    QByteArray errorMsg;
++    bool launcher_ok;
++    bool suicide;
++} d;
++
++struct child {
++    pid_t pid;
++    int sock; /* fd to write message when child is dead*/
++    struct child *next;
++};
++
++/*
++ * Close fd's which are only useful for the parent process.
++ * Restore default signal handlers.
++ */
++extern void close_fds();
++extern void setup_tty(const char *tty);
++extern QByteArray execpath_avoid_loops(const QByteArray &exec, int envc, const char *envs, bool avoid_loops);
++extern void reset_oom_protect();
++
++#define _KINIT_H
++#endif
+diff --git src/kdeinit/kinit_mac.h src/kdeinit/kinit_mac.h
+new file mode 100644
+index 0000000..c980f85
+--- /dev/null
++++ src/kdeinit/kinit_mac.h
+@@ -0,0 +1,34 @@
++/*
++ * This file is part of the KDE libraries
++ * Copyright (c) 1999-2000 Waldo Bastian <bastian@kde.org>
++ *           (c) 1999 Mario Weilguni <mweilguni@sime.com>
++ *           (c) 2001 Lubos Lunak <l.lunak@kde.org>
++ *           (c) 2015,2016 René J.V. Bertin <rjvbertin@gmail.com>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License version 2 as published by the Free Software Foundation.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public License
++ * along with this library; see the file COPYING.LIB.  If not, write to
++ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ */
++
++#ifndef _KINIT_MAC_H
++
++extern pid_t launch(int argc, const char *_name, const char *args,
++                    const char *cwd = 0, int envc = 0, const char *envs = 0,
++                    bool reset_env = false,
++                    const char *tty = 0, bool avoid_loops = false,
++                    const char *startup_id_str = "0");
++
++extern void mac_fork_and_reexec_self();
++
++#define _KINIT_MAC_H
++#endif
+diff --git src/kdeinit/kinit_mac.mm src/kdeinit/kinit_mac.mm
+new file mode 100644
+index 0000000..4b593fa
+--- /dev/null
++++ src/kdeinit/kinit_mac.mm
+@@ -0,0 +1,420 @@
++/*
++ * This file is part of the KDE libraries
++ * Copyright (c) 1999-2000 Waldo Bastian <bastian@kde.org>
++ *           (c) 1999 Mario Weilguni <mweilguni@sime.com>
++ *           (c) 2001 Lubos Lunak <l.lunak@kde.org>
++ *           (c) 2015,2016 René J.V. Bertin <rjvbertin@gmail.com>
 + *
 + * This library is free software; you can redistribute it and/or
 + * modify it under the terms of the GNU Library General Public
@@ -263,7 +586,6 @@ index 0000000..ef695f3
 +#include <QtCore/QRegExp>
 +#include <QCoreApplication>
 +#include <QFont>
-+#include <kcrash.h>
 +#include <kconfig.h>
 +#include <klocalizedstring.h>
 +#include <QDebug>
@@ -283,165 +605,10 @@ index 0000000..ef695f3
 +
 +#include <qstandardpaths.h>
 +
-+static const char *extra_libs[] = {
-+    "libKF5KIOCore.5.dylib",
-+    "libKF5Parts.5.dylib",
-+    "libKF5Plasma.5.dylib"
-+};
-+
-+// #define SKIP_PROCTITLE 1
-+
-+namespace KCrash
-+{
-+extern KCRASH_EXPORT bool loadedByKdeinit;
-+}
++#include "kinit.h"
++#include "kinit_mac.h"
 +
 +extern char **environ;
-+
-+// Finds size of sun_path without allocating a sockaddr_un to do it.
-+// Assumes sun_path is at end of sockaddr_un though
-+#define MAX_SOCK_FILE (sizeof(struct sockaddr_un) - offsetof(struct sockaddr_un,sun_path))
-+static char sock_file[MAX_SOCK_FILE];
-+
-+static const char* displayEnvVarName_c()
-+{
-+    // Can't use QGuiApplication::platformName() here, there is no app instance.
-+    return "MAC_DISPLAY";
-+}
-+
-+/* Group data */
-+static struct {
-+    int maxname;
-+    int fd[2];
-+    int launcher[2]; /* socket pair for launcher communication */
-+    int deadpipe[2]; /* pipe used to detect dead children */
-+    int initpipe[2];
-+    int wrapper; /* socket for wrapper communication */
-+    int accepted_fd; /* socket accepted and that must be closed in the child process */
-+    char result;
-+    int exit_status;
-+    pid_t fork;
-+    pid_t launcher_pid;
-+    pid_t kded_pid;
-+    int n;
-+    char **argv;
-+    int (*func)(int, char *[]);
-+    int (*launcher_func)(int);
-+    bool debug_wait;
-+    QByteArray errorMsg;
-+    bool launcher_ok;
-+    bool suicide;
-+} d;
-+
-+struct child {
-+    pid_t pid;
-+    int sock; /* fd to write message when child is dead*/
-+    struct child *next;
-+};
-+
-+static struct child *children;
-+
-+#if KDEINIT_OOM_PROTECT
-+static int oom_pipe = -1;
-+#endif
-+
-+/*
-+ * Clean up the file descriptor table by closing all file descriptors
-+ * that are still open.
-+ *
-+ * This function is called very early in the main() function, so that
-+ * we don't leak anything that was leaked to us.
-+ */
-+static void cleanup_fds()
-+{
-+    int maxfd = FD_SETSIZE;
-+    struct rlimit rl;
-+    if (getrlimit(RLIMIT_NOFILE, &rl) == 0) {
-+        maxfd = rl.rlim_max;
-+    }
-+    for (int fd = 3; fd < maxfd; ++fd) {
-+#if KDEINIT_OOM_PROTECT
-+        if (fd != oom_pipe)
-+#endif
-+            close(fd);
-+    }
-+}
-+
-+/*
-+ * Close fd's which are only useful for the parent process.
-+ * Restore default signal handlers.
-+ */
-+static void close_fds()
-+{
-+    while (struct child *child = children) {
-+        close(child->sock);
-+        children = child->next;
-+        free(child);
-+    }
-+
-+    if (d.deadpipe[0] != -1) {
-+        close(d.deadpipe[0]);
-+        d.deadpipe[0] = -1;
-+    }
-+
-+    if (d.deadpipe[1] != -1) {
-+        close(d.deadpipe[1]);
-+        d.deadpipe[1] = -1;
-+    }
-+
-+    if (d.initpipe[0] != -1) {
-+        close(d.initpipe[0]);
-+        d.initpipe[0] = -1;
-+    }
-+
-+    if (d.initpipe[1] != -1) {
-+        close(d.initpipe[1]);
-+        d.initpipe[1] = -1;
-+    }
-+
-+    if (d.launcher[0] != -1) {
-+        close(d.launcher[0]);
-+        d.launcher[0] = -1;
-+    }
-+    if (d.wrapper != -1) {
-+        close(d.wrapper);
-+        d.wrapper = -1;
-+    }
-+    if (d.accepted_fd != -1) {
-+        close(d.accepted_fd);
-+        d.accepted_fd = -1;
-+    }
-+
-+    signal(SIGCHLD, SIG_DFL);
-+    signal(SIGPIPE, SIG_DFL);
-+}
-+
-+/* Notify wrapper program that the child it started has finished. */
-+static void child_died(pid_t exit_pid, int exit_status)
-+{
-+    struct child *child, **childptr = &children;
-+
-+    while ((child = *childptr)) {
-+        if (child->pid == exit_pid) {
-+            /* Send a message with the return value of the child on the control socket */
-+            klauncher_header request_header;
-+            long request_data[2];
-+            request_header.cmd = LAUNCHER_CHILD_DIED;
-+            request_header.arg_length = sizeof(long) * 2;
-+            request_data[0] = exit_pid;
-+            request_data[1] = exit_status;
-+            write(child->sock, &request_header, sizeof(request_header));
-+            write(child->sock, request_data, request_header.arg_length);
-+            close(child->sock);
-+
-+            *childptr = child->next;
-+            free(child);
-+            return;
-+        }
-+
-+        childptr = &child->next;
-+    }
-+}
 +
 +static int show_message_box( const QString &title, const QString &message )
 +{
@@ -496,121 +663,10 @@ index 0000000..ef695f3
 +    }
 +}
 +
-+static void setup_tty(const char *tty)
-+{
-+    if (tty == NULL || *tty == '\0') {
-+        return;
-+    }
-+    QFile f(QFile::decodeName(tty));
-+    f.open(QFileDevice::WriteOnly);
-+    int fd = f.handle();
-+
-+    if (fd < 0) {
-+        perror("kdeinit5: could not open() tty");
-+        return;
-+    }
-+    if (dup2(fd, STDOUT_FILENO) < 0) {
-+        perror("kdeinit5: could not dup2() stdout tty");
-+    }
-+    if (dup2(fd, STDERR_FILENO) < 0) {
-+        perror("kdeinit5: could not dup2() stderr tty");
-+    }
-+    close(fd);
-+}
-+
-+// var has to be e.g. "DISPLAY=", i.e. with =
-+const char *get_env_var(const char *var, int envc, const char *envs)
-+{
-+    if (envc > 0) {
-+        // get the var from envs
-+        const char *env_l = envs;
-+        int ln = strlen(var);
-+        for (int i = 0;  i < envc; i++) {
-+            if (strncmp(env_l, var, ln) == 0) {
-+                return env_l + ln;
-+            }
-+            while (*env_l != 0) {
-+                env_l++;
-+            }
-+            env_l++;
-+        }
-+    }
-+    return NULL;
-+}
-+
-+QByteArray execpath_avoid_loops(const QByteArray &exec, int envc, const char *envs, bool avoid_loops)
-+{
-+    QStringList paths;
-+    const QRegExp pathSepRegExp(QStringLiteral("[:\b]"));
-+    if (envc > 0) { /* use the passed environment */
-+        const char *path = get_env_var("PATH=", envc, envs);
-+        if (path != NULL) {
-+            paths = QFile::decodeName(path).split(pathSepRegExp);
-+        }
-+    } else {
-+        paths = QString::fromLocal8Bit(qgetenv("PATH")).split(pathSepRegExp, QString::KeepEmptyParts);
-+        paths.prepend(QFile::decodeName(CMAKE_INSTALL_FULL_LIBEXECDIR_KF5));
-+    }
-+    QString execpath = QStandardPaths::findExecutable(QFile::decodeName(exec), paths);
-+    if (avoid_loops && !execpath.isEmpty()) {
-+        const int pos = execpath.lastIndexOf(QLatin1Char('/'));
-+        const QString bin_path = execpath.left(pos);
-+        for (QStringList::Iterator it = paths.begin();
-+                it != paths.end();
-+                ++it) {
-+            if (*it == bin_path || *it == bin_path + QLatin1Char('/')) {
-+                paths.erase(it);
-+                break; // -->
-+            }
-+        }
-+        execpath = QStandardPaths::findExecutable(QFile::decodeName(exec), paths);
-+    }
-+    return QFile::encodeName(execpath);
-+}
-+
-+#if KDEINIT_OOM_PROTECT
-+static void oom_protect_sighandler(int)
-+{
-+}
-+
-+static void reset_oom_protect()
-+{
-+    if (oom_pipe <= 0) {
-+        return;
-+    }
-+    struct sigaction act, oldact;
-+    act.sa_handler = oom_protect_sighandler;
-+    act.sa_flags = 0;
-+    sigemptyset(&act.sa_mask);
-+    sigaction(SIGUSR1, &act, &oldact);
-+    sigset_t sigs, oldsigs;
-+    sigemptyset(&sigs);
-+    sigaddset(&sigs, SIGUSR1);
-+    sigprocmask(SIG_BLOCK, &sigs, &oldsigs);
-+    pid_t pid = getpid();
-+    if (write(oom_pipe, &pid, sizeof(pid_t)) > 0) {
-+        sigsuspend(&oldsigs);   // wait for the signal to come
-+    } else {
-+#ifndef NDEBUG
-+        fprintf(stderr, "Failed to reset OOM protection: %d\n", pid);
-+#endif
-+    }
-+    sigprocmask(SIG_SETMASK, &oldsigs, NULL);
-+    sigaction(SIGUSR1, &oldact, NULL);
-+    close(oom_pipe);
-+    oom_pipe = -1;
-+}
-+#else
-+static void reset_oom_protect()
-+{
-+}
-+#endif
-+
-+static pid_t launch(int argc, const char *_name, const char *args,
-+                    const char *cwd = 0, int envc = 0, const char *envs = 0,
-+                    bool reset_env = false,
-+                    const char *tty = 0, bool avoid_loops = false,
-+                    const char *startup_id_str = "0")  // krazy:exclude=doublequote_chars
++pid_t launch(int argc, const char *_name, const char *args,
++                    const char *cwd, int envc, const char *envs,
++                    bool reset_env, const char *tty, bool avoid_loops,
++                    const char *startup_id_str)  // krazy:exclude=doublequote_chars
 +{
 +    QString bin, libpath;
 +    QByteArray name;
@@ -845,587 +901,6 @@ index 0000000..ef695f3
 +    return d.fork;
 +}
 +
-+extern "C" {
-+
-+    static void sig_child_handler(int)
-+    {
-+        /*
-+         * Write into the pipe of death.
-+         * This way we are sure that we return from the select()
-+         *
-+         * A signal itself causes select to return as well, but
-+         * this creates a race-condition in case the signal arrives
-+         * just before we enter the select.
-+         */
-+        char c = 0;
-+        write(d.deadpipe[1], &c, 1);
-+    }
-+
-+}
-+
-+static void init_signals()
-+{
-+    struct sigaction act;
-+    long options;
-+
-+    if (pipe(d.deadpipe) != 0) {
-+        perror("kdeinit5: Aborting. Can not create pipe");
-+        exit(255);
-+    }
-+
-+    options = fcntl(d.deadpipe[0], F_GETFL);
-+    if (options == -1) {
-+        perror("kdeinit5: Aborting. Can not make pipe non-blocking");
-+        exit(255);
-+    }
-+
-+    if (fcntl(d.deadpipe[0], F_SETFL, options | O_NONBLOCK) == -1) {
-+        perror("kdeinit5: Aborting. Can not make pipe non-blocking");
-+        exit(255);
-+    }
-+
-+    /*
-+     * A SIGCHLD handler is installed which sends a byte into the
-+     * pipe of death. This is to ensure that a dying child causes
-+     * an exit from select().
-+     */
-+    act.sa_handler = sig_child_handler;
-+    sigemptyset(&(act.sa_mask));
-+    sigaddset(&(act.sa_mask), SIGCHLD);
-+    sigprocmask(SIG_UNBLOCK, &(act.sa_mask), 0L);
-+    act.sa_flags = SA_NOCLDSTOP;
-+
-+    // CC: take care of SunOS which automatically restarts interrupted system
-+    // calls (and thus does not have SA_RESTART)
-+
-+#ifdef SA_RESTART
-+    act.sa_flags |= SA_RESTART;
-+#endif
-+    sigaction(SIGCHLD, &act, 0L);
-+
-+    act.sa_handler = SIG_IGN;
-+    sigemptyset(&(act.sa_mask));
-+    sigaddset(&(act.sa_mask), SIGPIPE);
-+    sigprocmask(SIG_UNBLOCK, &(act.sa_mask), 0L);
-+    act.sa_flags = 0;
-+    sigaction(SIGPIPE, &act, 0L);
-+}
-+
-+static void init_kdeinit_socket()
-+{
-+    struct sockaddr_un sa;
-+    kde_socklen_t socklen;
-+    long options;
-+    const QByteArray home_dir = qgetenv("HOME");
-+    int max_tries = 10;
-+    if (home_dir.isEmpty()) {
-+        fprintf(stderr, "kdeinit5: Aborting. $HOME not set!");
-+        exit(255);
-+    }
-+    if (chdir(home_dir.constData()) != 0) {
-+        fprintf(stderr, "kdeinit5: Aborting. Couldn't enter '%s'!", home_dir.constData());
-+        exit(255);
-+    }
-+
-+    {
-+        QByteArray path = home_dir;
-+        QByteArray readOnly = qgetenv("KDE_HOME_READONLY");
-+        if (access(path.data(), R_OK | W_OK)) {
-+            if (errno == ENOENT) {
-+                fprintf(stderr, "kdeinit5: Aborting. $HOME directory (%s) does not exist.\n", path.data());
-+                exit(255);
-+            } else if (readOnly.isEmpty()) {
-+                fprintf(stderr, "kdeinit5: Aborting. No write access to $HOME directory (%s).\n", path.data());
-+                exit(255);
-+            }
-+        }
-+    }
-+
-+    /** Test if socket file is already present
-+     *  note that access() resolves symlinks, and so we check the actual
-+     *  socket file if it exists
-+     */
-+    if (access(sock_file, W_OK) == 0) {
-+        int s;
-+        struct sockaddr_un server;
-+
-+//     fprintf(stderr, "kdeinit5: Warning, socket_file already exists!\n");
-+        /*
-+         * create the socket stream
-+         */
-+        s = socket(PF_UNIX, SOCK_STREAM, 0);
-+        if (s < 0) {
-+            perror("socket() failed");
-+            exit(255);
-+        }
-+        server.sun_family = AF_UNIX;
-+        qstrncpy(server.sun_path, sock_file, sizeof(server.sun_path));
-+        socklen = sizeof(server);
-+
-+        if (connect(s, (struct sockaddr *)&server, socklen) == 0) {
-+            fprintf(stderr, "kdeinit5: Shutting down running client.\n");
-+            klauncher_header request_header;
-+            request_header.cmd = LAUNCHER_TERMINATE_KDEINIT;
-+            request_header.arg_length = 0;
-+            write(s, &request_header, sizeof(request_header));
-+            sleep(1); // Give it some time
-+        }
-+        close(s);
-+    }
-+
-+    /** Delete any stale socket file (and symlink) **/
-+    unlink(sock_file);
-+
-+    /** create socket **/
-+    d.wrapper = socket(PF_UNIX, SOCK_STREAM, 0);
-+    if (d.wrapper < 0) {
-+        perror("kdeinit5: Aborting. socket() failed");
-+        exit(255);
-+    }
-+
-+    options = fcntl(d.wrapper, F_GETFL);
-+    if (options == -1) {
-+        perror("kdeinit5: Aborting. Can not make socket non-blocking");
-+        close(d.wrapper);
-+        exit(255);
-+    }
-+
-+    if (fcntl(d.wrapper, F_SETFL, options | O_NONBLOCK) == -1) {
-+        perror("kdeinit5: Aborting. Can not make socket non-blocking");
-+        close(d.wrapper);
-+        exit(255);
-+    }
-+
-+    while (1) {
-+        /** bind it **/
-+        socklen = sizeof(sa);
-+        memset(&sa, 0, socklen);
-+        sa.sun_family = AF_UNIX;
-+        qstrncpy(sa.sun_path, sock_file, sizeof(sa.sun_path));
-+        if (bind(d.wrapper, (struct sockaddr *)&sa, socklen) != 0) {
-+            if (max_tries == 0) {
-+                perror("kdeinit5: Aborting. bind() failed");
-+                fprintf(stderr, "Could not bind to socket '%s'\n", sock_file);
-+                close(d.wrapper);
-+                exit(255);
-+            }
-+            max_tries--;
-+        } else {
-+            break;
-+        }
-+    }
-+
-+    /** set permissions **/
-+    if (chmod(sock_file, 0600) != 0) {
-+        perror("kdeinit5: Aborting. Can not set permissions on socket");
-+        fprintf(stderr, "Wrong permissions of socket '%s'\n", sock_file);
-+        unlink(sock_file);
-+        close(d.wrapper);
-+        exit(255);
-+    }
-+
-+    if (listen(d.wrapper, SOMAXCONN) < 0) {
-+        perror("kdeinit5: Aborting. listen() failed");
-+        unlink(sock_file);
-+        close(d.wrapper);
-+        exit(255);
-+    }
-+}
-+
-+/*
-+ * Read 'len' bytes from 'sock' into buffer.
-+ * returns 0 on success, -1 on failure.
-+ */
-+static int read_socket(int sock, char *buffer, int len)
-+{
-+    ssize_t result;
-+    int bytes_left = len;
-+    while (bytes_left > 0) {
-+        result = read(sock, buffer, bytes_left);
-+        if (result > 0) {
-+            buffer += result;
-+            bytes_left -= result;
-+        } else if (result == 0) {
-+            return -1;
-+        } else if ((result == -1) && (errno != EINTR) && (errno != EAGAIN)) {
-+            return -1;
-+        }
-+    }
-+    return 0;
-+}
-+
-+static void start_klauncher()
-+{
-+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, d.launcher) < 0) {
-+        perror("kdeinit5: socketpair() failed");
-+        exit(255);
-+    }
-+    char args[32];
-+    strcpy(args, "--fd=");
-+    sprintf(args + 5, "%d", d.launcher[1]);
-+    d.launcher_pid = launch(2, CMAKE_INSTALL_FULL_LIBEXECDIR_KF5 "/klauncher", args);
-+    close(d.launcher[1]);
-+#ifndef NDEBUG
-+    fprintf(stderr, "kdeinit5: Launched KLauncher, pid = %ld, result = %d\n",
-+            (long) d.launcher_pid, d.result);
-+#endif
-+}
-+
-+static void launcher_died()
-+{
-+    if (!d.launcher_ok) {
-+        /* This is bad. */
-+        fprintf(stderr, "kdeinit5: Communication error with launcher. Exiting!\n");
-+        ::exit(255);
-+        return;
-+    }
-+
-+    // KLauncher died... restart
-+#ifndef NDEBUG
-+    fprintf(stderr, "kdeinit5: KLauncher died unexpectedly.\n");
-+#endif
-+    // Make sure it's really dead.
-+    if (d.launcher_pid) {
-+        kill(d.launcher_pid, SIGKILL);
-+        sleep(1); // Give it some time
-+    }
-+
-+    d.launcher_ok = false;
-+    d.launcher_pid = 0;
-+    close(d.launcher[0]);
-+    d.launcher[0] = -1;
-+
-+    start_klauncher();
-+}
-+
-+static bool handle_launcher_request(int sock, const char *who)
-+{
-+    (void)who; // for NDEBUG
-+
-+    klauncher_header request_header;
-+    char *request_data = 0L;
-+    int result = read_socket(sock, (char *) &request_header, sizeof(request_header));
-+    if (result != 0) {
-+        return false;
-+    }
-+
-+    if (request_header.arg_length != 0) {
-+        request_data = (char *) malloc(request_header.arg_length + 1);
-+        request_data[request_header.arg_length] = '\0';
-+
-+        result = read_socket(sock, request_data, request_header.arg_length);
-+        if (result != 0) {
-+            free(request_data);
-+            return false;
-+        }
-+    }
-+
-+    //qDebug() << "Got cmd" << request_header.cmd << commandToString(request_header.cmd);
-+    if (request_header.cmd == LAUNCHER_OK) {
-+        d.launcher_ok = true;
-+    } else if (request_header.arg_length &&
-+               ((request_header.cmd == LAUNCHER_EXEC) ||
-+                (request_header.cmd == LAUNCHER_EXT_EXEC) ||
-+                (request_header.cmd == LAUNCHER_SHELL) ||
-+                (request_header.cmd == LAUNCHER_KWRAPPER) ||
-+                (request_header.cmd == LAUNCHER_EXEC_NEW))) {
-+        pid_t pid;
-+        klauncher_header response_header;
-+        long response_data;
-+        long l;
-+        memcpy(&l, request_data, sizeof(long));
-+        int argc = l;
-+        const char *name = request_data + sizeof(long);
-+        const char *args = name + strlen(name) + 1;
-+        const char *cwd = 0;
-+        int envc = 0;
-+        const char *envs = 0;
-+        const char *tty = 0;
-+        int avoid_loops = 0;
-+        const char *startup_id_str = "0"; // krazy:exclude=doublequote_chars
-+
-+#ifndef NDEBUG
-+        fprintf(stderr, "kdeinit5: Got %s '%s' from %s.\n",
-+                commandToString(request_header.cmd),
-+                name, who);
-+#endif
-+
-+        const char *arg_n = args;
-+        for (int i = 1; i < argc; i++) {
-+            arg_n = arg_n + strlen(arg_n) + 1;
-+        }
-+
-+        if (request_header.cmd == LAUNCHER_SHELL || request_header.cmd == LAUNCHER_KWRAPPER) {
-+            // Shell or kwrapper
-+            cwd = arg_n; arg_n += strlen(cwd) + 1;
-+        }
-+        if (request_header.cmd == LAUNCHER_SHELL || request_header.cmd == LAUNCHER_KWRAPPER
-+                || request_header.cmd == LAUNCHER_EXT_EXEC || request_header.cmd == LAUNCHER_EXEC_NEW) {
-+            memcpy(&l, arg_n, sizeof(long));
-+            envc = l;
-+            arg_n += sizeof(long);
-+            envs = arg_n;
-+            for (int i = 0; i < envc; i++) {
-+                arg_n = arg_n + strlen(arg_n) + 1;
-+            }
-+            if (request_header.cmd == LAUNCHER_KWRAPPER) {
-+                tty = arg_n;
-+                arg_n += strlen(tty) + 1;
-+            }
-+        }
-+
-+        if (request_header.cmd == LAUNCHER_SHELL || request_header.cmd == LAUNCHER_KWRAPPER
-+                || request_header.cmd == LAUNCHER_EXT_EXEC || request_header.cmd == LAUNCHER_EXEC_NEW) {
-+            memcpy(&l, arg_n, sizeof(long));
-+            avoid_loops = l;
-+            arg_n += sizeof(long);
-+        }
-+
-+        if (request_header.cmd == LAUNCHER_SHELL || request_header.cmd == LAUNCHER_KWRAPPER
-+                || request_header.cmd == LAUNCHER_EXT_EXEC) {
-+            startup_id_str = arg_n;
-+            arg_n += strlen(startup_id_str) + 1;
-+        }
-+
-+        if ((request_header.arg_length > (arg_n - request_data)) &&
-+                (request_header.cmd == LAUNCHER_EXT_EXEC || request_header.cmd == LAUNCHER_EXEC_NEW)) {
-+            // Optional cwd
-+            cwd = arg_n; arg_n += strlen(cwd) + 1;
-+        }
-+
-+        if ((arg_n - request_data) != request_header.arg_length) {
-+#ifndef NDEBUG
-+            fprintf(stderr, "kdeinit5: EXEC request has invalid format.\n");
-+#endif
-+            free(request_data);
-+            d.debug_wait = false;
-+            return true; // sure?
-+        }
-+
-+        // support for the old a bit broken way of setting DISPLAY for multihead
-+        QByteArray olddisplay = qgetenv(displayEnvVarName_c());
-+        QByteArray kdedisplay = qgetenv("KDE_DISPLAY");
-+        bool reset_display = (! olddisplay.isEmpty() &&
-+                              ! kdedisplay.isEmpty() &&
-+                              olddisplay != kdedisplay);
-+
-+        if (reset_display) {
-+            qputenv(displayEnvVarName_c(), kdedisplay);
-+        }
-+
-+        pid = launch(argc, name, args, cwd, envc, envs,
-+                     request_header.cmd == LAUNCHER_SHELL || request_header.cmd == LAUNCHER_KWRAPPER,
-+                     tty, avoid_loops, startup_id_str);
-+
-+        if (reset_display) {
-+            unsetenv("KDE_DISPLAY");
-+            qputenv(displayEnvVarName_c(), olddisplay);
-+        }
-+
-+        if (pid && (d.result == 0)) {
-+            response_header.cmd = LAUNCHER_OK;
-+            response_header.arg_length = sizeof(response_data);
-+            response_data = pid;
-+            write(sock, &response_header, sizeof(response_header));
-+            write(sock, &response_data, response_header.arg_length);
-+
-+            /* add new child to list */
-+            struct child *child = (struct child *) malloc(sizeof(struct child));
-+            child->pid = pid;
-+            child->sock = dup(sock);
-+            child->next = children;
-+            children = child;
-+        } else {
-+            int l = d.errorMsg.length();
-+            if (l) {
-+                l++;    // Include trailing null.
-+            }
-+            response_header.cmd = LAUNCHER_ERROR;
-+            response_header.arg_length = l;
-+            write(sock, &response_header, sizeof(response_header));
-+            if (l) {
-+                write(sock, d.errorMsg.data(), l);
-+            }
-+        }
-+        d.debug_wait = false;
-+    } else if (request_header.arg_length && request_header.cmd == LAUNCHER_SETENV) {
-+        const char *env_name;
-+        const char *env_value;
-+        env_name = request_data;
-+        env_value = env_name + strlen(env_name) + 1;
-+
-+#ifndef NDEBUG
-+        fprintf(stderr, "kdeinit5: Got SETENV '%s=%s' from %s.\n", env_name, env_value, who);
-+#endif
-+
-+        if (request_header.arg_length !=
-+                (int)(strlen(env_name) + strlen(env_value) + 2)) {
-+#ifndef NDEBUG
-+            fprintf(stderr, "kdeinit5: SETENV request has invalid format.\n");
-+#endif
-+            free(request_data);
-+            return true; // sure?
-+        }
-+        qputenv(env_name, env_value);
-+    } else if (request_header.cmd == LAUNCHER_TERMINATE_KDE) {
-+#ifndef NDEBUG
-+        fprintf(stderr, "kdeinit5: terminate KDE.\n");
-+#endif
-+    } else if (request_header.cmd == LAUNCHER_TERMINATE_KDEINIT) {
-+#ifndef NDEBUG
-+        fprintf(stderr, "kdeinit5: Got termination request (PID %ld).\n", (long) getpid());
-+#endif
-+        if (d.launcher_pid) {
-+            kill(d.launcher_pid, SIGTERM);
-+            d.launcher_pid = 0;
-+            close(d.launcher[0]);
-+            d.launcher[0] = -1;
-+        }
-+        unlink(sock_file);
-+        if (children) {
-+            close(d.wrapper);
-+            d.wrapper = -1;
-+#ifndef NDEBUG
-+            fprintf(stderr, "kdeinit5: Closed sockets, but not exiting until all children terminate.\n");
-+#endif
-+        } else {
-+            raise(SIGTERM);
-+        }
-+    } else if (request_header.cmd == LAUNCHER_DEBUG_WAIT) {
-+#ifndef NDEBUG
-+        fprintf(stderr, "kdeinit5: Debug wait activated.\n");
-+#endif
-+        d.debug_wait = true;
-+    }
-+    if (request_data) {
-+        free(request_data);
-+    }
-+    return true;
-+}
-+
-+static void handle_requests(pid_t waitForPid)
-+{
-+    int max_sock = d.deadpipe[0];
-+    if (d.wrapper > max_sock) {
-+        max_sock = d.wrapper;
-+    }
-+    if (d.launcher[0] > max_sock) {
-+        max_sock = d.launcher[0];
-+    }
-+    max_sock++;
-+
-+    while (1) {
-+        fd_set rd_set;
-+        fd_set wr_set;
-+        fd_set e_set;
-+        int result;
-+        pid_t exit_pid;
-+        int exit_status;
-+        char c;
-+
-+        /* Flush the pipe of death */
-+        while (read(d.deadpipe[0], &c, 1) == 1) {
-+        }
-+
-+        /* Handle dying children */
-+        do {
-+            exit_pid = waitpid(-1, &exit_status, WNOHANG);
-+            if (exit_pid > 0) {
-+#ifndef NDEBUG
-+                fprintf(stderr, "kdeinit5: PID %ld terminated.\n", (long) exit_pid);
-+#endif
-+                if (waitForPid && (exit_pid == waitForPid)) {
-+                    return;
-+                }
-+
-+                if (WIFEXITED(exit_status)) { // fix process return value
-+                    exit_status = WEXITSTATUS(exit_status);
-+                } else if (WIFSIGNALED(exit_status)) {
-+                    exit_status = 128 + WTERMSIG(exit_status);
-+                }
-+                child_died(exit_pid, exit_status);
-+
-+                if (d.wrapper < 0 && !children) {
-+#ifndef NDEBUG
-+                    fprintf(stderr, "kdeinit5: Last child terminated, exiting (PID %ld).\n",
-+                            (long) getpid());
-+#endif
-+                    raise(SIGTERM);
-+                }
-+            }
-+        } while (exit_pid > 0);
-+
-+        FD_ZERO(&rd_set);
-+        FD_ZERO(&wr_set);
-+        FD_ZERO(&e_set);
-+
-+        if (d.launcher[0] >= 0) {
-+            FD_SET(d.launcher[0], &rd_set);
-+        }
-+        if (d.wrapper >= 0) {
-+            FD_SET(d.wrapper, &rd_set);
-+        }
-+        FD_SET(d.deadpipe[0], &rd_set);
-+
-+        result = select(max_sock, &rd_set, &wr_set, &e_set, 0);
-+        if (result < 0) {
-+            if (errno == EINTR || errno == EAGAIN) {
-+                continue;
-+            }
-+            perror("kdeinit5: Aborting. select() failed");
-+            return;
-+        }
-+
-+        /* Handle wrapper request */
-+        if (d.wrapper >= 0 && FD_ISSET(d.wrapper, &rd_set)) {
-+            struct sockaddr_un client;
-+            kde_socklen_t sClient = sizeof(client);
-+            int sock = accept(d.wrapper, (struct sockaddr *)&client, &sClient);
-+            if (sock >= 0) {
-+                d.accepted_fd = sock;
-+                handle_launcher_request(sock, "wrapper");
-+                close(sock);
-+                d.accepted_fd = -1;
-+            }
-+        }
-+
-+        /* Handle launcher request */
-+        if (d.launcher[0] >= 0 && FD_ISSET(d.launcher[0], &rd_set)) {
-+            if (!handle_launcher_request(d.launcher[0], "launcher")) {
-+                launcher_died();
-+            }
-+            if (waitForPid == d.launcher_pid) {
-+                return;
-+            }
-+        }
-+
-+    }
-+}
-+
-+static void generate_socket_name()
-+{
-+
-+    QByteArray display = qgetenv(displayEnvVarName_c());
-+    int i;
-+    if ((i = display.lastIndexOf('.')) > display.lastIndexOf(':') && i >= 0) {
-+        display.truncate(i);
-+    }
-+
-+    display.replace(':', '_');
-+#ifdef __APPLE__
-+    display.replace('/', '_');
-+#endif
-+    // WARNING, if you change the socket name, adjust kwrapper too
-+    const QString socketFileName = QStringLiteral("kdeinit5_%1").arg(QLatin1String(display));
-+    const QByteArray socketName = QFile::encodeName(QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation) + QLatin1Char('/') + socketFileName);
-+    if (static_cast<unsigned>(socketName.length()) >= MAX_SOCK_FILE) {
-+        fprintf(stderr, "kdeinit5: Aborting. Socket name will be too long:\n");
-+        fprintf(stderr, "         '%s'\n", socketName.data());
-+        exit(255);
-+    }
-+    strcpy(sock_file, socketName.data());
-+}
-+
 +/**
 + Calling CoreFoundation and other non-POSIX APIs (which is unavoidable) has always caused issues
 + with fork/exec on Mac OS X, but as of 10.5 is explicitly disallowed with an exception. As a
@@ -1437,8 +912,7 @@ index 0000000..ef695f3
 + in order to disappear into the background.
 +*/
 +// Copied from kkernel_mac.cpp
-+void
-+mac_fork_and_reexec_self()
++void mac_fork_and_reexec_self()
 +{
 +    int argc = *_NSGetArgc();
 +    char **argv = *_NSGetArgv();
@@ -1476,185 +950,6 @@ index 0000000..ef695f3
 +
 +    }
 +}
-+
-+extern "C" {
-+    // unused??
-+    static void secondary_child_handler(int)
-+    {
-+        waitpid(-1, 0, WNOHANG);
-+    }
-+
-+}
-+
-+int main(int argc, char **argv)
-+{
-+#ifndef _WIN32_WCE
-+    setlocale(LC_ALL, "");
-+    setlocale(LC_NUMERIC, "C");
-+#endif
-+
-+    pid_t pid;
-+    bool do_fork = true;
-+    int launch_klauncher = 1;
-+    int launch_kded = 0;
-+    int keep_running = 1;
-+    d.suicide = false;
-+
-+    /** Save arguments first... **/
-+    char **safe_argv = (char **) malloc(sizeof(char *) * argc);
-+    for (int i = 0; i < argc; i++) {
-+        safe_argv[i] = strcpy((char *)malloc(strlen(argv[i]) + 1), argv[i]);
-+        if (strcmp(safe_argv[i], "--no-klauncher") == 0) {
-+            launch_klauncher = 0;
-+        }
-+        if (strcmp(safe_argv[i], "--kded") == 0) {
-+            launch_kded = 1;
-+        }
-+        // allow both nofork and no-fork for compatibility with
-+        // old versions (both of this and of KUniqueApplication)
-+        if (strcmp(safe_argv[i], "--nofork") == 0) {
-+            do_fork = false;
-+        }
-+        if (strcmp(safe_argv[i], "--no-fork") == 0) {
-+            do_fork = false;
-+        }
-+        if (strcmp(safe_argv[i], "--suicide") == 0) {
-+            d.suicide = true;
-+        }
-+        if (strcmp(safe_argv[i], "--exit") == 0) {
-+            keep_running = 0;
-+        }
-+        if (strcmp(safe_argv[i], "--version") == 0) {
-+            printf("Qt: %s\n", qVersion());
-+            printf("KDE: %s\n", KINIT_VERSION_STRING);
-+            exit(0);
-+        }
-+#if KDEINIT_OOM_PROTECT
-+        if (strcmp(safe_argv[i], "--oom-pipe") == 0 && i + 1 < argc) {
-+            oom_pipe = atol(argv[i + 1]);
-+        }
-+#endif
-+        if (strcmp(safe_argv[i], "--help") == 0) {
-+            printf("Usage: kdeinit5 [options]\n");
-+            printf("    --no-fork         Do not fork\n");
-+            // printf("    --no-klauncher    Do not start klauncher\n");
-+            printf("    --kded            Start kded\n");
-+            printf("    --suicide         Terminate when no KDE applications are left running\n");
-+            printf("    --version         Show version information\n");
-+            // printf("    --exit            Terminate when kded has run\n");
-+            exit(0);
-+        }
-+    }
-+
-+    cleanup_fds();
-+
-+    // Redirect stdout to stderr. We have no reason to use stdout anyway.
-+    // This minimizes our impact on commands used in pipes.
-+    (void)dup2(2, 1);
-+
-+    if (do_fork) {
-+        mac_fork_and_reexec_self();
-+    }
-+
-+    /** Make process group leader (for shutting down children later) **/
-+    if (keep_running) {
-+        setsid();
-+    }
-+
-+    /** Prepare to change process name **/
-+#ifndef SKIP_PROCTITLE
-+    proctitle_init(argc, argv);
-+#endif
-+
-+    // don't change envvars before proctitle_init()
-+    unsetenv("LD_BIND_NOW");
-+    unsetenv("DYLD_BIND_AT_LAUNCH");
-+    KCrash::loadedByKdeinit = true;
-+
-+    d.maxname = strlen(argv[0]);
-+    d.launcher_pid = 0;
-+    d.kded_pid = 0;
-+    d.wrapper = -1;
-+    d.accepted_fd = -1;
-+    d.debug_wait = false;
-+    d.launcher_ok = false;
-+    children = NULL;
-+    init_signals();
-+
-+    generate_socket_name();
-+    if (keep_running) {
-+        /*
-+         * Create ~/.kde/tmp-<hostname>/kdeinit5-<display> socket for incoming wrapper
-+         * requests.
-+         */
-+        init_kdeinit_socket();
-+    }
-+    if (launch_klauncher) {
-+        start_klauncher();
-+        handle_requests(d.launcher_pid); // Wait for klauncher to be ready
-+    }
-+
-+    QFont::initialize();
-+
-+    if (launch_kded) {
-+        qputenv("KDED_STARTED_BY_KDEINIT", "1");
-+        pid = launch(1, KDED_EXENAME, 0);
-+        unsetenv("KDED_STARTED_BY_KDEINIT");
-+#ifndef NDEBUG
-+        fprintf(stderr, "kdeinit5: Launched KDED, pid = %ld result = %d\n", (long) pid, d.result);
-+#endif
-+        d.kded_pid = pid;
-+        // kded5 doesn't fork on startup anymore, so just move on.
-+        //handle_requests(pid);
-+    }
-+
-+    for (int i = 1; i < argc; i++) {
-+        if (safe_argv[i][0] == '+') {
-+            pid = launch(1, safe_argv[i] + 1, 0);
-+#ifndef NDEBUG
-+            fprintf(stderr, "kdeinit5: Launched '%s', pid = %ld result = %d\n", safe_argv[i] + 1, (long) pid, d.result);
-+#endif
-+            handle_requests(pid);
-+        } else if (safe_argv[i][0] == '-'
-+#if KDEINIT_OOM_PROTECT
-+                   || isdigit(safe_argv[i][0])
-+#endif
-+                  ) {
-+            // Ignore
-+        } else {
-+            pid = launch(1, safe_argv[i], 0);
-+#ifndef NDEBUG
-+            fprintf(stderr, "kdeinit5: Launched '%s', pid = %ld result = %d\n", safe_argv[i], (long) pid, d.result);
-+#endif
-+        }
-+    }
-+
-+    /** Free arguments **/
-+    for (int i = 0; i < argc; i++) {
-+        free(safe_argv[i]);
-+    }
-+    free(safe_argv);
-+
-+#ifndef SKIP_PROCTITLE
-+    proctitle_set("Running...");
-+#endif
-+
-+    if (!keep_running) {
-+        return 0;
-+    }
-+
-+    if (d.initpipe[1] != -1) {
-+        char c = 0;
-+        write(d.initpipe[1], &c, 1); // Kdeinit is started.
-+        close(d.initpipe[1]);
-+        d.initpipe[1] = -1;
-+    }
-+
-+    handle_requests(0);
-+
-+    return 0;
-+}
-+
 diff --git src/klauncher/CMakeLists.txt src/klauncher/CMakeLists.txt
 index a8e6c3e..cf8dd5e 100644
 --- src/klauncher/CMakeLists.txt
@@ -1670,19 +965,10 @@ index a8e6c3e..cf8dd5e 100644
  if (HAVE_XCB)
      target_link_libraries(kdeinit_klauncher XCB::XCB)
 diff --git src/klauncher/klauncher.cpp src/klauncher/klauncher.cpp
-index 7ea9da9..5af5f38 100644
+index baa5649..4d563d9 100644
 --- src/klauncher/klauncher.cpp
 +++ src/klauncher/klauncher.cpp
-@@ -379,7 +379,7 @@ static bool matchesPendingRequest(const QString &appId, const QString &pendingAp
- 
-     qCDebug(KLAUNCHER) << "appId=" << appId << "newAppId=" << newAppId << "pendingAppId=" << pendingAppId;
- 
--    if (pendingAppId.startsWith(QLatin1String("*."))) {
-+    if (pendingAppId.startsWith(QStringLiteral("*."))) {
-         const QString pendingName = pendingAppId.mid(2);
-         const QString appName = newAppId.mid(newAppId.lastIndexOf(QLatin1Char('.')) + 1);
-         qCDebug(KLAUNCHER) << "appName=" << appName;
-@@ -589,7 +589,7 @@ KLauncher::requestStart(KLaunchRequest *request)
+@@ -563,7 +563,7 @@ KLauncher::requestStart(KLaunchRequest *request)
      }
  
      QString executable = request->name;
@@ -1691,62 +977,17 @@ index 7ea9da9..5af5f38 100644
      const QString bundlepath = QStandardPaths::findExecutable(executable);
      if (!bundlepath.isEmpty()) {
          executable = bundlepath;
-@@ -782,7 +782,7 @@ KLauncher::start_service(KService::Ptr service, const QStringList &_urls,
- 
-     request->name = request->arg_list.takeFirst();
- 
--    if (request->name.endsWith(QLatin1String("/kioexec"))) {
-+    if (request->name.endsWith(QStringLiteral("/kioexec"))) {
-         // Special case for kioexec; if createArgs said we were going to use it,
-         // then we have to expect a kioexec-PID, not a org.kde.finalapp...
-         // Testcase: konqueror www.kde.org, RMB on link, open with, kruler.
-@@ -846,7 +846,7 @@ KLauncher::send_service_startup_info(KLaunchRequest *request, KService::Ptr serv
-     id.initId(startup_id);
-     QByteArray dpy_str;
-     foreach (const QString &env, envs) {
--        if (env.startsWith(QLatin1String("DISPLAY="))) {
-+        if (env.startsWith(QStringLiteral("DISPLAY="))) {
-             dpy_str = env.mid(8).toLocal8Bit();
+@@ -1073,7 +1073,7 @@ KLauncher::requestSlave(const QString &protocol,
+         if (!mSlaveValgrindSkin.isEmpty()) {
+             arg_list.prepend(QLatin1String("--tool=") + mSlaveValgrindSkin);
+         } else {
+-            arg_list.prepend(QStringLiteral("--tool=memcheck"));
++            arg_list.prepend(QLatin1String("--tool=memcheck"));
          }
      }
-@@ -908,7 +908,7 @@ KLauncher::cancel_service_startup_info(KLaunchRequest *request, const QByteArray
-     if (!startup_id.isEmpty() && startup_id != "0" && mIsX11) {
-         QString dpy_str;
-         foreach (const QString &env, envs) {
--            if (env.startsWith(QLatin1String("DISPLAY="))) {
-+            if (env.startsWith(QStringLiteral("DISPLAY="))) {
-                 dpy_str = env.mid(8);
-             }
-         }
-@@ -962,7 +962,7 @@ KLauncher::kdeinit_exec(const QString &app, const QStringList &args,
-     request->envs = envs;
-     request->cwd = workdir;
- #if HAVE_X11
--    if (!app.endsWith(QLatin1String("kbuildsycoca5"))) { // avoid stupid loop
-+    if (!app.endsWith(QStringLiteral("kbuildsycoca5"))) { // avoid stupid loop
-         // Find service, if any - strip path if needed
-         const QString desktopName = app.mid(app.lastIndexOf(QLatin1Char('/')) + 1);
-         KService::Ptr service = KService::serviceByDesktopName(desktopName);
-@@ -1136,7 +1136,7 @@ KLauncher::requestSlave(const QString &protocol,
-         name = QStringLiteral("valgrind");
- 
-         if (!mSlaveValgrindSkin.isEmpty()) {
--            arg_list.prepend(QLatin1String("--tool=") + mSlaveValgrindSkin);
-+            arg_list.prepend(QStringLiteral("--tool=") + mSlaveValgrindSkin);
-         } else {
-             arg_list.prepend(QStringLiteral("--tool=memcheck"));
-         }
-@@ -1237,7 +1237,7 @@ KLauncher::idleTimeout()
-     bool keepOneFileSlave = true;
-     QDateTime now = QDateTime::currentDateTime();
-     foreach (IdleSlave *slave, mSlaveList) {
--        if ((slave->protocol() == QLatin1String("file")) && (keepOneFileSlave)) {
-+        if ((slave->protocol() == QStringLiteral("file")) && (keepOneFileSlave)) {
-             keepOneFileSlave = false;
-         } else if (slave->age(now) > SLAVE_MAX_IDLE) {
-             // killing idle slave
+ #endif
 diff --git src/klauncher/klauncher.h src/klauncher/klauncher.h
-index 31bfaaa..12b96b1 100644
+index 92f57fa..7690c13 100644
 --- src/klauncher/klauncher.h
 +++ src/klauncher/klauncher.h
 @@ -26,7 +26,7 @@
@@ -1759,7 +1000,7 @@ index 31bfaaa..12b96b1 100644
  #endif
  #ifdef Q_CC_MSVC
 diff --git src/klauncher/klauncher_main.cpp src/klauncher/klauncher_main.cpp
-index 710c889..fc1dff8 100644
+index 710c889..5a7c248 100644
 --- src/klauncher/klauncher_main.cpp
 +++ src/klauncher/klauncher_main.cpp
 @@ -35,6 +35,10 @@
@@ -1778,7 +1019,7 @@ index 710c889..fc1dff8 100644
  #endif
  
 -#if defined(Q_OS_DARWIN) || defined (Q_OS_MAC)
-+#if defined(Q_OS_DARWIN) || defined (Q_OS_OSX)
++#if defined(Q_OS_DARWIN)
  // Copied from kkernel_mac.cpp
  bool dbus_initialized = false;
  
@@ -1787,7 +1028,7 @@ index 710c889..fc1dff8 100644
  #endif
  
 -#if defined(Q_OS_DARWIN) || defined (Q_OS_MAC)
-+#if defined(Q_OS_DARWIN) || defined (Q_OS_OSX)
++#if defined(Q_OS_DARWIN)
 +    CFBundleRef mainBundle = CFBundleGetMainBundle();
 +    if (mainBundle) {
 +        // get the application's Info Dictionary. For app bundles this would live in the bundle's Info.plist,
@@ -1819,10 +1060,10 @@ index 46d6cb3..74fddc5 100644
  install(TARGETS start_kdeinit DESTINATION ${CMAKE_INSTALL_FULL_LIBEXECDIR_KF5})
  install(TARGETS start_kdeinit_wrapper DESTINATION ${CMAKE_INSTALL_FULL_LIBEXECDIR_KF5})
 diff --git src/wrapper.cpp src/wrapper.cpp
-index 9cb0a71..d35a654 100644
+index 9cb0a71..ebe4f3f 100644
 --- src/wrapper.cpp
 +++ src/wrapper.cpp
-@@ -42,42 +42,43 @@
+@@ -42,42 +42,47 @@
  
  extern char **environ;
  
@@ -1862,42 +1103,44 @@ index 9cb0a71..d35a654 100644
 -    colon = strrchr(result, ':');
 -    if (screen && (screen > colon)) {
 -        *screen = '\0';
--    }
--    while ((i = strchr(result, ':'))) {
--        *i = '_';
--    }
 +// adapted from kdeinit/kinit.cpp
 +// WARNING, if you change the socket name, adjust kinit.cpp too
 +static const QString generate_socket_file_name()
 +{
 +
++#if HAVE_X11 || HAVE_XCB // qt5: see displayEnvVarName_c()
 +    QByteArray display = qgetenv(displayEnvVarName_c());
 +    if (display.isEmpty()) {
-+#if HAVE_X11
 +        fprintf(stderr, "Error: could not determine $%s.\n", displayEnvVarName_c());
 +        return QString();
-+    } else {
-+#endif
-+        int i;
-+        if ((i = display.lastIndexOf('.')) > display.lastIndexOf(':') && i >= 0) {
-+            display.truncate(i);
-+        }
+     }
+-    while ((i = strchr(result, ':'))) {
+-        *i = '_';
++    int i;
++    if ((i = display.lastIndexOf('.')) > display.lastIndexOf(':') && i >= 0) {
++        display.truncate(i);
+     }
 +
-+        display.replace(':', '_');
++    display.replace(':', '_');
  #ifdef __APPLE__
 -    while ((i = strchr(result, '/'))) {
 -        *i = '_';
 -    }
-+        display.replace('/', '_');
++    // not entirely impossible, so let's leave it
++    display.replace('/', '_');
  #endif
 -    return result;
-+    }
++#else
++    // not using a DISPLAY variable; use an empty string instead
++    QByteArray display = "";
++#endif
++    // WARNING, if you change the socket name, adjust kwrapper too
 +    const QString socketFileName = QStringLiteral("kdeinit5_%1").arg(QLatin1String(display));
 +    return socketFileName;
  }
  
  /*
-@@ -126,23 +127,14 @@ static int read_socket(int sock, char *buffer, int len)
+@@ -126,23 +131,14 @@ static int read_socket(int sock, char *buffer, int len)
  
  static int openSocket()
  {
@@ -1923,7 +1166,7 @@ index 9cb0a71..d35a654 100644
      struct sockaddr_un server;
      if (strlen(sock_file) >= sizeof(server.sun_path)) {
          fprintf(stderr, "Warning: Path of socketfile exceeds UNIX_PATH_MAX.\n");
-@@ -252,7 +244,7 @@ static int kwrapper_run(pid_t wrapped, int sock)
+@@ -252,7 +248,7 @@ static int kwrapper_run(pid_t wrapped, int sock)
  
      buffer = (char *) malloc(header.arg_length);
      if (buffer == NULL) {
@@ -1932,7 +1175,7 @@ index 9cb0a71..d35a654 100644
          exit(255);
      }
  
-@@ -408,7 +400,7 @@ int main(int argc, char **argv)
+@@ -408,7 +404,7 @@ int main(int argc, char **argv)
  
      buffer = (char *) malloc(size);
      if (buffer == NULL) {
@@ -1941,7 +1184,7 @@ index 9cb0a71..d35a654 100644
          exit(255);
      }
      p = buffer;
-@@ -475,7 +467,7 @@ int main(int argc, char **argv)
+@@ -475,7 +471,7 @@ int main(int argc, char **argv)
          long pid;
          buffer = (char *) malloc(header.arg_length);
          if (buffer == NULL) {
