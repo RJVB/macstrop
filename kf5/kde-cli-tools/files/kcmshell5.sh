@@ -1,5 +1,6 @@
 #!/bin/sh
 
+env KDE_SESSION_VERSION=5
 @KDEAPPDIR@/kcmshell5.app/Contents/MacOS/kcmshell5 "$@" &
 PID=$!
 
