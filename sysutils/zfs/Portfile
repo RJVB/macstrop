@@ -22,7 +22,22 @@ subport ${name}-devel {
     description     ${description} This port follows git/master.
     long_description \
                     ${long_description} This port follows git/master.
+    if {${os.major} >= 14} {
+        variant look_ma_no_sip description \
+            "This port won't work without disabling a basic security feature: see `port info ${subport} +look_ma_no_sip`" {}
+        if {[variant_isset look_ma_no_sip]} {
+            long_description-append \nNB NB NB\n\
+                "This port installs unsigned kexts, and those will not load without disabling SIP. You do so at your own risk."
+        } else {
+            pre-fetch {
+                ui_error "This port won't build by default on OS X 10.10 and higher; see `port variants ${subport}`"
+                return -code error "See `port variants ${subport}`"
+            }
+        }
+    }
 }
+
+patchfiles-append   patch-kextloading.diff
 
 if {${subport} eq "${name}-devel"} {
     conflicts       ${name}
@@ -39,21 +54,94 @@ if {${subport} eq "${name}-devel"} {
                     zfs-snapshot${extract.suffix} \
                     rmd160  81a93f1cb836a6700a0107fccc83f2d15ebf0a51 \
                     sha256  e321691b059e6432529756539771dc7c4fb860a4ee9ed39475ca0b3afe5c6396
+    patchfiles-append \
+                    patch-dont-invoke-launchctl.diff \
 } else {
     conflicts       ${name}-devel
-    version         1.5.0
+    version         1.4.5
     set spl_commit  spl-${version}
     set zfs_commit  zfs-${version}
+
+    # Code borrowed from port:osxfuse, except that we make do with the single unsigned kext
+    # warning on OS X 10.9.
+    # Use the published signed kext for OS 10.10 (Darwin 14) and later.
+    # Don't even fetch and extract the dmg unnecessarily, since the commands don't
+    # work on some earlier OS versions.
+    if {${os.major} >= 14} {
+        set use_signed_kext    yes
+    } else {
+        set use_signed_kext    no
+    }
+    set extdir ""
+
     master_sites    https://github.com/openzfsonosx/spl/archive/:distspl \
                     https://github.com/openzfsonosx/zfs/archive/:distzfs
     distfiles       spl-${version}${extract.suffix}:distspl \
                     zfs-${version}${extract.suffix}:distzfs
     checksums       spl-${version}${extract.suffix} \
-                    rmd160  3de98080531cde4ff17703db0ab428779691c303 \
-                    sha256  70cff93044295f282deaa9f46d32ab01401f72b0b872e79e5a850dc9acb9810d \
+                    rmd160  cbecbd03f56b7f693addc938ab2067aadb43ec35 \
+                    sha256  62596e9d3d9877786f90e6dfc280810e90722e0b687a33df954ed2f32bd36778 \
                     zfs-${version}${extract.suffix} \
-                    rmd160  027c43a097a268efb1d026b50abd77231a27288b \
-                    sha256  77d105f30d273b27066ad9238a86b50a4bebc233eefbe62ea302787f1eb2f7fc
+                    rmd160  c9ddba05d70cd218a07ae3f2f312da7e0853d226 \
+                    sha256  b651eaba44eeeb102ad7e5fa52bb72985613d1af6b3c93dded2b135d6fd53aa0
+    if {${use_signed_kext}} {
+        master_sites-append \
+                    https://openzfsonosx.org/w/images/9/9f/:officialDmg
+        distfiles-append \
+                    OpenZFS_on_OS_X_${version}.dmg:officialDmg
+        checksums-append \
+                    OpenZFS_on_OS_X_${version}.dmg \
+                    rmd160  0795536c162345f36bdcd72d77d7284d39d902b6 \
+                    sha256  9ad0b21bc54c5453a90427d478533f530ff9bb98744d17f2fcb127a81af18169
+        # extract phase will just extract the dmg; post-extract will expand
+        # the tarballs
+        use_dmg yes
+        extract.only OpenZFS_on_OS_X_${version}.dmg
+
+        post-extract {
+            switch ${os.major} {
+                # 10.9
+                "13" {
+                    # this case included for testing only
+                    system -W ${workpath}/${name}-${version} "pkgutil --expand 'OpenZFS on OS X 1.4.5 Mavericks.pkg' ${workpath}/pkg"
+                    system -W ${workpath}/pkg/zfs109.pkg "gzip -dc Payload | cpio -id"
+                    file rename ${workpath}/pkg/zfs109.pkg ${workpath}/pkg/official.pkg
+                }
+                # 10.10
+                "14" {
+                    system -W ${workpath}/${name}-${version} "pkgutil --expand 'OpenZFS on OS X 1.4.5 Yosemite.pkg' ${workpath}/pkg"
+                    system -W ${workpath}/pkg/zfs1010.pkg "gzip -dc Payload | cpio -id"
+                    file rename ${workpath}/pkg/zfs1010.pkg ${workpath}/pkg/official.pkg
+                }
+                # 10.11
+                "15" {
+                    system -W ${workpath}/${name}-${version} "pkgutil --expand 'OpenZFS on OS X 1.4.5 El Capitan or higher.pkg' ${workpath}/pkg"
+                    system -W ${workpath}/pkg/zfs1011.pkg "gzip -dc Payload | cpio -id"
+                    file rename ${workpath}/pkg/zfs1011.pkg ${workpath}/pkg/official.pkg
+                }
+                default {
+                    ui_error "Darwin ${os.major}.${os.minor} is an as-yet unsupport OS X version"
+                    return -code error "Unsupported OS X version"
+                }
+            }
+
+            # Extract the source tarballs
+            foreach tarball {spl zfs} {
+                system -W ${workpath} "tar -xf ${distpath}/${tarball}-${version}.tar.gz"
+            }
+            # cleanup
+            file delete -force ${workpath}/${name}-${version}
+        }
+        post-destroot {
+            # replace our home-built kexts with the signed ones from the official dmg
+            file delete -force ${destroot}${prefix}/Library/Extensions/spl.kext
+            file delete -force ${destroot}${prefix}/Library/Extensions/zfs.kext
+            copy ${workpath}/pkg/official.pkg/Library/Extensions/spl.kext ${destroot}${prefix}/Library/Extensions/
+            copy ${workpath}/pkg/official.pkg/Library/Extensions/zfs.kext ${destroot}${prefix}/Library/Extensions/
+        }
+    }
+    patchfiles-append \
+                    patch-dont-invoke-launchctl-145.diff \
 }
 
 post-extract {
@@ -63,14 +151,15 @@ post-extract {
 use_configure       yes
 patch.pre_args      -Np1
 
+depends_build       port:autoconf \
+                    port:automake \
+                    port:libtool
+
 depends_lib-append  port:zlib
 
 configure.dir       ${workpath}/zfs-${zfs_commit}
 build.dir           ${configure.dir}
 patch.dir           ${configure.dir}
-
-patchfiles-append   patch-dont-invoke-launchctl.diff \
-                    patch-kextloading.diff
 
 post-patch {
     ui_info "--->  Preparing SPL"
@@ -158,3 +247,4 @@ zpool import tank -d /path/to \n\
 \n\
 See ${homepage} for more information about ZFS and its OS X implementation \n\
 "
+
