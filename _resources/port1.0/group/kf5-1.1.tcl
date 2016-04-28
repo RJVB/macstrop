@@ -700,4 +700,17 @@ proc kf5.check_qspXDG {name} {
     return no
 }
 
+# create a wrapper script in ${prefix}/bin for an application bundle in kf5.applications_dir
+proc kf5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""}} {
+    global kf5.applications_dir destroot prefix
+    if {${bundlename} eq ""} {
+        set bundlename ${wrappername}
+    }
+    if {${bundleexec} eq ""} {
+        set bundleexec ${bundlename}
+    }
+    system "echo \"#!/bin/sh\nexport KDE_SESSION_VERSION=5\nexec \\\"${kf5.applications_dir}/${bundlename}.app/Contents/MacOS/${bundleexec}\\\" \\\"\\\$\@\\\"\" > ${destroot}${prefix}/bin/${wrappername}"
+    system "chmod 755 ${destroot}${prefix}/bin/${wrappername}"
+}
+
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
