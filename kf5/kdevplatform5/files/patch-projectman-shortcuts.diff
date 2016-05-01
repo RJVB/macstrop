@@ -1,0 +1,149 @@
+diff --git plugins/projectmanagerview/projectmanagerview.cpp plugins/projectmanagerview/projectmanagerview.cpp
+index f08fe23..69bbb56 100644
+--- plugins/projectmanagerview/projectmanagerview.cpp
++++ plugins/projectmanagerview/projectmanagerview.cpp
+@@ -23,6 +23,7 @@
+ 
+ #include <QHeaderView>
+ #include <QKeyEvent>
++#include <QKeySequence>
+ #include <QUrl>
+ 
+ #include <KActionCollection>
+@@ -146,16 +147,17 @@ bool ProjectManagerView::eventFilter(QObject* obj, QEvent* event)
+     if (obj == m_ui->projectTreeView) {
+         if (event->type() == QEvent::KeyRelease) {
+             QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
+-            if (keyEvent->key() == Qt::Key_Delete && keyEvent->modifiers() == Qt::NoModifier) {
++            QKeySequence shortcut = QKeySequence(keyEvent->modifiers() + keyEvent->key());
++            if (m_plugin->removeAction() && shortcut == m_plugin->removeAction()->shortcut()) {
+                 m_plugin->removeItems(selectedItems());
+                 return true;
+-            } else if (keyEvent->key() == Qt::Key_F2 && keyEvent->modifiers() == Qt::NoModifier) {
++            } else if (m_plugin->renameAction() && shortcut == m_plugin->renameAction()->shortcut()) {
+                 m_plugin->renameItems(selectedItems());
+                 return true;
+-            } else if (keyEvent->key() == Qt::Key_C && keyEvent->modifiers() == Qt::ControlModifier) {
++            } else if (m_plugin->copyAction() && shortcut == m_plugin->copyAction()->shortcut()) {
+                 m_plugin->copyFromContextMenu();
+                 return true;
+-            } else if (keyEvent->key() == Qt::Key_V && keyEvent->modifiers() == Qt::ControlModifier) {
++            } else if (m_plugin->pasteAction() && shortcut == m_plugin->pasteAction()->shortcut()) {
+                 m_plugin->pasteFromContextMenu();
+                 return true;
+             }
+diff --git plugins/projectmanagerview/projectmanagerviewplugin.cpp plugins/projectmanagerview/projectmanagerviewplugin.cpp
+index add17c6..42805dc 100644
+--- plugins/projectmanagerview/projectmanagerviewplugin.cpp
++++ plugins/projectmanagerview/projectmanagerviewplugin.cpp
+@@ -83,6 +83,7 @@ class ProjectManagerViewPluginPrivate
+ {
+ public:
+     ProjectManagerViewPluginPrivate()
++        : m_remove(0), m_rename(0), m_copy(0), m_paste(0)
+     {}
+     KDevProjectManagerViewFactory *factory;
+     QList<QPersistentModelIndex> ctxProjectItemList;
+@@ -92,6 +93,10 @@ public:
+     QAction* m_clean;
+     QAction* m_configure;
+     QAction* m_prune;
++    QAction* m_remove;
++    QAction* m_rename;
++    QAction* m_copy;
++    QAction* m_paste;
+ };
+ 
+ static QList<ProjectBaseItem*> itemsFromIndexes(const QList<QPersistentModelIndex>& indexes)
+@@ -285,14 +290,18 @@ ContextMenuExtension ProjectManagerViewPlugin::contextMenuExtension( KDevelop::C
+         menuExt.addAction( ContextMenuExtension::FileGroup, action );
+     }
+     if ( needsRemoveAndRename ) {
+-        QAction* remove = new QAction( i18n( "Remove" ), this );
+-        remove->setIcon(QIcon::fromTheme(QStringLiteral("user-trash")));
+-        connect( remove, &QAction::triggered, this, &ProjectManagerViewPlugin::removeFromContextMenu );
+-        menuExt.addAction( ContextMenuExtension::FileGroup, remove );
+-        QAction* rename = new QAction( i18n( "Rename..." ), this );
+-        rename->setIcon(QIcon::fromTheme(QStringLiteral("edit-rename")));
+-        connect( rename, &QAction::triggered, this, &ProjectManagerViewPlugin::renameItemFromContextMenu );
+-        menuExt.addAction( ContextMenuExtension::FileGroup, rename );
++        d->m_remove = new QAction( i18n( "Remove" ), this );
++        d->m_remove->setIcon(QIcon::fromTheme(QStringLiteral("user-trash")));
++        d->m_remove->setShortcutContext(Qt::WidgetShortcut);
++        d->m_remove->setShortcut(Qt::NoModifier + Qt::Key_Delete);
++        connect( d->m_remove, &QAction::triggered, this, &ProjectManagerViewPlugin::removeFromContextMenu );
++        menuExt.addAction( ContextMenuExtension::FileGroup, d->m_remove );
++        d->m_rename = new QAction( i18n( "Rename..." ), this );
++        d->m_rename->setIcon(QIcon::fromTheme(QStringLiteral("edit-rename")));
++        d->m_rename->setShortcutContext(Qt::WidgetShortcut);
++        d->m_rename->setShortcut(Qt::NoModifier + Qt::Key_F2);
++        connect( d->m_rename, &QAction::triggered, this, &ProjectManagerViewPlugin::renameItemFromContextMenu );
++        menuExt.addAction( ContextMenuExtension::FileGroup, d->m_rename );
+     }
+     if ( needsRemoveTargetFiles ) {
+         QAction* remove = new QAction( i18n( "Remove From Target" ), this );
+@@ -302,14 +311,16 @@ ContextMenuExtension ProjectManagerViewPlugin::contextMenuExtension( KDevelop::C
+     }
+ 
+     {
+-        QAction* copy = KStandardAction::copy(this, SLOT(copyFromContextMenu()), this);
+-        copy->setShortcutContext(Qt::WidgetShortcut);
+-        menuExt.addAction( ContextMenuExtension::FileGroup, copy );
++        d->m_copy = KStandardAction::copy(this, SLOT(copyFromContextMenu()), this);
++        d->m_copy->setShortcutContext(Qt::WidgetShortcut);
++        d->m_copy->setShortcut(Qt::ControlModifier + Qt::Key_C);
++        menuExt.addAction( ContextMenuExtension::FileGroup, d->m_copy );
+     }
+     if (needsPaste) {
+-        QAction* paste = KStandardAction::paste(this, SLOT(pasteFromContextMenu()), this);
+-        paste->setShortcutContext(Qt::WidgetShortcut);
+-        menuExt.addAction( ContextMenuExtension::FileGroup, paste );
++        d->m_paste = KStandardAction::paste(this, SLOT(pasteFromContextMenu()), this);
++        d->m_paste->setShortcutContext(Qt::WidgetShortcut);
++        d->m_paste->setShortcut(Qt::ControlModifier + Qt::Key_V);
++        menuExt.addAction( ContextMenuExtension::FileGroup, d->m_paste );
+     }
+ 
+     return menuExt;
+@@ -710,6 +721,25 @@ void ProjectManagerViewPlugin::pasteFromContextMenu()
+     }
+ }
+ 
++QAction *ProjectManagerViewPlugin::removeAction()
++{
++    return d->m_remove;
++}
++
++QAction *ProjectManagerViewPlugin::renameAction()
++{
++    return d->m_rename;
++}
++
++QAction *ProjectManagerViewPlugin::copyAction()
++{
++    return d->m_copy;
++}
++
++QAction *ProjectManagerViewPlugin::pasteAction()
++{
++    return d->m_paste;
++}
+ 
+ #include "projectmanagerviewplugin.moc"
+ 
+diff --git plugins/projectmanagerview/projectmanagerviewplugin.h plugins/projectmanagerview/projectmanagerviewplugin.h
+index 5c50286..eeb3059 100644
+--- plugins/projectmanagerview/projectmanagerviewplugin.h
++++ plugins/projectmanagerview/projectmanagerviewplugin.h
+@@ -59,6 +59,11 @@ public:
+     void removeItems(const QList<KDevelop::ProjectBaseItem*>& items);
+     void renameItems(const QList< KDevelop::ProjectBaseItem* >& items);
+ 
++    QAction *removeAction();
++    QAction *renameAction();
++    QAction *copyAction();
++    QAction *pasteAction();
++
+ public Q_SLOTS:
+     void buildProjectItems();
+     void installProjectItems();
