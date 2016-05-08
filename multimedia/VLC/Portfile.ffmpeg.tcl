@@ -7,6 +7,7 @@ PortGroup           compiler_blacklist_versions 1.0
 PortGroup           active_variants 1.1
 
 version             2.8.6
+revision            1
 license             LGPL-2.1+
 categories          multimedia
 maintainers         gmail.com:rjvbertin openmaintainer
@@ -34,18 +35,19 @@ depends_build-append \
 
 depends_lib         port:lame \
                     port:libiconv \
-                    port:libvorbis \
-                    port:libopus \
-                    port:libogg \
-                    port:libtheora \
-                    port:libass \
-                    port:gnutls \
                     port:openjpeg15 \
-                    port:fontconfig \
-                    port:freetype \
-                    port:bzip2 \
                     port:xz \
                     port:zlib
+
+# depends_lib-append  port:libvorbis \
+#                     port:libopus \
+#                     port:libogg \
+#                     port:libtheora \
+#                     port:libass \
+#                     port:gnutls \
+#                     port:fontconfig \
+#                     port:freetype \
+#                     port:bzip2
 
 build.cmd           ${prefix}/bin/gmake
 build.env-append    V=1
@@ -61,10 +63,6 @@ if {[lsearch [get_canonical_archs] i386] != -1} {
     # clang-139 hits https://trac.macports.org/ticket/38141
     compiler.blacklist-append {clang < 422.1.7}
 }
-
-# The old ffmpeg port was GPL-2+ as base and had a no_gpl variant, so this keeps us consistent
-# Also, -gpl2 causes other ports to fail to build due to the missing libpostproc (#35473)
-default_variants-append +gpl2
 
 configure.cflags-append -DHAVE_LRINTF ${configure.cppflags}
 configure.args      --prefix=${FFMPEG_VLC_PREFIX} \
@@ -92,17 +90,18 @@ configure.args      --prefix=${FFMPEG_VLC_PREFIX} \
 # with these components.
 configure.args-append \
                     --enable-gpl \
-                    --enable-postproc \
-                    --enable-libx264 \
-                    --enable-libxvid
-depends_lib-append  port:XviD \
-                    port:x264
+                    --enable-postproc
+# configure.args-append \
+#                     --enable-libx264 \
+#                     --enable-libxvid
+# depends_lib-append  port:XviD \
+#                     port:x264
 
 configure.args-append \
                     --arch=${configure.build_arch}
 configure.env-append \
                     ASFLAGS='[get_canonical_archflags]'
-if {${build_arch} eq "i386" || ${build_arch} eq "x86_64"} {
+if {${build_arch} eq "x86_64"} {
     depends_build-append \
                     port:yasm
     configure.args-append \
@@ -143,8 +142,6 @@ platform darwin {
     }
 }
 
-test.run            yes
-
 #
 # configure isn't autoconf and they do use a dep cache
 #
@@ -159,6 +156,17 @@ destroot.target     install-libs install-headers
 
 post-destroot {
     file delete -force ${destroot}${prefix}/share/examples
+    # replace the -L${libdir} -lfoo linker options with a direct reference to the actual
+    # shared binary, so that we're sure the linker will use our libraries and not one
+    # from a location like ${prefix}/lib . VLC's libtool will drop link modules that are
+    # (shared) libraries, so we use a hack
+    foreach pc [glob ${destroot}${FFMPEG_VLC_PREFIX}/lib/pkgconfig/*.pc] {
+        set libname [file rootname [file tail ${pc}]]
+        # trick libtool into treating ${libname} as if it were a mere object file.
+        # Libtool calls clang (${CC}), which knows how to handle this situation appropriately.
+        ln -s ${libname}.dylib ${destroot}${FFMPEG_VLC_PREFIX}/lib/${libname}.o
+        reinplace "s|Libs: -L\$\{libdir\}  -l\\(.*\\) |Libs: \$\{libdir\}/lib\\1.o|g" ${pc}
+    }
 }
 
 livecheck.type      regex
