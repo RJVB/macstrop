@@ -85,14 +85,14 @@ if {![info exists kf5.version]} {
 if {![ info exists kf5.release ]} {
     set kf5.release     15.12.0
     set kf5.latest_release \
-                        16.04.0
+                        16.04.1
 }
 
 # KF5 Plasma version
 if {![ info exists kf5.plasma ]} {
     set kf5.plasma      5.6.0
     set kf5.latest_plasma \
-                        5.6.3
+                        5.6.4
 }
 
 platforms               darwin linux
