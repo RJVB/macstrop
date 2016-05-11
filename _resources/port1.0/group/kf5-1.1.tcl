@@ -78,19 +78,19 @@ if {![info exists kf5.version]} {
     # kf5.latest_version is supposed to be used only in the KF5-Frameworks Portfile
     # when updating it to the new version (=kf5.latest_version).
     set kf5.latest_version \
-                        5.20.0
+                        5.21.0
 }
 
 # KF5 Applications version
 if {![ info exists kf5.release ]} {
-    set kf5.release     15.12.0
+    set kf5.release     16.04.0
     set kf5.latest_release \
                         16.04.1
 }
 
 # KF5 Plasma version
 if {![ info exists kf5.plasma ]} {
-    set kf5.plasma      5.6.0
+    set kf5.plasma      5.6.4
     set kf5.latest_plasma \
                         5.6.4
 }
