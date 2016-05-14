@@ -199,12 +199,12 @@ if {${os.platform} eq "darwin"} {
 } elseif {${os.platform} eq "linux"} {
     set kf5.applications_dir \
                         ${prefix}/bin
-    set kf5.libexec_dir ${prefix}/lib/${os.arch}-linux-gnu/libexec
+    set kf5.libexec_dir ${prefix}/lib/${build_arch}-linux-gnu/libexec
     configure.args-delete \
                         -DCMAKE_INSTALL_RPATH="${prefix}/lib"
     configure.args-append \
                         -DCMAKE_PREFIX_PATH=${prefix} \
-                        -DCMAKE_INSTALL_RPATH="${prefix}/lib/${os.arch}-linux-gnu\;${prefix}/lib"
+                        -DCMAKE_INSTALL_RPATH="${prefix}/lib/${build_arch}-linux-gnu\;${prefix}/lib"
 }
 set kf5.docs_dir        ${prefix}/share/doc/kf5
 
@@ -256,7 +256,7 @@ if {${os.platform} eq "darwin"} {
    set kf5.libs_dir    ${prefix}/lib
    set kf5.libs_ext    dylib
 } elseif {${os.platform} eq "linux"} {
-   set kf5.libs_dir    ${prefix}/lib/${os.arch}-linux-gnu
+   set kf5.libs_dir    ${prefix}/lib/${build_arch}-linux-gnu
    set kf5.libs_ext    so
 }
 
@@ -474,7 +474,7 @@ proc kf5.framework_dependency {name {library 0} {soversion 5}} {
     upvar #0 kf5.${name}_dep dep
     upvar #0 kf5.${name}_lib lib
     if {${library} ne 0} {
-        global os.platform os.arch
+        global os.platform build_arch
         if {${os.platform} eq "darwin"} {
             set kf5.lib_path    lib
             if {${soversion} ne ""} {
@@ -483,7 +483,7 @@ proc kf5.framework_dependency {name {library 0} {soversion 5}} {
                 set kf5.lib_ext dylib
             }
         } elseif {${os.platform} eq "linux"} {
-            set kf5.lib_path    lib/${os.arch}-linux-gnu
+            set kf5.lib_path    lib/${build_arch}-linux-gnu
             if {${soversion} ne ""} {
                 set kf5.lib_ext so.5
             } else {
