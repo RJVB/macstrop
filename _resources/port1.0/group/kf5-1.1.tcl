@@ -289,12 +289,12 @@ if {![info exists kf5.framework] && ![info exists kf5.portingAid]} {
                         -DLIBXSLT_INCLUDE_DIR=${prefix}/include \
                         -DLIBXSLT_LIBRARIES=${prefix}/lib/libxslt.${kf5.libs_ext} \
                         -DOPENAL_INCLUDE_DIR=/System/Library/Frameworks/OpenAL.framework/Headers \
-                        -DOPENAL_LIBRARY=/System/Library/Frameworks/OpenAL.framework \
-                        -DPNG_INCLUDE_DIR=${prefix}/include \
-                        -DPNG_PNG_INCLUDE_DIR=${prefix}/include \
-                        -DPNG_LIBRARY=${prefix}/lib/libpng.${kf5.libs_ext} \
-                        -DTIFF_INCLUDE_DIR=${prefix}/include \
-                        -DTIFF_LIBRARY=${prefix}/lib/libtiff.${kf5.libs_ext}
+                        -DOPENAL_LIBRARY=/System/Library/Frameworks/OpenAL.framework
+#                         -DPNG_INCLUDE_DIR=${prefix}/include \
+#                         -DPNG_PNG_INCLUDE_DIR=${prefix}/include \
+#                         -DPNG_LIBRARY=${prefix}/lib/libpng.${kf5.libs_ext} \
+#                         -DTIFF_INCLUDE_DIR=${prefix}/include \
+#                         -DTIFF_LIBRARY=${prefix}/lib/libtiff.${kf5.libs_ext}
 }
 
 proc kf5.set_paths {} {
