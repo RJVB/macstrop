@@ -206,6 +206,7 @@ if {${os.platform} eq "darwin"} {
                         -DCMAKE_PREFIX_PATH=${prefix} \
                         -DCMAKE_INSTALL_RPATH="${prefix}/lib/${build_arch}-linux-gnu\;${prefix}/lib"
 }
+configure.args-append   -DSYSCONF_INSTALL_DIR="${prefix}/etc"
 set kf5.docs_dir        ${prefix}/share/doc/kf5
 
 set kf5.allow_docs_generation \
