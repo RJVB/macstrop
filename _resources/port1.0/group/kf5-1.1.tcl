@@ -727,4 +727,20 @@ proc kf5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""}} {
     system "chmod 755 ${destroot}${prefix}/bin/${wrappername}"
 }
 
+# procedure to record a conflict with a KDE4 port if kde4compat isn't active
+proc kf5.kde4compat {{kde4port ""}} {
+    global subport
+    if {[variant_exists kde4compat] && ![variant_isset kde4compat]} {
+        if {${kde4port} eq ""} {
+            if {[string first "kf5-" ${subport}] >= 0} {
+                conflicts-append \
+                        [string range ${subport} 4 end]
+            }
+        } else {
+            conflicts-append \
+                        ${kde4port}
+        }
+    }
+}
+
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
