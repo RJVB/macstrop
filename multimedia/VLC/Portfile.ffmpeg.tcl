@@ -66,6 +66,8 @@ if {[lsearch [get_canonical_archs] i386] != -1} {
 
 configure.cflags-append -DHAVE_LRINTF ${configure.cppflags}
 configure.args      --prefix=${FFMPEG_VLC_PREFIX} \
+                    --progs-suffix=-VLC \
+                    --build-suffix=-VLC \
                     --disable-doc \
                     --disable-encoder=vorbis \
                     --enable-libopenjpeg \
@@ -156,16 +158,12 @@ destroot.target     install-libs install-headers
 
 post-destroot {
     file delete -force ${destroot}${prefix}/share/examples
-    # replace the -L${libdir} -lfoo linker options with a direct reference to the actual
-    # shared binary, so that we're sure the linker will use our libraries and not one
-    # from a location like ${prefix}/lib . VLC's libtool will drop link modules that are
-    # (shared) libraries, so we use a hack
+    # We need to make sure that the linker will use our libraries and not one
+    # from a location like ${prefix}/lib . That's why we use --build-suffix, but
+    # that still requires us to provide pkg-config files with the standard names:
     foreach pc [glob ${destroot}${FFMPEG_VLC_PREFIX}/lib/pkgconfig/*.pc] {
-        set libname [file rootname [file tail ${pc}]]
-        # trick libtool into treating ${libname} as if it were a mere object file.
-        # Libtool calls clang (${CC}), which knows how to handle this situation appropriately.
-        ln -s ${libname}.dylib ${destroot}${FFMPEG_VLC_PREFIX}/lib/${libname}.o
-        reinplace "s|Libs: -L\$\{libdir\}  -l\\(.*\\) |Libs: \$\{libdir\}/lib\\1.o|g" ${pc}
+        set standardname [strsed ${pc} "s/-VLC.pc/.pc/"]
+        ln -s [file tail ${pc}] ${standardname}
     }
 }
 
