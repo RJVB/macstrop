@@ -165,6 +165,17 @@ post-destroot {
         set standardname [strsed ${pc} "s/-VLC.pc/.pc/"]
         ln -s [file tail ${pc}] ${standardname}
     }
+    # oblige dependent code to include files from our own renamed header file directories, so it
+    # cannot include mismatching headers by accident (e.g. those from ffmpeg 3.x).
+    foreach dir {libavcodec libavformat libavresample libavutil libpostproc libswresample libswscale} {
+        file rename ${destroot}${FFMPEG_VLC_PREFIX}/include/${dir} ${destroot}${FFMPEG_VLC_PREFIX}/include/${dir}-VLC
+    }
+    foreach dir {libavcodec libavformat libavresample libavutil libpostproc libswresample libswscale} {
+        foreach header [glob -nocomplain ${destroot}${FFMPEG_VLC_PREFIX}/include/*/*.h] {
+            reinplace "s|${dir}/|${dir}-VLC/|g" ${header}
+        }
+    }
+    # packageable: ${destroot}${FFMPEG_VLC_PREFIX}/{include,lib/lib*VLC.dylib,lib/pkgconfig}
 }
 
 livecheck.type      regex
