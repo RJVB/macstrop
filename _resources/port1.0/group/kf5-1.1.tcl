@@ -78,7 +78,7 @@ if {![info exists kf5.version]} {
     # kf5.latest_version is supposed to be used only in the KF5-Frameworks Portfile
     # when updating it to the new version (=kf5.latest_version).
     set kf5.latest_version \
-                        5.20.0
+                        5.22.0
 }
 
 # KF5 Applications version
@@ -137,6 +137,12 @@ if {![variant_isset nativeQSP]} {
 
 # A transitional procedure that adds definitions that are likely to become the default
 proc kf5.use_QExtStandardPaths {} {
+    if {[variant_isset nativeQSP]} {
+        ui_error "Port ${subport} shouldn't call kf5.use_QExtStandardPaths with +nativeQSP"
+        return -code error "kf5.use_QExtStandardPaths shouldn't be called"
+    } else {
+        ui_msg "kf5.use_QExtStandardPaths is obsolete"
+    }
 # 20160324 : remove payload because -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=true is becoming the default
 #     # 20160214 : switch from QStandardPaths to the experimental QExtStandardPaths
 #     configure.cppflags-append \
