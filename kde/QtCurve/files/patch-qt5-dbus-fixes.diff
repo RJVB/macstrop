@@ -1,0 +1,129 @@
+diff --git qt5/style/qtcurve.cpp qt5/style/qtcurve.cpp
+index b2a7738..a7bf43a 100644
+--- qt5/style/qtcurve.cpp
++++ qt5/style/qtcurve.cpp
+@@ -347,7 +347,8 @@ Style::Style() :
+     m_windowManager(new WindowManager(this)),
+     m_blurHelper(new BlurHelper(this)),
+     m_shortcutHandler(new ShortcutHandler(this)),
+-    m_dbusConnected(nullptr)
++    m_dbusConnected(nullptr),
++    m_sessionDBus(nullptr)
+ {
+     const char *env = getenv(QTCURVE_PREVIEW_CONFIG);
+     if (env && strcmp(env, QTCURVE_PREVIEW_CONFIG) == 0) {
+@@ -655,6 +656,20 @@ void Style::init(bool initial)
+ #endif
+ }
+ 
++class SessionDBus {
++public:
++    SessionDBus(const QDBusConnection &bus)
++        : m_dbusConnection(bus)
++    {
++    }
++    inline QDBusConnection& link()
++    {
++        return m_dbusConnection;
++    }
++private:
++    QDBusConnection m_dbusConnection;
++};
++
+ void Style::connectDBus()
+ {
+     if (m_dbusConnected)
+@@ -662,22 +677,24 @@ void Style::connectDBus()
+     m_dbusConnected = registerCleanup([] (void *data) {
+             reinterpret_cast<Style*>(data)->disconnectDBus();
+         }, this);
+-    auto bus = QDBusConnection::sessionBus();
+-    bus.connect(QString(), "/KGlobalSettings", "org.kde.KGlobalSettings",
++//     auto bus = QDBusConnection::sessionBus();
++    m_sessionDBus = QSharedPointer<SessionDBus>(new SessionDBus(QDBusConnection::sessionBus()));
++    m_sessionDBus->link().connect(QString(), "/KGlobalSettings", "org.kde.KGlobalSettings",
+                 "notifyChange", this, SLOT(kdeGlobalSettingsChange(int, int)));
+-    bus.connect("org.kde.kwin", "/KWin", "org.kde.KWin", "compositingToggled",
++    QTC_RET_IF_FAIL(qtcX11Enabled());
++    m_sessionDBus->link().connect("org.kde.kwin", "/KWin", "org.kde.KWin", "compositingToggled",
+                 this, SLOT(compositingToggled()));
+ 
+     if (!qApp || qApp->arguments()[0] != "kwin") {
+-        bus.connect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
++        m_sessionDBus->link().connect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
+                     "borderSizesChanged", this, SLOT(borderSizesChanged()));
+         if (opts.menubarHiding & HIDE_KWIN)
+-            bus.connect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
++            m_sessionDBus->link().connect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
+                         "toggleMenuBar",
+                         this, SLOT(toggleMenuBar(unsigned int)));
+ 
+         if (opts.statusbarHiding & HIDE_KWIN) {
+-            bus.connect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
++            m_sessionDBus->link().connect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
+                         "toggleStatusBar",
+                         this, SLOT(toggleStatusBar(unsigned int)));
+         }
+@@ -691,18 +708,19 @@ void Style::disconnectDBus()
+     void *cb = m_dbusConnected;
+     m_dbusConnected = nullptr;
+     unregisterCleanup(cb);
+-    auto bus = QDBusConnection::sessionBus();
+-    bus.disconnect(QString(), "/KGlobalSettings", "org.kde.KGlobalSettings",
++//     auto bus = QDBusConnection::sessionBus();
++    m_sessionDBus->link().disconnect(QString(), "/KGlobalSettings", "org.kde.KGlobalSettings",
+                    "notifyChange",
+                    this, SLOT(kdeGlobalSettingsChange(int, int)));
+-    bus.disconnect("org.kde.kwin", "/KWin", "org.kde.KWin", "compositingToggled",
++    QTC_RET_IF_FAIL(qtcX11Enabled());
++    m_sessionDBus->link().disconnect("org.kde.kwin", "/KWin", "org.kde.KWin", "compositingToggled",
+                    this, SLOT(compositingToggled()));
+-    bus.disconnect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
++    m_sessionDBus->link().disconnect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
+                    "borderSizesChanged", this, SLOT(borderSizesChanged()));
+-    bus.disconnect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
++    m_sessionDBus->link().disconnect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
+                    "toggleMenuBar",
+                    this, SLOT(toggleMenuBar(unsigned int)));
+-    bus.disconnect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
++    m_sessionDBus->link().disconnect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
+                    "toggleStatusBar",
+                    this, SLOT(toggleStatusBar(unsigned int)));
+ }
+@@ -4406,6 +4424,7 @@ void Style::emitMenuSize(QWidget *w, unsigned short size, bool force)
+ 
+ void Style::emitStatusBarState(QStatusBar *sb)
+ {
++    QTC_RET_IF_FAIL(qtcX11Enabled());
+     if (opts.statusbarHiding & HIDE_KWIN) {
+         if (!m_dBus)
+             m_dBus = new QDBusInterface("org.kde.kwin", "/QtCurve",
+diff --git qt5/style/qtcurve.h qt5/style/qtcurve.h
+index 6836b9d..8c02742 100644
+--- qt5/style/qtcurve.h
++++ qt5/style/qtcurve.h
+@@ -33,6 +33,8 @@
+ #include <QStyleOption>
+ #include <QtGlobal>
+ #include <QCommonStyle>
++#include <QSharedPointer>
++
+ typedef qulonglong QtcKey;
+ #include <common/common.h>
+ 
+@@ -52,6 +54,7 @@ class WindowManager;
+ class BlurHelper;
+ class ShortcutHandler;
+ class ShadowHelper;
++class SessionDBus;
+ 
+ class Style: public QCommonStyle {
+     Q_OBJECT
+@@ -561,6 +564,7 @@ private:
+     BlurHelper *m_blurHelper;
+     ShortcutHandler *m_shortcutHandler;
+     void *m_dbusConnected;
++    QSharedPointer<SessionDBus> m_sessionDBus;
+ };
+ }
+ 
