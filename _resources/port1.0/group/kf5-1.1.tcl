@@ -191,7 +191,8 @@ configure.args-append   -DPLUGIN_INSTALL_DIR=${qt_plugins_dir} \
 # standard configure args
 configure.args-append   -DBUILD_doc=OFF \
                         -DBUILD_docs=OFF \
-                        -DBUILD_SHARED_LIBS=ON
+                        -DBUILD_SHARED_LIBS=ON \
+                        -DCMAKE_STRIP:FILEPATH=/bin/echo
 if {${os.platform} eq "darwin"} {
     set kf5.applications_dir \
                         ${applications_dir}/KF5
