@@ -2,14 +2,52 @@ diff --git qt5/common/common.h qt5/common/common.h
 index bb103fd..a23be01 100644
 --- qt5/common/common.h
 +++ qt5/common/common.h
-@@ -878,6 +878,7 @@ typedef struct {
+@@ -44,6 +44,7 @@
+ #include <map>
+ #include <set>
+ #include <QString>
++#include <QFont>
+ #include <QPixmap>
+ #include <QSet>
+ 
+@@ -878,6 +879,11 @@ typedef struct {
                       useQtFileDialogApps,
                       windowDragWhiteList,
                       windowDragBlackList;
-+     bool            onlyTicksInMenu;
++    bool             onlyTicksInMenu;
++    // these are runtime constants for the user-option "onlyTicksInMenu":
++    QFont            tickFont;
++    QString          menuTick;
++    int              fontTickWidth;
  } Options;
  
  void qtcSetupGradient(Gradient *grad, EGradientBorder border, int numStops, ...);
+diff --git qt5/style/qtcurve.h qt5/style/qtcurve.h
+index 6836b9d..d9395bc 100644
+--- qt5/style/qtcurve.h
++++ qt5/style/qtcurve.h
+@@ -30,6 +30,7 @@
+ #include <QSet>
+ #include <QCache>
+ #include <QColor>
++#include <QFont>
+ #include <QStyleOption>
+ #include <QtGlobal>
+ #include <QCommonStyle>
+diff --git qt5/style/qtcurve.cpp qt5/style/qtcurve.cpp
+index b2a7738..c4c1d13 100644
+--- qt5/style/qtcurve.cpp
++++ qt5/style/qtcurve.cpp
+@@ -647,6 +647,9 @@ void Style::init(bool initial)
+                              opts.dlgOpacity != 100 ||
+                              opts.menuBgndOpacity != 100);
+ 
++    opts.fontTickWidth=-1;
++    opts.menuTick=QString(QChar(0x2713));
++
+ #ifdef QTC_QT5_ENABLE_KDE
+     // We need to set the decoration colours for the preview now...
+     if (m_isPreview) {
 diff --git qt5/common/config_file.cpp qt5/common/config_file.cpp
 index 362381a..98c40fc 100644
 --- qt5/common/config_file.cpp
@@ -47,7 +85,37 @@ diff --git qt5/style/qtcurve_api.cpp qt5/style/qtcurve_api.cpp
 index b8535da..b747587 100644
 --- qt5/style/qtcurve_api.cpp
 +++ qt5/style/qtcurve_api.cpp
-@@ -3046,7 +3046,7 @@ Style::drawControl(ControlElement element, const QStyleOption *option,
+@@ -47,6 +47,7 @@
+ #include <QCheckBox>
+ #include <QRadioButton>
+ #include <QTextEdit>
++#include <QFontMetrics>
+ #include <QDial>
+ #include <QLabel>
+ #include <QStackedLayout>
+@@ -3018,6 +3019,21 @@ Style::drawControl(ControlElement element, const QStyleOption *option,
+             bool checked = menuItem->checked;
+             bool enabled = state & State_Enabled;
+ 
++            if (checkable && opts.onlyTicksInMenu) {
++                if (opts.fontTickWidth <= 0) {
++                    opts.tickFont = QFont(widget->font());
++                    opts.fontTickWidth = QFontMetrics(opts.tickFont).width(opts.menuTick);
++                    qWarning() << "menuFont:" << opts.tickFont.toString() << "tickMark:" << opts.menuTick
++                        << "width=" << opts.fontTickWidth << "/" << QFontMetrics(opts.tickFont).boundingRect(opts.menuTick).width();
++                }
++                // check if the font tick is wider than the current margin
++                // and adjust if necessary
++                if (opts.fontTickWidth > checkcol) {
++                    int dx = opts.fontTickWidth - checkcol;
++                    r.adjust(-dx, 0, dx, 0);
++                    checkcol += dx;
++                }
++            }
+             if (opts.menuStripe && !comboMenu)
+                 drawBevelGradient(menuStripeCol(), painter,
+                                   QRect(reverse ? r.right()-stripeWidth : r.x(),
+@@ -3046,7 +3062,7 @@ Style::drawControl(ControlElement element, const QStyleOption *option,
                  checkRect = visualRect(menuItem->direction, menuItem->rect,
                                         checkRect);
                  if (checkable) {
@@ -56,7 +124,7 @@ index b8535da..b747587 100644
                           QStyleOptionMenuItem::Exclusive) &&
                          menuItem->icon.isNull()) {
                          QStyleOptionButton button;
-@@ -3065,7 +3065,7 @@ Style::drawControl(ControlElement element, const QStyleOption *option,
+@@ -3065,7 +3081,7 @@ Style::drawControl(ControlElement element, const QStyleOption *option,
                              if (checked)
                                  button.state |= State_On;
                              button.palette = palette;
@@ -65,7 +133,7 @@ index b8535da..b747587 100644
                                            painter, widget);
                          } else if (checked) {
                              int iconSize = qMax(menuItem->maxIconWidth, 20);
-@@ -3078,9 +3078,7 @@ Style::drawControl(ControlElement element, const QStyleOption *option,
+@@ -3078,9 +3094,7 @@ Style::drawControl(ControlElement element, const QStyleOption *option,
                              sunkenRect = visualRect(menuItem->direction,
                                                      menuItem->rect, sunkenRect);
                              opt.state = menuItem->state;
@@ -99,14 +167,24 @@ index a8a2bed..856218a 100644
          if (isOO && r == QRect(0, 0, opts.crSize, opts.crSize)) {
              rect.adjust(0, -1, 0, -1);
          }
-@@ -1764,10 +1767,34 @@ Style::drawPrimitiveIndicatorCheckBox(PrimitiveElement element,
+@@ -1764,10 +1767,44 @@ Style::drawPrimitiveIndicatorCheckBox(PrimitiveElement element,
          }
      }
      if (state & State_On || selectedOOMenu) {
 -        QPixmap *pix = getPixmap(checkRadioCol(option), PIX_CHECK, 1.0);
 +        if (onlyTicksInMenu) {
 +            // only tickmarks (= without the box) in menu; adjust its horizontal position
-+            rect.adjust(6, 0, 0, 0);
++            // the normal, hardcoded margin is 20 (pixels). If that's too small, compensate,
++            // using a hand-tuned ad-hoc recipe tested over point size range 8 - 32 pt
++            if (opts.fontTickWidth > 20){
++                int dx = (opts.fontTickWidth - 20) + 3;
++                rect.adjust(dx, -dx, 2 * dx, dx);
++            } else if (opts.fontTickWidth > 10){
++                int dx = (opts.fontTickWidth - 10) / 2;
++                rect.adjust(dx, -dx, dx, dx);
++            } else {
++                rect.adjust(6, 0, 0, 0);
++            }
 +            // get the font for adjusting; widget will be the menu holding the menuitem
 +            // but that uses the same font as the menuitem.
 +            QFont font(widget->font());
@@ -124,7 +202,7 @@ index a8a2bed..856218a 100644
 +            painter->setFont(font);
 +            // render the tickmark using the Unicode "Check Mark" symbol (✓)
 +            drawItemTextWithRole(painter, rect, Qt::AlignHCenter|Qt::AlignVCenter, palette, true,
-+                             QString(QChar(0x2713)), QPalette::Text);
++                             opts.menuTick, QPalette::Text);
 +            painter->restore();
 +        } else {
 +            QPixmap *pix = getPixmap(checkRadioCol(option), PIX_CHECK, 1.0);
