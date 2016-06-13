@@ -124,15 +124,17 @@ if {${os.platform} eq "darwin"} {
     set kf5.pythondep   bin:python:python27
 }
 
-variant nativeQSP conflicts qspXDG description {use the native Apple-style QStandardPaths locations} {}
+platform darwin {
+    variant nativeQSP conflicts qspXDG description {use the native Apple-style QStandardPaths locations} {}
 
-if {![file exists ${qt_includes_dir}/QtCore/qextstandardpaths.h]} {
-    default_variants    +nativeQSP
-}
+    if {![file exists ${qt_includes_dir}/QtCore/qextstandardpaths.h]} {
+        default_variants    +nativeQSP
+    }
 
-if {![variant_isset nativeQSP]} {
-    configure.cppflags-append \
+    if {![variant_isset nativeQSP]} {
+        configure.cppflags-append \
                         -DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=true
+    }
 }
 
 # A transitional procedure that adds definitions that are likely to become the default
@@ -259,13 +261,15 @@ if {![variant_isset docs]} {
         }
     }
 }
-if {![variant_isset nativeQSP]} {
-    post-destroot {
-        ui_msg "--->  Checking ${subport} for QSP XDG mode ..."
-        if {[catch {system "fgrep 'DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=true' ${build.dir}/CMakeCache.txt 2>&1"} result context]} {
-            ui_msg "QSP XDG mode  check failed: ${result}, ${context}"
-        } else {
-            ui_info "QSP XDG mode check: OK (${result})"
+platform darwin {
+    if {![variant_isset nativeQSP]} {
+        post-destroot {
+            ui_msg "--->  Checking ${subport} for QSP XDG mode ..."
+            if {[catch {system "fgrep 'DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=true' ${build.dir}/CMakeCache.txt 2>&1"} result context]} {
+                ui_msg "QSP XDG mode  check failed: ${result}, ${context}"
+            } else {
+                ui_info "QSP XDG mode check: OK (${result})"
+            }
         }
     }
 }
