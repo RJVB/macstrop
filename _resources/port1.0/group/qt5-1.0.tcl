@@ -96,17 +96,29 @@ proc qt5.depends_component {first args} {
     global qt5.using_kde
     # join ${first} and (the optional) ${args}
     set args [linsert $args[set list {}] 0 ${first}]
+    # select the Qt5 port prefix, depending on which Qt5 port is installed
+    if {${qt5.using_kde}} {
+        set qt5pprefix "qt5-kde"
+    } else {
+        set qt5pprefix "qt5"
+    }
     foreach comp ${args} {
-        if {${qt5.using_kde}} {
-            set portname "qt5-kde-${comp}"
+        if {${comp} eq "qt5"} {
+            if {${qt5.using_kde}} {
+                global qt5_dependency
+                # qt5-kde-1.0.tcl exports the dependency expression in a variable
+                depends_lib-append ${qt5_dependency}
+            } else {
+                depends_lib-append port:${qt5pprefix}
+            }
         } else {
-            set portname "qt5-${comp}"
-        }
-        if {[info exists qt5_component_lib] && [info exists qt5_component_lib(${comp})]} {
-            # an explicit dependency pattern was given, e.g. path:foo
-            depends_lib-append "$qt5_component_lib(${comp}):${portname}"
-        } else {
-            depends_lib-append port:${portname}
+            set portname "${qt5pprefix}-${comp}"
+            if {[info exists qt5_component_lib] && [info exists qt5_component_lib(${comp})]} {
+                # an explicit dependency pattern was given, e.g. path:foo
+                depends_lib-append "$qt5_component_lib(${comp}):${portname}"
+            } else {
+                depends_lib-append port:${portname}
+            }
         }
     }
 }

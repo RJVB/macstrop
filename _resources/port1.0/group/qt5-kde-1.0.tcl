@@ -468,6 +468,7 @@ post-destroot {
     }
 }
 
-# array set qt5_component_lib {
-#     qtwebkit path:libexec/${qt_name}/Library/Frameworks/QtWebKitCore.framework/QtWebKitCore
-# }
+array set qt5_component_lib {
+     qtwebkit path:libexec/${qt_name}/Library/Frameworks/QtWebKitCore.framework/QtWebKitCore
+     qtwebengine path:libexec/${qt_name}/Library/Frameworks/QtWebEngine.framework/QtWebEngine
+}
