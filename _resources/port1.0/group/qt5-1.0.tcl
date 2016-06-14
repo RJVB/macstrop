@@ -97,14 +97,14 @@ proc qt5.depends_component {first args} {
     # join ${first} and (the optional) ${args}
     set args [linsert $args[set list {}] 0 ${first}]
     # select the Qt5 port prefix, depending on which Qt5 port is installed
-    if {${qt5.using_kde}} {
+    if {[info exists qt5.using_kde] && ${qt5.using_kde}} {
         set qt5pprefix "qt5-kde"
     } else {
         set qt5pprefix "qt5"
     }
     foreach comp ${args} {
         if {${comp} eq "qt5"} {
-            if {${qt5.using_kde}} {
+            if {[info exists qt5.using_kde] && ${qt5.using_kde}} {
                 global qt5_dependency
                 # qt5-kde-1.0.tcl exports the dependency expression in a variable
                 depends_lib-append ${qt5_dependency}

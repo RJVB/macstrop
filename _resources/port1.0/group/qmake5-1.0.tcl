@@ -148,6 +148,7 @@ if {${qt5.using_kde}} {
 
 # override C++11 flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
 #    so value of ${configure.cxx_stdlib} can always be used
+# RJVB: only use cxx_stdlib when it is actually set and not equal to libc++ already.
 if {${configure.cxx_stdlib} ne ""} {
     if {${configure.cxx_stdlib} ne "libc++"} {
         configure.args-append \
