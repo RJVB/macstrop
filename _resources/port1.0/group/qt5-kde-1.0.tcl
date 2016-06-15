@@ -43,6 +43,28 @@
 # Define qt5.depends_qtwebengine before including the portgroup to add
 # a dependency on qt5-kde-qtwebengine .
 
+if {[file exists ${prefix}/libexec/qt5/plugins]
+        && [file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
+    # Qt5 has been installed through port:qt5, which leads to certain incompatibilities
+    # which do not need to be declared otherwise. The header Qt5 PortGroup has similar
+    # checks and provisions, but since ports can also include us directly we have to
+    # repeat them here.
+    conflicts-append qt5-qtbase
+    if {[info exists building_qt5]} {
+        PortGroup conflicts_build 1.0
+        conflicts_build-append qt5-qtbase
+        ui_info "Qt5 has been installed through port:qt5 or its subports; you cannot build ${subport}"
+        pre-fetch {
+            return -code error "Deactivate the conflicting port:qt5 (subports) first!"
+        }
+        pre-configure {
+            return -code error "Deactivate the conflicting port:qt5 (subports) first!"
+        }
+    } else {
+        ui_info "Qt5 has been installed through port:qt5 or its subports; you can build but not install ${subport}"
+    }
+}
+
 if { ![exists universal_variant] || [option universal_variant] } {
     PortGroup muniversal 1.0
     #universal_archs_supported i386 x86_64
