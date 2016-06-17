@@ -220,7 +220,16 @@ set kf5.docs_dir        ${prefix}/share/doc/kf5
 
 set kf5.allow_docs_generation \
                         yes
-variant docs description {build and install the documentation, for use with Qt's Assistant and KDevelop} {
+proc kf5.allow_docs_generation {val} {
+    upvar #0 kf5.allow_docs_generation adg
+    if {${val}} {
+        set adg yes
+    } else {
+        set adg no
+    }
+}
+
+variant docs description {build and install the API documentation, for use with Qt's Assistant and KDevelop} {
     configure.args-delete \
                         -DBUILD_doc=OFF \
                         -DBUILD_docs=OFF
@@ -229,7 +238,7 @@ variant docs description {build and install the documentation, for use with Qt's
             kf5.depends_frameworks \
                         kdoctools
         }
-        if {[info exists kf5.allow_docs_generation]} {
+        if {[info exists kf5.allow_docs_generation] && ${kf5.allow_docs_generation}} {
             kf5.depends_build_frameworks \
                         kapidox
             post-destroot {
