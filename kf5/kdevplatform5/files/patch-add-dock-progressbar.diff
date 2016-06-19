@@ -246,19 +246,21 @@ index 1a32ea8..e637e71 100644
  
  #include <KLocalizedString>
  
-@@ -49,6 +52,10 @@
+@@ -49,6 +52,9 @@
  #include <QPushButton>
  #include <QStackedWidget>
  #include <QTimer>
 +#include <QApplication>
 +#include <QStyle>
-+
 +#include <QDebug>
  
  using namespace KDevelop;
  
-@@ -64,22 +71,49 @@ StatusbarProgressWidget::StatusbarProgressWidget( ProgressDialog* progressDialog
+@@ -62,37 +68,66 @@ StatusbarProgressWidget::StatusbarProgressWidget( ProgressDialog* progressDialog
+     box = new QHBoxLayout( this );
+     box->setMargin(0);
      box->setSpacing(0);
++    stack = new QStackedWidget( this );
  
      m_pButton = new QPushButton( this );
 -    m_pButton->setAttribute(Qt::WA_MacMiniSize);
@@ -271,51 +273,58 @@ index 1a32ea8..e637e71 100644
 -    int maximumHeight = fontMetrics().height();
 -    stack->setMaximumHeight( maximumHeight );
 -    box->addWidget( stack );
- 
+-
 -    m_pButton->setToolTip( i18n("Open detailed progress dialog") );
-+    // allow for a 1 pixel margin above and below the reference text
-+    int maximumHeight = fontMetrics().height() + 2;
++    QSize iconSize = m_pButton->iconSize();
  
      m_pProgressBar = new QProgressBar( this );
      m_pProgressBar->installEventFilter( this );
      m_pProgressBar->setMinimumWidth( w );
-+    m_pProgressBar->setMinimumHeight( maximumHeight );
 +    m_pProgressBar->setAttribute( Qt::WA_LayoutUsesWidgetRect, true );
 +
-+    // Even Mac/OS X users can have started us using the -style option, or even use the Xcb QPA
++    // Determine maximumHeight from the progressbar's height and scale the icon.
++    // This operation is style specific and cannot infer the style in use
++    // from Q_OS_??? because users can have started us using the -style option
++    // (or even be using a non-standard QPA).
++    int maximumHeight = m_pProgressBar->sizeHint().height();
 +    bool macWidgetStyle = QApplication::style()->objectName() == QLatin1String("macintosh");
-+    QSize iconSize = m_pButton->iconSize();
 +    if (macWidgetStyle) {
-+        // QProgressBar height is fixed with the macintosh native widget style; get
-+        // the closest height estimate. For a flat button (icon without button outline)
-+        // that is from sizeHint(), for a regular button that's from minimumSizeHint().
-+        int pbHeight = m_pProgressBar->sizeHint().height();
-+        if (pbHeight > maximumHeight) {
-+            maximumHeight = pbHeight;
-+        }
-+        iconSize.scale( pbHeight, pbHeight, Qt::KeepAspectRatio );
-+        // this gives a button that is slightly too high and not perfectly
-+        // aligned. Annoyingly calling setMaximumHeight() doesn't improve this
-+        // and causes the button to change shape. So we use a "flat" button,
-+        // which is more in line with platform practices anyway.
++        // QProgressBar height is fixed with the macintosh native widget style
++        // and alignment with m_pButton is tricky. Sizing the icon to maximumHeight
++        // gives a button that is slightly too high and not perfectly
++        // aligned. Annoyingly that doesn't improve by calling setMaximumHeight()
++        // which even causes the button to change shape. So we use a "flat" button,
++        // an invisible outline which is more in line with platform practices anyway.
++        iconSize.scale( maximumHeight, maximumHeight, Qt::KeepAspectRatio );
 +        m_pButton->setFlat( true );
++        m_pButton->setMaximumWidth( m_pButton->iconSize().width() + 4 );
 +    } else {
-+        // scale the icon to fontMetrics().height() with 1 pixel margins on each side
++        // Adjust maximumHeight, such that its value corresponds to
++        // fontMetrics().height() + 2
++        // for Breeze, Oxygen, Fusion, Windows and QtCurve
++        // (the 6 follows from the sizeHint() code)
++        // The icon is scaled to maximumHeight but with 1 pixel margins on each side
++        // because it be in a visible button.
++        maximumHeight -= 6;
 +        iconSize.scale( maximumHeight - 2, maximumHeight - 2, Qt::KeepAspectRatio );
++        // additional adjustments:
++        m_pButton->setAttribute( Qt::WA_LayoutUsesWidgetRect, true );
++        stack->setMaximumHeight( maximumHeight );
 +    }
 +    m_pButton->setIconSize(iconSize);
 +    box->addWidget( m_pButton  );
 +
 +    m_pButton->setToolTip( i18n("Open detailed progress dialog") );
 +
-+    stack = new QStackedWidget( this );
 +    box->addWidget( stack );
 +
      stack->insertWidget( 1,m_pProgressBar );
  
      m_pLabel = new QLabel( QString(), this );
-@@ -88,11 +122,13 @@ StatusbarProgressWidget::StatusbarProgressWidget( ProgressDialog* progressDialog
+     m_pLabel->setAlignment( Qt::AlignHCenter | Qt::AlignVCenter );
+     m_pLabel->installEventFilter( this );
      m_pLabel->setMinimumWidth( w );
++    m_pLabel->setMaximumHeight( maximumHeight );
      stack->insertWidget( 2, m_pLabel );
  
 -#ifndef Q_OS_MAC
@@ -323,16 +332,10 @@ index 1a32ea8..e637e71 100644
 -    // It isn't necessary because on OSX the button's minimumSizeHint is small enough
      m_pButton->setMaximumHeight( maximumHeight );
 -#endif
-+    if (!macWidgetStyle) {
-+        m_pButton->setAttribute( Qt::WA_LayoutUsesWidgetRect, true );
-+        stack->setMaximumHeight( maximumHeight );
-+    } else {
-+        m_pButton->setMaximumWidth( m_pButton->iconSize().width() + 2 );
-+    }
      setMinimumWidth( minimumSizeHint().width() );
  
      mode = None;
-@@ -178,6 +214,9 @@ void StatusbarProgressWidget::activateSingleItemMode()
+@@ -178,6 +213,9 @@ void StatusbarProgressWidget::activateSingleItemMode()
      m_pProgressBar->setMaximum( 100 );
      m_pProgressBar->setValue( mCurrentItem->progress() );
      m_pProgressBar->setTextVisible( true );
@@ -342,7 +345,7 @@ index 1a32ea8..e637e71 100644
  }
  
  void StatusbarProgressWidget::slotShowItemDelayed()
-@@ -201,6 +240,9 @@ void StatusbarProgressWidget::slotProgressItemProgress( ProgressItem *item, unsi
+@@ -201,6 +239,9 @@ void StatusbarProgressWidget::slotProgressItemProgress( ProgressItem *item, unsi
      Q_ASSERT( item == mCurrentItem); // the only one we should be connected to
      Q_UNUSED( item );
      m_pProgressBar->setValue( value );
@@ -352,7 +355,7 @@ index 1a32ea8..e637e71 100644
  }
  
  void StatusbarProgressWidget::setMode() {
-@@ -212,6 +254,9 @@ void StatusbarProgressWidget::setMode() {
+@@ -212,6 +253,9 @@ void StatusbarProgressWidget::setMode() {
          // show the empty label in order to make the status bar look better
          stack->show();
          stack->setCurrentWidget( m_pLabel );
@@ -362,7 +365,7 @@ index 1a32ea8..e637e71 100644
          break;
  
      case Progress:
-@@ -220,6 +265,9 @@ void StatusbarProgressWidget::setMode() {
+@@ -220,6 +264,9 @@ void StatusbarProgressWidget::setMode() {
          if ( m_bShowButton ) {
              m_pButton->show();
          }
