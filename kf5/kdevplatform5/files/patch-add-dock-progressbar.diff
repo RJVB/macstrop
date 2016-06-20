@@ -73,10 +73,10 @@ index 0000000..58b6ed5
 +#endif
 diff --git shell/macdockprogressview.mm shell/macdockprogressview.mm
 new file mode 100644
-index 0000000..bfb0942
+index 0000000..23557ae
 --- /dev/null
 +++ shell/macdockprogressview.mm
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,211 @@
 +/*
 + * Copyright 2016 René J.V. Bertin <rjvbertin@gmail.com>
 + *
@@ -100,6 +100,7 @@ index 0000000..bfb0942
 +
 +#include "macdockprogressview.h"
 +#include <QtGlobal>
++#include <utility>
 +
 +#if MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_5
 +#import <AppKit/NSDockTile.h>
@@ -108,6 +109,7 @@ index 0000000..bfb0942
 +#import <AppKit/NSCIImageRep.h>
 +#import <AppKit/NSBezierPath.h>
 +#import <AppKit/NSColor.h>
++#import <Foundation/NSTimer.h>
 +
 +using namespace KDevelop;
 +
@@ -115,10 +117,15 @@ index 0000000..bfb0942
 +    int min;
 +    int max;
 +    int value;
++    NSColor *bgColour, *fgColour;
++    NSTimer *indeterminateTimer;
 +}
 +
 ++ (MacDockProgressViewPrivate *)sharedProgressView;
 +
++- (id)init;
++- (void)dealloc;
++- (void)removeTimer;
 +- (void)rangeStartsAt:(int)v1 endsAt:(int)v2;
 +- (void)setValue:(int)v;
 +- (void)updateBadge;
@@ -138,10 +145,55 @@ index 0000000..bfb0942
 +    return sharedProgressView;
 +}
 +
++- (id)init
++{
++    self = [super init];
++    bgColour = fgColour = nil;
++    indeterminateTimer = nil;
++    min = max = value = 0;
++    return self;
++}
++
++- (void)dealloc
++{
++    [self removeTimer];
++    [bgColour release];
++    [fgColour release];
++    [super dealloc];
++}
++
++- (void)removeTimer
++{
++    if (indeterminateTimer != nil) {
++        [indeterminateTimer invalidate];
++        [indeterminateTimer release];
++        indeterminateTimer = nil;
++    }
++}
++
 +- (void)rangeStartsAt:(int)v1 endsAt:(int)v2
 +{
 +    min = v1;
 +    max = v2;
++    // (re)set the colours to the standard progressbar colour scheme
++    [bgColour release];
++    [fgColour release];
++    bgColour = [[NSColor blackColor] retain];
++    fgColour = [[NSColor lightGrayColor] retain];
++    if (v1 == v2 ) {
++        if (indeterminateTimer == nil) {
++            indeterminateTimer = [[NSTimer timerWithTimeInterval:1
++                                            target:self
++                                            selector:@selector(updateBadge)
++                                            userInfo:nil
++                                            repeats:YES] retain];
++            if (indeterminateTimer) {
++                [[NSRunLoop currentRunLoop] addTimer:indeterminateTimer forMode:NSDefaultRunLoopMode];
++            }
++        }
++    } else {
++        [self removeTimer];
++    }
 +    [self updateBadge];
 +}
 +
@@ -170,24 +222,28 @@ index 0000000..bfb0942
 +    progressBoundary.origin.x = (NSWidth(boundary) - NSWidth(progressBoundary)) / 2.0;
 +    progressBoundary.origin.y = NSHeight(boundary) * 0.1;
 +
-+    double range = max - min;
 +    double percent = 0.50;
-+    if (range != 0) {
++    if (min != max) {
++        double range = max - min;
 +        percent = (value - min) / range;
-+    }
-+    if (percent > 1) {
-+        percent = 1;
-+    } else if (percent < 0) {
-+        percent = 0;
++        if (percent > 1) {
++            percent = 1;
++        } else if (percent < 0) {
++            percent = 0;
++        }
++    } else {
++        // poor man's indefinite busy progressbar obtained by swapping
++        // fg and bg colours with the bar at the 50% point.
++        std::swap(fgColour, bgColour);
 +    }
 +
 +    NSRect currentProgress = progressBoundary;
 +    currentProgress.size.width *= percent;
-+    [[NSColor blackColor] setFill];
++    [bgColour setFill];
 +    [NSBezierPath fillRect:progressBoundary];
-+    [[NSColor lightGrayColor] setFill];
++    [fgColour setFill];
 +    [NSBezierPath fillRect:currentProgress];
-+    [[NSColor blackColor] setStroke];
++    [bgColour setStroke];
 +    [NSBezierPath strokeRect:progressBoundary];
 +}
 +
@@ -233,7 +289,7 @@ index 0000000..bfb0942
 +
 +#endif
 diff --git shell/progresswidget/statusbarprogresswidget.cpp shell/progresswidget/statusbarprogresswidget.cpp
-index 1a32ea8..e637e71 100644
+index 1a32ea8..dec675e 100644
 --- shell/progresswidget/statusbarprogresswidget.cpp
 +++ shell/progresswidget/statusbarprogresswidget.cpp
 @@ -37,6 +37,9 @@
@@ -246,106 +302,29 @@ index 1a32ea8..e637e71 100644
  
  #include <KLocalizedString>
  
-@@ -49,6 +52,9 @@
- #include <QPushButton>
- #include <QStackedWidget>
- #include <QTimer>
-+#include <QApplication>
-+#include <QStyle>
-+#include <QDebug>
- 
- using namespace KDevelop;
- 
-@@ -62,37 +68,66 @@ StatusbarProgressWidget::StatusbarProgressWidget( ProgressDialog* progressDialog
-     box = new QHBoxLayout( this );
-     box->setMargin(0);
-     box->setSpacing(0);
-+    stack = new QStackedWidget( this );
- 
-     m_pButton = new QPushButton( this );
--    m_pButton->setAttribute(Qt::WA_MacMiniSize);
-     m_pButton->setSizePolicy( QSizePolicy( QSizePolicy::Minimum,
-                                            QSizePolicy::Minimum ) );
-     QIcon smallIcon = QIcon::fromTheme( QStringLiteral("go-up") );
-     m_pButton->setIcon( smallIcon );
--    box->addWidget( m_pButton  );
--    stack = new QStackedWidget( this );
--    int maximumHeight = fontMetrics().height();
--    stack->setMaximumHeight( maximumHeight );
--    box->addWidget( stack );
--
--    m_pButton->setToolTip( i18n("Open detailed progress dialog") );
-+    QSize iconSize = m_pButton->iconSize();
- 
-     m_pProgressBar = new QProgressBar( this );
-     m_pProgressBar->installEventFilter( this );
-     m_pProgressBar->setMinimumWidth( w );
-+    m_pProgressBar->setAttribute( Qt::WA_LayoutUsesWidgetRect, true );
-+
-+    // Determine maximumHeight from the progressbar's height and scale the icon.
-+    // This operation is style specific and cannot infer the style in use
-+    // from Q_OS_??? because users can have started us using the -style option
-+    // (or even be using a non-standard QPA).
-+    int maximumHeight = m_pProgressBar->sizeHint().height();
-+    bool macWidgetStyle = QApplication::style()->objectName() == QLatin1String("macintosh");
-+    if (macWidgetStyle) {
-+        // QProgressBar height is fixed with the macintosh native widget style
-+        // and alignment with m_pButton is tricky. Sizing the icon to maximumHeight
-+        // gives a button that is slightly too high and not perfectly
-+        // aligned. Annoyingly that doesn't improve by calling setMaximumHeight()
-+        // which even causes the button to change shape. So we use a "flat" button,
-+        // an invisible outline which is more in line with platform practices anyway.
-+        iconSize.scale( maximumHeight, maximumHeight, Qt::KeepAspectRatio );
-+        m_pButton->setFlat( true );
-+        m_pButton->setMaximumWidth( m_pButton->iconSize().width() + 4 );
-+    } else {
-+        // Adjust maximumHeight, such that its value corresponds to
-+        // fontMetrics().height() + 2
-+        // for Breeze, Oxygen, Fusion, Windows and QtCurve
-+        // (the 6 follows from the sizeHint() code)
-+        // The icon is scaled to maximumHeight but with 1 pixel margins on each side
-+        // because it be in a visible button.
-+        maximumHeight -= 6;
-+        iconSize.scale( maximumHeight - 2, maximumHeight - 2, Qt::KeepAspectRatio );
-+        // additional adjustments:
-+        m_pButton->setAttribute( Qt::WA_LayoutUsesWidgetRect, true );
-+        stack->setMaximumHeight( maximumHeight );
-+    }
-+    m_pButton->setIconSize(iconSize);
-+    box->addWidget( m_pButton  );
-+
-+    m_pButton->setToolTip( i18n("Open detailed progress dialog") );
-+
-+    box->addWidget( stack );
-+
-     stack->insertWidget( 1,m_pProgressBar );
- 
-     m_pLabel = new QLabel( QString(), this );
-     m_pLabel->setAlignment( Qt::AlignHCenter | Qt::AlignVCenter );
-     m_pLabel->installEventFilter( this );
-     m_pLabel->setMinimumWidth( w );
-+    m_pLabel->setMaximumHeight( maximumHeight );
-     stack->insertWidget( 2, m_pLabel );
- 
--#ifndef Q_OS_MAC
--    // Currently on OSX this causes the button to be cut-off
--    // It isn't necessary because on OSX the button's minimumSizeHint is small enough
-     m_pButton->setMaximumHeight( maximumHeight );
--#endif
-     setMinimumWidth( minimumSizeHint().width() );
- 
-     mode = None;
-@@ -178,6 +213,9 @@ void StatusbarProgressWidget::activateSingleItemMode()
+@@ -178,6 +218,10 @@ void StatusbarProgressWidget::activateSingleItemMode()
      m_pProgressBar->setMaximum( 100 );
      m_pProgressBar->setValue( mCurrentItem->progress() );
      m_pProgressBar->setTextVisible( true );
 +#ifdef Q_OS_OSX
++    MacDockProgressView::setRange( 0, 100 );
 +    MacDockProgressView::setProgress( mCurrentItem->progress() );
 +#endif
  }
  
  void StatusbarProgressWidget::slotShowItemDelayed()
-@@ -201,6 +239,9 @@ void StatusbarProgressWidget::slotProgressItemProgress( ProgressItem *item, unsi
+@@ -188,6 +232,10 @@ void StatusbarProgressWidget::slotShowItemDelayed()
+     } else if ( !noItems ) { // N items
+         m_pProgressBar->setMaximum( 0 );
+         m_pProgressBar->setTextVisible( false );
++#ifdef Q_OS_OSX
++        MacDockProgressView::setRange( 0, 0 );
++        MacDockProgressView::setProgress( 0 );
++#endif
+     }
+ 
+     if ( !noItems && mode == None ) {
+@@ -201,6 +249,9 @@ void StatusbarProgressWidget::slotProgressItemProgress( ProgressItem *item, unsi
      Q_ASSERT( item == mCurrentItem); // the only one we should be connected to
      Q_UNUSED( item );
      m_pProgressBar->setValue( value );
@@ -355,7 +334,7 @@ index 1a32ea8..e637e71 100644
  }
  
  void StatusbarProgressWidget::setMode() {
-@@ -212,6 +253,9 @@ void StatusbarProgressWidget::setMode() {
+@@ -212,6 +263,9 @@ void StatusbarProgressWidget::setMode() {
          // show the empty label in order to make the status bar look better
          stack->show();
          stack->setCurrentWidget( m_pLabel );
@@ -365,7 +344,7 @@ index 1a32ea8..e637e71 100644
          break;
  
      case Progress:
-@@ -220,6 +264,9 @@ void StatusbarProgressWidget::setMode() {
+@@ -220,6 +274,9 @@ void StatusbarProgressWidget::setMode() {
          if ( m_bShowButton ) {
              m_pButton->show();
          }
