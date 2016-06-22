@@ -1,0 +1,452 @@
+diff --git a/projectmanagers/cmake/cmakeimportjsonjob.cpp b/projectmanagers/cmake/cmakeimportjsonjob.cpp
+index f064647..623879c 100644
+--- a/projectmanagers/cmake/cmakeimportjsonjob.cpp
++++ b/projectmanagers/cmake/cmakeimportjsonjob.cpp
+@@ -86,6 +86,7 @@ CMakeJsonData importCommands(const Path& commandsFile)
+ 
+         CMakeFile ret;
+         ret.includes = result.paths;
++        ret.frameworkPaths = result.frameworkPaths;
+         ret.defines = result.defines;
+         // NOTE: we use the canonical file path to prevent issues with symlinks in the path
+         //       leading to lookup failures
+diff --git a/projectmanagers/cmake/cmakemanager.cpp b/projectmanagers/cmake/cmakemanager.cpp
+index 5c15e2f..c9a2ec4 100644
+--- a/projectmanagers/cmake/cmakemanager.cpp
++++ b/projectmanagers/cmake/cmakemanager.cpp
+@@ -124,6 +124,8 @@ CMakeManager::~CMakeManager()
+     parseLock()->unlock();
+ }
+ 
++// TODO? should there be an equivalent hasFrameworkDirectories() method, or should
++// this method return true when an item has a frameworkDir specification?
+ bool CMakeManager::hasIncludesOrDefines(ProjectBaseItem* item) const
+ {
+     return m_projects[item->project()].jsonData.files.contains(item->path());
+@@ -234,6 +236,11 @@ Path::List CMakeManager::includeDirectories(KDevelop::ProjectBaseItem *item) con
+     return fileInformation(item).includes;
+ }
+ 
++Path::List CMakeManager::frameworkDirectories(KDevelop::ProjectBaseItem *item) const
++{
++    return fileInformation(item).frameworkPaths;
++}
++
+ QHash<QString, QString> CMakeManager::defines(KDevelop::ProjectBaseItem *item ) const
+ {
+     return fileInformation(item).defines;
+diff --git a/projectmanagers/cmake/cmakemanager.h b/projectmanagers/cmake/cmakemanager.h
+index 3096b7d..c1c6cdb 100644
+--- a/projectmanagers/cmake/cmakemanager.h
++++ b/projectmanagers/cmake/cmakemanager.h
+@@ -89,6 +89,7 @@ public:
+     bool hasIncludesOrDefines(KDevelop::ProjectBaseItem*) const override;
+     KDevelop::Path buildDirectory(KDevelop::ProjectBaseItem*) const override;
+     KDevelop::Path::List includeDirectories(KDevelop::ProjectBaseItem *) const override;
++    KDevelop::Path::List frameworkDirectories(KDevelop::ProjectBaseItem *item) const override;
+     QHash<QString, QString> defines(KDevelop::ProjectBaseItem *) const override;
+ 
+     KDevelop::ProjectTargetItem* createTarget( const QString&, KDevelop::ProjectFolderItem* ) override { return 0; }
+diff --git a/projectmanagers/cmake/cmakeprojectdata.h b/projectmanagers/cmake/cmakeprojectdata.h
+index 60e8773..754456d 100644
+--- a/projectmanagers/cmake/cmakeprojectdata.h
++++ b/projectmanagers/cmake/cmakeprojectdata.h
+@@ -36,6 +36,7 @@
+ struct CMakeFile
+ {
+     KDevelop::Path::List includes;
++    KDevelop::Path::List frameworkPaths;
+     QHash<QString, QString> defines;
+ };
+ inline QDebug &operator<<(QDebug debug, const CMakeFile& file)
+diff --git a/projectmanagers/custom-buildsystem/custombuildsystemplugin.cpp b/projectmanagers/custom-buildsystem/custombuildsystemplugin.cpp
+index b04647e..bb2083b 100644
+--- a/projectmanagers/custom-buildsystem/custombuildsystemplugin.cpp
++++ b/projectmanagers/custom-buildsystem/custombuildsystemplugin.cpp
+@@ -144,6 +144,11 @@ Path::List CustomBuildSystem::includeDirectories( ProjectBaseItem* ) const
+     return {};
+ }
+ 
++Path::List CustomBuildSystem::frameworkDirectories( ProjectBaseItem* ) const
++{
++    return {};
++}
++
+ KJob* CustomBuildSystem::install( KDevelop::ProjectBaseItem* item, const QUrl &installPrefix )
+ {
+     auto job = new CustomBuildJob( this, item, CustomBuildSystemTool::Install );
+diff --git a/projectmanagers/custom-buildsystem/custombuildsystemplugin.h b/projectmanagers/custom-buildsystem/custombuildsystemplugin.h
+index 372b283..c5478c5 100644
+--- a/projectmanagers/custom-buildsystem/custombuildsystemplugin.h
++++ b/projectmanagers/custom-buildsystem/custombuildsystemplugin.h
+@@ -76,6 +76,7 @@ public:
+     KDevelop::ProjectTargetItem* createTarget( const QString& target, KDevelop::ProjectFolderItem* parent ) override;
+     QHash<QString, QString> defines( KDevelop::ProjectBaseItem* ) const override;
+     KDevelop::Path::List includeDirectories( KDevelop::ProjectBaseItem* ) const override;
++    KDevelop::Path::List frameworkDirectories( KDevelop::ProjectBaseItem* ) const override;
+     bool removeFilesFromTargets( const QList<KDevelop::ProjectFileItem*>& ) override;
+     bool removeTarget( KDevelop::ProjectTargetItem* target ) override;
+     QList<KDevelop::ProjectTargetItem*> targets( KDevelop::ProjectFolderItem* ) const override;
+diff --git a/projectmanagers/custommake/custommakemanager.cpp b/projectmanagers/custommake/custommakemanager.cpp
+index e2ce943..912749a 100644
+--- a/projectmanagers/custommake/custommakemanager.cpp
++++ b/projectmanagers/custommake/custommakemanager.cpp
+@@ -80,6 +80,24 @@ public:
+         return m_resolver->resolveIncludePath(path).paths;
+     }
+ 
++    Path::List frameworkPathsInBackground(const QString& path) const override
++    {
++        {
++            QReadLocker lock(&m_lock);
++
++            bool inProject = std::any_of(m_customMakeManager->m_projectPaths.constBegin(), m_customMakeManager->m_projectPaths.constEnd(), [&path](const QString& projectPath)
++            {
++                return path.startsWith(projectPath);
++            } );
++
++            if (!inProject) {
++                return {};
++            }
++        }
++
++        return m_resolver->resolveIncludePath(path).frameworkPaths;
++    }
++
+     IDefinesAndIncludesManager::Type type() const override
+     {
+         return IDefinesAndIncludesManager::ProjectSpecific;
+@@ -137,6 +155,11 @@ Path::List CustomMakeManager::includeDirectories(KDevelop::ProjectBaseItem*) con
+     return Path::List();
+ }
+ 
++Path::List CustomMakeManager::frameworkDirectories(KDevelop::ProjectBaseItem*) const
++{
++    return Path::List();
++}
++
+ QHash<QString,QString> CustomMakeManager::defines(KDevelop::ProjectBaseItem*) const
+ {
+     return QHash<QString,QString>();
+diff --git a/projectmanagers/custommake/custommakemanager.h b/projectmanagers/custommake/custommakemanager.h
+index 33c2997..3afcbf4 100644
+--- a/projectmanagers/custommake/custommakemanager.h
++++ b/projectmanagers/custommake/custommakemanager.h
+@@ -46,6 +46,11 @@ public:
+     KDevelop::Path::List includeDirectories(KDevelop::ProjectBaseItem*) const override;
+ 
+     /**
++     * Provide a list of framework directories.
++     */
++    KDevelop::Path::List frameworkDirectories(KDevelop::ProjectBaseItem*) const override;
++
++    /**
+      * Provide a list of files that contain the preprocessor defines for the
+      * project
+      */
+diff --git a/projectmanagers/custommake/makefileresolver/makefileresolver.cpp b/projectmanagers/custommake/makefileresolver/makefileresolver.cpp
+index ab069bb..35141c4 100644
+--- a/projectmanagers/custommake/makefileresolver/makefileresolver.cpp
++++ b/projectmanagers/custommake/makefileresolver/makefileresolver.cpp
+@@ -66,6 +66,7 @@ namespace {
+     { }
+     ModificationRevisionSet modificationTime;
+     Path::List paths;
++    Path::List frameworkPaths;
+     QHash<QString, QString> defines;
+     QString errorMessage, longErrorMessage;
+     bool failed;
+@@ -254,6 +255,10 @@ void PathResolutionResult::mergeWith(const PathResolutionResult& rhs)
+         if(!paths.contains(path))
+             paths.append(path);
+     }
++    foreach(const Path& path, rhs.frameworkPaths) {
++        if(!frameworkPaths.contains(path))
++            frameworkPaths.append(path);
++    }
+     includePathDependency += rhs.includePathDependency;
+     defines.unite(rhs.defines);
+ }
+@@ -397,7 +402,7 @@ PathResolutionResult MakeFileResolver::resolveIncludePath(const QString& file, c
+       }
+     }
+ 
+-    if (!resultOnFail.errorMessage.isEmpty() || !resultOnFail.paths.isEmpty())
++    if (!resultOnFail.errorMessage.isEmpty() || !resultOnFail.paths.isEmpty() || !resultOnFail.frameworkPaths.isEmpty())
+       return resultOnFail;
+     else
+       return PathResolutionResult(false, i18n("Makefile is missing in folder \"%1\"", dir.absolutePath()), i18n("Problem while trying to resolve include paths for %1", file));
+@@ -406,6 +411,7 @@ PathResolutionResult MakeFileResolver::resolveIncludePath(const QString& file, c
+   PushValue<bool> e(m_isResolving, true);
+ 
+   Path::List cachedPaths; //If the call doesn't succeed, use the cached not up-to-date version
++  Path::List cachedFWDirs;
+   QHash<QString, QString> cachedDefines;
+   ModificationRevisionSet dependency;
+   dependency.addModificationRevision(IndexedString(makeFile.filePath()), ModificationRevision::revisionForFile(IndexedString(makeFile.filePath())));
+@@ -416,12 +422,14 @@ PathResolutionResult MakeFileResolver::resolveIncludePath(const QString& file, c
+     it = s_cache.find(dir.path());
+     if (it != s_cache.end()) {
+       cachedPaths = it->paths;
++      cachedFWDirs = it->frameworkPaths;
+       cachedDefines = it->defines;
+       if (dependency == it->modificationTime) {
+         if (!it->failed) {
+           //We have a valid cached result
+           PathResolutionResult ret(true);
+           ret.paths = it->paths;
++          ret.frameworkPaths = it->frameworkPaths;
+           ret.defines = it->defines;
+           ret.mergeWith(resultOnFail);
+           return ret;
+@@ -432,6 +440,7 @@ PathResolutionResult MakeFileResolver::resolveIncludePath(const QString& file, c
+             ret.errorMessage = i18n("Cached: %1", it->errorMessage);
+             ret.longErrorMessage = it->longErrorMessage;
+             ret.paths = it->paths;
++            ret.frameworkPaths = it->frameworkPaths;
+             ret.defines = it->defines;
+             ret.mergeWith(resultOnFail);
+             return ret;
+@@ -454,7 +463,7 @@ PathResolutionResult MakeFileResolver::resolveIncludePath(const QString& file, c
+ 
+   int dot;
+   if ((dot = file.lastIndexOf('.')) == -1) {
+-    if (!resultOnFail.errorMessage.isEmpty() || !resultOnFail.paths.isEmpty())
++    if (!resultOnFail.errorMessage.isEmpty() || !resultOnFail.paths.isEmpty() || !resultOnFail.frameworkPaths.isEmpty())
+       return resultOnFail;
+     else
+       return PathResolutionResult(false, i18n("Filename %1 seems to be malformed", file));
+@@ -491,6 +500,10 @@ PathResolutionResult MakeFileResolver::resolveIncludePath(const QString& file, c
+       res.paths = cachedPaths; //We failed, maybe there is an old cached result, use that.
+       res.defines = cachedDefines;
+   }
++  // a build command could contain only one or more -iframework or -F specifications.
++  if (res.frameworkPaths.isEmpty()) {
++      res.frameworkPaths = cachedFWDirs;
++  }
+ 
+   {
+     QMutexLocker l(&s_cacheMutex);
+@@ -499,6 +512,7 @@ PathResolutionResult MakeFileResolver::resolveIncludePath(const QString& file, c
+ 
+     CacheEntry& ce(*it);
+     ce.paths = res.paths;
++    ce.frameworkPaths = res.frameworkPaths;
+     ce.modificationTime = dependency;
+ 
+     if (!res) {
+@@ -514,7 +528,7 @@ PathResolutionResult MakeFileResolver::resolveIncludePath(const QString& file, c
+   }
+ 
+ 
+-  if (!res && (!resultOnFail.errorMessage.isEmpty() || !resultOnFail.paths.isEmpty()))
++  if (!res && (!resultOnFail.errorMessage.isEmpty() || !resultOnFail.paths.isEmpty() || !resultOnFail.frameworkPaths.isEmpty()))
+     return resultOnFail;
+ 
+   return res;
+@@ -523,7 +537,7 @@ PathResolutionResult MakeFileResolver::resolveIncludePath(const QString& file, c
+ static QRegularExpression includeRegularExpression()
+ {
+   static const QRegularExpression expression(
+-    "\\s(?:--include-dir=|-I\\s*|-isystem\\s+)("
++    "\\s(?:--include-dir=|-I\\s*|-isystem\\s+|-iframework\\s+|-F\\s*)("
+     "\\'.*\\'|\\\".*\\\"" //Matches "hello", 'hello', 'hello"hallo"', etc.
+     "|"
+     "((?:\\\\.)?([\\S^\\\\]?))+" //Matches /usr/I\ am\ a\ strange\ path/include
+@@ -639,7 +653,7 @@ PathResolutionResult MakeFileResolver::resolveIncludePathInternal(const QString&
+   ///STEP 2: Search the output for include-paths
+ 
+   PathResolutionResult ret = processOutput(fullOutput, workingDirectory);
+-  if (ret.paths.isEmpty())
++  if (ret.paths.isEmpty() && ret.frameworkPaths.isEmpty())
+     return PathResolutionResult(false, i18n("Could not extract include paths from make output"),
+                                 i18n("Folder: \"%1\"  Command: \"%2\"  Output: \"%3\"", workingDirectory,
+                                      source.getCommand(file, workingDirectory, makeParameters), fullOutput));
+@@ -683,18 +697,25 @@ PathResolutionResult MakeFileResolver::processOutput(const QString& fullOutput,
+     auto it = includeRx.globalMatch(fullOutput);
+     while (it.hasNext()) {
+       const auto match = it.next();
+-      QString path = match.captured(1);
++      QString path(match.captured(1));
+       if (path.startsWith('"') || (path.startsWith('\'') && path.length() > 2)) {
+-        //probable a quoted path
+-        if (path.endsWith(path.left(1))) {
+-          //Quotation is ok, remove it
+-          path = path.mid(1, path.length() - 2);
+-        }
++          //probable a quoted path
++          if (path.endsWith(path.left(1))) {
++            //Quotation is ok, remove it
++            path = path.mid(1, path.length() - 2);
++          }
+       }
+       if (QDir::isRelativePath(path))
+         path = workingDirectory + '/' + path;
+-
+-      ret.paths << internPath(path);
++      const auto& internedPath = internPath(path);
++      const auto& type = match.captured(0).trimmed();
++      const auto isFramework = type.startsWith(QLatin1String("-iframework"))
++        || type.startsWith(QLatin1String("-F"));
++      if (isFramework) {
++        ret.frameworkPaths << internedPath;
++      } else {
++        ret.paths << internedPath;
++      }
+     }
+   }
+ 
+diff --git a/projectmanagers/custommake/makefileresolver/makefileresolver.h b/projectmanagers/custommake/makefileresolver/makefileresolver.h
+index 22f9dba..e0b4d60 100644
+--- a/projectmanagers/custommake/makefileresolver/makefileresolver.h
++++ b/projectmanagers/custommake/makefileresolver/makefileresolver.h
+@@ -40,6 +40,10 @@ struct PathResolutionResult
+   KDevelop::ModificationRevisionSet includePathDependency;
+ 
+   KDevelop::Path::List paths;
++  // the list of framework directories specified with explicit -iframework and/or -F arguments.
++  // Mainly for OS X, but available everywhere to avoid #ifdefs and
++  // because clang is an out-of-the-box cross-compiler.
++  KDevelop::Path::List frameworkPaths;
+   QHash<QString, QString> defines;
+ 
+   void mergeWith(const PathResolutionResult& rhs);
+diff --git a/projectmanagers/custommake/makefileresolver/tests/test_custommake.cpp b/projectmanagers/custommake/makefileresolver/tests/test_custommake.cpp
+index 368e83e..04413ef 100644
+--- a/projectmanagers/custommake/makefileresolver/tests/test_custommake.cpp
++++ b/projectmanagers/custommake/makefileresolver/tests/test_custommake.cpp
+@@ -81,6 +81,30 @@ void TestCustomMake::testIncludeDirectories()
+     QVERIFY(result.paths.contains(Path("/testFile4")));
+ }
+ 
++void TestCustomMake::testFrameworkDirectories()
++{
++    QTemporaryDir tempDir;
++    int expectedPaths = 2;
++    {
++        QFile file( tempDir.path() + "/Makefile" );
++        createFile( file );
++        QFile testfile( tempDir.path() + "/testfile.cpp" );
++        createFile(testfile);
++        QTextStream stream1( &file );
++        stream1 << "testfile.o:\n\t clang++ testfile.cpp -iframework /System/Library/Frameworks -F/Library/Frameworks -o testfile";
++    }
++
++    MakeFileResolver mf;
++    auto result = mf.resolveIncludePath(tempDir.path() + "/testfile.cpp");
++    if (!result.success) {
++      qDebug() << result.errorMessage << result.longErrorMessage;
++      QFAIL("Failed to resolve include path.");
++    }
++    QCOMPARE(result.frameworkPaths.size(), expectedPaths);
++    QVERIFY(result.frameworkPaths.contains(Path("/System/Library/Frameworks")));
++    QVERIFY(result.frameworkPaths.contains(Path("/Library/Frameworks")));
++}
++
+ void TestCustomMake::testDefines()
+ {
+     MakeFileResolver mf;
+diff --git a/projectmanagers/custommake/makefileresolver/tests/test_custommake.h b/projectmanagers/custommake/makefileresolver/tests/test_custommake.h
+index 3ad0f36..113523a 100644
+--- a/projectmanagers/custommake/makefileresolver/tests/test_custommake.h
++++ b/projectmanagers/custommake/makefileresolver/tests/test_custommake.h
+@@ -32,6 +32,7 @@ private slots:
+     void initTestCase();
+     void cleanupTestCase();
+     void testIncludeDirectories();
++    void testFrameworkDirectories();
+     void testDefines();
+ };
+ 
+diff --git a/projectmanagers/qmake/qmakemanager.cpp b/projectmanagers/qmake/qmakemanager.cpp
+index 123b474..9f313bd 100644
+--- a/projectmanagers/qmake/qmakemanager.cpp
++++ b/projectmanagers/qmake/qmakemanager.cpp
+@@ -430,6 +430,12 @@ Path::List QMakeProjectManager::includeDirectories(ProjectBaseItem* item) const
+     return list;
+ }
+ 
++// TODO: investigate QMakeProjectFile::frameworkDirectories()
++Path::List QMakeProjectManager::frameworkDirectories(ProjectBaseItem* item) const
++{
++    return {};
++}
++
+ QHash<QString, QString> QMakeProjectManager::defines(ProjectBaseItem* item) const
+ {
+     QHash<QString, QString> d;
+diff --git a/projectmanagers/qmake/qmakemanager.h b/projectmanagers/qmake/qmakemanager.h
+index e5e3266..69473ff 100644
+--- a/projectmanagers/qmake/qmakemanager.h
++++ b/projectmanagers/qmake/qmakemanager.h
+@@ -56,6 +56,7 @@ public:
+     KDevelop::IProjectBuilder*  builder() const override;
+     KDevelop::Path buildDirectory(KDevelop::ProjectBaseItem*) const override;
+     KDevelop::Path::List includeDirectories(KDevelop::ProjectBaseItem*) const override;
++    KDevelop::Path::List frameworkDirectories(KDevelop::ProjectBaseItem* item) const override;
+     QHash<QString,QString> defines(KDevelop::ProjectBaseItem*) const override;
+     bool hasIncludesOrDefines(KDevelop::ProjectBaseItem*) const override;
+ 
+diff --git a/languages/plugins/custom-definesandincludes/CMakeLists.txt b/languages/plugins/custom-definesandincludes/CMakeLists.txt
+index 5a6c5b7..4f5cb5d 100644
+--- a/languages/plugins/custom-definesandincludes/CMakeLists.txt
++++ b/languages/plugins/custom-definesandincludes/CMakeLists.txt
+@@ -36,6 +36,7 @@ target_link_libraries( kdevdefinesandincludesmanager LINK_PRIVATE
+ option(BUILD_kdev_includepathsconverter "Build utility to modify include paths of a project from command line." ON)
+ if(BUILD_kdev_includepathsconverter)
+     add_executable(kdev_includepathsconverter includepathsconverter.cpp)
++    ecm_mark_nongui_executable(kdev_includepathsconverter)
+     target_link_libraries(kdev_includepathsconverter LINK_PRIVATE
+         KDev::Project
+         kdevcompilerprovider
+diff --git a/languages/plugins/custom-definesandincludes/compilerprovider/compilerprovider.cpp b/languages/plugins/custom-definesandincludes/compilerprovider/compilerprovider.cpp
+index 24e532a..a172c8e 100644
+--- a/languages/plugins/custom-definesandincludes/compilerprovider/compilerprovider.cpp
++++ b/languages/plugins/custom-definesandincludes/compilerprovider/compilerprovider.cpp
+@@ -152,6 +152,12 @@ Path::List CompilerProvider::includes( ProjectBaseItem* item ) const
+     return config.compiler->includes(languageType == Utils::C ? config.parserArguments.cArguments : config.parserArguments.cppArguments);
+ }
+ 
++// TODO : no idea if and what to return here
++Path::List CompilerProvider::frameworkPaths( ProjectBaseItem* item ) const
++{
++    return {};
++}
++
+ IDefinesAndIncludesManager::Type CompilerProvider::type() const
+ {
+     return IDefinesAndIncludesManager::CompilerSpecific;
+diff --git a/languages/plugins/custom-definesandincludes/compilerprovider/compilerprovider.h b/languages/plugins/custom-definesandincludes/compilerprovider/compilerprovider.h
+index 7a5184f..f1331fa 100644
+--- a/languages/plugins/custom-definesandincludes/compilerprovider/compilerprovider.h
++++ b/languages/plugins/custom-definesandincludes/compilerprovider/compilerprovider.h
+@@ -40,6 +40,7 @@ public:
+ 
+     KDevelop::Defines defines( KDevelop::ProjectBaseItem* item ) const override;
+     KDevelop::Path::List includes( KDevelop::ProjectBaseItem* item ) const override;
++    KDevelop::Path::List frameworkPaths( KDevelop::ProjectBaseItem* item ) const override;
+     KDevelop::IDefinesAndIncludesManager::Type type() const override;
+ 
+     /// @return current compiler for the @p item
+diff --git a/languages/plugins/custom-definesandincludes/idefinesandincludesmanager.h b/languages/plugins/custom-definesandincludes/idefinesandincludesmanager.h
+index 5da71f2..34cb967 100644
+--- a/languages/plugins/custom-definesandincludes/idefinesandincludesmanager.h
++++ b/languages/plugins/custom-definesandincludes/idefinesandincludesmanager.h
+@@ -72,6 +72,8 @@ public:
+ 
+         virtual Path::List includes( ProjectBaseItem* item ) const = 0;
+ 
++        virtual Path::List frameworkPaths( ProjectBaseItem* item ) const = 0;
++
+         /// @return the type of i/d this provider provides
+         virtual Type type() const = 0;
+     };
+@@ -90,6 +92,8 @@ public:
+ 
+         virtual Path::List includesInBackground( const QString& path ) const = 0;
+ 
++        virtual Path::List frameworkPathsInBackground( const QString& path ) const = 0;
++
+         virtual Defines definesInBackground( const QString& path ) const = 0;
+ 
+         /// @return the type of i/d this provider provides
