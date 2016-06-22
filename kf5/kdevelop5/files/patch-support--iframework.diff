@@ -1,5 +1,5 @@
 diff --git projectmanagers/custommake/makefileresolver/makefileresolver.cpp projectmanagers/custommake/makefileresolver/makefileresolver.cpp
-index ab069bb..20fd26e 100644
+index ab069bb..e7b208a 100644
 --- projectmanagers/custommake/makefileresolver/makefileresolver.cpp
 +++ projectmanagers/custommake/makefileresolver/makefileresolver.cpp
 @@ -66,6 +66,7 @@ namespace {
@@ -116,7 +116,7 @@ index ab069bb..20fd26e 100644
      return PathResolutionResult(false, i18n("Could not extract include paths from make output"),
                                  i18n("Folder: \"%1\"  Command: \"%2\"  Output: \"%3\"", workingDirectory,
                                       source.getCommand(file, workingDirectory, makeParameters), fullOutput));
-@@ -683,18 +697,36 @@ PathResolutionResult MakeFileResolver::processOutput(const QString& fullOutput,
+@@ -683,18 +697,23 @@ PathResolutionResult MakeFileResolver::processOutput(const QString& fullOutput,
      auto it = includeRx.globalMatch(fullOutput);
      while (it.hasNext()) {
        const auto match = it.next();
@@ -126,33 +126,21 @@ index ab069bb..20fd26e 100644
 -        if (path.endsWith(path.left(1))) {
 -          //Quotation is ok, remove it
 -          path = path.mid(1, path.length() - 2);
-+      QStringList pathList;
 +      if (match.captured(0).contains(QLatin1String("-iframework ")) || match.captured(0).contains(QLatin1String("-F "))) {
 +        // add the directory regardless of whether it exists
 +        ret.frameworkDirs << internPath(match.captured(1));
-+        QDir fwDir(match.captured(1));
-+        QStringList fwFilter(QString::fromUtf8("*.framework"));
-+        QStringList frameworkList(fwDir.entryList(fwFilter));
-+        foreach (const auto& p, frameworkList) {
-+          QString fwHeaderDir = p + QString::fromUtf8("/Headers");
-+          if (fwDir.exists(fwHeaderDir)) {
-+            pathList << fwDir.filePath(fwHeaderDir);
-+          }
-         }
 +      } else {
-+        pathList << match.captured(1);
-       }
--      if (QDir::isRelativePath(path))
--        path = workingDirectory + '/' + path;
-+      foreach (const auto& p, pathList) {
-+        QString path(p);
++        QString path(match.captured(1));
 +        if (path.startsWith('"') || (path.startsWith('\'') && path.length() > 2)) {
 +            //probable a quoted path
 +            if (path.endsWith(path.left(1))) {
 +            //Quotation is ok, remove it
 +            path = path.mid(1, path.length() - 2);
 +            }
-+        }
+         }
+-      }
+-      if (QDir::isRelativePath(path))
+-        path = workingDirectory + '/' + path;
 +        if (QDir::isRelativePath(path))
 +            path = workingDirectory + '/' + path;
  
@@ -177,68 +165,49 @@ index 22f9dba..d043624 100644
  
    void mergeWith(const PathResolutionResult& rhs);
 diff --git projectmanagers/custommake/makefileresolver/tests/test_custommake.cpp projectmanagers/custommake/makefileresolver/tests/test_custommake.cpp
-index 368e83e..9de4cab 100644
+index 368e83e..189d588 100644
 --- projectmanagers/custommake/makefileresolver/tests/test_custommake.cpp
 +++ projectmanagers/custommake/makefileresolver/tests/test_custommake.cpp
-@@ -22,9 +22,12 @@
- #include "test_custommake.h"
- 
- #include <QFile>
-+#include <QDir>
- #include <QTextStream>
- #include <QDebug>
- #include <QTemporaryDir>
-+#include <QString>
-+#include <QStringList>
- 
- #include <tests/autotestshell.h>
- #include <tests/testcore.h>
-@@ -59,13 +62,18 @@ void TestCustomMake::cleanupTestCase()
- void TestCustomMake::testIncludeDirectories()
- {
-     QTemporaryDir tempDir;
-+    int expectedPaths = 4;
-     {
-         QFile file( tempDir.path() + "/Makefile" );
-         createFile( file );
-         QFile testfile( tempDir.path() + "/testfile.cpp" );
-         createFile(testfile);
-         QTextStream stream1( &file );
--        stream1 << "testfile.o:\n\t g++ testfile.cpp -I/testFile1 -I /testFile2 -isystem /testFile3 --include-dir=/testFile4 -o testfile";
-+        stream1 << "testfile.o:\n\t g++ testfile.cpp -I/testFile1 -I /testFile2 -isystem /testFile3 -iframework /System/Library/Frameworks -F /Library/Frameworks --include-dir=/testFile4 -o testfile";
-+#ifdef Q_OS_OSX
-+        // on OS X, the 2 framework directories exist, elsewhere most likely not.
-+        expectedPaths += 2;
-+#endif
-     }
- 
-     MakeFileResolver mf;
-@@ -74,11 +82,27 @@ void TestCustomMake::testIncludeDirectories()
-       qDebug() << result.errorMessage << result.longErrorMessage;
-       QFAIL("Failed to resolve include path.");
-     }
--    QCOMPARE(result.paths.size(), 4);
-+    QVERIFY(result.paths.size() >= expectedPaths);
-     QVERIFY(result.paths.contains(Path("/testFile1")));
-     QVERIFY(result.paths.contains(Path("/testFile2")));
-     QVERIFY(result.paths.contains(Path("/testFile3")));
+@@ -81,6 +81,30 @@ void TestCustomMake::testIncludeDirectories()
      QVERIFY(result.paths.contains(Path("/testFile4")));
-+#ifdef Q_OS_OSX
-+    // we should at least have found the CoreFoundation framework
-+    QVERIFY(result.paths.contains(Path("/System/Library/Frameworks/CoreFoundation.framework/Headers")));
-+    qWarning() << "paths:" << result.paths.size();
-+    QStringList pathList, fwDirs;
-+    foreach (const auto &p, result.paths) {
-+        pathList << p.path();
-+    }
-+    foreach (const auto &p, result.frameworkDirs) {
-+        fwDirs << p.path();
-+    }
-+    qWarning() << "pathList:" << pathList;
-+    qWarning() << "fwDirs:" << fwDirs;
-+#endif
-+    QVERIFY(result.frameworkDirs.contains(Path("/System/Library/Frameworks")));
-+    QVERIFY(result.frameworkDirs.contains(Path("/Library/Frameworks")));
  }
  
++void TestCustomMake::testFrameworkDirectories()
++{
++    QTemporaryDir tempDir;
++    int expectedPaths = 2;
++    {
++        QFile file( tempDir.path() + "/Makefile" );
++        createFile( file );
++        QFile testfile( tempDir.path() + "/testfile.cpp" );
++        createFile(testfile);
++        QTextStream stream1( &file );
++        stream1 << "testfile.o:\n\t clang++ testfile.cpp -iframework /System/Library/Frameworks -F /Library/Frameworks -o testfile";
++    }
++
++    MakeFileResolver mf;
++    auto result = mf.resolveIncludePath(tempDir.path() + "/testfile.cpp");
++    if (!result.success) {
++      qDebug() << result.errorMessage << result.longErrorMessage;
++      QFAIL("Failed to resolve include path.");
++    }
++    QCOMPARE(result.frameworkDirs.size(), expectedPaths);
++    QVERIFY(result.frameworkDirs.contains(Path("/System/Library/Frameworks")));
++    QVERIFY(result.frameworkDirs.contains(Path("/Library/Frameworks")));
++}
++
  void TestCustomMake::testDefines()
+ {
+     MakeFileResolver mf;
+diff --git projectmanagers/custommake/makefileresolver/tests/test_custommake.h projectmanagers/custommake/makefileresolver/tests/test_custommake.h
+index 3ad0f36..113523a 100644
+--- projectmanagers/custommake/makefileresolver/tests/test_custommake.h
++++ projectmanagers/custommake/makefileresolver/tests/test_custommake.h
+@@ -32,6 +32,7 @@ private slots:
+     void initTestCase();
+     void cleanupTestCase();
+     void testIncludeDirectories();
++    void testFrameworkDirectories();
+     void testDefines();
+ };
+ 
