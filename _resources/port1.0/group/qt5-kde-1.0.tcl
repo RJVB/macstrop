@@ -65,10 +65,12 @@ if {[file exists ${prefix}/libexec/qt5/plugins]
     }
 }
 
-if { ![exists universal_variant] || [option universal_variant] } {
-    PortGroup muniversal 1.0
-    #universal_archs_supported i386 x86_64
-}
+# if { ![exists universal_variant] || [option universal_variant] } {
+#     PortGroup muniversal 1.0
+#     #universal_archs_supported i386 x86_64
+# }
+# Ports that want to provide a universal variant need to use the muniversal PortGroup explicitly.
+universal_variant no
 
 # check for +debug variant of this port, and make sure Qt was
 # installed with +debug as well; if not, error out.
