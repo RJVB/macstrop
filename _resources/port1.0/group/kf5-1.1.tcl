@@ -273,11 +273,15 @@ if {![variant_isset docs]} {
 platform darwin {
     if {![variant_isset nativeQSP]} {
         post-destroot {
-            ui_msg "--->  Checking ${subport} for QSP XDG mode ..."
-            if {[catch {system "fgrep 'DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=true' ${build.dir}/CMakeCache.txt 2>&1"} result context]} {
-                ui_msg "QSP XDG mode  check failed: ${result}, ${context}"
+            if {[file exists ${build.dir}/CMakeCache.txt] || [file exists ${build.dir}/Makefile]} {
+                ui_msg "--->  Checking ${subport} for QSP XDG mode ..."
+                if {[catch {system "fgrep 'DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=true' -R ${build.dir} --include=CMake* --include=Makefile --include=*.make 2>&1"} result context]} {
+                    ui_msg "QSP XDG mode  check failed: ${result}, ${context}"
+                } else {
+                    ui_info "QSP XDG mode check: OK (${result})"
+                }
             } else {
-                ui_info "QSP XDG mode check: OK (${result})"
+                ui_msg "####  Cannot check ${subport} for QSP XDG mode (not a CMake project)."
             }
         }
     }
