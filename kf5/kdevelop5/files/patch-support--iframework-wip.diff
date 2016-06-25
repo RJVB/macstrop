@@ -19,7 +19,7 @@ index 5c15e2f..c9a2ec4 100644
  }
  
 +// TODO? should there be an equivalent hasFrameworkDirectories() method, or should
-+// this method return true when an item has a frameworkDir specification?
++// this method return true when an item has a frameworkDir specification? Works with either...
  bool CMakeManager::hasIncludesOrDefines(ProjectBaseItem* item) const
  {
      return m_projects[item->project()].jsonData.files.contains(item->path());
@@ -145,7 +145,7 @@ index 33c2997..3afcbf4 100644
       * project
       */
 diff --git a/projectmanagers/custommake/makefileresolver/makefileresolver.cpp b/projectmanagers/custommake/makefileresolver/makefileresolver.cpp
-index ab069bb..35141c4 100644
+index 97973d4..c926cfd 100644
 --- a/projectmanagers/custommake/makefileresolver/makefileresolver.cpp
 +++ b/projectmanagers/custommake/makefileresolver/makefileresolver.cpp
 @@ -66,6 +66,7 @@ namespace {
@@ -249,7 +249,7 @@ index ab069bb..35141c4 100644
  {
    static const QRegularExpression expression(
 -    "\\s(?:--include-dir=|-I\\s*|-isystem\\s+)("
-+    "\\s(?:--include-dir=|-I\\s*|-isystem\\s+|-iframework\\s+|-F\\s*)("
++    "\\s(--include-dir=|-I\\s*|-isystem\\s+|-iframework\\s+|-F\\s*)("
      "\\'.*\\'|\\\".*\\\"" //Matches "hello", 'hello', 'hello"hallo"', etc.
      "|"
      "((?:\\\\.)?([\\S^\\\\]?))+" //Matches /usr/I\ am\ a\ strange\ path/include
@@ -267,7 +267,7 @@ index ab069bb..35141c4 100644
      while (it.hasNext()) {
        const auto match = it.next();
 -      QString path = match.captured(1);
-+      QString path(match.captured(1));
++      QString path(match.captured(2));
        if (path.startsWith('"') || (path.startsWith('\'') && path.length() > 2)) {
 -        //probable a quoted path
 -        if (path.endsWith(path.left(1))) {
@@ -285,7 +285,7 @@ index ab069bb..35141c4 100644
 -
 -      ret.paths << internPath(path);
 +      const auto& internedPath = internPath(path);
-+      const auto& type = match.captured(0).trimmed();
++      const auto& type = match.captured(1);
 +      const auto isFramework = type.startsWith(QLatin1String("-iframework"))
 +        || type.startsWith(QLatin1String("-F"));
 +      if (isFramework) {
@@ -297,7 +297,7 @@ index ab069bb..35141c4 100644
    }
  
 diff --git a/projectmanagers/custommake/makefileresolver/makefileresolver.h b/projectmanagers/custommake/makefileresolver/makefileresolver.h
-index 22f9dba..e0b4d60 100644
+index debe977..d030efb 100644
 --- a/projectmanagers/custommake/makefileresolver/makefileresolver.h
 +++ b/projectmanagers/custommake/makefileresolver/makefileresolver.h
 @@ -40,6 +40,10 @@ struct PathResolutionResult
@@ -387,6 +387,189 @@ index e5e3266..69473ff 100644
      QHash<QString,QString> defines(KDevelop::ProjectBaseItem*) const override;
      bool hasIncludesOrDefines(KDevelop::ProjectBaseItem*) const override;
  
+diff --git a/languages/clang/clangparsejob.cpp b/languages/clang/clangparsejob.cpp
+index 8375eb5..d849117 100644
+--- a/languages/clang/clangparsejob.cpp
++++ b/languages/clang/clangparsejob.cpp
+@@ -165,10 +165,12 @@ ClangParseJob::ClangParseJob(const IndexedString& url, ILanguageSupport* languag
+     bool hasBuildSystemInfo;
+     if (auto file = findProjectFileItem(tuUrl, &hasBuildSystemInfo)) {
+         m_environment.addIncludes(IDefinesAndIncludesManager::manager()->includes(file));
++        m_environment.addFrameworkPaths(IDefinesAndIncludesManager::manager()->frameworkPaths(file));
+         m_environment.addDefines(IDefinesAndIncludesManager::manager()->defines(file));
+         m_environment.setParserSettings(ClangSettingsManager::self()->parserSettings(file));
+     } else {
+         m_environment.addIncludes(IDefinesAndIncludesManager::manager()->includes(tuUrl.str()));
++        m_environment.addFrameworkPaths(IDefinesAndIncludesManager::manager()->frameworkPaths(tuUrl.str()));
+         m_environment.addDefines(IDefinesAndIncludesManager::manager()->defines(tuUrl.str()));
+         m_environment.setParserSettings(ClangSettingsManager::self()->parserSettings(tuUrl.str()));
+     }
+@@ -230,6 +232,7 @@ void ClangParseJob::run(ThreadWeaver::JobPointer /*self*/, ThreadWeaver::Thread*
+         }
+ 
+         m_environment.addIncludes(IDefinesAndIncludesManager::manager()->includesInBackground(tuUrlStr));
++        m_environment.addFrameworkPaths(IDefinesAndIncludesManager::manager()->frameworkPathsInBackground(tuUrlStr));
+         m_environment.addDefines(IDefinesAndIncludesManager::manager()->definesInBackground(tuUrlStr));
+         m_environment.setPchInclude(userDefinedPchIncludeForFile(tuUrlStr));
+     }
+diff --git a/languages/clang/duchain/clangparsingenvironment.cpp b/languages/clang/duchain/clangparsingenvironment.cpp
+index b515037..7c7e2ca 100644
+--- a/languages/clang/duchain/clangparsingenvironment.cpp
++++ b/languages/clang/duchain/clangparsingenvironment.cpp
+@@ -23,6 +23,15 @@
+ 
+ using namespace KDevelop;
+ 
++#ifdef Q_OS_OSX
++ClangParsingEnvironment::ClangParsingEnvironment()
++{
++    m_frameworkPaths.clear();
++    m_frameworkPaths += Path(QString::fromUtf8("/Library/Frameworks"));
++    m_frameworkPaths += Path(QString::fromUtf8("/System/Library/Frameworks"));
++}
++#endif
++
+ int ClangParsingEnvironment::type() const
+ {
+     return CppParsingEnvironment;
+@@ -43,6 +52,11 @@ void ClangParsingEnvironment::addIncludes(const Path::List& includes)
+     m_includes += includes;
+ }
+ 
++void ClangParsingEnvironment::addFrameworkPaths(const KDevelop::Path::List& frameworkPaths)
++{
++    m_frameworkPaths += frameworkPaths;
++}
++
+ ClangParsingEnvironment::IncludePaths ClangParsingEnvironment::includes() const
+ {
+     IncludePaths ret;
+@@ -65,6 +79,28 @@ ClangParsingEnvironment::IncludePaths ClangParsingEnvironment::includes() const
+     return ret;
+ }
+ 
++ClangParsingEnvironment::FrameworkPaths ClangParsingEnvironment::frameworkPaths() const
++{
++    FrameworkPaths ret;
++    ret.project.reserve(m_frameworkPaths.size());
++    ret.system.reserve(m_frameworkPaths.size());
++    foreach (const auto& path, m_frameworkPaths) {
++        bool inProject = false;
++        foreach (const auto& project, m_projectPaths) {
++            if (project.isParentOf(path) || project == path) {
++                inProject = true;
++                break;
++            }
++        }
++        if (inProject) {
++            ret.project.append(path);
++        } else {
++            ret.system.append(path);
++        }
++    }
++    return ret;
++}
++
+ void ClangParsingEnvironment::addDefines(const QHash<QString, QString>& defines)
+ {
+     for (auto it = defines.constBegin(); it != defines.constEnd(); ++it) {
+diff --git a/languages/clang/duchain/clangparsingenvironment.h b/languages/clang/duchain/clangparsingenvironment.h
+index c689132..410df31 100644
+--- a/languages/clang/duchain/clangparsingenvironment.h
++++ b/languages/clang/duchain/clangparsingenvironment.h
+@@ -32,6 +32,9 @@
+ class KDEVCLANGPRIVATE_EXPORT ClangParsingEnvironment : public KDevelop::ParsingEnvironment
+ {
+ public:
++#ifdef Q_OS_OSX
++    ClangParsingEnvironment();
++#endif
+     virtual ~ClangParsingEnvironment() = default;
+     virtual int type() const override;
+ 
+@@ -49,6 +52,11 @@ public:
+      */
+     void addIncludes(const KDevelop::Path::List& includes);
+ 
++    /**
++     * Add the given list of @p framework-directories to this environment.
++     */
++    void addFrameworkPaths(const KDevelop::Path::List& frameworkPaths);
++
+     struct IncludePaths
+     {
+         /// This list contains all include paths outside the known projects paths.
+@@ -61,6 +69,18 @@ public:
+      */
+     IncludePaths includes() const;
+ 
++    struct FrameworkPaths
++    {
++        /// This list contains all framework directories outside the known projects paths.
++        KDevelop::Path::List system;
++        /// This list contains all framework directories inside the known projects paths.
++        KDevelop::Path::List project;
++    };
++    /**
++     * Returns the list of framework directories, split into a list of system paths and project paths.
++     */
++    FrameworkPaths frameworkPaths() const;
++
+     void addDefines(const QHash<QString, QString>& defines);
+     QMap<QString, QString> defines() const;
+ 
+@@ -101,6 +121,7 @@ public:
+ private:
+     KDevelop::Path::List m_projectPaths;
+     KDevelop::Path::List m_includes;
++    KDevelop::Path::List m_frameworkPaths;
+     // NOTE: As elements in QHash stored in an unordered sequence, we're using QMap instead
+     QMap<QString, QString> m_defines;
+     KDevelop::Path m_pchInclude;
+diff --git a/languages/clang/duchain/parsesession.cpp b/languages/clang/duchain/parsesession.cpp
+index aae0661..669359b 100644
+--- a/languages/clang/duchain/parsesession.cpp
++++ b/languages/clang/duchain/parsesession.cpp
+@@ -118,6 +119,28 @@ void addIncludes(QVector<const char*>* args, QVector<QByteArray>* otherArgs,
+     }
+ }
+ 
++void addFrameworkPaths(QVector<const char*>* args, QVector<QByteArray>* otherArgs,
++                 const Path::List& frameworkPaths, const char* cliSwitch)
++{
++    foreach (const Path& url, frameworkPaths) {
++        if (url.isEmpty()) {
++            continue;
++        }
++
++        QFileInfo info(url.toLocalFile());
++        QByteArray path = url.toLocalFile().toUtf8();
++
++        if (info.isDir()) {
++            otherArgs->append(cliSwitch);
++            otherArgs->append(path);
++            args->append(cliSwitch);
++            args->append(path.constData());
++        } else {
++            qWarning() << "supposed framework directory is not a directory:" << url.pathOrUrl();
++        }
++    }
++}
++
+ QVector<CXUnsavedFile> toClangApi(const QVector<UnsavedFile>& unsavedFiles)
+ {
+     QVector<CXUnsavedFile> unsaved;
+@@ -220,6 +243,10 @@ ParseSessionData::ParseSessionData(const QVector<UnsavedFile>& unsavedFiles, Cla
+     addIncludes(&clangArguments, &smartArgs, includes.system, "-isystem");
+     addIncludes(&clangArguments, &smartArgs, includes.project, "-I");
+ 
++    const auto& frameworkPaths = environment.frameworkPaths();
++    addFrameworkPaths(&clangArguments, &smartArgs, frameworkPaths.system, "-iframework");
++    addFrameworkPaths(&clangArguments, &smartArgs, frameworkPaths.project, "-F");
++
+     smartArgs << writeDefinesFile(environment.defines());
+     clangArguments << "-imacros" << smartArgs.last().constData();
+ 
 diff --git a/languages/plugins/custom-definesandincludes/CMakeLists.txt b/languages/plugins/custom-definesandincludes/CMakeLists.txt
 index 5a6c5b7..4f5cb5d 100644
 --- a/languages/plugins/custom-definesandincludes/CMakeLists.txt
@@ -428,8 +611,105 @@ index 7a5184f..f1331fa 100644
      KDevelop::IDefinesAndIncludesManager::Type type() const override;
  
      /// @return current compiler for the @p item
+diff --git a/languages/plugins/custom-definesandincludes/definesandincludesmanager.cpp b/languages/plugins/custom-definesandincludes/definesandincludesmanager.cpp
+index ebceb4d..047f3aa 100644
+--- a/languages/plugins/custom-definesandincludes/definesandincludesmanager.cpp
++++ b/languages/plugins/custom-definesandincludes/definesandincludesmanager.cpp
+@@ -184,6 +184,39 @@ Path::List DefinesAndIncludesManager::includes( ProjectBaseItem* item, Type type
+     return includes;
+ }
+ 
++Path::List DefinesAndIncludesManager::frameworkPaths( ProjectBaseItem* item, Type type ) const
++{
++    Q_ASSERT(QThread::currentThread() == qApp->thread());
++
++    if (!item) {
++        return m_settings->provider()->frameworkPaths(nullptr);
++    }
++
++    Path::List frameworkDirectories;
++
++    // TODO?
++//     if (type & UserDefined) {
++//         auto cfg = item->project()->projectConfiguration().data();
++// 
++//         frameworkDirectories += KDevelop::toPathList(findConfigForItem(m_settings->readPaths(cfg), item).frameworkDirectories);
++//     }
++
++    if ( type & ProjectSpecific ) {
++        auto buildManager = item->project()->buildSystemManager();
++        if ( buildManager ) {
++            frameworkDirectories += buildManager->frameworkDirectories(item);
++        }
++    }
++
++    for (auto provider : m_providers) {
++        if (provider->type() & type) {
++            frameworkDirectories += provider->frameworkPaths(item);
++        }
++    }
++
++    return frameworkDirectories;
++}
++
+ bool DefinesAndIncludesManager::unregisterProvider(IDefinesAndIncludesManager::Provider* provider)
+ {
+     int idx = m_providers.indexOf(provider);
+@@ -218,6 +251,11 @@ Path::List DefinesAndIncludesManager::includes(const QString& path) const
+            + m_noProjectIPM->includesAndDefines(path).first;
+ }
+ 
++Path::List DefinesAndIncludesManager::frameworkPaths(const QString& path) const
++{
++    return m_settings->provider()->frameworkPaths(nullptr);
++}
++
+ void DefinesAndIncludesManager::openConfigurationDialog(const QString& pathToFile)
+ {
+     if (auto project = KDevelop::ICore::self()->projectController()->findProjectForUrl(QUrl::fromLocalFile(pathToFile))) {
+@@ -238,6 +276,17 @@ Path::List DefinesAndIncludesManager::includesInBackground(const QString& path)
+     return includes;
+ }
+ 
++Path::List DefinesAndIncludesManager::frameworkPathsInBackground(const QString& path) const
++{
++    Path::List fwPaths;
++
++    for (auto provider: m_backgroundProviders) {
++        fwPaths += provider->frameworkPathsInBackground(path);
++    }
++
++    return fwPaths;
++}
++
+ Defines DefinesAndIncludesManager::definesInBackground(const QString& path) const
+ {
+     QHash<QString, QString> defines;
+diff --git a/languages/plugins/custom-definesandincludes/definesandincludesmanager.h b/languages/plugins/custom-definesandincludes/definesandincludesmanager.h
+index 6d0d210..0d31ee7 100644
+--- a/languages/plugins/custom-definesandincludes/definesandincludesmanager.h
++++ b/languages/plugins/custom-definesandincludes/definesandincludesmanager.h
+@@ -49,14 +49,18 @@ public:
+     KDevelop::Defines defines( KDevelop::ProjectBaseItem* item, Type type ) const override;
+     ///@return list of all custom includes for @p item
+     KDevelop::Path::List includes( KDevelop::ProjectBaseItem* item, Type type  ) const override;
++    ///@return list of all custom framework directories for @p item
++    KDevelop::Path::List frameworkPaths( KDevelop::ProjectBaseItem* item, Type type ) const override;
+ 
+     KDevelop::Defines defines( const QString& path ) const override;
+     KDevelop::Path::List includes( const QString& path ) const override;
++    KDevelop::Path::List frameworkPaths(const QString& path) const override;
+ 
+     void registerProvider( Provider* provider ) override;
+     bool unregisterProvider( Provider* provider ) override;
+ 
+     KDevelop::Path::List includesInBackground( const QString& path ) const override;
++    KDevelop::Path::List frameworkPathsInBackground( const QString& path ) const override;
+     KDevelop::Defines definesInBackground(const QString& path) const override;
+ 
+     void registerBackgroundProvider(BackgroundProvider* provider) override;
 diff --git a/languages/plugins/custom-definesandincludes/idefinesandincludesmanager.h b/languages/plugins/custom-definesandincludes/idefinesandincludesmanager.h
-index 5da71f2..34cb967 100644
+index 5da71f2..875bb44 100644
 --- a/languages/plugins/custom-definesandincludes/idefinesandincludesmanager.h
 +++ b/languages/plugins/custom-definesandincludes/idefinesandincludesmanager.h
 @@ -72,6 +72,8 @@ public:
@@ -450,3 +730,43 @@ index 5da71f2..34cb967 100644
          virtual Defines definesInBackground( const QString& path ) const = 0;
  
          /// @return the type of i/d this provider provides
+@@ -106,6 +110,11 @@ public:
+     ///NOTE: call it from the foreground thread only.
+     virtual Path::List includes( ProjectBaseItem* item, Type type = All ) const = 0;
+ 
++    ///@param item project item
++    ///@return list of framework directories for @p item
++    ///NOTE: call it from the foreground thread only.
++    virtual Path::List frameworkPaths( ProjectBaseItem* item, Type type = All ) const = 0;
++
+     ///@param path path to an out-of-project file.
+     ///@return list of defines for @p path
+     ///NOTE: call it from the foreground thread only.
+@@ -116,6 +125,11 @@ public:
+     ///NOTE: call it from the foreground thread only.
+     virtual Path::List includes( const QString& path ) const = 0;
+ 
++    ///@param path path to an out-of-project file.
++    ///@return list of framework directories for @p path
++    ///NOTE: call it from the foreground thread only.
++    virtual Path::List frameworkPaths( const QString& path ) const = 0;
++
+     /**
+      * Computes include directories in background thread.
+      *
+@@ -126,6 +140,15 @@ public:
+     virtual Path::List includesInBackground( const QString& path ) const = 0;
+ 
+     /**
++     * Computes framework directories in background thread.
++     *
++     * This is especially useful for CustomMake projects.
++     *
++     * Call it from background thread if possible.
++    **/
++    virtual Path::List frameworkPathsInBackground( const QString& path ) const = 0;
++
++    /**
+      * Computes defined macros in background thread.
+      *
+      * Call it from background thread if possible.
