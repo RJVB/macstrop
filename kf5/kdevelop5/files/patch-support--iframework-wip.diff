@@ -418,23 +418,57 @@ index 3ad0f36..113523a 100644
  };
  
 diff --git a/projectmanagers/qmake/qmakemanager.cpp b/projectmanagers/qmake/qmakemanager.cpp
-index 123b474..ce7d8ba 100644
+index 123b474..6194fd3 100644
 --- a/projectmanagers/qmake/qmakemanager.cpp
 +++ b/projectmanagers/qmake/qmakemanager.cpp
-@@ -430,6 +430,12 @@ Path::List QMakeProjectManager::includeDirectories(ProjectBaseItem* item) const
+@@ -395,14 +395,14 @@ IProjectBuilder* QMakeProjectManager::builder() const
+     return m_builder;
+ }
+ 
+-Path::List QMakeProjectManager::includeDirectories(ProjectBaseItem* item) const
++Path::List QMakeProjectManager::collectDirectories(ProjectBaseItem* item, const QStringList (*helper)(QMakeProjectFile*)) const
+ {
+     Path::List list;
+     QMakeFolderItem* folder = findQMakeFolderParent(item);
+     if (folder) {
+         foreach (QMakeProjectFile* pro, folder->projectFiles()) {
+             if (pro->files().contains(item->path().toLocalFile())) {
+-                foreach (const QString& dir, pro->includeDirectories()) {
++                foreach (const QString& dir, helper(pro)) {
+                     Path path(dir);
+                     if (!list.contains(path)) {
+                         list << path;
+@@ -413,7 +413,7 @@ Path::List QMakeProjectManager::includeDirectories(ProjectBaseItem* item) const
+         if (list.isEmpty()) {
+             // fallback for new files, use all possible include dirs
+             foreach (QMakeProjectFile* pro, folder->projectFiles()) {
+-                foreach (const QString& dir, pro->includeDirectories()) {
++                foreach (const QString& dir, helper(pro)) {
+                     Path path(dir);
+                     if (!list.contains(path)) {
+                         list << path;
+@@ -430,6 +430,20 @@ Path::List QMakeProjectManager::includeDirectories(ProjectBaseItem* item) const
      return list;
  }
  
-+// TODO: investigate QMakeProjectFile::frameworkDirectories()
++Path::List QMakeProjectManager::includeDirectories(ProjectBaseItem* item) const
++{
++    return collectDirectories(item, [](QMakeProjectFile* pro) -> const QStringList {
++        return pro->includeDirectories();
++    });
++}
++
 +Path::List QMakeProjectManager::frameworkDirectories(ProjectBaseItem* item) const
 +{
-+    return {};
++    return collectDirectories(item, [](QMakeProjectFile* pro) -> const QStringList {
++        return pro->frameworkDirectories();
++    });
 +}
 +
  QHash<QString, QString> QMakeProjectManager::defines(ProjectBaseItem* item) const
  {
      QHash<QString, QString> d;
-@@ -446,7 +452,7 @@ QHash<QString, QString> QMakeProjectManager::defines(ProjectBaseItem* item) cons
+@@ -446,7 +460,7 @@ QHash<QString, QString> QMakeProjectManager::defines(ProjectBaseItem* item) cons
      return d;
  }
  
@@ -444,12 +478,22 @@ index 123b474..ce7d8ba 100644
      return findQMakeFolderParent(item);
  }
 diff --git a/projectmanagers/qmake/qmakemanager.h b/projectmanagers/qmake/qmakemanager.h
-index e5e3266..cb1b992 100644
+index e5e3266..73534ff 100644
 --- a/projectmanagers/qmake/qmakemanager.h
 +++ b/projectmanagers/qmake/qmakemanager.h
-@@ -56,8 +56,9 @@ public:
+@@ -28,6 +28,7 @@
+ class QMakeFolderItem;
+ class IQMakeBuilder;
+ class QMakeCache;
++class QMakeProjectFile;
+ 
+ class QMakeProjectManager : public KDevelop::AbstractFileManagerPlugin, public KDevelop::IBuildSystemManager
+ {
+@@ -55,9 +56,11 @@ public:
+     //TODO
      KDevelop::IProjectBuilder*  builder() const override;
      KDevelop::Path buildDirectory(KDevelop::ProjectBaseItem*) const override;
++    KDevelop::Path::List collectDirectories(KDevelop::ProjectBaseItem*, const QStringList (*helper)(QMakeProjectFile*)) const;
      KDevelop::Path::List includeDirectories(KDevelop::ProjectBaseItem*) const override;
 +    KDevelop::Path::List frameworkDirectories(KDevelop::ProjectBaseItem* item) const override;
      QHash<QString,QString> defines(KDevelop::ProjectBaseItem*) const override;
@@ -458,6 +502,71 @@ index e5e3266..cb1b992 100644
  
      KDevelop::ProjectTargetItem* createTarget( const QString&, KDevelop::ProjectFolderItem* ) override
      {
+diff --git a/projectmanagers/qmake/qmakeprojectfile.cpp b/projectmanagers/qmake/qmakeprojectfile.cpp
+index 221eee9..ad425ab 100644
+--- a/projectmanagers/qmake/qmakeprojectfile.cpp
++++ b/projectmanagers/qmake/qmakeprojectfile.cpp
+@@ -102,10 +102,11 @@ bool QMakeProjectFile::read()
+ 
+     const QString qtInstallHeaders = QStringLiteral("QT_INSTALL_HEADERS");
+     const QString qtVersion = QStringLiteral("QT_VERSION");
++    const QString qtInstallLibs = QStringLiteral("QT_INSTALL_LIBS");
+ 
+     const QString binary = QMakeConfig::qmakeBinary(project());
+     if (!m_qmakeQueryCache.contains(binary)) {
+-        const auto queryResult = QMakeConfig::queryQMake(binary, {qtInstallHeaders, qtVersion});
++        const auto queryResult = QMakeConfig::queryQMake(binary, {qtInstallHeaders, qtVersion, qtInstallLibs});
+         if (queryResult.isEmpty()) {
+             qCWarning(KDEV_QMAKE) << "Failed to query qmake - bad qmake binary configured?" << binary;
+         }
+@@ -115,6 +116,7 @@ bool QMakeProjectFile::read()
+     const auto cachedQueryResult = m_qmakeQueryCache.value(binary);
+     m_qtIncludeDir = cachedQueryResult.value(qtInstallHeaders);
+     m_qtVersion = cachedQueryResult.value(qtVersion);
++    m_qtLibDir = cachedQueryResult.value(qtInstallLibs);
+ 
+     return QMakeFile::read();
+ }
+@@ -251,6 +253,18 @@ QStringList QMakeProjectFile::includeDirectories() const
+     ifDebug(qCDebug(KDEV_QMAKE) << "final list:" << list;) return list;
+ }
+ 
++// TODO: implement. Should scan QMAKE_C*FLAGS for -F and -iframework
++// may have to do idem with QMAKE_LFLAGS. For now, return just QT_INSTALL_LIBS
++// which corresponds to Qt's framework directory on OS X.
++QStringList QMakeProjectFile::frameworkDirectories() const
++{
++    QStringList list;
++#ifdef Q_OS_OSX
++    list << m_qtLibDir;
++#endif
++    return list;
++}
++
+ QStringList QMakeProjectFile::files() const
+ {
+     ifDebug(qCDebug(KDEV_QMAKE) << "Fetching files";)
+diff --git a/projectmanagers/qmake/qmakeprojectfile.h b/projectmanagers/qmake/qmakeprojectfile.h
+index 027800c..d7f493d 100644
+--- a/projectmanagers/qmake/qmakeprojectfile.h
++++ b/projectmanagers/qmake/qmakeprojectfile.h
+@@ -51,6 +51,7 @@ public:
+     QStringList files() const;
+     QStringList filesForTarget( const QString& ) const;
+     QStringList includeDirectories() const;
++    QStringList frameworkDirectories() const;
+ 
+     QStringList targets() const;
+ 
+@@ -80,6 +81,8 @@ private:
+     static QHash<QString, QHash<QString, QString> > m_qmakeQueryCache;
+     QString m_qtIncludeDir;
+     QString m_qtVersion;
++    // On OS X, QT_INSTALL_LIBS is typically a framework directory and should thus be added to the framework search path
++    QString m_qtLibDir;
+ };
+ 
+ #endif
 diff --git a/languages/clang/clangparsejob.cpp b/languages/clang/clangparsejob.cpp
 index 8375eb5..655841f 100644
 --- a/languages/clang/clangparsejob.cpp
