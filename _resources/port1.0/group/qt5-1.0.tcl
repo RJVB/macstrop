@@ -122,3 +122,6 @@ proc qt5.depends_component {first args} {
         }
     }
 }
+
+# Ports that want to provide a universal variant need to use the muniversal PortGroup explicitly.
+universal_variant no
