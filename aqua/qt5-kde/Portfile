@@ -16,14 +16,7 @@ if {${os.platform} eq "darwin" && ${os.major} <= 10} {
     if {[variant_isset legacy]} {
         version     5.3.2
     } else {
-        version     5.6.0
-    }
-}
-if {${subport} eq ${name}} {
-    revision        1
-    platform darwin {
-        # this is for the inclusion of the no-DBus-in-platformsupport patch
-        revision    [expr ${revision} + 1]
+        version     5.6.1
     }
 }
 platform darwin {
@@ -51,6 +44,10 @@ platform darwin {
 set building_qt5    1
 set qt5.prefer_kde  1
 PortGroup           qt5 1.0
+
+if {${subport} ne "${name}-qtwebengine"} {
+    PortGroup       muniversal 1.0
+}
 
 if {![info exists qt5.using_kde] || !${qt5.using_kde}} {
     ui_error "Using port ${subport} without the corresponding Qt5 PortGroup"
@@ -109,7 +106,8 @@ if {${QT53}} {
 } else {
     if {${QT56}} {
         set qtwebkit_is_stub yes
-        set qtwebkit_commit  7205faf1a546a690f68176989100109e9a3335b7
+        # 5.6.1 branch head at 20160615
+        set qtwebkit_commit b889f460280ad98c89ede179bd3b9ce
         if {${subport} eq "${name}-qtwebkit"} {
             master_sites \
                     http://download.qt.io/community_releases/${branch}/${version}/
@@ -117,7 +115,7 @@ if {${QT53}} {
                     qtwebkit-opensource-src-${version}
             distfiles \
                     ${distname}${extract.suffix}
-            # the official tarball currently doesn't build
+            # the official 5.6.0 tarball currently doesn't build
             checksums \
                     rmd160  331178fc60330e24ac47bac9ece84ec25cc6600c \
                     sha256  93823670769cdc459ca11bc9223101c8efc00e2d6b398936a22d792f69f5c2b2
@@ -128,8 +126,8 @@ if {${QT53}} {
             distfiles \
                     ${distname}${extract.suffix}
             checksums \
-                    rmd160  bea243ed30c720fc5f92028b82b14fb3a49b6b5f \
-                    sha256  76a95cf6c1503290f75a641aa25079cd0c5a8fcd7cff07ddebff80a955b07de7 \
+                    rmd160  ee7a838aba61a34e7aa5fdce608d8e1809cf0a21 \
+                    sha256  0d3cc75d2368ad988c9ec6bcbed6362dbaa8e03fdfd04e679284f4b9af91e565
         }
     } else {
         checksums   rmd160  42bf7768dafb868f2cdef857fd3e444520f2a706 \
@@ -319,7 +317,9 @@ if {${subport} eq ${name}} {
                 } else {
                     system -W ${worksrcpath} "tar -xf ${distpath}/${qtwkdistfile}"
                 }
-                file rename ${worksrcpath}/qtwebkit-${qtwebkit_commit} ${worksrcpath}/qtwebkit
+                # the github tarball may add something to the dirname after the commit hash,
+                # so we need to do some globbing or hardcode the exact dirname somewhere:
+                system "mv ${worksrcpath}/qtwebkit-${qtwebkit_commit}* ${worksrcpath}/qtwebkit"
                 file mkdir ${worksrcpath}/qtwebkit/.git
             }
         }
@@ -329,7 +329,7 @@ if {${subport} eq ${name}} {
 if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "${name}-x11"} {
     # use the qt5 group; set 'building_qt5' so that the portgroup
     # does not include certain parts
-    conflicts           qt3 qt3-mac qt5 qt5-kde-devel qt5-kde-devel-x11 qt5-mac
+    conflicts-append    qt3 qt3-mac qt5 qt5-kde-devel qt5-kde-devel-x11 qt5-mac
     PortGroup           xcodeversion 1.0
 
     minimum_xcodeversions   {10 3.2}
@@ -400,12 +400,14 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         # these enable automatic loading of a KDE platform theme plugin
         patchfiles-append   ${PPREF}patch-enable-qgenericunixthemes.diff \
                             ${PPREF}patch-enable-qgenericunixservices.diff
+        # and this one if probably required because of adding the genericunix stuff:
+        patchfiles-append   ${PPREF}patch-enable-fontconfig.diff
 
         # 2 more reported bugs
         patchfiles-append   ${PPREF}patch-nonull-setAsDockMenu.diff \
                             ${PPREF}patch-qkqueuefilesystemwatcher_addPaths.diff
         # https://bugreports.qt.io/browse/QTBUG-49887 ; a bit overzealous!
-        patchfiles-append   ${PPREF}patch-qpbutton-noshowicon.diff
+        #patchfiles-append   ${PPREF}patch-qpbutton-noshowicon.diff
     } else {
         patchfiles-append   qt532/fix-qsp_fontlocations.patch
         ## TODO : backport the qsp_xdg (qmake) / QspXDG (cmake) activators ##
@@ -491,14 +493,10 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         # fix font colour due to inappropriate gamma
         patchfiles-append   ${PPREF}patch-silence-qnsview-warnings.diff \
                             ${PPREF}patch-silence-qpixmap-warnings.diff
-        # fix a crash-on-exit
-        patchfiles-append   ${PPREF}patch-fix-QLockFile.diff
         # do not omit pkg-config files:
         # https://codereview.qt-project.org/#/c/140954/
         # https://github.com/Homebrew/legacy-homebrew/commit/620baaf10c957875d9d2b958343456f0d35d15fc
         patchfiles-append   ${PPREF}patch-restore-pc-files.diff
-        # fixed in 5.6.1
-        patchfiles-append   ${PPREF}patch-qnsview-check-null.diff
 
         # https://codereview.qt-project.org/124863
         # will probably be implemented in 5.6.1 and imposes some changes in the qgenericunixtheme
@@ -955,29 +953,31 @@ if { (${subport} eq ${name}) \
         # The solution is ???.
     }
 
-    variant harfbuzz description {Use HarfBuzz-NG to do text shaping} {
-        if {${os.platform} eq "darwin"} {
-            depends_lib-append port:harfbuzz
+    if {${subport} ne "${name}-qtwebengine"} {
+        variant harfbuzz description {Use HarfBuzz-NG to do text shaping} {
+            if {${os.platform} eq "darwin"} {
+                depends_lib-append port:harfbuzz
+            }
+            configure.args-replace \
+                -no-harfbuzz       \
+                -system-harfbuzz
         }
-        configure.args-replace \
-            -no-harfbuzz       \
-            -system-harfbuzz
-    }
-    default_variants    +harfbuzz
+        default_variants    +harfbuzz
 
-    variant reduce_exports description {configure with --reduce-exports (experimental)} {
-        configure.args-append   --reduce-exports
-    }
-    if {${os.platform} eq "linux"} {
-        default_variants        +reduce_exports
-    }
+        variant reduce_exports description {configure with --reduce-exports (experimental)} {
+            configure.args-append   --reduce-exports
+        }
+        if {${os.platform} eq "linux"} {
+            default_variants        +reduce_exports
+        }
 
-    variant tests description {Enable tests} {
-        configure.args-replace  {-nomake tests} {-make tests}
-    }
+        variant tests description {Enable tests} {
+            configure.args-replace  {-nomake tests} {-make tests}
+        }
 
-    variant examples description "Build examples. This will conflict with port:${name}-examples!" {
-        configure.args-replace  {-nomake examples} {-make examples}
+        variant examples description "Build examples. This will conflict with port:${name}-examples!" {
+            configure.args-replace  {-nomake examples} {-make examples}
+        }
     }
 
     variant debug description {This variant is just a stub to identify a build made with configure.optflags="-O0 -g"} {}
@@ -1404,7 +1404,12 @@ pre-build {
 post-build {
     if {[file exists ${prefix}/bin/afsctool]} {
         ui_msg "--->  Compressing the build directory ..."
-        if {[catch {system "${prefix}/bin/afsctool -cfvv -8 -J${build.jobs} ${build.dir} 2>&1"} result context]} {
+        if {${use_parallel_build}} {
+            set compjobs "-J${build.jobs}"
+        } else {
+            set compjobs ""
+        }
+        if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} ${build.dir} 2>&1"} result context]} {
             ui_msg "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
         } else {
             ui_debug "Compressing ${build.dir}: ${result}"
@@ -1544,6 +1549,7 @@ if {${QT54}} {
         # some kind of process multiplication (I've seen peak loads of 30 in a supposedly
         # serial build ...)
         use_parallel_build  no
+        set build.jobs      1
         if {[variant_isset universal]} {
             # See the comments about qmake and .qmake.stash above. It is likely that the same "feature"
             # prevents us from doing cross-bitwidth (32 on 64bit and vice-versa) builds inside the Qt
@@ -1561,7 +1567,25 @@ if {${QT54}} {
         build.env-append    CXX=${configure.cxx}
 
         # extract only the qtwebengine component
-        extract.post_args-append    ${distname}/qtwebengine
+        extract.post_args-append \
+                            ${distname}/qtwebengine
+        configure.args-append \
+                            WEBENGINE_CONFIG+=use_proprietary_codecs \
+                            CONFIG-=debug
+        platform linux {
+            PortGroup       conflicts_build 1.0
+            conflicts_build \
+                            gettext
+            # https://codereview.qt-project.org/#/c/156378
+            patchfiles-append \
+                            patch-qtwebengine-ffmpeg3.diff
+            configure.args-append \
+                            WEBENGINE_CONFIG+=use_system_libxml \
+                            WEBENGINE_CONFIG+=use_system_ffmpeg
+            depends_lib-append \
+                            port:libxml2 \
+                            port:libvpx
+        }
     }
 }
 
@@ -1734,7 +1758,7 @@ subport ${name}-settingseditor {
                                 It can edit both native (binary) .plists and cross-platform .ini \
                                 files.
     universal_variant           no
-    conflicts                   port:${basename}-devel-settingseditor
+    conflicts-append            port:${basename}-devel-settingseditor
 
     # extract only the examples
     extract.post_args-append    ${distname}/qtbase/examples/widgets/tools/settingseditor
@@ -1780,6 +1804,7 @@ post-activate {
         ui_msg "\t${resdir}/${pg}"
     }
     ui_msg "(That's probably ${prefix}/var/macports/sources/rsync.macports.org/release/ports/_resources/port1.0/group"
+    ui_msg "or ${prefix}/var/macports/sources/rsync.macports.org/release/tarballs/ports/_resources/port1.0/group/"
     ui_msg "or ${prefix}/var/macports/sources/svn.macports.org/trunk/dports/_resources/port1.0/group)"
 }
 
