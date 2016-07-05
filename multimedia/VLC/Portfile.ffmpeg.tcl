@@ -86,6 +86,8 @@ configure.args      --prefix=${FFMPEG_VLC_PREFIX} \
                     --disable-sdl \
                     --disable-libxcb --disable-libxcb-shm --disable-libxcb-xfixes --disable-libxcb-shape \
                     --enable-shared --disable-static --enable-pthreads \
+                    --enable-rpath \
+                    --disable-stripping \
                     --cc=${configure.cc}
 
 # this is the old gpl2 variant. VLC is GPL2'ed, so we can just as well build ffmpeg
