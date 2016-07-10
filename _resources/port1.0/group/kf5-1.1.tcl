@@ -738,7 +738,7 @@ proc kf5.check_qspXDG {name} {
 
 # create a wrapper script in ${prefix}/bin for an application bundle in kf5.applications_dir
 proc kf5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""}} {
-    global kf5.applications_dir destroot prefix os.platform
+    global kf5.applications_dir kf5.project destroot prefix os.platform
     if {${os.platform} eq "darwin"} {
         if {${bundlename} eq ""} {
             set bundlename ${wrappername}
