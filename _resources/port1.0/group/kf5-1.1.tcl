@@ -738,7 +738,7 @@ proc kf5.check_qspXDG {name} {
 
 # create a wrapper script in ${prefix}/bin for an application bundle in kf5.applications_dir
 proc kf5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""}} {
-    global kf5.applications_dir kf5.project destroot prefix os.platform
+    global kf5.applications_dir destroot prefix os.platform
     if {${os.platform} eq "darwin"} {
         if {${bundlename} eq ""} {
             set bundlename ${wrappername}
@@ -748,6 +748,7 @@ proc kf5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""}} {
         }
         system "echo \"#!/bin/sh\nexport KDE_SESSION_VERSION=5\nexec \\\"${kf5.applications_dir}/${bundlename}.app/Contents/MacOS/${bundleexec}\\\" \\\"\\\$\@\\\"\" > ${destroot}${prefix}/bin/${wrappername}"
     } else {
+        global kf5.project qt_libs_dir
         # no app bundles on this platform, but provide the same API by pretending there are.
         # If unset, use kf5.project to guess the exec. name because evidently we cannot
         # symlink ${wrappername} onto itself.
@@ -757,7 +758,9 @@ proc kf5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""}} {
         if {${bundleexec} eq ""} {
             set bundleexec ${bundlename}
         }
-        system "echo \"#!/bin/sh\nexport KDE_SESSION_VERSION=5\nexec \\\"${kf5.applications_dir}/${bundleexec}\\\" \\\"\\\$\@\\\"\" > ${destroot}${prefix}/bin/${wrappername}"
+        system "echo \"#!/bin/sh\nexport KDE_SESSION_VERSION=5\" > ${destroot}${prefix}/bin/${wrappername}"
+        system "echo \"export LD_LIBRARY_PATH=\$\{LD_LIBRARY_PATH\}:${prefix}/lib:${qt_libs_dir}\" >> ${destroot}${prefix}/bin/${wrappername}"
+        system "echo \"exec \\\"${kf5.applications_dir}/${bundleexec}\\\" \\\"\\\$\@\\\"\" >> ${destroot}${prefix}/bin/${wrappername}"
     }
     system "chmod 755 ${destroot}${prefix}/bin/${wrappername}"
 }
