@@ -778,4 +778,48 @@ proc kf5.kde4compat {{kde4port ""}} {
     }
 }
 
+# this should hopefully be temporary: redefine the platform statement so it takes an "else" clause
+proc platform {os args} {
+    global os.platform os.subplatform os.arch os.major
+
+    set len [llength $args]
+    if {$len < 1} {
+        return -code error "Malformed platform specification"
+    }
+    if {[lindex $args end-1] eq "else"} {
+        set code [lindex $args end-2]
+        set altcode [lindex $args end]
+        set consumed 3
+    } else {
+        set code [lindex $args end]
+        set altcode ""
+        set consumed 1
+    }
+
+    foreach arg [lrange $args 0 end-$consumed]  {
+        if {[regexp {(^[0-9]+$)} $arg match result]} {
+            set release $result
+        } elseif {[regexp {([a-zA-Z0-9]*)} $arg match result]} {
+            set arch $result
+        }
+    }
+
+    set match 0
+    # 'os' could be a platform or an arch when it's alone
+    if {$len == 2 && ($os == ${os.platform} || $os == ${os.subplatform} || $os == ${os.arch})} {
+        set match 1
+    } elseif {($os == ${os.platform} || $os == ${os.subplatform})
+              && (![info exists release] || ${os.major} == $release)
+              && (![info exists arch] || ${os.arch} == $arch)} {
+        set match 1
+    }
+
+    # Execute the code if this platform matches the platform we're on
+    if {$match} {
+        uplevel 1 $code
+    } elseif {${altcode} ne ""} {
+        uplevel 1 $altcode
+    }
+}
+
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
