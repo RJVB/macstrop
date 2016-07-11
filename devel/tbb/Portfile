@@ -1,0 +1,115 @@
+# -*- coding: utf-8; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
+# $Id: Portfile 140550 2015-09-22 13:35:47Z ryandesign@macports.org $
+
+PortSystem          1.0
+PortGroup           muniversal 1.0
+
+name                tbb
+version             4.4-20150728
+categories          devel
+platforms           darwin
+maintainers         mehta.io:sean
+license             GPL-2
+
+description         Intel Threading Building Blocks offers a rich and complete approach to parallelism in C++
+
+long_description    ${description} \
+                    It represents a higher-level, task-based parallelism that abstracts \
+                    platform details and threading mechanisms for scalability and performance
+
+homepage            http://threadingbuildingblocks.org/
+master_sites        ${homepage}sites/default/files/software_releases/source/
+
+livecheck.version   [strsed [strsed ${version} {g/-/_/}] {g/\.//}]
+
+worksrcdir          ${name}${livecheck.version}oss
+distname            ${worksrcdir}_src
+extract.suffix      .tgz
+
+checksums           rmd160  7a3bd111c3155d23141ca24ff0e07ef438fae6a5 \
+                    sha256  e9534f3238e6f7b34f9d0a78cb8604da1c5a611c5a2569fdd9cc90e06339538a
+
+use_configure       no
+
+set tbb_arch(i386)      ia32
+set tbb_arch(ppc)       ppc32
+set tbb_arch(x86_64)    intel64
+if {![info exists tbb_arch(${configure.build_arch})]} {
+    set tbb_arch(${configure.build_arch}) ${configure.build_arch}
+}
+
+if {[string match *clang* ${configure.compiler}]} {
+    set tbb_compiler clang
+} else {
+    set tbb_compiler gcc
+}
+
+set tbb_build_prefix macports
+
+patchfiles          patch-build-macos.inc.diff
+
+post-patch {
+    reinplace "s|@CC@|${configure.cc}|g" ${worksrcpath}/build/macos.inc
+    reinplace "/^CONLY *=/s|=.*$|= ${configure.cc}|g" ${worksrcpath}/build/macos.${tbb_compiler}.inc
+    reinplace "/^CPLUS *=/s|=.*$|= ${configure.cxx}|g" ${worksrcpath}/build/macos.${tbb_compiler}.inc
+
+    # http://software.intel.com/en-us/forums/topic/505370
+    reinplace "/ -dynamiclib/s|$| -install_name ${prefix}/lib/\$@|g" ${worksrcpath}/build/macos.${tbb_compiler}.inc
+}
+
+build.target        tbb tbbmalloc tbbproxy
+build.args-append   compiler=${tbb_compiler} \
+                    tbb_build_prefix=${tbb_build_prefix} \
+                    use_proxy=1
+
+test.run            yes
+test.target         test
+test.args-append    ${build.args}
+
+# The Makefile does not have an install target.
+# http://software.intel.com/en-us/forums/topic/347428
+# but the muniversal portgroup requires a destroot.cmd
+destroot.cmd        true
+
+if {[variant_isset universal]} {
+    foreach arch ${configure.universal_archs} {
+        set merger_build_args(${arch}) arch=$tbb_arch(${arch})
+        set merger_test_args(${arch}) arch=$tbb_arch(${arch})
+    }
+    merger-post-destroot {
+        foreach arch ${universal_archs_to_use} {
+            tbb_destroot ${worksrcpath}-${arch} ${destroot}-${arch}
+        }
+    }
+} else {
+    build.args-append arch=$tbb_arch(${configure.build_arch})
+    test.args-append arch=$tbb_arch(${configure.build_arch})
+    post-destroot {
+        tbb_destroot ${worksrcpath} ${destroot}
+    }
+}
+
+proc tbb_destroot {worksrcpath destroot} {
+    global          destroot.dir prefix tbb_build_prefix
+    destroot.dir    ${worksrcpath}/build/${tbb_build_prefix}_release
+
+    # fix paths
+    reinplace -W ${destroot.dir} "s|\\(TBBROOT.\\)\".*\"|\\1\"${prefix}\"|g" tbbvars.sh tbbvars.csh
+    reinplace -W ${destroot.dir} "s|\\(tbb_bin.\\)\".*\"|\\1\"${prefix}/lib\"|g" tbbvars.sh tbbvars.csh
+
+    # copy lib, include & bin
+    copy {*}[glob ${destroot.dir}/lib*.dylib] ${destroot}${prefix}/lib
+    copy {*}[glob ${destroot.dir}/tbbvars.*sh] ${destroot}${prefix}/bin
+    copy ${worksrcpath}/include/tbb ${destroot}${prefix}/include/tbb
+}
+
+post-destroot {
+    # copy examples & docs
+    xinstall -d ${destroot}${prefix}/share/${name}
+    copy ${worksrcpath}/doc ${destroot}${prefix}/share/${name}/doc
+    copy ${worksrcpath}/examples ${destroot}${prefix}/share/${name}/examples
+}
+
+livecheck.type      regex
+livecheck.url       ${homepage}download
+livecheck.regex     ${name}(\[\\d_\]+)oss_src${extract.suffix}
