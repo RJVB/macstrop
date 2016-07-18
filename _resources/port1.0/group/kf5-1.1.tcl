@@ -281,7 +281,7 @@ platform darwin {
                     ui_info "QSP XDG mode check: OK (${result})"
                 }
             } else {
-                ui_msg "####  Cannot check ${subport} for QSP XDG mode (not a CMake project)."
+                ui_info "####  Cannot check ${subport} for QSP XDG mode (not a CMake project)."
             }
         }
     }
