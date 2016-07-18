@@ -234,7 +234,7 @@ variant docs description {build and install the API documentation, for use with 
                         -DBUILD_doc=OFF \
                         -DBUILD_docs=OFF
     if {${subport} ne "kf5-kapidox"} {
-        if {${subport} ne "kf5-kdoctools"} {
+        if {![info exists kf5.framework]} {
             kf5.depends_frameworks \
                         kdoctools
         }
@@ -351,12 +351,12 @@ proc kf5.set_paths {} {
     global kf5.portingAid
     global kf5.framework
     global kf5.branch
-    if { [ info exists kf5.portingAid ] } {
+    if { [info exists kf5.portingAid] } {
         set vp          "frameworks"
         set f           "frameworks/${kf5.branch}/portingAids"
     }
 
-    if { [ info exists kf5.framework ] } {
+    if { [info exists kf5.framework] } {
         set vp          "frameworks"
         set f           "frameworks/${kf5.branch}"
     }
@@ -393,7 +393,7 @@ proc kf5.set_project {project} {
     global filespath
     global version
     set p ${project}
-    if { ![ info exists kf5.framework ] && ![ info exists kf5.portingAid ] } {
+    if { ![info exists kf5.framework] && ![info exists kf5.portingAid] } {
         if { ![ info exists kf5.virtualPath ] } {
             ui_error "You haven't defined kf5.virtualPath, which is mandatory for any KF5 port that uses kf5.project. \
             (Or is this project perhaps a framework or porting aid?)"
