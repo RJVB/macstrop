@@ -271,8 +271,8 @@ if {![variant_isset docs]} {
     }
 }
 platform darwin {
-    if {![variant_isset nativeQSP]} {
-        post-destroot {
+    post-destroot {
+        if {![variant_isset nativeQSP] && (${supported_archs} ne "noarch")} {
             if {[file exists ${build.dir}/CMakeCache.txt] || [file exists ${build.dir}/Makefile]} {
                 ui_msg "--->  Checking ${subport} for QSP XDG mode ..."
                 if {[catch {system "fgrep 'DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=true' -R ${build.dir} --include=CMake* --include=Makefile --include=*.make 2>&1"} result context]} {
