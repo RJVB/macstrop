@@ -245,13 +245,26 @@ variant docs description {build and install the API documentation, for use with 
                 ui_msg "--->  Generating documentation for ${subport}"
                 # generate the documentation, working from ${build.dir}
                 xinstall -m 755 -d ${destroot}${kf5.docs_dir}
-                system -W ${build.dir} "kgenapidox --qhp --searchengine --api-searchbox \
-                    --qtdoc-dir ${qt_docs_dir} --kdedoc-dir ${kf5.docs_dir} \
-                    --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"
-                # after creating the destination, copy all generated qch documentation to it
-                foreach doc [glob -nocomplain ${build.dir}/apidocs/qch/*.qch] {
-                    if {${doc} ne "${build.dir}/apidocs/qch/None.qch"} {
-                        xinstall -m 644 ${doc} ${destroot}${kf5.docs_dir}
+                # this appears to be necessary, sometimes:
+                system "chmod 755 ${destroot}${kf5.docs_dir}"
+                if {[file exists ${prefix}/bin/kgenapidox]} {
+                    system -W ${build.dir} "kgenapidox --qhp --searchengine --api-searchbox \
+                        --qtdoc-dir ${qt_docs_dir} --kdedoc-dir ${kf5.docs_dir} \
+                        --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"
+                    # after creating the destination, copy all generated qch documentation to it
+                    foreach doc [glob -nocomplain ${build.dir}/apidocs/qch/*.qch] {
+                        if {${doc} ne "${build.dir}/apidocs/qch/None.qch"} {
+                            xinstall -m 644 ${doc} ${destroot}${kf5.docs_dir}
+                        }
+                    }
+                } else {
+                    system -W ${build.dir} "kapidox_generate --qhp --searchengine --api-searchbox \
+                        --qtdoc-dir ${qt_docs_dir} --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"
+                    # after creating the destination, copy all generated qch documentation to it
+                    foreach doc [glob -nocomplain ${build.dir}/frameworks/*/qch/*.qch] {
+                        if {[file tail ${doc}] ne "None.qch"} {
+                            xinstall -m 644 ${doc} ${destroot}${kf5.docs_dir}
+                        }
                     }
                 }
                 # cleanup
