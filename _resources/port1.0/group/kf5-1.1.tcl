@@ -711,10 +711,17 @@ kf5.framework_dependency    cli-tools libkdeinit5_kcmshell5 ""
 # destination: the full path to the destination directory
 # see port:kf5-kdelibs4support (post-patch) for an example on how to use this.
 proc kf5.link_icons {iconDir category iconName destination} {
-    foreach icon [glob -nocomplain ${iconDir}/*/${category}/${iconName}] {
+    set iconlist [glob -nocomplain ${iconDir}/*/${category}/${iconName}]
+    if {${iconlist} eq ""} {
+        set iconlist [glob -nocomplain ${iconDir}/base/*/${category}/${iconName}]
+        set iconDir ${iconDir}/base
+    }
+    ui_info "${iconlist}"
+    foreach icon ${iconlist} {
         set ifile [strsed ${icon} "s|${iconDir}/||"]
         set ifile [strsed ${ifile} "s|x\[0-9\]*/${category}/|-|"]
         if {![file exists ${destination}/${ifile}]} {
+            ui_info "${icon} -> ${destination}/${ifile}"
             ln -s ${icon} ${destination}/${ifile}
         }
     }
