@@ -258,8 +258,17 @@ variant docs description {build and install the API documentation, for use with 
                         }
                     }
                 } else {
-                    system -W ${build.dir} "kapidox_generate --qhp --searchengine --api-searchbox \
-                        --qtdoc-dir ${qt_docs_dir} --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"
+                    if {[info exists kf5.framework]} {
+                        if {[catch {system -W ${build.dir} "kapidox_generate --qhp --searchengine --api-searchbox \
+                            --qtdoc-dir ${qt_docs_dir} --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"} result context]} {
+                            ui_msg "Failure generating documentation: ${result}"
+                        }
+                    } else {
+                        if {[catch {system -W ${build.dir} "kapidox_generate --qhp --searchengine \
+                            --qtdoc-dir ${qt_docs_dir} --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"} result context]} {
+                            ui_msg "Failure generating documentation: ${result}"
+                        }
+                    }
                     # after creating the destination, copy all generated qch documentation to it
                     foreach doc [glob -nocomplain ${build.dir}/frameworks/*/qch/*.qch] {
                         if {[file tail ${doc}] ne "None.qch"} {
