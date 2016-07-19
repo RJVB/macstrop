@@ -716,7 +716,6 @@ proc kf5.link_icons {iconDir category iconName destination} {
         set iconlist [glob -nocomplain ${iconDir}/base/*/${category}/${iconName}]
         set iconDir ${iconDir}/base
     }
-    ui_info "${iconlist}"
     foreach icon ${iconlist} {
         set ifile [strsed ${icon} "s|${iconDir}/||"]
         set ifile [strsed ${ifile} "s|x\[0-9\]*/${category}/|-|"]
