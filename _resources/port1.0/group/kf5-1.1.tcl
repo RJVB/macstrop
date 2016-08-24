@@ -235,7 +235,7 @@ variant docs description {build and install the API documentation, for use with 
                         -DBUILD_docs=OFF
     if {${subport} ne "kf5-kapidox"} {
         if {![info exists kf5.framework]} {
-            kf5.depends_frameworks \
+            kf5.depends_build_frameworks \
                         kdoctools
         }
         if {[info exists kf5.allow_docs_generation] && ${kf5.allow_docs_generation}} {
