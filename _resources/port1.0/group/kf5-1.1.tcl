@@ -133,7 +133,7 @@ platform darwin {
 
     if {![variant_isset nativeQSP]} {
         configure.cppflags-append \
-                        -DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=true
+                        -DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_ALT_DEFAULT=true
     }
 }
 
@@ -145,15 +145,6 @@ proc kf5.use_QExtStandardPaths {} {
     } else {
         ui_msg "kf5.use_QExtStandardPaths is obsolete"
     }
-# 20160324 : remove payload because -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=true is becoming the default
-#     # 20160214 : switch from QStandardPaths to the experimental QExtStandardPaths
-#     configure.cppflags-append \
-#                     -DQT_USE_EXTSTANDARDPATHS
-#     # configure QExtStandardPaths to use the QSP/XDG mode set by the QSP activator.
-#     # alternatives are false (use native QSP) and true (use XDG-compliant QS).
-#     # This will be set to "true" if it is decided to dump the QSP activator.
-#     configure.cppflags-append \
-#                     -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=runtime
 }
 
 # TODO:
@@ -296,14 +287,14 @@ platform darwin {
     post-destroot {
         if {![variant_isset nativeQSP] && (${supported_archs} ne "noarch")} {
             if {[file exists ${build.dir}/CMakeCache.txt] || [file exists ${build.dir}/Makefile]} {
-                ui_msg "--->  Checking ${subport} for QSP XDG mode ..."
-                if {[catch {system "fgrep 'DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_XDG_DEFAULT=true' -R ${build.dir} --include=CMake* --include=Makefile --include=*.make 2>&1"} result context]} {
-                    ui_msg "QSP XDG mode  check failed: ${result}, ${context}"
+                ui_msg "--->  Checking ${subport} for QSP ALT mode ..."
+                if {[catch {system "fgrep 'DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_ALT_DEFAULT=true' -R ${build.dir} --include=CMake* --include=Makefile --include=*.make 2>&1"} result context]} {
+                    ui_msg "QSP ALT mode  check failed: ${result}, ${context}"
                 } else {
-                    ui_info "QSP XDG mode check: OK (${result})"
+                    ui_info "QSP ALT mode check: OK (${result})"
                 }
             } else {
-                ui_info "####  Cannot check ${subport} for QSP XDG mode (not a CMake project)."
+                ui_info "####  Cannot check ${subport} for QSP ALT mode (not a CMake project)."
             }
         }
     }
@@ -588,12 +579,12 @@ proc kf5.depends_frameworks {first args} {
         if {![catch {set nativeQSP [active_variants "${kdep}" nativeQSP]}]} {
             global subport
             if {${nativeQSP}} {
-                # dependency is built for native QSP locations but the dependent port wants XDG locations
+                # dependency is built for native QSP locations but the dependent port wants ALT (XDG) locations
                 if {([variant_isset qspXDG] || ![variant_isset nativeQSP])} {
                     ui_msg "Warning: ${subport} potential mismatch with kf5-${f}+nativeQSP"
                 }
             } elseif {[variant_isset nativeQSP]} {
-                # dependency is built for XDG QSP locations but the dependent port wants to use native locations
+                # dependency is built for ALT (XDG) QSP locations but the dependent port wants to use native locations
                 ui_msg "Warning: ${subport}+nativeQSP potential mismatch with kf5-${f} (-nativeQSP)"
             }
         }
