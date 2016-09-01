@@ -43,7 +43,11 @@
 #
 # codesign ${sub_prefix}/bin/debugserver lldb_codesign
 #
-# This procedure is supposed to be called from the post-activate phase.
+# This procedure is supposed to be called from the post-activate phase. The procedure
+# returns 0 in case of success, and 1 otherwise. This makes it possible to instruct
+# the user, for instance to create the required key.
+# Note that care should be taken (in a post-activate block) that the activation procedure
+# doesn't abort.
 
 proc codesign {app {sign_identity 0} {sign_user ""}} {
     global prefix
@@ -66,11 +70,11 @@ proc codesign {app {sign_identity 0} {sign_user ""}} {
     }
     if {${sign_identity} ne 0} {
         set identity ${sign_identity}
-        ui_msg "Set sign identity from arguments; ${identity}"
+        ui_info "Set sign identity from arguments; ${identity}"
     }
     if {${sign_user} ne ""} {
         set user ${sign_user}
-        ui_msg "Set sign user from arguments; ${user}"
+        ui_info "Set sign user from arguments; ${user}"
     }
     platform darwin {
         if {[info exists identity] && (${identity} ne "")} {
@@ -79,6 +83,8 @@ proc codesign {app {sign_identity 0} {sign_user ""}} {
                 if {[info exists user] && ${user} ne ""} {
                     if {[catch {system "sudo -u ${user} -H codesign -s ${identity} --preserve-metadata -f -vvv --deep ${app}"} err]} {
                         ui_error "signing ${app} as user ${user}: ${err}"
+                    } else {
+                        return 0
                     }
                 } else {
                     if {[catch {system "codesign -s ${identity} --preserve-metadata -f -vvv --deep ${app}"} err]} {
@@ -92,5 +98,6 @@ proc codesign {app {sign_identity 0} {sign_user ""}} {
         }  else {
             ui_error "No signing identity given through the arguments or in ${codesigning_conf}"
         }
+        return 1
     }
 }
