@@ -1,5 +1,5 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
-# $Id: kf5-1.0.tcl 134210 2015-03-20 06:40:18Z mk@macports.org $
+# $Id: code-sign-1.0.tcl -1 2016-00-01 06:40:18Z gmail.com:rjvbertin $
 
 # Copyright (c) 2015 The MacPorts Project
 # All rights reserved.
@@ -33,32 +33,64 @@
 # Usage:
 # PortGroup     code-sign 1.0
 
-# checks for the existence of a file etc/macports/codesign-identity.tcl and includes
-# that file if it exists. If that provides a non-empty variable ${identity}, its
-# contents will be used to sign the files given in the argument(s), one by one.
+# checks for the existence of a file etc/macports/codesigning.conf and read options
+# from that file if it exists. If that provides a non-empty option `identity`, its
+# contents will be used to sign the file given in the first argument. If the file also
+# defines the `user` option, the signing operation will be run as that user. This is
+# required unless the MacPorts user has the desired signing key in the keychain, or when
+# using the ad hoc identify ("-").
+# Additional arguments allow to override the defaults from codesigning.conf, e.g.
+#
+# codesign ${sub_prefix}/bin/debugserver lldb_codesign
+#
 # This procedure is supposed to be called from the post-activate phase.
-proc codesign {first args} {
+
+proc codesign {app {sign_identity 0} {sign_user ""}} {
     global prefix
-    # join ${first} and (the optional) ${args}
-    set args [linsert $args[set list {}] 0 ${first}]
-    if {[file exists ${prefix}/etc/macports/codesign-identity.tcl]} {
-        if {[catch {source "${prefix}/etc/macports/codesign-identity.tcl"} err]} {
-            ui_error "reading ${prefix}/etc/macports/codesign-identity.tcl: $err"
-            return -code error "Error reading ${prefix}/etc/macports/codesign-identity.tcl"
+#     if {[file exists ${prefix}/etc/macports/codesign-identity.tcl]} {
+#         if {[catch {source "${prefix}/etc/macports/codesign-identity.tcl"} err]} {
+#             ui_error "reading ${prefix}/etc/macports/codesign-identity.tcl: $err"
+#             return -code error "Error reading ${prefix}/etc/macports/codesign-identity.tcl"
+#         }
+#     }
+    set codesigning_conf "${prefix}/etc/macports/codesigning.conf"
+    if {[file exists ${codesigning_conf}]} {
+        set fd [open ${codesigning_conf} r]
+        while {[gets $fd line] >= 0} {
+            if {[regexp {^(\w+)([ \t]+(.*))?$} $line match option ignore val] == 1} {
+                ui_msg "Option ${option} set to ${val}"
+                set ${option} ${val}
+            }
         }
+        close $fd
+    }
+    if {${sign_identity} ne 0} {
+        set identity ${sign_identity}
+        ui_msg "Set sign identity from arguments; ${identity}"
+    }
+    if {${sign_user} ne ""} {
+        set user ${sign_user}
+        ui_msg "Set sign user from arguments; ${user}"
     }
     platform darwin {
         if {[info exists identity] && (${identity} ne "")} {
-            foreach app ${args} {
-                ui_info "Signing ${app}"
-                if {[file exists ${app}]} {
+            ui_info "Signing ${app}"
+            if {[file exists ${app}]} {
+                if {[info exists user] && ${user} ne ""} {
+                    if {[catch {system "sudo -u ${user} -H codesign -s ${identity} --preserve-metadata -f -vvv --deep ${app}"} err]} {
+                        ui_error "signing ${app} as user ${user}: ${err}"
+                    }
+                } else {
                     if {[catch {system "codesign -s ${identity} --preserve-metadata -f -vvv --deep ${app}"} err]} {
                         ui_error "signing ${app}: ${err}"
+                        ui_msg "You will probably need to set the user option to your own username in ${codesigning_conf}"
                     }
                 }
+            } else {
+                ui_error "File ${app} cannot be signed because it doesn't exist"
             }
         }  else {
-            ui_error "${prefix}/etc/macports/codesign-identity.tcl does not define `identity`"
+            ui_error "No signing identity given through the arguments or in ${codesigning_conf}"
         }
     }
 }
