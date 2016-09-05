@@ -125,7 +125,7 @@ if {${os.platform} eq "darwin"} {
 }
 
 platform darwin {
-    variant nativeQSP conflicts qspXDG description {use the native Apple-style QStandardPaths locations} {}
+    variant nativeQSP description {use the native Apple-style QStandardPaths locations} {}
 
     if {![file exists ${qt_includes_dir}/QtCore/qextstandardpaths.h]} {
         default_variants    +nativeQSP
