@@ -78,17 +78,19 @@ proc codesign {app {sign_identity 0} {sign_user ""}} {
     }
     platform darwin {
         if {[info exists identity] && (${identity} ne "")} {
-            ui_info "Signing ${app}"
             if {[file exists ${app}]} {
                 if {[info exists user] && ${user} ne ""} {
-                    if {[catch {system "sudo -u ${user} -H codesign -s ${identity} --preserve-metadata -f -vvv --deep ${app}"} err]} {
-                        ui_error "signing ${app} as user ${user}: ${err}"
+                    set home [glob "~${user}"]
+                    ui_info "Signing ${app} with ${identity} from ${user}'s keychains under HOME=${home}"
+                    if {[catch {system "env HOME=${home} codesign -s ${identity} --preserve-metadata -f -vvv --deep ${app}"} err]} {
+                        ui_error "Signing ${app} with ${identity} from ${user}'s keychains under HOME=${home}: ${err}"
                     } else {
                         return 0
                     }
                 } else {
+                    ui_info "Signing ${app} with ${identity}"
                     if {[catch {system "codesign -s ${identity} --preserve-metadata -f -vvv --deep ${app}"} err]} {
-                        ui_error "signing ${app}: ${err}"
+                        ui_error "Signing ${app} with ${identity}: ${err}"
                         ui_msg "You will probably need to set the user option to your own username in ${codesigning_conf}"
                     }
                 }
