@@ -1,0 +1,402 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c7b9fe4..2e34f42 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -46,6 +46,12 @@ include( MarbleMacros )
+ # if this option is set, srtm.jpg will not be installed but the generated tiles instead
+ option(MOBILE "Create a Marble version optimized for handheld devices")
+ 
++# Generate a standalone app bundle when building on Apple's OS X
++# unset this to build a more unix-traditional layout that uses and provides
++# shared libraries and other resources (e.g. for MacPorts, Fink, HomeBrew etc.)
++option(APPLE_STANDALONE_BUNDLE "Generate a standalone app bundle when building on Apple's OS X" ON)
++add_feature_info("App Bundle" APPLE_STANDALONE_BUNDLE "Generate a standalone app bundle when building on Apple's OS X.")
++
+ ####################################################
+ # Specific options for building with Qt 4 vs 5
+ 
+@@ -113,7 +119,7 @@ endif( WIN32 )
+ ####################################################
+ # Build a D-Bus interface for marble
+ # This is disabled by default for all win32, apple and Qt-Only builds
+-if(WIN32 OR APPLE OR CMAKE_SYSTEM_NAME STREQUAL Android)
++if(WIN32 OR APPLE_STANDALONE_BUNDLE OR CMAKE_SYSTEM_NAME STREQUAL Android)
+     option(BUILD_WITH_DBUS "Build the D-Bus interface for the Marble widget" OFF)
+ else()
+     option(BUILD_WITH_DBUS "Build the D-Bus interface for the Marble widget" ON)
+@@ -157,15 +163,21 @@ elseif(APPLE)
+     FIND_LIBRARY(APP_SERVICES_LIBRARY ApplicationServices )
+     MARK_AS_ADVANCED (APP_SERVICES_LIBRARY)
+     SET(MAC_EXTRA_LIBS ${APP_SERVICES_LIBRARY})
+-      # for Mac OS X, everything is put inside an application bundle
+-      SET (CMAKE_INSTALL_PREFIX ${CMAKE_INSTALL_PREFIX}/)
+-      # path for library references
+-      SET (CMAKE_INSTALL_NAME_DIR @executable_path/lib)
+-      # install the Info.plist file
+-      install(FILES src/mac/Info.plist DESTINATION ${CMAKE_INSTALL_PREFIX}/Marble.app/Contents)
+-      #SET (lib_dir ${CMAKE_INSTALL_PREFIX}/Marble.app/Contents/MacOS/lib)
+-      SET (data_dir   ${CMAKE_INSTALL_PREFIX}/Marble.app/Contents/MacOS/resources/data)
+-      SET (plugin_dir   ${CMAKE_INSTALL_PREFIX}/Marble.app/Contents/MacOS/resources/plugins)
++    if(APPLE_STANDALONE_BUNDLE)
++        # for Mac OS X, everything is put inside an application bundle
++        SET (CMAKE_INSTALL_PREFIX ${CMAKE_INSTALL_PREFIX}/)
++        # path for library references
++        SET (CMAKE_INSTALL_NAME_DIR @executable_path/lib)
++        # install the Info.plist file
++        install(FILES src/mac/Info.plist DESTINATION ${CMAKE_INSTALL_PREFIX}/Marble.app/Contents)
++        #SET (lib_dir ${CMAKE_INSTALL_PREFIX}/Marble.app/Contents/MacOS/lib)
++        SET (data_dir   ${CMAKE_INSTALL_PREFIX}/Marble.app/Contents/Resources)
++        SET (plugin_dir   ${CMAKE_INSTALL_PREFIX}/Marble.app/Contents/Resources/plugins)
++    else(APPLE_STANDALONE_BUNDLE)
++        set(data_dir ${CMAKE_INSTALL_PREFIX}/share/marble/data)
++        set(plugin_dir ${CMAKE_INSTALL_FULL_LIBDIR}/marble/plugins)
++        set(CMAKE_MODULES_INSTALL_PATH ${CMAKE_INSTALL_PREFIX}/share/marble/cmake)
++    endif(APPLE_STANDALONE_BUNDLE)
+ elseif(CMAKE_SYSTEM_NAME STREQUAL Android)
+       set(plugin_dir "${CMAKE_INSTALL_PREFIX}/assets/plugins")
+       set(data_dir "${CMAKE_INSTALL_PREFIX}/assets/data")
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 063db88..df59736 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -67,9 +67,9 @@ configure_file(
+   ${CMAKE_CURRENT_BINARY_DIR}/config-marble.h
+ )
+ 
+-if(APPLE)
++if(APPLE_STANDALONE_BUNDLE)
+   add_subdirectory( mac )
+-endif(APPLE)
++endif(APPLE_STANDALONE_BUNDLE)
+ 
+ # FIXME ktimezonewidget.h is gone
+ #add_subdirectory( plasmoid )
+diff --git a/src/apps/marble-kde/CMakeLists.txt b/src/apps/marble-kde/CMakeLists.txt
+index f12ef58..234762d 100644
+--- a/src/apps/marble-kde/CMakeLists.txt
++++ b/src/apps/marble-kde/CMakeLists.txt
+@@ -5,6 +5,7 @@ if(ECM_FOUND)
+   include(KDEInstallDirs)
+   include(KDECMakeSettings)
+   include(ECMInstallIcons)
++  include(ECMAddAppIcon)
+ endif()
+ macro_optional_find_package(KF5 QUIET COMPONENTS Crash NewStuff Parts CoreAddons I18n)
+ 
+@@ -47,6 +48,9 @@ ecm_install_icons(ICONS
+   "${CMAKE_CURRENT_SOURCE_DIR}/../../../data/icons/48-apps-marble.png"
+   "${CMAKE_CURRENT_SOURCE_DIR}/../../../data/icons/64-apps-marble.png"
+   DESTINATION ${ICON_INSTALL_DIR})
++file(GLOB ICONS_SRCS
++  "${CMAKE_CURRENT_SOURCE_DIR}/../../../data/icons/*-apps-marble.png")
++ecm_add_app_icon(marble_kde_SRCS ICONS ${ICONS_SRCS})
+ add_executable (marble ${marble_kde_SRCS})
+ 
+ target_link_libraries (
+@@ -67,7 +71,7 @@ if(STATIC_BUILD)
+     target_link_libraries(marble ${QT_PLUGINS_DIR}/imageformats/qsvg.lib)
+ endif(STATIC_BUILD)
+ 
+-if (NOT APPLE)
++if (NOT APPLE_STANDALONE_BUNDLE)
+     install( FILES marble.desktop DESTINATION ${APPS_INSTALL_DIR})
+ endif()
+ 
+diff --git a/src/apps/marble-mobile/main.cpp b/src/apps/marble-mobile/main.cpp
+index e612b4f..dc844ad 100644
+--- a/src/apps/marble-mobile/main.cpp
++++ b/src/apps/marble-mobile/main.cpp
+@@ -33,7 +33,7 @@
+  Q_IMPORT_PLUGIN(qsvg)
+ #endif
+ 
+-#ifdef Q_OS_MACX
++#ifdef Q_OS_OSX
+ //for getting app bundle path
+ #include <ApplicationServices/ApplicationServices.h>
+ #endif
+@@ -77,7 +77,7 @@ int main(int argc, char *argv[])
+     QApplication::addLibraryPath( QApplication::applicationDirPath() 
+         + QDir::separator() + "plugins" );
+ #endif
+-#ifdef Q_OS_MACX
++#ifdef Q_OS_OSX
+     QApplication::instance()->setAttribute(Qt::AA_DontShowIconsInMenus);
+     qDebug("Adding qt image plugins to plugin search path...");
+     CFURLRef myBundleRef = CFBundleCopyBundleURL(CFBundleGetMainBundle());
+@@ -92,7 +92,7 @@ int main(int argc, char *argv[])
+     // lets try to set the qt plugin search path...
+     if (myPath.contains(".app"))
+     {
+-      myPath += "/Contents/plugins";
++      myPath += "/Contents/Resources/plugins";
+       QApplication::addLibraryPath( myPath );
+       qDebug( "Added %s to plugin search path", qPrintable( myPath ) );
+     }
+diff --git a/src/apps/marble-qt/CMakeLists.txt b/src/apps/marble-qt/CMakeLists.txt
+index 5a242b6..34478b3 100644
+--- a/src/apps/marble-qt/CMakeLists.txt
++++ b/src/apps/marble-qt/CMakeLists.txt
+@@ -14,13 +14,13 @@ if (WIN32)
+ 	  set_target_properties(marble-qt PROPERTIES LINK_FLAGS "/ENTRY:\"mainCRTStartup\"")
+     endif()
+ else (WIN32)
+-    if (APPLE)
++    if (APPLE_STANDALONE_BUNDLE)
+         add_executable (marble-qt ${marble_SRCS})
+         # For Mac OS X, the executable must be at the root of the bundle's executable folder
+         INSTALL(TARGETS marble-qt RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/Marble.app/Contents/MacOS)
+-    else (APPLE)
++    else (APPLE_STANDALONE_BUNDLE)
+         add_executable (marble-qt ${marble_SRCS})
+-    endif (APPLE)
++    endif (APPLE_STANDALONE_BUNDLE)
+ endif (WIN32)
+ 
+ target_link_libraries (
+@@ -54,11 +54,11 @@ endif(STATIC_BUILD)
+ if(WIN32)
+ install (TARGETS marble-qt RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX})
+ else(WIN32)
+-if (APPLE)
++if (APPLE_STANDALONE_BUNDLE)
+   # No need for this when installing to a bundle
+-else (APPLE)
++else (APPLE_STANDALONE_BUNDLE)
+     install (TARGETS marble-qt RUNTIME DESTINATION bin )
+-endif (APPLE)
++endif (APPLE_STANDALONE_BUNDLE)
+ endif(WIN32)
+ if(APPS_INSTALL_DIR)
+   install(PROGRAMS marble-qt.desktop DESTINATION ${APPS_INSTALL_DIR})
+diff --git a/src/apps/marble-qt/qtmain.cpp b/src/apps/marble-qt/qtmain.cpp
+index b66ad63..1445fc5 100644
+--- a/src/apps/marble-qt/qtmain.cpp
++++ b/src/apps/marble-qt/qtmain.cpp
+@@ -32,7 +32,7 @@
+  Q_IMPORT_PLUGIN(qsvg)
+ #endif
+ 
+-#ifdef Q_OS_MACX
++#ifdef Q_OS_OSX
+ //for getting app bundle path
+ #include <ApplicationServices/ApplicationServices.h>
+ #endif
+@@ -61,7 +61,7 @@ int main(int argc, char *argv[])
+     QApplication::addLibraryPath( QApplication::applicationDirPath() 
+         + QDir::separator() + "plugins" );
+ #endif
+-#ifdef Q_OS_MACX
++#ifdef Q_OS_OSX
+     QApplication::instance()->setAttribute(Qt::AA_DontShowIconsInMenus);
+     qDebug("Adding qt image plugins to plugin search path...");
+     CFURLRef myBundleRef = CFBundleCopyBundleURL(CFBundleGetMainBundle());
+@@ -76,7 +76,7 @@ int main(int argc, char *argv[])
+     // lets try to set the qt plugin search path...
+     if (myPath.contains(".app"))
+     {
+-      myPath += "/Contents/plugins";
++      myPath += "/Contents/Resources/plugins";
+       QApplication::addLibraryPath( myPath );
+       qDebug( "Added %s to plugin search path", qPrintable( myPath ) );
+     }
+diff --git a/src/lib/astro/CMakeLists.txt b/src/lib/astro/CMakeLists.txt
+index c4dcd5b..642cbd3 100644
+--- a/src/lib/astro/CMakeLists.txt
++++ b/src/lib/astro/CMakeLists.txt
+@@ -50,7 +50,7 @@ endif()
+ # choose the correct target install library path
+ if(WIN32)
+   INSTALL(TARGETS astro RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX})
+-elseif(APPLE)
++elseif(APPLE_STANDALONE_BUNDLE)
+   INSTALL(TARGETS astro LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/Marble.app/Contents/MacOS/lib)
+ else()
+   INSTALL(TARGETS astro LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+diff --git a/src/lib/marble/AbstractFloatItem.cpp b/src/lib/marble/AbstractFloatItem.cpp
+index 4506405..c82caeb 100644
+--- a/src/lib/marble/AbstractFloatItem.cpp
++++ b/src/lib/marble/AbstractFloatItem.cpp
+@@ -46,7 +46,7 @@ class AbstractFloatItemPrivate
+ };
+ 
+ QPen         AbstractFloatItemPrivate::s_pen = QPen( Qt::black );
+-#ifdef Q_OS_MACX
++#ifdef Q_OS_OSX
+     QFont AbstractFloatItemPrivate::s_font = QFont( QStringLiteral("Sans Serif"), 10 );
+ #else
+     QFont AbstractFloatItemPrivate::s_font = QFont( QStringLiteral("Sans Serif"), 8 );
+diff --git a/src/lib/marble/CMakeLists.txt b/src/lib/marble/CMakeLists.txt
+index f38b8bf..4db654f 100644
+--- a/src/lib/marble/CMakeLists.txt
++++ b/src/lib/marble/CMakeLists.txt
+@@ -411,7 +411,7 @@ set_target_properties(${MARBLEWIDGET} PROPERTIES
+ # choose the correct target install library path
+ if(WIN32)
+   install(TARGETS ${MARBLEWIDGET} RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX})
+-elseif(APPLE)
++elseif(APPLE_STANDALONE_BUNDLE)
+   install(TARGETS ${MARBLEWIDGET} LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/Marble.app/Contents/MacOS/lib)
+ else()
+   install(TARGETS ${MARBLEWIDGET} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+diff --git a/src/lib/marble/MarbleDirs.cpp b/src/lib/marble/MarbleDirs.cpp
+index c7d3c62..afb9d2b 100644
+--- a/src/lib/marble/MarbleDirs.cpp
++++ b/src/lib/marble/MarbleDirs.cpp
+@@ -30,7 +30,7 @@
+ #include <shlobj.h>
+ #endif
+ 
+-#ifdef Q_OS_MACX
++#ifdef Q_OS_OSX
+ //for getting app bundle path
+ #include <ApplicationServices/ApplicationServices.h>
+ #endif
+@@ -130,7 +130,7 @@ QString MarbleDirs::systemPath()
+ 	return QCoreApplication::applicationDirPath() + QDir::separator() + "data";
+ #endif
+ 
+-#ifdef Q_OS_MACX
++#ifdef Q_OS_OSX
+     //
+     // On OSX lets try to find any file first in the bundle
+     // before branching out to home and sys dirs
+@@ -145,7 +145,7 @@ QString MarbleDirs::systemPath()
+     //marble was not built as a bundle
+     if (myPath.contains(".app"))  //its a bundle!
+     {
+-      systempath = myPath + "/Contents/Resources/data";
++      systempath = myPath + "/Contents/Resources";
+     }
+ 
+     if ( QFile::exists( systempath ) ){ 
+@@ -184,7 +184,7 @@ QString MarbleDirs::pluginSystemPath()
+ 
+     QString systempath;
+ 
+-#ifdef Q_OS_MACX
++#ifdef Q_OS_OSX
+     //
+     // On OSX lets try to find any file first in the bundle
+     // before branching out to home and sys dirs
+diff --git a/src/lib/marble/geodata/data/GeoDataFeature.cpp b/src/lib/marble/geodata/data/GeoDataFeature.cpp
+index 2953e37..0b34147 100644
+--- a/src/lib/marble/geodata/data/GeoDataFeature.cpp
++++ b/src/lib/marble/geodata/data/GeoDataFeature.cpp
+@@ -176,7 +176,7 @@ void GeoDataFeaturePrivate::initializeDefaultStyles()
+ 
+     QString defaultFamily = s_defaultFont.family();
+ 
+-#ifdef Q_OS_MACX
++#ifdef Q_OS_OSX
+     int defaultSize = 10;
+ #else
+     int defaultSize = 8;
+diff --git a/src/lib/marble/geodata/data/GeoDataLabelStyle.cpp b/src/lib/marble/geodata/data/GeoDataLabelStyle.cpp
+index cace904..6a6042f 100644
+--- a/src/lib/marble/geodata/data/GeoDataLabelStyle.cpp
++++ b/src/lib/marble/geodata/data/GeoDataLabelStyle.cpp
+@@ -18,7 +18,7 @@
+ 
+ namespace Marble
+ {
+-#ifdef Q_OS_MACX
++#ifdef Q_OS_OSX
+ static const int defaultSize = 10;
+ #else
+ static const int defaultSize = 8;
+diff --git a/src/plugins/render/graticule/GraticulePlugin.cpp b/src/plugins/render/graticule/GraticulePlugin.cpp
+index 6a64188..54213e4 100644
+--- a/src/plugins/render/graticule/GraticulePlugin.cpp
++++ b/src/plugins/render/graticule/GraticulePlugin.cpp
+@@ -272,7 +272,7 @@ bool GraticulePlugin::render( GeoPainter *painter, ViewportParams *viewport,
+     }
+ 
+     // Setting the label font for the coordinate lines.
+-#ifdef Q_OS_MACX
++#ifdef Q_OS_OSX
+     int defaultFontSize = 10;
+ #else
+     int defaultFontSize = 8;
+diff --git a/src/plugins/render/measure/MeasureToolPlugin.cpp b/src/plugins/render/measure/MeasureToolPlugin.cpp
+index 26cf4d9..e5dcf62 100644
+--- a/src/plugins/render/measure/MeasureToolPlugin.cpp
++++ b/src/plugins/render/measure/MeasureToolPlugin.cpp
+@@ -41,7 +41,7 @@ MeasureToolPlugin::MeasureToolPlugin( const MarbleModel *marbleModel )
+     : RenderPlugin( marbleModel ),
+       m_measureLineString( GeoDataLineString( Tessellate ) ),
+       m_mark( ":/mark.png" ),
+-#ifdef Q_OS_MACX
++#ifdef Q_OS_OSX
+       m_font_regular( QFont( QStringLiteral( "Sans Serif" ), 10, 50, false ) ),
+ #else
+       m_font_regular( QFont( QStringLiteral( "Sans Serif" ),  8, 50, false ) ),
+diff --git a/src/plugins/render/weather/WeatherItem.cpp b/src/plugins/render/weather/WeatherItem.cpp
+index 766cbca..75e8c42 100644
+--- a/src/plugins/render/weather/WeatherItem.cpp
++++ b/src/plugins/render/weather/WeatherItem.cpp
+@@ -315,7 +315,7 @@ class WeatherItemPrivate
+ };
+ 
+ // FIXME: Fonts to be defined globally
+-#ifdef Q_OS_MACX
++#ifdef Q_OS_OSX
+     QFont WeatherItemPrivate::s_font = QFont( QStringLiteral( "Sans Serif" ), 10 );
+ #else
+     QFont WeatherItemPrivate::s_font = QFont( QStringLiteral( "Sans Serif" ), 8 );
+diff --git a/src/plugins/runner/kml/CMakeLists.txt b/src/plugins/runner/kml/CMakeLists.txt
+index 573e149..0479103 100644
+--- a/src/plugins/runner/kml/CMakeLists.txt
++++ b/src/plugins/runner/kml/CMakeLists.txt
+@@ -11,7 +11,7 @@ set( kml_SRCS KmlDocument.cpp KmlParser.cpp KmlPlugin.cpp KmlRunner.cpp KmzHandl
+ 
+ marble_add_plugin( KmlPlugin ${kml_SRCS} )
+ 
+-if(WIN32 OR APPLE)
++if(WIN32 OR APPLE_STANDALONE_BUNDLE)
+   # nothing to do
+ else()
+   install(FILES marble_kml.desktop DESTINATION ${APPS_INSTALL_DIR})
+diff --git a/src/plugins/runner/osm/CMakeLists.txt b/src/plugins/runner/osm/CMakeLists.txt
+index c14cf35..767fd9f 100644
+--- a/src/plugins/runner/osm/CMakeLists.txt
++++ b/src/plugins/runner/osm/CMakeLists.txt
+@@ -35,7 +35,7 @@ set( osm_SRCS
+ 
+ marble_add_plugin( OsmPlugin ${osm_SRCS} ${osm_writers_SRCS} ${osm_translators_SRCS} )
+ 
+-if(WIN32 OR APPLE)
++if(WIN32 OR APPLE_STANDALONE_BUNDLE)
+   # nothing to do
+ else()
+   install(FILES marble_osm.desktop DESTINATION ${APPS_INSTALL_DIR})
+diff --git a/src/plugins/runner/shp/CMakeLists.txt b/src/plugins/runner/shp/CMakeLists.txt
+index cddaebf..f73068e 100644
+--- a/src/plugins/runner/shp/CMakeLists.txt
++++ b/src/plugins/runner/shp/CMakeLists.txt
+@@ -13,7 +13,7 @@ set( ShpPlugin_LIBS ${LIBSHP_LIBRARIES} )
+ 
+ marble_add_plugin( ShpPlugin ${shp_SRCS} )
+ 
+-if(WIN32 OR APPLE)
++if(WIN32 OR APPLE_STANDALONE_BUNDLE)
+   # nothing to do
+ else()
+   install(FILES marble_shp.desktop DESTINATION ${APPS_INSTALL_DIR})
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index d0db4d6..6044029 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -14,10 +14,10 @@ ENDIF (WIN32)
+ # Since the tests are not actually installed, but rather
+ # run directly from the build/src/tests dir we need to
+ # ensure the marble libs can be found.
+-IF (APPLE)
++IF (APPLE_STANDALONE_BUNDLE)
+   # For Mac OS X, the executable must be at the root of the bundle's executable folder
+   SET (CMAKE_INSTALL_NAME_DIR @executable_path/../lib)
+-ENDIF (APPLE)
++ENDIF (APPLE_STANDALONE_BUNDLE)
+ 
+ set( EXECUTABLE_OUTPUT_PATH ${CMAKE_CURRENT_BINARY_DIR} )
+ 
