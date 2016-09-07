@@ -1,4 +1,5 @@
-# $Id: Portfile 152329 2016-09-04 01:22:27Z jeremyhu@macports.org $
+# $Id: Portfile 146341 2016-03-05 17:53:16Z jeremyhu@macports.org $
+# $Id: Portfile 151991 2016-08-25 22:42:32Z jeremyhu@macports.org $
 
 # TODO:
 #  * Update clang subport to build against installed llvm
@@ -14,6 +15,9 @@ set llvm_version_no_dot 39
 name                    llvm-${llvm_version}
 revision                0
 subport                 clang-${llvm_version} {}
+subport                 lldb-${llvm_version} {
+    PortGroup           code-sign 1.0
+}
 set suffix              mp-${llvm_version}
 set sub_prefix          ${prefix}/libexec/llvm-${llvm_version}
 dist_subdir             llvm
@@ -66,6 +70,20 @@ if {${subport} eq "llvm-${llvm_version}"} {
     depends_lib-append  port:libedit port:libffi port:ncurses port:zlib
 
     default_variants    +analyzer
+} elseif {${subport} eq "lldb-${llvm_version}"} {
+    homepage            http://lldb.llvm.org/
+    description         the LLVM debugger
+    long_description    Lldb is the "LLVM native" debugger.
+
+    depends_lib         port:libxml2 port:libomp port:llvm-${llvm_version} port:python27 \
+                        port:ncurses
+    depends_build-append port:cctools port:swig-python port:doxygen
+    depends_skip_archcheck-append cctools
+
+    # Clang doesn't actually use any of these, but the LLVM makefile
+    # system overlinks its binaries. Remove (or convert to build deps?)
+    # after #46040 is resolved.
+    depends_lib-append  port:libedit port:libffi port:ncurses port:zlib
 }
 
 #fetch.type              svn
@@ -97,6 +115,8 @@ if {${distfiles} ne ""} {
         }
     } elseif {${subport} eq "clang-${llvm_version}"} {
         distfiles-append     cfe-${version}.src${extract.suffix} compiler-rt-${version}.src${extract.suffix} libcxx-${version}.src${extract.suffix} clang-tools-extra-${version}.src${extract.suffix}
+    } elseif {${subport} eq "lldb-${llvm_version}"} {
+        distfiles-append     cfe-${version}.src${extract.suffix} lldb-${version}.src${extract.suffix}
     }
 }
 
@@ -117,7 +137,10 @@ checksums           llvm-3.9.0.src.tar.xz \
                     sha256  5b7aec46ec8e999ec683c87ad744082e1133781ee4b01905b4bdae5d20785f14 \
                     polly-3.9.0.src.tar.xz \
                     rmd160  76b4fba05ffbfa1ce1486e80b55824fdcbfcbfe2 \
-                    sha256  ef0dd25010099baad84597cf150b543c84feac2574d055d6780463d5de8cd97e
+                    sha256  ef0dd25010099baad84597cf150b543c84feac2574d055d6780463d5de8cd97e \
+                    lldb-3.9.0.src.tar.xz \
+                    rmd160  dbcbe796ea46fc0081e6d5519b4a96c6c32e0fc5 \
+                    sha256  61280e07411e3f2b4cca0067412b39c16b0a9edd19d304d3fc90249899d12384
 
 patch.pre_args  -p1
 patchfiles \
@@ -160,6 +183,34 @@ if {${subport} eq "clang-${llvm_version}"} {
         }
     }
 }
+if {${subport} eq "lldb-${llvm_version}"} {
+    # lldb needs the clang sources present, so we apply the applicable patches.
+    patchfiles-append \
+        1001-MacPorts-Only-Prepare-clang-format-for-replacement-w.patch \
+        1002-MacPorts-Only-Fix-name-of-scan-view-executable-insid.patch \
+        1003-Default-to-ppc7400-for-OSX-10.5.patch \
+        1004-Only-call-setpriority-PRIO_DARWIN_THREAD-0-PRIO_DARW.patch \
+        1005-Default-to-fragile-ObjC-runtime-when-targeting-darwi.patch \
+        openmp-locations.patch
+
+    # https://llvm.org/bugs/show_bug.cgi?id=25681
+    if {${worksrcdir} eq "trunk" || ${worksrcdir} eq "release_${llvm_version_no_dot}"} {
+        # Cannot set cppflags due to https://cmake.org/Bug/view.php?id=12928
+        # Cannot set cxxflags due to https://llvm.org/bugs/show_bug.cgi?id=25904
+        #configure.cxxflags-append -DSVN_REVISION='"${svn.revision}"'
+
+        post-patch {
+            reinplace "1 i \\                             
+                #define SVN_REVISION \"${svn.revision}\"
+            " ${worksrcpath}/tools/clang/lib/Basic/Version.cpp
+        }
+    }
+
+    # we'll need to codesign the debugserver executable, but we'll do that
+    # in the post-activate step.
+    patchfiles-append       patch-no-codesign.diff
+}
+patchfiles-append           patch-accept-build_types.diff
 
 configure.post_args         ../${worksrcdir}
 default configure.dir       {${workpath}/build}
@@ -200,6 +251,25 @@ if {${subport} eq "llvm-${llvm_version}"} {
     # TODO: libc++ shouldn't be built at all.
     #       https://llvm.org/bugs/show_bug.cgi?id=25666
 
+    if {${os.major} <= 12} {
+        # We unfortunately don't have an option to just turn off tsan
+        # https://llvm.org/bugs/show_bug.cgi?id=27715
+        configure.args-append \
+            -DCOMPILER_RT_BUILD_SANITIZERS=OFF
+    }
+} elseif {${subport} eq "lldb-${llvm_version}"} {
+    select.group        lldb
+    select.file         ${filespath}/mp-${subport}
+
+    configure.args-append \
+        -DCLANG_ENABLE_ARCMT=OFF \
+        -DCLANG_INCLUDE_TESTS=OFF \
+        -DCLANG_ENABLE_STATIC_ANALYZER=OFF \
+        -DLLVM_BUILD_RUNTIME=ON \
+        -DLIBCXX_ENABLE_SHARED=OFF \
+        -DLIBCXX_INSTALL_LIBRARY=OFF \
+        -DPYTHON_EXECUTABLE=${prefix}/bin/python2.7 \
+        -DPYTHON_INCLUDE_DIR=${prefix}/Library/Frameworks/Python.framework/Versions/2.7/include/python2.7
     if {${os.major} <= 12} {
         # We unfortunately don't have an option to just turn off tsan
         # https://llvm.org/bugs/show_bug.cgi?id=27715
@@ -269,6 +339,18 @@ variant assertions description "Enable assertions for error detection (has perfo
     configure.args-append -DLLVM_ENABLE_ASSERTIONS=ON
 }
 
+if {${subport} ne "lldb-${llvm_version}"} {
+    variant static_libllvm description "Don't build the shared libLLVM.dylib, for instance to get a standalone redistributable libclang" {
+        configure.args-delete -DLLVM_LINK_LLVM_DYLIB=ON
+        configure.args-append -DLLVM_LINK_LLVM_DYLIB=OFF -DLLVM_BUILD_LLVM_DYLIB=OFF
+    }
+
+    variant nortti description "Don't build with internal RTTI support (increases compilation performance somewhat)" {
+        configure.args-delete -DLLVM_ENABLE_RTTI=ON
+        configure.args-append -DLLVM_ENABLE_RTTI=OFF
+    }
+}
+
 platform darwin {
     if {[string match "*ppc*" [get_canonical_archs]]} {
         # http://trac.macports.org/ticket/33987
@@ -328,10 +410,18 @@ post-extract {
             file rename ${workpath}/libcxx-${version}.src ${worksrcpath}/projects/libcxx
             file rename ${workpath}/clang-tools-extra-${version}.src ${worksrcpath}/tools/clang/tools/extra
         }
+    } elseif {${subport} eq "lldb-${llvm_version}"} {
+        file rename ${workpath}/cfe-${version}.src ${worksrcpath}/tools/clang
+        file rename ${workpath}/lldb-${version}.src ${worksrcpath}/tools/lldb
     }
 }
 
 if {${subport} eq "clang-${llvm_version}"} {
+    build {
+        system -W ${build.dir}/tools/clang "${build.cmd} ${build.pre_args} ${build.target} ${build.post_args}"
+        system -W ${build.dir}/projects/compiler-rt "${build.cmd} ${build.pre_args} ${build.target} ${build.post_args}"
+        system -W ${build.dir}/projects/libcxx "${build.cmd} ${build.pre_args} ${build.target} ${build.post_args}"
+    }
     destroot {
         system "cd ${destroot.dir}/tools/clang && ${destroot.cmd} ${destroot.pre_args} ${destroot.target} ${destroot.post_args}"
         system "cd ${destroot.dir}/projects/compiler-rt && ${destroot.cmd} ${destroot.pre_args} ${destroot.target} ${destroot.post_args}"
@@ -339,6 +429,47 @@ if {${subport} eq "clang-${llvm_version}"} {
 
         delete ${destroot}${sub_prefix}/bin/clang
         file rename ${destroot}${sub_prefix}/bin/clang-${llvm_version} ${destroot}${sub_prefix}/bin/clang
+        if {![variant_isset static_libllvm]} {
+            # this is not a build that aims to be (more easily) relocatable
+            system "install_name_tool -id ${sub_prefix}/lib/libclang.dylib ${destroot}${sub_prefix}/lib/libclang.dylib"
+            system "install_name_tool -change @rpath/libLLVM.dylib ${sub_prefix}/lib/libLLVM.dylib ${destroot}${sub_prefix}/lib/libclang.dylib"
+        }
+    }
+}
+
+if {${subport} eq "lldb-${llvm_version}"} {
+    post-patch {
+        reinplace "s|@@PREFIX@@|${prefix}|" \
+            ${worksrcpath}/tools/clang/lib/Driver/Tools.cpp
+
+        reinplace "s|@CLANG_FORMAT_PATH@|${prefix}/bin/clang-format-${suffix}|g" \
+            ${worksrcpath}/tools/clang/tools/clang-format/clang-format-bbedit.applescript \
+            ${worksrcpath}/tools/clang/tools/clang-format/clang-format-diff.py            \
+            ${worksrcpath}/tools/clang/tools/clang-format/clang-format-sublime.py         \
+            ${worksrcpath}/tools/clang/tools/clang-format/clang-format.el                 \
+            ${worksrcpath}/tools/clang/tools/clang-format/clang-format.py
+    }
+
+    build.dir   ${build.dir}/tools/lldb
+
+    destroot {
+        destroot.target     install/fast
+        system "cd ${destroot.dir} && ${destroot.cmd} ${destroot.pre_args} ${destroot.target} ${destroot.post_args}"
+
+        foreach bin {lldb lldb-mi lldb-server} {
+            delete ${destroot}${sub_prefix}/bin/${bin}
+            file rename ${destroot}${sub_prefix}/bin/${bin}-${version} ${destroot}${sub_prefix}/bin/${bin}
+        }
+        # this is not a build that aims to be (more easily) relocatable
+        system "install_name_tool -id ${sub_prefix}/lib/liblldb.dylib ${destroot}${sub_prefix}/lib/liblldb.dylib"
+        system "install_name_tool -change @rpath/libLLVM.dylib ${sub_prefix}/lib/libLLVM.dylib ${destroot}${sub_prefix}/lib/liblldb.dylib"
+        xinstall -m 755 -d ${destroot}${prefix}/share/doc/lldb-${llvm_version}
+        xinstall -m 644 ${worksrcpath}/tools/lldb/docs/code-signing.txt ${destroot}${prefix}/share/doc/lldb-${llvm_version}/
+    }
+    post-activate {
+        if {[codesign ${sub_prefix}/bin/debugserver lldb_codesign] ne 0} {
+            ui_msg "Please follow the instructions in ${prefix}/lldb-${llvm_version}/code-signing.txt and then reinstall this port"
+        }
     }
 }
 
@@ -362,11 +493,19 @@ post-destroot {
         if {[variant_isset polly]} {
             ln -s LLVMPolly.so ${destroot}${sub_prefix}/lib/LLVMPolly.dylib
         }
+        if {[file exists ${destroot}${sub_prefix}/lib/libLLVM.dylib]} {
+            # this is not a build that aims to be (more easily) relocatable
+            system "install_name_tool -id ${sub_prefix}/lib/libLTO.dylib ${destroot}${sub_prefix}/lib/libLTO.dylib"
+            system "install_name_tool -id ${sub_prefix}/lib/libLLVM.dylib ${destroot}${sub_prefix}/lib/libLLVM.dylib"
+            system "install_name_tool -change @rpath/libLLVM.dylib ${sub_prefix}/lib/libLLVM.dylib ${destroot}${sub_prefix}/lib/libLTO.dylib"
+        }
     } elseif {${subport} eq "clang-${llvm_version}"} {
         system "ditto ${worksrcpath}/projects/libcxx/include ${destroot}${sub_prefix}/lib/c++/v1"
 
         # http://trac.macports.org/ticket/33207
         ln -s ${prefix}/libexec/ld64/ld ${destroot}${sub_prefix}/bin/ld
+    } elseif {${subport} eq "lldb-${llvm_version}"} {
+        delete ${destroot}${prefix}/bin/debugserver-${suffix}
     }
 }
 
