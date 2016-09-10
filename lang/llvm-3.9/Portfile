@@ -15,6 +15,7 @@ set llvm_version_no_dot 39
 name                    llvm-${llvm_version}
 revision                0
 subport                 clang-${llvm_version} {}
+set lldb_standalone_build true
 subport                 lldb-${llvm_version} {
     PortGroup           code-sign 1.0
 }
@@ -116,7 +117,12 @@ if {${distfiles} ne ""} {
     } elseif {${subport} eq "clang-${llvm_version}"} {
         distfiles-append     cfe-${version}.src${extract.suffix} compiler-rt-${version}.src${extract.suffix} libcxx-${version}.src${extract.suffix} clang-tools-extra-${version}.src${extract.suffix}
     } elseif {${subport} eq "lldb-${llvm_version}"} {
-        distfiles-append     cfe-${version}.src${extract.suffix} lldb-${version}.src${extract.suffix}
+        distfiles-append \
+                    lldb-${version}.src${extract.suffix}
+        if {![info exists lldb_standalone_build]} {
+            distfiles-append \
+                    cfe-${version}.src${extract.suffix}
+        }
     }
 }
 
@@ -183,27 +189,33 @@ if {${subport} eq "clang-${llvm_version}"} {
         }
     }
 }
+
 if {${subport} eq "lldb-${llvm_version}"} {
-    # lldb needs the clang sources present, so we apply the applicable patches.
-    patchfiles-append \
-        1001-MacPorts-Only-Prepare-clang-format-for-replacement-w.patch \
-        1002-MacPorts-Only-Fix-name-of-scan-view-executable-insid.patch \
-        1003-Default-to-ppc7400-for-OSX-10.5.patch \
-        1004-Only-call-setpriority-PRIO_DARWIN_THREAD-0-PRIO_DARW.patch \
-        1005-Default-to-fragile-ObjC-runtime-when-targeting-darwi.patch \
-        openmp-locations.patch
+    if {![info exists lldb_standalone_build]} {
+        # lldb needs the clang sources present, so we apply the applicable patches.
+        patchfiles-append \
+            1001-MacPorts-Only-Prepare-clang-format-for-replacement-w.patch \
+            1002-MacPorts-Only-Fix-name-of-scan-view-executable-insid.patch \
+            1003-Default-to-ppc7400-for-OSX-10.5.patch \
+            1004-Only-call-setpriority-PRIO_DARWIN_THREAD-0-PRIO_DARW.patch \
+            1005-Default-to-fragile-ObjC-runtime-when-targeting-darwi.patch \
+            openmp-locations.patch
 
-    # https://llvm.org/bugs/show_bug.cgi?id=25681
-    if {${worksrcdir} eq "trunk" || ${worksrcdir} eq "release_${llvm_version_no_dot}"} {
-        # Cannot set cppflags due to https://cmake.org/Bug/view.php?id=12928
-        # Cannot set cxxflags due to https://llvm.org/bugs/show_bug.cgi?id=25904
-        #configure.cxxflags-append -DSVN_REVISION='"${svn.revision}"'
+        # https://llvm.org/bugs/show_bug.cgi?id=25681
+        if {${worksrcdir} eq "trunk" || ${worksrcdir} eq "release_${llvm_version_no_dot}"} {
+            # Cannot set cppflags due to https://cmake.org/Bug/view.php?id=12928
+            # Cannot set cxxflags due to https://llvm.org/bugs/show_bug.cgi?id=25904
+            #configure.cxxflags-append -DSVN_REVISION='"${svn.revision}"'
 
-        post-patch {
-            reinplace "1 i \\                             
-                #define SVN_REVISION \"${svn.revision}\"
-            " ${worksrcpath}/tools/clang/lib/Basic/Version.cpp
+            post-patch {
+                reinplace "1 i \\
+                    #define SVN_REVISION \"${svn.revision}\"
+                " ${worksrcpath}/tools/clang/lib/Basic/Version.cpp
+            }
         }
+    } else {
+        patchfiles-append \
+            patch-private-include-path.diff
     }
 
     # we'll need to codesign the debugserver executable, but we'll do that
@@ -276,6 +288,15 @@ if {${subport} eq "llvm-${llvm_version}"} {
         configure.args-append \
             -DCOMPILER_RT_BUILD_SANITIZERS=OFF
     }
+    # for the standalone build:
+    if {[info exists lldb_standalone_build]} {
+        configure.args-append \
+            -DLLVM_CONFIG=${sub_prefix}/bin/llvm-config \
+            -DLLVM_DIR=${sub_prefix}/lib/cmake/llvm \
+            -DPYTHON_LIBRARY=${prefix}/lib/libpython2.7.dylib
+     configure.post_args \
+            ../${worksrcdir}/tools/lldb
+    }
 }
 
 # llvm-3.5 and later requires a C++11 runtime
@@ -297,11 +318,13 @@ if {${subport} eq "clang-${llvm_version}"} {
     compiler.blacklist-append macports-clang-${llvm_version}
 }
 
-# blacklist current and future versions if they're not available in order to
-# help break potential dependency cycles.
-foreach ver {3.9 devel} {
-    if {![file exists ${prefix}/bin/clang-mp-${ver}]} {
-        compiler.blacklist-append macports-clang-${ver}
+if {${subport} ne "lldb-${llvm_version}"} {
+    # blacklist current and future versions if they're not available in order to
+    # help break potential dependency cycles.
+    foreach ver {3.9 devel} {
+        if {![file exists ${prefix}/bin/clang-mp-${ver}]} {
+            compiler.blacklist-append macports-clang-${ver}
+        }
     }
 }
 
@@ -411,7 +434,7 @@ post-extract {
             file rename ${workpath}/clang-tools-extra-${version}.src ${worksrcpath}/tools/clang/tools/extra
         }
     } elseif {${subport} eq "lldb-${llvm_version}"} {
-        file rename ${workpath}/cfe-${version}.src ${worksrcpath}/tools/clang
+#         file rename ${workpath}/cfe-${version}.src ${worksrcpath}/tools/clang
         file rename ${workpath}/lldb-${version}.src ${worksrcpath}/tools/lldb
     }
 }
@@ -439,18 +462,20 @@ if {${subport} eq "clang-${llvm_version}"} {
 
 if {${subport} eq "lldb-${llvm_version}"} {
     post-patch {
-        reinplace "s|@@PREFIX@@|${prefix}|" \
-            ${worksrcpath}/tools/clang/lib/Driver/Tools.cpp
+        if {![info exists lldb_standalone_build]} {
+            reinplace "s|@@PREFIX@@|${prefix}|" \
+                ${worksrcpath}/tools/clang/lib/Driver/Tools.cpp
 
-        reinplace "s|@CLANG_FORMAT_PATH@|${prefix}/bin/clang-format-${suffix}|g" \
-            ${worksrcpath}/tools/clang/tools/clang-format/clang-format-bbedit.applescript \
-            ${worksrcpath}/tools/clang/tools/clang-format/clang-format-diff.py            \
-            ${worksrcpath}/tools/clang/tools/clang-format/clang-format-sublime.py         \
-            ${worksrcpath}/tools/clang/tools/clang-format/clang-format.el                 \
-            ${worksrcpath}/tools/clang/tools/clang-format/clang-format.py
+            reinplace "s|@CLANG_FORMAT_PATH@|${prefix}/bin/clang-format-${suffix}|g" \
+                ${worksrcpath}/tools/clang/tools/clang-format/clang-format-bbedit.applescript \
+                ${worksrcpath}/tools/clang/tools/clang-format/clang-format-diff.py            \
+                ${worksrcpath}/tools/clang/tools/clang-format/clang-format-sublime.py         \
+                ${worksrcpath}/tools/clang/tools/clang-format/clang-format.el                 \
+                ${worksrcpath}/tools/clang/tools/clang-format/clang-format.py
+        }
+        # invoke make in tools/lldb to (re)build only what's strictly necessary
+        build.dir   ${build.dir}/tools/lldb
     }
-
-    build.dir   ${build.dir}/tools/lldb
 
     destroot {
         destroot.target     install/fast
@@ -493,6 +518,8 @@ post-destroot {
         if {[variant_isset polly]} {
             ln -s LLVMPolly.so ${destroot}${sub_prefix}/lib/LLVMPolly.dylib
         }
+        # copy a cmake module that's required for a standalone build of lldb
+        xinstall -m 644 ${worksrcdir}/cmake/modules/CheckAtomic.cmake ${destroot}${sub_prefix}/lib/cmake/llvm
 #         if {[file exists ${destroot}${sub_prefix}/lib/libLLVM.dylib]} {
 #             # this is not a build that aims to be (more easily) relocatable
 #             system "install_name_tool -id ${sub_prefix}/lib/libLTO.dylib ${destroot}${sub_prefix}/lib/libLTO.dylib"
@@ -506,6 +533,12 @@ post-destroot {
         ln -s ${prefix}/libexec/ld64/ld ${destroot}${sub_prefix}/bin/ld
     } elseif {${subport} eq "lldb-${llvm_version}"} {
         delete ${destroot}${prefix}/bin/debugserver-${suffix}
+        if {[info exists lldb_standalone_build]} {
+            system "install_name_tool -id @rpath/liblldb.${version}.dylib ${destroot}${sub_prefix}/lib/liblldb.${version}.dylib"
+            foreach bin [glob ${destroot}${sub_prefix}/bin/*] {
+                system "install_name_tool -change ${prefix}/lib/liblldb.${version}.dylib ${sub_prefix}/lib/liblldb.${version}.dylib ${bin}"
+            }
+        }
     }
 }
 
