@@ -145,6 +145,17 @@ pre-configure {
     # but why do we set -DNDEBUG?
     configure.cflags-append     -DNDEBUG
     configure.cxxflags-append   -DNDEBUG
+    # force newer CMake versions to take a change in compiler choice into account
+    # even if it is invoked in a build.dir that was configured before.
+    if {${configure.cc} ne ""} {
+        configure.args-append \
+                    -DCMAKE_C_COMPILER=${configure.cc}
+    }
+    if {${configure.cxx} ne ""} {
+        configure.args-append \
+                    -DCMAKE_CXX_COMPILER=${configure.cxx}
+    }
+
 
     # process ${configure.cppflags} to extract include directives and other options
     if {${configure.cppflags} ne ""} {
