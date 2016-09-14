@@ -1,8 +1,14 @@
 diff --git a/processcore/CMakeLists.txt b/processcore/CMakeLists.txt
-index e7c9263..cfc1686 100644
+index e7c9263..9235963 100644
 --- a/processcore/CMakeLists.txt
 +++ b/processcore/CMakeLists.txt
-@@ -30,6 +30,10 @@ if( ${CMAKE_SYSTEM_NAME} MATCHES "NetBSD" )
+@@ -1,3 +1,5 @@
++include(ECMMarkNonGuiExecutable)
++
+ remove_definitions(-DQT_NO_CAST_FROM_ASCII -DQT_NO_CAST_FROM_BYTEARRAY)
+ add_definitions(-DTRANSLATION_DOMAIN=\"processcore\")
+ 
+@@ -30,6 +32,10 @@ if( ${CMAKE_SYSTEM_NAME} MATCHES "NetBSD" )
    message(STATUS "Adding kvm library on NetBSD")
    target_link_libraries(processcore kvm)
  endif()
@@ -13,23 +19,100 @@ index e7c9263..cfc1686 100644
  
  target_include_directories(processcore PUBLIC "$<BUILD_INTERFACE:${libksysguard_SOURCE_DIR}>" "$<INSTALL_INTERFACE:${INCLUDE_INSTALL_DIR}/ksysguard>")
  set_target_properties(processcore PROPERTIES VERSION ${KSYSGUARD_VERSION_STRING} SOVERSION ${KSYSGUARD_SOVERSION} EXPORT_NAME ProcessCore)
-@@ -50,6 +54,10 @@ set(ksysguardprocesslist_helper_srcs
+@@ -49,7 +55,11 @@ set(ksysguardprocesslist_helper_srcs
+     processes_base_p.cpp)
  
  add_executable(ksysguardprocesslist_helper ${ksysguardprocesslist_helper_srcs})
++ecm_mark_nongui_executable(ksysguardprocesslist_helper)
  target_link_libraries(ksysguardprocesslist_helper Qt5::Core KF5::Auth KF5::I18n)
 +if(APPLE)
-+  message(STATUS "Adding Security framework on Mac OS X")
-+  target_link_libraries(ksysguardprocesslist_helper "-framework Security")
++    target_link_libraries(ksysguardprocesslist_helper "-sectcreate __TEXT __info_plist ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist -framework Security")
 +endif()
  install(TARGETS ksysguardprocesslist_helper DESTINATION ${KAUTH_HELPER_INSTALL_DIR})
  
  kauth_install_helper_files(ksysguardprocesslist_helper org.kde.ksysguard.processlisthelper root)
+diff --git a/processcore/Info.plist b/processcore/Info.plist
+new file mode 100644
+index 0000000..cd16f1f
+--- /dev/null
++++ b/processcore/Info.plist
+@@ -0,0 +1,36 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++        <key>NSPrincipalClass</key>
++        <string>NSApplication</string>
++        <key>CFBundleDevelopmentRegion</key>
++        <string>English</string>
++        <key>CFBundleExecutable</key>
++        <string>ksysguardprocesslist_helper</string>
++        <key>CFBundleGetInfoString</key>
++        <string>ksysguardprocesslist_helper</string>
++        <key>CFBundleIdentifier</key>
++        <string>org.kde.ksysguard.processlisthelper</string>
++        <key>CFBundleInfoDictionaryVersion</key>
++        <string>6.0</string>
++        <key>CFBundleLongVersionString</key>
++        <string>5.7.2</string>
++        <key>CFBundleName</key>
++        <string>ksysguardprocesslist_helper</string>
++        <key>CFBundleShortVersionString</key>
++        <string>5.7</string>
++        <key>CFBundleVersion</key>
++        <string>5.7.2</string>
++        <key>CSResourcesFileMapped</key>
++        <true/>
++        <key>LSRequiresCarbon</key>
++        <true/>
++        <key>NSHumanReadableCopyright</key>
++        <string>1996-2016 The KDE System Monitor Developers</string>
++        <key>SecTaskAccess</key>
++        <array>
++            <string>allowed</string>
++        </array>
++</dict>
++</plist>
+diff --git a/processcore/helper.cpp b/processcore/helper.cpp
+index d54c8e1..4371b7f 100644
+--- a/processcore/helper.cpp
++++ b/processcore/helper.cpp
+@@ -23,6 +23,10 @@
+ #include "helper.h"
+ #include "processes_local_p.h"
+ 
++#ifdef Q_OS_OSX
++#include <QtCore/QCoreApplication>
++#endif
++
+ using namespace KAuth;
+ 
+ KSysGuardProcessListHelper::KSysGuardProcessListHelper()
+@@ -123,5 +127,18 @@ ActionReply KSysGuardProcessListHelper::changecpuscheduler(QVariantMap parameter
+         return ActionReply(ActionReply::HelperErrorType);
+ 
+ }
++
++#ifdef Q_OS_OSX
++
++int main(int argc, char **argv)
++{
++    QCoreApplication::setSetuidAllowed(true);
++    return KAuth::HelperSupport::helperMain(argc, argv, "org.kde.ksysguard.processlisthelper", new KSysGuardProcessListHelper());
++}
++
++#else
++
+ KAUTH_HELPER_MAIN("org.kde.ksysguard.processlisthelper", KSysGuardProcessListHelper)
+ 
++#endif
++
 diff --git a/processcore/processes_darwin_p.cpp b/processcore/processes_darwin_p.cpp
 new file mode 100644
-index 0000000..4a0dd92
+index 0000000..642b44b
 --- /dev/null
 +++ b/processcore/processes_darwin_p.cpp
-@@ -0,0 +1,397 @@
+@@ -0,0 +1,442 @@
 +/*  This file is part of the KDE project
 +    Copyright (C) 2007 Manolo Valdes <nolis71cu@gmail.com>
 +
@@ -93,6 +176,12 @@ index 0000000..4a0dd92
 +// cf. http://os-tres.net/blog/2010/02/17/mac-os-x-and-task-for-pid-mach-call/
 +int acquireTaskportRight()
 +{
++    static bool done = false;
++
++    if (done) {
++        return 0;
++    }
++
 +    OSStatus stat;
 +    AuthorizationItem taskport_item[] = {{"system.privilege.taskport:"}};
 +    AuthorizationRights rights = {1, taskport_item}, *out_rights = NULL;
@@ -110,6 +199,7 @@ index 0000000..4a0dd92
 +    if (stat != errAuthorizationSuccess) {
 +        return 1;
 +    }
++    done = true;
 +    return 0;
 +}
 +
@@ -120,18 +210,23 @@ index 0000000..4a0dd92
 +    {
 +        if (acquireTaskportRight()) {
 +            qWarning() << "Failure acquiring authorisation to read other processes' Mach ports";
++            m_haveAuthTask = false;
++        } else {
++            m_haveAuthTask = true;
 +        }
 +    }
 +    ~Private() {;}
-+    inline int argMax();
-+    inline bool readProc(long pid, struct kinfo_proc *p);
-+    inline void readProcStatus(struct kinfo_proc *p, Process *process);
-+    inline void readProcStat(struct kinfo_proc *p, Process *process);
-+    inline void readProcStatm(struct kinfo_proc *p, Process *process);
-+    inline bool readProcCmdline(long pid, Process *process);
++    int argMax();
++    bool readProc(long pid, struct kinfo_proc *p);
++    void readProcStatus(struct kinfo_proc *p, Process *process);
++    void readProcStat(struct kinfo_proc *p, Process *process);
++    void readProcStatm(struct kinfo_proc *p, Process *process);
++    bool readProcCmdline(long pid, Process *process);
++
++    bool m_haveAuthTask;
 +};
 +
-+int ProcessesLocal::Private::argMax()
++inline int ProcessesLocal::Private::argMax()
 +{
 +    int mib[2] = {CTL_KERN, KERN_ARGMAX};
 +    int argmax = 0;
@@ -142,7 +237,7 @@ index 0000000..4a0dd92
 +    return argmax;
 +}
 +
-+bool ProcessesLocal::Private::readProc(long pid, struct kinfo_proc *p)
++inline bool ProcessesLocal::Private::readProc(long pid, struct kinfo_proc *p)
 +{
 +    int mib[4];
 +    size_t len;
@@ -160,9 +255,11 @@ index 0000000..4a0dd92
 +{
 +    pid_t pid = p->kp_proc.p_pid;
 +
-+    process->setUid(0);
-+    process->setGid(0);
-+    process->setTracerpid(-1);
++    if (p->kp_proc.p_oppid > 0) {
++        process->setTracerpid(p->kp_proc.p_oppid);
++    } else {
++        process->setTracerpid(-1);
++    }
 +
 +    process->setEuid(p->kp_eproc.e_ucred.cr_uid);
 +    process->setUid(p->kp_eproc.e_pcred.p_ruid);
@@ -174,7 +271,7 @@ index 0000000..4a0dd92
 +    mach_port_t task;
 +    // this is likely to fail except for ourselves, but we'll leave it in because
 +    // it should only be a matter of codesigning the right binaries.
-+    if (task_for_pid(mach_task_self(), pid, &task) == KERN_SUCCESS) {
++    if (m_haveAuthTask && task_for_pid(mach_task_self(), pid, &task) == KERN_SUCCESS) {
 +        thread_act_array_t thread_list = nullptr;
 +        mach_msg_type_number_t thread_count = 0;
 +        if (task_threads(task, &thread_list, &thread_count) == KERN_SUCCESS) {
@@ -186,16 +283,47 @@ index 0000000..4a0dd92
 +
 +void ProcessesLocal::Private::readProcStat(struct kinfo_proc *p, Process *ps)
 +{
++    pid_t pid = p->kp_proc.p_pid;
 +    int status;
-+    struct rusage *pru = p->kp_proc.p_ru;
++    mach_port_t task;
++    bool gotTask, gotTaskInfo = false;
++    gotTask = m_haveAuthTask? task_for_pid(mach_task_self(), pid, &task) == KERN_SUCCESS : false;
++    struct task_basic_info taskInfo;
++    mach_msg_type_number_t infoCount = TASK_BASIC_INFO_COUNT;
++    // this is likely to fail except for ourselves, but we'll leave it in because
++    // it should only be a matter of codesigning the right binaries.
++    if (gotTask) {
++        gotTaskInfo = task_info(task, TASK_BASIC_INFO, task_info_t(&taskInfo), &infoCount) == KERN_SUCCESS;
++    }
 +
++    struct rusage *pru = p->kp_proc.p_ru;
 +    if (pru) {
 +        ps->setUserTime(pru->ru_utime.tv_sec * 100 + pru->ru_utime.tv_usec / 10000);
 +        ps->setSysTime(pru->ru_stime.tv_sec * 100 + pru->ru_stime.tv_usec / 10000);
 +    }
 +    ps->setNiceLevel(p->kp_proc.p_nice);
-+    ps->setVmSize(p->kp_eproc.e_xsize / 1024);
-+    ps->setVmRSS(p->kp_eproc.e_xrssize * getpagesize() / 1024);
++
++    struct timeval startTime = p->kp_proc.p_un.__p_starttime;
++    ps->setStartTime(startTime.tv_sec + startTime.tv_usec * 1000000L * CLOCKS_PER_SEC);
++
++    int ttyNr = p->kp_eproc.e_tdev;
++    if (ttyNr >= 0x10000000) {
++        ttyNr -= 0x10000000;
++        char ttyName[256];
++        snprintf(ttyName, sizeof(ttyName)/sizeof(char), "ttys%03d", ttyNr);
++        ps->setTty(QByteArray(ttyName));
++    }
++
++    if (gotTaskInfo) {
++        ps->setVmSize(taskInfo.virtual_size / PAGE_SIZE);
++        ps->setVmRSS(taskInfo.resident_size / PAGE_SIZE);
++        ps->setUserTime(taskInfo.user_time.seconds * 100);
++        ps->setSysTime(taskInfo.system_time.seconds * 100);
++    } else {
++        ps->setVmSize(p->kp_eproc.e_xsize / 1024);
++        ps->setVmRSS(p->kp_eproc.e_xrssize * getpagesize() / 1024);
++    }
++
 +    status = p->kp_proc.p_stat;
 +
 +    // "idle","run","sleep","stop","zombie"
@@ -415,7 +543,7 @@ index 0000000..4a0dd92
 +    size_t len;
 +
 +    len = sizeof (Total);
-+    if (sysctlbyname("hw.physmem", &Total, &len, NULL, 0) == -1)
++    if (sysctlbyname("hw.memsize", &Total, &len, NULL, 0) == -1)
 +        return 0;
 +
 +    return Total /= 1024;
