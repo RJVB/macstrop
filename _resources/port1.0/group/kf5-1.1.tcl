@@ -195,7 +195,9 @@ if {${os.platform} eq "darwin"} {
                         -DCMAKE_DISABLE_FIND_PACKAGE_X11=ON \
                         -DAPPLE_SUPPRESS_X11_WARNING=ON \
                         -DCMAKE_INSTALL_LIBEXECDIR=${prefix}/libexec \
-                        -DKDE_INSTALL_LIBEXECDIR=${kf5.libexec_dir}
+                        -DKDE_INSTALL_LIBEXECDIR=${kf5.libexec_dir} \
+                        -DCMAKE_MACOSX_RPATH=ON
+    # 20160914: may need to set -DCMAKE_POLICY_DEFAULT_CMP0042=NEW
 } elseif {${os.platform} eq "linux"} {
     set kf5.applications_dir \
                         ${prefix}/bin
