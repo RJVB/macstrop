@@ -1,9 +1,35 @@
+diff --git a/processcore/CMakeLists.txt b/processcore/CMakeLists.txt
+index e7c9263..cfc1686 100644
+--- a/processcore/CMakeLists.txt
++++ b/processcore/CMakeLists.txt
+@@ -30,6 +30,10 @@ if( ${CMAKE_SYSTEM_NAME} MATCHES "NetBSD" )
+   message(STATUS "Adding kvm library on NetBSD")
+   target_link_libraries(processcore kvm)
+ endif()
++if(APPLE)
++  message(STATUS "Adding Security framework on Mac OS X")
++  target_link_libraries(processcore PRIVATE "-framework Security")
++endif()
+ 
+ target_include_directories(processcore PUBLIC "$<BUILD_INTERFACE:${libksysguard_SOURCE_DIR}>" "$<INSTALL_INTERFACE:${INCLUDE_INSTALL_DIR}/ksysguard>")
+ set_target_properties(processcore PROPERTIES VERSION ${KSYSGUARD_VERSION_STRING} SOVERSION ${KSYSGUARD_SOVERSION} EXPORT_NAME ProcessCore)
+@@ -50,6 +54,10 @@ set(ksysguardprocesslist_helper_srcs
+ 
+ add_executable(ksysguardprocesslist_helper ${ksysguardprocesslist_helper_srcs})
+ target_link_libraries(ksysguardprocesslist_helper Qt5::Core KF5::Auth KF5::I18n)
++if(APPLE)
++  message(STATUS "Adding Security framework on Mac OS X")
++  target_link_libraries(ksysguardprocesslist_helper "-framework Security")
++endif()
+ install(TARGETS ksysguardprocesslist_helper DESTINATION ${KAUTH_HELPER_INSTALL_DIR})
+ 
+ kauth_install_helper_files(ksysguardprocesslist_helper org.kde.ksysguard.processlisthelper root)
 diff --git a/processcore/processes_darwin_p.cpp b/processcore/processes_darwin_p.cpp
 new file mode 100644
-index 0000000..b148602
+index 0000000..4a0dd92
 --- /dev/null
 +++ b/processcore/processes_darwin_p.cpp
-@@ -0,0 +1,298 @@
+@@ -0,0 +1,397 @@
 +/*  This file is part of the KDE project
 +    Copyright (C) 2007 Manolo Valdes <nolis71cu@gmail.com>
 +
@@ -31,6 +57,7 @@ index 0000000..b148602
 +
 +#include <QSet>
 +#include <QFileInfo>
++#include <QProcess>
 +
 +#include <sys/param.h>
 +#include <sys/sysctl.h>
@@ -38,9 +65,23 @@ index 0000000..b148602
 +#include <sys/user.h>
 +#include <sys/resource.h>
 +#include <sys/vm.h>
++
++// #include <mach/mach_init.h>
++// #include <mach/mach_vm.h>
++// #include <mach/vm_map.h>
++#include <mach/mach.h>
++#if defined(__APPLE__) && (MAC_OS_X_VERSION_MIN_REQUIRED >= 1060)
++    #include <mach/shared_region.h>
++#else
++    #include <mach/shared_memory_server.h> /* deprecated in 10.6 */
++#endif
++#include <mach/task.h>
++#include <Security/Authorization.h>
++
 +#include <signal.h>
 +#include <unistd.h>
 +#include <stdlib.h>
++#include <stdio.h>
 +#include <sched.h>
 +
 +#include <QDebug>
@@ -49,10 +90,38 @@ index 0000000..b148602
 +namespace KSysGuard
 +{
 +
++// cf. http://os-tres.net/blog/2010/02/17/mac-os-x-and-task-for-pid-mach-call/
++int acquireTaskportRight()
++{
++    OSStatus stat;
++    AuthorizationItem taskport_item[] = {{"system.privilege.taskport:"}};
++    AuthorizationRights rights = {1, taskport_item}, *out_rights = NULL;
++    AuthorizationRef author;
++
++    AuthorizationFlags auth_flags = kAuthorizationFlagExtendRights|kAuthorizationFlagPreAuthorize
++        |kAuthorizationFlagInteractionAllowed|(1 << 5);
++
++    stat = AuthorizationCreate(NULL, kAuthorizationEmptyEnvironment,auth_flags,&author);
++    if (stat != errAuthorizationSuccess) {
++        return 1;
++    }
++
++    stat = AuthorizationCopyRights(author, &rights, kAuthorizationEmptyEnvironment, auth_flags, &out_rights);
++    if (stat != errAuthorizationSuccess) {
++        return 1;
++    }
++    return 0;
++}
++
 +class ProcessesLocal::Private
 +{
 +public:
-+    Private() {;}
++    Private()
++    {
++        if (acquireTaskportRight()) {
++            qWarning() << "Failure acquiring authorisation to read other processes' Mach ports";
++        }
++    }
 +    ~Private() {;}
 +    inline int argMax();
 +    inline bool readProc(long pid, struct kinfo_proc *p);
@@ -89,6 +158,8 @@ index 0000000..b148602
 +
 +void ProcessesLocal::Private::readProcStatus(struct kinfo_proc *p, Process *process)
 +{
++    pid_t pid = p->kp_proc.p_pid;
++
 +    process->setUid(0);
 +    process->setGid(0);
 +    process->setTracerpid(-1);
@@ -99,6 +170,18 @@ index 0000000..b148602
 +    process->setEgid(p->kp_eproc.e_pcred.p_svgid);
 +    process->setGid(p->kp_eproc.e_pgid);
 +    process->setName(QString(p->kp_proc.p_comm[0] ? p->kp_proc.p_comm : "????"));
++
++    mach_port_t task;
++    // this is likely to fail except for ourselves, but we'll leave it in because
++    // it should only be a matter of codesigning the right binaries.
++    if (task_for_pid(mach_task_self(), pid, &task) == KERN_SUCCESS) {
++        thread_act_array_t thread_list = nullptr;
++        mach_msg_type_number_t thread_count = 0;
++        if (task_threads(task, &thread_list, &thread_count) == KERN_SUCCESS) {
++            process->setNumThreads(thread_count);
++            vm_deallocate(mach_task_self(), vm_address_t(thread_list), sizeof(thread_act_array_t) * thread_count);
++        }
++    }
 +}
 +
 +void ProcessesLocal::Private::readProcStat(struct kinfo_proc *p, Process *ps)
@@ -115,23 +198,23 @@ index 0000000..b148602
 +    ps->setVmRSS(p->kp_eproc.e_xrssize * getpagesize() / 1024);
 +    status = p->kp_proc.p_stat;
 +
-+// "idle","run","sleep","stop","zombie"
-+    switch( status ) {
-+      case SRUN:
-+         ps->setStatus(Process::Running);
-+	 break;
-+      case SSLEEP:
-+         ps->setStatus(Process::Sleeping);
-+	 break;
-+      case SSTOP:
-+         ps->setStatus(Process::Stopped);
-+         break;
-+      case SZOMB:
-+         ps->setStatus(Process::Zombie);
-+         break;
-+      default:
-+         ps->setStatus(Process::OtherStatus);
-+         break;
++    // "idle","run","sleep","stop","zombie"
++    switch (status) {
++        case SRUN:
++            ps->setStatus(Process::Running);
++            break;
++        case SSLEEP:
++            ps->setStatus(Process::Sleeping);
++            break;
++        case SSTOP:
++            ps->setStatus(Process::Stopped);
++            break;
++        case SZOMB:
++            ps->setStatus(Process::Zombie);
++            break;
++        default:
++            ps->setStatus(Process::OtherStatus);
++            break;
 +    }
 +}
 +
@@ -150,42 +233,84 @@ index 0000000..b148602
 +    mib[1] = KERN_PROCARGS2;
 +    mib[2] = pid;
 +
-+    if (sysctl(mib, 3, buf.data(), &buflen, NULL, 0) == -1 || !buflen) {
-+        return false;
-+    }
-+    //cmdline separates parameters with the NULL character; buf.data() starts
-+    // with argc stored as an int
-+    int argc;
-+    memcpy(&argc, buf.data(), sizeof(argc));
-+    char *cmd = buf.data() + sizeof(int);
-+    size_t i = sizeof(int);
++    if (sysctl(mib, 3, buf.data(), &buflen, NULL, 0) == 0 && buflen) {
++        //cmdline separates parameters with the NULL character; buf.data() starts
++        // with argc stored as an int
++        int argc;
++        memcpy(&argc, buf.data(), sizeof(argc));
++        char *cmd = buf.data() + sizeof(int);
++        size_t i = sizeof(int);
 +
-+    // store argv[0] as process->setName() because p_comm is only 16 characters long
-+    process->setName(QFileInfo(QString::fromUtf8(cmd)).baseName());
++        // store argv[0] as process->setName() because p_comm is only 16 characters long
++        process->setName(QFileInfo(QString::fromUtf8(cmd)).baseName());
 +
-+    // get rid of argv[0]
-+    while (*cmd != '\0') {
-+        ++cmd, ++i;
-+    }
-+    // prune
-+    while (*cmd == '\0') {
-+        ++cmd, ++i;
-+    }
-+    // now we should be at the actual commandline.
-+    // separate the arguments, and stop after having processed
-+    // all arguments because we do not want to store the environment
-+    for (int j = 0, n = 0; i < buflen && n < argc-1; ++i, ++j) {
-+        if (cmd[j] == '\0') {
-+            cmd[j] = ' ';
-+            n += 1;
++        // get rid of argv[0]
++        while (*cmd != '\0') {
++            ++cmd, ++i;
++        }
++        // prune
++        while (*cmd == '\0') {
++            ++cmd, ++i;
++        }
++        // now we should be at the actual commandline.
++        // separate the arguments, and stop after having processed
++        // all arguments because we do not want to store the environment
++        for (int j = 0, n = 0; i < buflen && n < argc-1; ++i, ++j) {
++            if (cmd[j] == '\0') {
++                cmd[j] = ' ';
++                n += 1;
++            }
++        }
++        QString command = QString::fromUtf8(cmd);
++
++//         qWarning() << "pid" << pid << "argc=" << argc << ":" << command.trimmed();
++        process->setCommand(command.trimmed());
++
++        return true;
++    } else {
++        char *comm = nullptr;
++        // This must be a command that requires privileges to nose into;
++        // use ps to figure out what we want; inspired by QtCreator's localprocesslist.cpp
++        // but limit the overhead of using Qt calls. `ps -o comm` returns the command name,
++        // `ps -o command` returns the full command line. Appending an '=' allows to control
++        // the header that ps prints; appending an empty string suppresses the full header.
++        if (asprintf(&comm, "ps -o comm= -p %ld ; ps -o command= -p %ld", pid, pid) > 0) {
++            FILE *fp = popen(comm, "r");
++            if (fp) {
++                // we've opened a stream to a command that will output 2 lines if pid is valid:
++                // the command itself
++                // the full commandline
++                // There appears to be no way to obtain these observations with a single ps call;
++                // the 1st column will always be truncated. And the command is a full path, which
++                // often contains spaces on OS X so we can't post-process the full commandline.
++                QString pidCommand, pidCommandLine;
++                // The lazy way with Qt overhead:
++                // QTextStream qfp(fp, QIODevice::ReadOnly);
++                // qfp.readLineInto(&pidCommand);
++                // qfp.readLineInto(&pidCommandLine);
++                // hardly less work and less overhead:
++                char *line = NULL;
++                size_t linecap = 0;
++                if (getline(&line, &linecap, fp) > 0) {
++                    pidCommand = QLatin1String(line);
++                    pidCommand.chop(1);
++                    process->setName(QFileInfo(pidCommand).baseName());
++                }
++                if (getline(&line, &linecap, fp) > 0) {
++                    pidCommandLine = QLatin1String(line);
++                    pidCommandLine.chop(1);
++                    process->setCommand(pidCommandLine);
++                }
++                if (line) {
++                    free(line);
++                }
++                pclose(fp);
++//                 qWarning() << "pid" << pid << "comm=" << pidCommand << "commandLine=" << pidCommandLine;
++            }
++            free(comm);
 +        }
 +    }
-+    QString command = QString::fromUtf8(cmd);
-+
-+    qWarning() << "pid" << pid << "argc=" << argc << ":" << command.trimmed();
-+    process->setCommand(command.trimmed());
-+
-+    return true;
++    return false;
 +}
 +
 +ProcessesLocal::ProcessesLocal()
