@@ -73,6 +73,24 @@ index 0000000..cd16f1f
 +        </array>
 +</dict>
 +</plist>
+diff --git a/processcore/helper.cpp b/processcore/helper.cpp
+index d54c8e1..f5787a7 100644
+--- a/processcore/helper.cpp
++++ b/processcore/helper.cpp
+@@ -23,10 +23,13 @@
+ #include "helper.h"
+ #include "processes_local_p.h"
+ 
++#include <QtCore/QCoreApplication>
++
+ using namespace KAuth;
+ 
+ KSysGuardProcessListHelper::KSysGuardProcessListHelper()
+ {
++    qApp->setSetuidAllowed(true);
+     qRegisterMetaType<QList<long long> >();
+ }
+ 
 diff --git a/processcore/processes_darwin_p.cpp b/processcore/processes_darwin_p.cpp
 new file mode 100644
 index 0000000..642b44b
@@ -522,7 +540,7 @@ index 0000000..642b44b
 +
 +}
 diff --git a/processcore/processes_local_p.cpp b/processcore/processes_local_p.cpp
-index 2bc123f..5ff858e 100644
+index 2bc123f..21ee986 100644
 --- a/processcore/processes_local_p.cpp
 +++ b/processcore/processes_local_p.cpp
 @@ -23,13 +23,15 @@
@@ -542,3 +560,119 @@ index 2bc123f..5ff858e 100644
  #include "processes_gnu_p.cpp"
  #else
  // Use Qt's OS detection
+diff --git a/processui/ReniceDlg.cpp b/processui/ReniceDlg.cpp
+index a97563f..2eaab4a 100644
+--- a/processui/ReniceDlg.cpp
++++ b/processui/ReniceDlg.cpp
+@@ -53,7 +53,11 @@ ReniceDlg::ReniceDlg(QWidget* parent, const QStringList& processes, int currentC
+ 		// Unfortunately, in linux you can't ever set a process back to being None.  So we fake it :)
+ 		currentIoSched = KSysGuard::Process::None;
+ 	}
++#ifdef Q_OS_OSX
++    ioniceSupported = false;
++#else
+ 	ioniceSupported = (currentIoPrio != -2);
++#endif
+ 
+ 
+ 	QVBoxLayout *mainLayout = new QVBoxLayout;
+@@ -71,6 +75,16 @@ ReniceDlg::ReniceDlg(QWidget* parent, const QStringList& processes, int currentC
+ 	ui->setupUi(widget);
+ 	ui->listWidget->insertItems(0, processes);
+ 
++#ifdef Q_OS_OSX
++    ui->radioNormal->setEnabled(false);
++    ui->radioBatch->setEnabled(false);
++    ui->radioFIFO->setEnabled(false);
++    ui->radioRR->setEnabled(false);
++    ui->radioIONormal->setEnabled(false);
++    ui->radioIdle->setEnabled(false);
++    ui->radioRealTime->setEnabled(false);
++    ui->radioBestEffort->setEnabled(false);
++#else
+ 	cpuScheduler = new QButtonGroup(this);
+ 	cpuScheduler->addButton(ui->radioNormal, (int)KSysGuard::Process::Other);
+ #ifndef Q_OS_SOLARIS
+@@ -103,21 +117,23 @@ ReniceDlg::ReniceDlg(QWidget* parent, const QStringList& processes, int currentC
+ 
+ 	ioScheduler->setExclusive(true);
+ 
++	connect(cpuScheduler, SIGNAL(buttonClicked(int)), this, SLOT(cpuSchedulerChanged(int)));
++	connect(ioScheduler, SIGNAL(buttonClicked(int)), this, SLOT(updateUi()));
++	connect(ui->sliderCPU, &QAbstractSlider::valueChanged, this, &ReniceDlg::cpuSliderChanged);
++	connect(ui->sliderIO, &QAbstractSlider::valueChanged, this, &ReniceDlg::ioSliderChanged);
++#endif
++
+ 	setSliderRange(); //Update the slider ranges before trying to set their current values
+ 	if(ioniceSupported)
+ 		ui->sliderIO->setValue(currentIoPrio);
+ 	ui->sliderCPU->setValue(currentCpuPrio);
++	ui->sliderCPU->setToolTip(QString::number(currentCpuPrio));
+ 
+ 	ui->imgCPU->setPixmap( QIcon::fromTheme(QStringLiteral("cpu")).pixmap(128, 128) );
+-	ui->imgIO->setPixmap( QIcon::fromTheme(QStringLiteral("drive-harddisk")).pixmap(128, 128) );
++    ui->imgIO->setPixmap( QIcon::fromTheme(QStringLiteral("drive-harddisk")).pixmap(128, 128) );
+ 
+ 	newCPUPriority = 40;
+ 
+-	connect(cpuScheduler, SIGNAL(buttonClicked(int)), this, SLOT(cpuSchedulerChanged(int)));
+-	connect(ioScheduler, SIGNAL(buttonClicked(int)), this, SLOT(updateUi()));
+-	connect(ui->sliderCPU, &QAbstractSlider::valueChanged, this, &ReniceDlg::cpuSliderChanged);
+-	connect(ui->sliderIO, &QAbstractSlider::valueChanged, this, &ReniceDlg::ioSliderChanged);
+-
+ 	updateUi();
+ 
+ 	mainLayout->addWidget(buttonBox);
+@@ -158,8 +174,13 @@ void ReniceDlg::cpuSliderChanged(int value) {
+ }
+ 
+ void ReniceDlg::updateUi() {
++#ifdef Q_OS_OSX
++    bool cpuPrioEnabled = false;
++    bool ioPrioEnabled = false;
++#else
+ 	bool cpuPrioEnabled = ( cpuScheduler->checkedId() != -1);
+ 	bool ioPrioEnabled = ( ioniceSupported && ioScheduler->checkedId() != -1 && ioScheduler->checkedId() != (int)KSysGuard::Process::Idle && ioScheduler->checkedId() != (int)KSysGuard::Process::None);
++#endif
+ 
+ 	ui->sliderCPU->setEnabled(cpuPrioEnabled);
+ 	ui->lblCpuLow->setEnabled(cpuPrioEnabled);
+@@ -180,7 +201,12 @@ void ReniceDlg::updateUi() {
+ }
+ 
+ void ReniceDlg::setSliderRange() {
+-	if(cpuScheduler->checkedId() == (int)KSysGuard::Process::Other || cpuScheduler->checkedId() == (int)KSysGuard::Process::Batch || cpuScheduler->checkedId() == (int)KSysGuard::Process::Interactive) {
++#ifdef Q_OS_OSX
++    if(true)
++#else
++	if(cpuScheduler->checkedId() == (int)KSysGuard::Process::Other || cpuScheduler->checkedId() == (int)KSysGuard::Process::Batch || cpuScheduler->checkedId() == (int)KSysGuard::Process::Interactive)
++#endif
++    {
+ 		//The slider is setting the priority, so goes from 19 to -20.  We cannot actually do this with a slider, so instead we go from -19 to 20, and negate later
+ 		if(ui->sliderCPU->value() > 20) ui->sliderCPU->setValue(20);
+ 		ui->sliderCPU->setInvertedAppearance(true);
+@@ -200,7 +226,9 @@ void ReniceDlg::slotOk()
+ {
+ 	newCPUPriority = ui->sliderCPU->value();
+ 	newIOPriority = ui->sliderIO->value();
++#ifndef Q_OS_OSX
+ 	newCPUSched = cpuScheduler->checkedId();
+ 	newIOSched = ioScheduler->checkedId();
++#endif
+ 	accept();
+ }
+diff --git a/processui/ksysguardprocesslist.cpp b/processui/ksysguardprocesslist.cpp
+index 44603de..b21fb81 100644
+--- a/processui/ksysguardprocesslist.cpp
++++ b/processui/ksysguardprocesslist.cpp
+@@ -1246,6 +1246,10 @@ bool KSysGuardProcessList::killProcesses(const QList< long long> &pids, int sig)
+     }
+     if(unkilled_pids.isEmpty()) return true;
+     if(!d->mModel.isLocalhost()) return false; //We can't elevate privileges to kill non-localhost processes
++#ifdef Q_OS_OSX
++    KMessageBox::sorry(this, i18n("You can only send signals to your own processes on Mac"));
++    return false;
++#endif
+ 
+     KAuth::Action action(QStringLiteral("org.kde.ksysguard.processlisthelper.sendsignal"));
+     action.setParentWidget(window());
