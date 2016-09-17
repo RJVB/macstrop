@@ -30,7 +30,7 @@ index 1b6930d..684a86c 100644
      # KAUTH_POLICY_GEN_LIBRARIES has been generated from ConfigureChecks.cmake
      target_link_libraries( kauth-policy-gen PRIVATE ${KAUTH_POLICY_GEN_LIBRARIES} )
 diff --git src/backends/dbus/DBusHelperProxy.cpp src/backends/dbus/DBusHelperProxy.cpp
-index decc267..25326a2 100644
+index decc267..fed8ba9 100644
 --- src/backends/dbus/DBusHelperProxy.cpp
 +++ src/backends/dbus/DBusHelperProxy.cpp
 @@ -83,7 +83,9 @@ void DBusHelperProxy::executeAction(const QString &action, const QString &helper
@@ -44,8 +44,21 @@ index decc267..25326a2 100644
          emit actionPerformed(action, errorReply);
      }
  
+@@ -155,10 +157,12 @@ bool DBusHelperProxy::initHelper(const QString &name)
+     new Kf5authAdaptor(this);
+ 
+     if (!m_busConnection.registerService(name)) {
++        qCWarning(KAUTH) << "Error registering helper DBus service" << name << m_busConnection.lastError().message();
+         return false;
+     }
+ 
+     if (!m_busConnection.registerObject(QLatin1String("/"), this)) {
++        qCWarning(KAUTH) << "Error registering helper DBus object:" << m_busConnection.lastError().message();
+         return false;
+     }
+ 
 diff --git src/backends/mac/AuthServicesBackend.cpp src/backends/mac/AuthServicesBackend.cpp
-index e832bfe..fcc77d2 100644
+index e832bfe..6c0f072 100644
 --- src/backends/mac/AuthServicesBackend.cpp
 +++ src/backends/mac/AuthServicesBackend.cpp
 @@ -1,5 +1,6 @@
@@ -55,7 +68,11 @@ index e832bfe..fcc77d2 100644
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU Lesser General Public License as published by
-@@ -22,6 +23,17 @@
+@@ -18,17 +19,25 @@
+ */
+ 
+ #include "AuthServicesBackend.h"
+-#include <Security/Security.h>
  
  #include <QtCore/qplugin.h>
  
@@ -73,7 +90,14 @@ index e832bfe..fcc77d2 100644
  namespace KAuth
  {
  
-@@ -38,10 +50,46 @@ AuthorizationRef authRef()
+ static AuthorizationRef s_authRef = NULL;
+ 
+-AuthorizationRef authRef();
+-
+ AuthorizationRef authRef()
+ {
+     if (!s_authRef) {
+@@ -38,10 +47,53 @@ AuthorizationRef authRef()
      return s_authRef;
  }
  
@@ -93,7 +117,7 @@ index e832bfe..fcc77d2 100644
 +//     errAuthorizationToolExecuteFailure      = -60031, /* The specified program could not be executed. */
 +//     errAuthorizationToolEnvironmentError    = -60032, /* An invalid status was returned during execution of a privileged tool. */
 +//     errAuthorizationBadAddress              = -60033, /* The requested socket address is invalid (must be 0-1023 inclusive). */
-+static OSStatus GetActionRights(const QString &action, AuthorizationFlags flags, AuthorizationRef auth=NULL)
++static OSStatus GetActionRights(const QString &action, AuthorizationFlags flags, AuthorizationRef auth)
 +{
 +    AuthorizationItem item;
 +    item.name = action.toUtf8().constData();
@@ -105,7 +129,7 @@ index e832bfe..fcc77d2 100644
 +    rights.count = 1;
 +    rights.items = &item;
 +
-+    OSStatus result = AuthorizationCopyRights((auth)? auth : authRef(),
++    OSStatus result = AuthorizationCopyRights(auth,
 +                                              &rights,
 +                                              kAuthorizationEmptyEnvironment,
 +                                              flags, NULL);
@@ -118,10 +142,17 @@ index e832bfe..fcc77d2 100644
  {
 -    setCapabilities(AuthorizeFromHelperCapability | CheckActionExistenceCapability);
 +    setCapabilities(AuthorizeFromClientCapability | CheckActionExistenceCapability);
++}
++
++AuthServicesBackend::~AuthServicesBackend()
++{
++    if (s_authRef) {
++        AuthorizationFree(s_authRef, kAuthorizationFlagDefaults);
++    }
  }
  
  void AuthServicesBackend::setupAction(const QString &)
-@@ -49,41 +97,61 @@ void AuthServicesBackend::setupAction(const QString &)
+@@ -49,48 +101,82 @@ void AuthServicesBackend::setupAction(const QString &)
      // Nothing to do here...
  }
  
@@ -131,12 +162,25 @@ index e832bfe..fcc77d2 100644
  {
 -    return actionStatus(action);
 +    Action::AuthStatus retval;
-+    OSStatus result = GetActionRights(action, kAuthorizationFlagExtendRights | kAuthorizationFlagInteractionAllowed);
++    OSStatus result = GetActionRights(action, kAuthorizationFlagExtendRights | kAuthorizationFlagInteractionAllowed, authRef());
 +    qCDebug(KAUTH_OSX) << "AuthServicesBackend::authorizeAction(" << action << ") AuthorizationCopyRights returned" << result;
 +    switch (result) {
-+        case errAuthorizationSuccess:
++        case errAuthorizationSuccess: {
++//             FILE *fp = NULL;
++//             const char *args[] = {"-qt=qt5", "--system", NULL};
++//             qWarning() << "AuthorizationExecuteWithPrivileges() returns" <<
++//                 AuthorizationExecuteWithPrivileges(authRef(), "/opt/local/bin/qdbus", kAuthorizationFlagDefaults, (char *const *)args, &fp);
++//             if (fp) {
++//                 QTextStream qfp(fp);
++//                 QString line;
++//                 while (qfp.readLineInto(&line)) {
++//                     qWarning() << line;
++//                 }
++//                 fclose(fp);
++//             }
 +            retval = Action::AuthorizedStatus;
 +            break;
++        }
 +        case errAuthorizationCanceled:
 +            retval = Action::UserCancelledStatus;
 +            break;
@@ -183,7 +227,7 @@ index e832bfe..fcc77d2 100644
 -                      NULL);
 -
 +    Action::AuthStatus retval;
-+    OSStatus result = GetActionRights(action, kAuthorizationFlagExtendRights | kAuthorizationFlagPreAuthorize);
++    OSStatus result = GetActionRights(action, kAuthorizationFlagExtendRights | kAuthorizationFlagPreAuthorize, authRef());
 +    qCDebug(KAUTH_OSX) << "AuthServicesBackend::actionStatus(" << action << ") AuthorizationCopyRights returned" << result;
 +    // this function has a simpler return code parser:
      switch (result) {
@@ -194,6 +238,8 @@ index e832bfe..fcc77d2 100644
 -    default:
 -        return Action::DeniedStatus;
 +        case errAuthorizationSuccess:
++//             qWarning() << "AuthorizationExecuteWithPrivileges() returns" <<
++//                 AuthorizationExecuteWithPrivileges(authRef(), "/usr/bin/whoami", kAuthorizationFlagDefaults, {NULL}, NULL);
 +            retval = Action::AuthorizedStatus;
 +            break;
 +        case errAuthorizationCanceled:
@@ -210,7 +256,14 @@ index e832bfe..fcc77d2 100644
  }
  
  QByteArray AuthServicesBackend::callerID() const
-@@ -104,37 +172,24 @@ bool AuthServicesBackend::isCallerAuthorized(const QString &action, QByteArray c
+ {
+     AuthorizationExternalForm ext;
+     AuthorizationMakeExternalForm(authRef(), &ext);
+-
+     QByteArray id((const char *)&ext, sizeof(ext));
+ 
+     return id;
+@@ -104,37 +190,24 @@ bool AuthServicesBackend::isCallerAuthorized(const QString &action, QByteArray c
      AuthorizationRef auth;
  
      if (AuthorizationCreateFromExternalForm(&ext, &auth) != noErr) {
@@ -244,9 +297,10 @@ index e832bfe..fcc77d2 100644
      return result == errAuthorizationSuccess;
  }
  
+-bool AuthServicesBackend::actionExists(const QString &action)
 +// OS X doesn't distinguish between "action doesn't exist" and "action not allowed". So the
 +// best thing we can do is return true and hope that the action will be created if it didn't exist...
- bool AuthServicesBackend::actionExists(const QString &action)
++bool AuthServicesBackend::actionExists(const QString &)
  {
 -    OSStatus exists = AuthorizationRightGet(action.toUtf8().constData(), NULL);
 -
@@ -255,6 +309,34 @@ index e832bfe..fcc77d2 100644
  }
  
  }; // namespace KAuth
+diff --git src/backends/mac/AuthServicesBackend.h src/backends/mac/AuthServicesBackend.h
+index 8f51eba..9eb656a 100644
+--- src/backends/mac/AuthServicesBackend.h
++++ src/backends/mac/AuthServicesBackend.h
+@@ -21,6 +21,7 @@
+ #define AUTHSERVICES_BACKEND_H
+ 
+ #include "AuthBackend.h"
++#include <Security/Security.h>
+ 
+ namespace KAuth
+ {
+@@ -33,6 +34,7 @@ class AuthServicesBackend : public AuthBackend
+ 
+ public:
+     AuthServicesBackend();
++    virtual ~AuthServicesBackend();
+     virtual void setupAction(const QString &);
+     virtual Action::AuthStatus authorizeAction(const QString &);
+     virtual Action::AuthStatus actionStatus(const QString &);
+@@ -41,6 +43,7 @@ public:
+     virtual bool actionExists(const QString &action);
+ };
+ 
++
+ } // namespace KAuth
+ 
+ #endif
 diff --git src/backends/mac/kauth-policy-gen-mac.cpp src/backends/mac/kauth-policy-gen-mac.cpp
 index b51d217..e146c46 100644
 --- src/backends/mac/kauth-policy-gen-mac.cpp
@@ -293,16 +375,30 @@ index b51d217..e146c46 100644
              }
          }
      }
-diff --git src/kauthexecutejob.cpp src/kauthexecutejob.cpp
-index 2901e3b..30e0177 100644
---- src/kauthexecutejob.cpp
-+++ src/kauthexecutejob.cpp
-@@ -117,6 +117,8 @@ void ExecuteJob::Private::doExecuteAction()
-         Action::AuthStatus s = BackendsManager::authBackend()->authorizeAction(action.name());
+diff --git src/kauthhelpersupport.cpp src/kauthhelpersupport.cpp
+index 318d3a0..80d8e5a 100644
+--- src/kauthhelpersupport.cpp
++++ src/kauthhelpersupport.cpp
+@@ -78,7 +78,13 @@ int HelperSupport::helperMain(int argc, char **argv, const char *id, QObject *re
+     fixEnvironment();
+ #endif
  
-         if (s == Action::AuthorizedStatus) {
-+            // RJVB: this seems to correspond to the place in Action::execute() in kdecore/auth/kauthaction.cpp
-+            // where on OS X the function returns if AuthorizeFromClientCapability .
-             if (action.hasHelper()) {
-                 BackendsManager::helperProxy()->executeAction(action.name(), action.helperId(), action.arguments());
-             } else {
++#ifdef Q_OS_OSX
++    openlog(id, LOG_CONS|LOG_PID, LOG_USER);
++    int logLevel = LOG_WARNING;
++#else
+     openlog(id, 0, LOG_USER);
++    int logLevel = LOG_DEBUG;
++#endif
+     qInstallMessageHandler(&HelperSupport::helperDebugHandler);
+ 
+     // NOTE: The helper proxy might use dbus, and we should have the qapp
+@@ -86,7 +92,7 @@ int HelperSupport::helperMain(int argc, char **argv, const char *id, QObject *re
+     QCoreApplication app(argc, argv);
+ 
+     if (!BackendsManager::helperProxy()->initHelper(QString::fromLatin1(id))) {
+-        syslog(LOG_DEBUG, "Helper initialization failed");
++        syslog(logLevel, "Helper initialization failed");
+         return -1;
+     }
+ 
