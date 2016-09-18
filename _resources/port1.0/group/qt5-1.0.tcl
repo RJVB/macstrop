@@ -77,10 +77,18 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore]
     set qt5.using_kde   no
 }
 
-if {!${qt5.using_kde} && [info exists qt5.prefer_kde]} {
-    # this is a port that prefers port:qt5-kde and thus expects most of Qt5 to be installed
-    # through that single port rather than enumerate all components it depends on.
-    depends_lib-append  port:qt5
+if {!${qt5.using_kde}} {
+    if {[info exists qt5.prefer_kde]} {
+        # this is a port that prefers port:qt5-kde and thus expects most of Qt5 to be installed
+        # through that single port rather than enumerate all components it depends on.
+        depends_lib-append  port:qt5
+    }
+    if {![info exists qt_cmake_defines]} {
+        # the Qt5 PortGroups used to define a variable that is no longer provided by qt5-mac-1.0.tcl;
+        # set it to an empty value so that it can be referenced without side-effects.
+        global qt_cmake_defines
+        set qt_cmake_defines ""
+    }
 }
 
 proc qt_branch {} {
