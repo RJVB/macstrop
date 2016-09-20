@@ -1,0 +1,235 @@
+diff --git bus/Makefile.am bus/Makefile.am
+index 268c6f0..a50ce77 100644
+--- bus/Makefile.am
++++ bus/Makefile.am
+@@ -44,6 +44,7 @@ CONFIG_IN_FILES=				\
+ 	legacy-config/session.conf.in		\
+ 	legacy-config/system.conf.in		\
+ 	org.freedesktop.dbus-session.plist.in	\
++	org.freedesktop.dbus-system.plist.in	\
+ 	example-system-enable-stats.conf.in	\
+ 	example-session-disable-stats.conf.in	\
+ 	$(NULL)
+@@ -65,6 +66,8 @@ examples_DATA = \
+ if DBUS_ENABLE_LAUNCHD
+ agentdir=$(LAUNCHD_AGENT_DIR)
+ agent_DATA=org.freedesktop.dbus-session.plist
++daemondir=$(LAUNCHD_DAEMON_DIR)
++daemon_DATA=org.freedesktop.dbus-system.plist
+ endif
+ 
+ XML_SOURCES=config-loader-expat.c
+diff --git bus/org.freedesktop.dbus-system.plist.in bus/org.freedesktop.dbus-system.plist.in
+new file mode 100644
+index 0000000..5af48b5
+--- /dev/null
++++ bus/org.freedesktop.dbus-system.plist.in
+@@ -0,0 +1,25 @@
++<?xml version='1.0' encoding='UTF-8'?>
++<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN"
++"http://www.apple.com/DTDs/PropertyList-1.0.dtd" >
++<plist version='1.0'>
++<dict>
++	<key>Label</key>
++	<string>org.freedesktop.dbus-system</string>
++	<key>ProgramArguments</key>
++	<array>
++		<string>@DBUS_DAEMONDIR@/dbus-daemon</string>
++		<string>--system</string>
++		<string>--nofork</string>
++	</array>
++	<key>KeepAlive</key><true/>
++	<key>Disabled</key><true/>
++	<key>Sockets</key>
++	<dict>
++		<key>system_bus_socket</key>
++		<dict>
++			<key>SockPathName</key>
++			<string>@DBUS_SYSTEM_SOCKET@</string>
++		</dict>
++	</dict>
++</dict>
++</plist>
+diff --git configure.ac configure.ac
+index 460b32b..4f748ca 100644
+--- configure.ac
++++ configure.ac
+@@ -93,6 +93,7 @@ LT_LANG([Windows Resource])
+ # Set some internal variables depending on the platform for later use.
+ dbus_win=no
+ dbus_cygwin=no
++dbus_darwin=no
+ dbus_unix=no
+ case "${host}" in
+     *-mingw32ce*)
+@@ -106,6 +107,10 @@ case "${host}" in
+         dbus_cygwin=yes
+         dbus_unix=yes
+         ;;
++    *darwin*)
++        dbus_darwin=yes
++        dbus_unix=yes
++        ;;
+     *)
+         dbus_unix=yes
+        ;;
+@@ -139,7 +144,7 @@ fi
+ 
+ # For best security, assume that all non-Windows platforms can do
+ # credentials-passing.
+-AS_IF([test "$dbus_win" = yes],
++AS_IF([test "$dbus_win" = yes || test "$dbus_darwin" = yes],
+     [DBUS_SESSION_CONF_MAYBE_AUTH_EXTERNAL="<!--<auth>EXTERNAL</auth>-->"],
+     [DBUS_SESSION_CONF_MAYBE_AUTH_EXTERNAL="<auth>EXTERNAL</auth>"])
+ AC_SUBST([DBUS_SESSION_CONF_MAYBE_AUTH_EXTERNAL])
+@@ -196,7 +201,8 @@ AC_ARG_WITH(system-pid-file, AS_HELP_STRING([--with-system-pid-file=[pidfile]],[
+ AC_ARG_WITH(system-socket, AS_HELP_STRING([--with-system-socket=[filename]],[UNIX domain socket for systemwide daemon]))
+ AC_ARG_WITH(console-auth-dir, AS_HELP_STRING([--with-console-auth-dir=[dirname]],[directory to check for console ownerhip]))
+ AC_ARG_WITH(console-owner-file, AS_HELP_STRING([--with-console-owner-file=[filename]],[file whose owner determines current console owner]))
+-AC_ARG_WITH(launchd-agent-dir, AS_HELP_STRING([--with-launchd-agent-dir=[dirname]],[directory to put the launchd agent (default: /Library/LaunchAgents)]))
++AC_ARG_WITH(launchd-agent-dir, AS_HELP_STRING([--with-launchd-agent-dir=[dirname]],[directory to put the launchd agent (session bus) (default: /Library/LaunchAgents)]))
++AC_ARG_WITH(launchd-daemon-dir, AS_HELP_STRING([--with-launchd-daemon-dir=[dirname]],[directory to put the launchd daemon (system bus) (default: /Library/LaunchDaemons)]))
+ AC_ARG_WITH(dbus_user, AS_HELP_STRING([--with-dbus-user=<user>],[User for running the DBUS daemon (messagebus)]))
+ AC_ARG_WITH([test_user],
+   [AS_HELP_STRING([--with-test-user=<user>],
+@@ -1139,6 +1145,15 @@ fi
+ 
+ AC_SUBST(LAUNCHD_AGENT_DIR)
+ 
++#### Directory to place launchd daemon file
++if test "x$with_launchd_daemon_dir" = "x"; then
++   LAUNCHD_DAEMON_DIR="/Library/LaunchDaemons"
++else
++   LAUNCHD_DAEMON_DIR="$with_launchd_daemon_dir"
++fi
++
++AC_SUBST(LAUNCHD_DAEMON_DIR)
++
+ dnl console owner file
+ if test x$enable_console_owner_file = xno ; then
+     have_console_owner_file=no;
+@@ -1849,6 +1864,7 @@ bus/example-session-disable-stats.conf
+ bus/messagebus
+ bus/messagebus-config
+ bus/org.freedesktop.dbus-session.plist
++bus/org.freedesktop.dbus-system.plist
+ bus/rc.messagebus
+ bus/dbus.service
+ bus/dbus.socket
+@@ -1938,6 +1954,7 @@ echo "
+ "
+ if test x$have_launchd = xyes; then
+         echo "        launchd agent dir:        ${LAUNCHD_AGENT_DIR}"
++        echo "        launchd daemon dir:       ${LAUNCHD_DAEMON_DIR}"
+ fi
+ echo
+ 
+diff --git dbus/dbus-bus.c dbus/dbus-bus.c
+index 0fd4831..83bbd0e 100644
+--- dbus/dbus-bus.c
++++ dbus/dbus-bus.c
+@@ -434,7 +434,13 @@ internal_bus_get (DBusBusType  type,
+       return NULL;
+     }
+ 
++#ifdef DBUS_ENABLE_LAUNCHD
++      // on Mac we will typically not have all 3 bus addresses; as long
++      // as we have the requested one we should be fine.
++  if (!init_connections_unlocked () && bus_connection_addresses[type] == NULL)
++#else
+   if (!init_connections_unlocked ())
++#endif
+     {
+       _DBUS_SET_OOM (error);
+       goto out;
+@@ -518,6 +524,10 @@ out:
+     _DBUS_ASSERT_ERROR_IS_SET (error);
+ 
+   _DBUS_UNLOCK (bus);
++#ifdef DBUS_ENABLE_LAUNCHD
++  _dbus_verbose ("internal_bus_get(type=%d,private=%d) : found and registered connection to %s",
++         type, private, address);
++#endif
+   return connection;
+ }
+ 
+diff --git dbus/dbus-sysdeps-unix.c dbus/dbus-sysdeps-unix.c
+index 1f964b5..5691c5a 100644
+--- dbus/dbus-sysdeps-unix.c
++++ dbus/dbus-sysdeps-unix.c
+@@ -3928,28 +3928,45 @@ _dbus_lookup_launchd_socket (DBusString *socket_path,
+ 
+   _DBUS_ASSERT_ERROR_IS_CLEAR (error);
+ 
++  const char *fromEnv = getenv (launchd_env_var);
++  dbus_bool_t hasEnvVar = (fromEnv && *fromEnv);
++
+   if (_dbus_check_setuid ())
+     {
+-      dbus_set_error_const (error, DBUS_ERROR_NOT_SUPPORTED,
+-                            "Unable to find launchd socket when setuid");
+-      return FALSE;
+-    }
++      if (!hasEnvVar)
++        {
++          dbus_set_error_const (error, DBUS_ERROR_NOT_SUPPORTED,
++                                "Unable to find launchd socket when setuid");
++          return FALSE;
++        }
+ 
+-  i = 0;
+-  argv[i] = "launchctl";
+-  ++i;
+-  argv[i] = "getenv";
+-  ++i;
+-  argv[i] = (char*)launchd_env_var;
+-  ++i;
+-  argv[i] = NULL;
+-  ++i;
++      i = 0;
++      argv[i] = "launchctl";
++      ++i;
++      argv[i] = "getenv";
++      ++i;
++      argv[i] = (char*)launchd_env_var;
++      ++i;
++      argv[i] = NULL;
++      ++i;
+ 
+-  _dbus_assert (i == _DBUS_N_ELEMENTS (argv));
++      _dbus_assert (i == _DBUS_N_ELEMENTS (argv));
++
++      if (!_read_subprocess_line_argv(argv[0], TRUE, argv, socket_path, error) && !hasEnvVar)
++        {
++          return FALSE;
++        }
++      else
++        {
++          // prefer the value obtained from launchctl
++          hasEnvVar = FALSE;
++        }
++    }
+ 
+-  if (!_read_subprocess_line_argv(argv[0], TRUE, argv, socket_path, error))
++  if (hasEnvVar)
+     {
+-      return FALSE;
++      _dbus_string_append (socket_path, fromEnv);
++      return TRUE;
+     }
+ 
+   /* no error, but no result either */
+@@ -3975,13 +3992,6 @@ _dbus_lookup_session_address_launchd (DBusString *address, DBusError  *error)
+   dbus_bool_t valid_socket;
+   DBusString socket_path;
+ 
+-  if (_dbus_check_setuid ())
+-    {
+-      dbus_set_error_const (error, DBUS_ERROR_NOT_SUPPORTED,
+-                            "Unable to find launchd socket when setuid");
+-      return FALSE;
+-    }
+-
+   if (!_dbus_string_init (&socket_path))
+     {
+       _DBUS_SET_OOM (error);
