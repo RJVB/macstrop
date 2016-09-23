@@ -7,13 +7,6 @@ set basename        qt4-mac
 name                ${basename}-devel
 version             4.8.7
 
-if {[variant_isset exclusive]} {
-    # qt4-mac is "replaced_by" this port,
-    # so this port cannot conflict with it.
-    #conflicts           qt3 qt3-mac qt4-mac
-    conflicts           qt3 qt3-mac qt5-mac
-}
-
 # set qtportlist {qt4-mac qt4-mac-devel}
 set qtportlist {qt4-mac-devel}
 
@@ -321,18 +314,17 @@ if {${subport} eq ${name} || ${subport} eq "${basename}"} {
 }
 
 
-# error out if trying to build on a new OSX version (> 10.11).
-
-platform darwin {
-    if {${MINOR} > 11} {
-        depends_lib
-        depends_run
-        pre-fetch {
-            ui_error "$name does not currently build on OS X later than 10.11 'El Capitan'."
-            error "unsupported platform"
-        }
-    }
-}
+# we no longer error out if trying to build on a new, untested OS X version.
+# platform darwin {
+#     if {${MINOR} > 11} {
+#         depends_lib
+#         depends_run
+#         pre-fetch {
+#             ui_error "$name does not currently build on OS X later than 10.11 'El Capitan'."
+#             error "unsupported platform"
+#         }
+#     }
+# }
 
 ###############################################
 
@@ -362,6 +354,19 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
             set SDK ${developer_dir}/SDKs/MacOSX${sdk_version}.sdk
         } else {
             set SDK ${developer_dir}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX${sdk_version}.sdk
+        }
+    }
+    # on Leopard and Snow Leopard with libc++ForOlderSystems
+    # installed, SDK must be unset as we can only use system libraries
+    # also, a missing library link must be replaced for build to
+    # succeed: <https://trac.macports.org/ticket/51844>
+    platform darwin {
+        if {${os.major} == 9 || ${os.major} == 10} {
+            if {${configure.cxx_stdlib} eq "libc++"} {
+                set SDK ""
+                configure.ldflags-append "-lobjc"
+                patchfiles-delete patch-src_plugins_bearer_corewlan_corewlan.pro.diff
+            }
         }
     }
 
@@ -851,11 +856,9 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
     # RJVB: ${destroot}${qt_libs_dir} is NOT always equal to ${qt_pkg_config_dir} !!
         move ${destroot}${qt_frameworks_dir}/pkgconfig \
             ${destroot}${qt_pkg_config_dir}
-        if {![variant_isset exclusive]} {
-            # qt_pkg_config_dir==${prefix}/lib/pkgconfig; make a symlink to that place in
-            # ${qt_libs_dir} so that 3rd party .pc files end up where pkg-config can find them ...
-            ln -s ${qt_pkg_config_dir} ${destroot}${qt_libs_dir}/pkgconfig
-        }
+        # qt_pkg_config_dir==${prefix}/lib/pkgconfig; make a symlink to that place in
+        # ${qt_libs_dir} so that 3rd party .pc files end up where pkg-config can find them ...
+        ln -s ${qt_pkg_config_dir} ${destroot}${qt_libs_dir}/pkgconfig
 
         # move .la files from ${qt_frameworks_dir} to ${qt_libs_dir}
 
@@ -1133,12 +1136,10 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
         ln -s ${qt_frameworks_dir}/QtGui.framework/Resources \
             ${destroot}${qt_libs_dir}
 
-        if {![variant_isset exclusive]} {
-            ln -s ${qt_qmake_cmd} ${destroot}/${prefix}/bin/qmake-qt${qt_major}
-            ln -s ${qt_moc_cmd} ${destroot}/${prefix}/bin/moc-qt${qt_major}
-            ln -s ${qt_uic_cmd} ${destroot}/${prefix}/bin/uic-qt${qt_major}
-            ln -s ${qt_lrelease_cmd} ${destroot}/${prefix}/bin/lrelease-qt${qt_major}
-        }
+        ln -s ${qt_qmake_cmd} ${destroot}/${prefix}/bin/qmake-qt${qt_major}
+        ln -s ${qt_moc_cmd} ${destroot}/${prefix}/bin/moc-qt${qt_major}
+        ln -s ${qt_uic_cmd} ${destroot}/${prefix}/bin/uic-qt${qt_major}
+        ln -s ${qt_lrelease_cmd} ${destroot}/${prefix}/bin/lrelease-qt${qt_major}
         if {[variant_isset KDE]} {
             # expose KDE4 styles to Qt4:
             ln -s ${prefix}/lib/kde4/plugins/styles ${destroot}${qt_plugins_dir}/
@@ -1251,39 +1252,10 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
     }
 }
 
-## The convenience subport that installs the symlinks which allow ports built against qt4-mac +exclusive
-## to keep functioning after installing qt4-mac in the new concurrent mode, without rebuilding them.
-## It can be uninstalled after all Qt4 "client" ports have been rebuilt.
 if { ${subport} eq "${name}-transitional" || ${subport} eq "${basename}-transitional" } {
-    if {[variant_isset exclusive]} {
+    pre-fetch {
             return -code error "\n\nERROR:\n\
-        ${name}-transitional is available only when qt4-mac has been installed without +exclusive\n"
-    }
-    fetch {
-        if {![info exists qt4_is_concurrent]} {
-            return -code error "\n\nERROR:\n\
-            ${name}-transitional is available only when qt4-mac has been installed without +exclusive\n"
-        }
-    }
-    if {[file exists ${prefix}/Library/Frameworks/QtCore.framework/Versions/5/Headers/QtCore]} {
-        conflicts-append    qt5-mac
-    }
-    destroot {
-        set qt_vers [split ${version} "."]
-        set qt_major [lindex ${qt_vers} 0]
-        set qt_minor [lindex ${qt_vers} 1]
-        set qt_patch [lindex ${qt_vers} 2]
-        exec mkdir -p ${destroot}/${prefix}/lib ${destroot}/${prefix}/Library/Frameworks
-        foreach fixfile [exec find ${qt_frameworks_dir} \
-                             -name "*.framework"] {
-
-            set tf_full [strsed ${fixfile} {s@\\.framework@@}]
-            set tf [strsed ${tf_full} {g@.*\/@@}]
-            ln -s ${tf_full}.framework/${tf} ${destroot}/${prefix}/lib/lib${tf}.${qt_major}.dylib
-            ln -s ${tf_full}.framework/${tf} ${destroot}/${prefix}/lib/lib${tf}.${qt_major}.${qt_minor}.dylib
-            ln -s ${tf_full}.framework/${tf} ${destroot}/${prefix}/lib/lib${tf}.${qt_major}.${qt_minor}.${qt_patch}.dylib
-            ln -s ${tf_full}.framework       ${destroot}/${prefix}/Library/Frameworks/${tf}.framework
-        }
+        ${subport} is obsolete and no longer available\n"
     }
 }
 
@@ -1316,32 +1288,8 @@ foreach parp ${qtportlist} {
     }
 }
 
-subport ${name}-transitional {
-    conflicts           qt3 qt3-mac qt4-mac qt4-mac-sqlite3-plugin qt4-mac-transitional
-    if {[file exists ${prefix}/Library/Frameworks/QtCore.framework/Versions/5/QtCore]} {
-        conflicts       qt5-mac
-    }
-    universal_variant   no
-    checksum {}
-    extract {}
-    patch {}
-    post-patch {}
-    configure {}
-    build {}
-}
-subport ${basename}-transitional {
-    conflicts           qt3 qt3-mac qt4-mac-devel qt4-mac-devel-sqlite3-plugin qt4-mac-devel-transitional
-    if {[file exists ${prefix}/Library/Frameworks/QtCore.framework/Versions/5/QtCore]} {
-        conflicts       qt5-mac
-    }
-    universal_variant   no
-    checksum {}
-    extract {}
-    patch {}
-    post-patch {}
-    configure {}
-    build {}
-}
+subport ${name}-transitional {}
+subport ${basename}-transitional {}
 
 post-activate {
     set pdir [file dirname ${filespath}]
