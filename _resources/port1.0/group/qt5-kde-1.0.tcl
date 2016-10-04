@@ -480,7 +480,13 @@ post-destroot {
     }
 }
 
-array set qt5_component_lib {
-     qtwebkit path:libexec/qt5/Library/Frameworks/QtWebKit.framework/QtWebKit
-     qtwebengine path:libexec/qt5/Library/Frameworks/QtWebEngine.framework/QtWebEngine
+# define the qt5_component_lib array element-by-element instead of in a table;
+# using a table wouldn't allow the use of variables (they wouldn't be expanded)
+platform darwin {
+    set qt5_component_lib(qtwebkit)     path:libexec/${qt_name}/Library/Frameworks/QtWebKit.framework/QtWebKit
+    set qt5_component_lib(qtwebengine)  path:libexec/${qt_name}/Library/Frameworks/QtWebEngine.framework/QtWebEngine
+}
+platform linux {
+    set qt5_component_lib(qtwebkit)     path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext}
+    set qt5_component_lib(qtwebengine)  path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext}
 }
