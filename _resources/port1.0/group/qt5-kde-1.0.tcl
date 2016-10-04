@@ -307,19 +307,11 @@ if {![info exists building_qt5]} {
         # if not, depend on the library version
 
         global qt5_dependency
-#         if {[info exists qt5_is_concurrent]} {
-            if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
-                set qt5_pathlibspec path:libexec/${qt_name}/Library/Frameworks/QtCore.framework/QtCore
-            } else {
-                set qt5_pathlibspec path:libexec/${qt_name}/lib/libQtCore.${qt_libs_ext}
-            }
-#         } else {
-#             if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
-#                 set qt5_pathlibspec path:Library/Frameworks/QtCore.framework/QtCore
-#             } else {
-#                 set qt5_pathlibspec path:lib/libQtCore.${qt_libs_ext}
-#             }
-#         }
+        if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
+            set qt5_pathlibspec path:libexec/${qt_name}/Library/Frameworks/QtCore.framework/QtCore
+        } else {
+            set qt5_pathlibspec path:libexec/${qt_name}/lib/libQtCore.${qt_libs_ext}
+        }
         set qt5_dependency ${qt5_pathlibspec}:qt5-kde
         depends_lib-append ${qt5_dependency} \
                 path:libexec/${qt_name}/Library/Frameworks/QtWebKit.framework/QtWebKit:qt5-kde-qtwebkit
@@ -339,11 +331,7 @@ if {![info exists building_qt5]} {
     }
 }
 
-if {${os.platform} eq "darwin"} {
-    variant LTO description {Build with Link-Time Optimisation (LTO) (currently not 100% compatible with SSE4+ and 3DNow intrinsics)} {}
-} else {
-    variant LTO description {Build with Link-Time Optimisation (LTO) (experimental)} {}
-}
+variant LTO description {Build with Link-Time Optimisation (LTO) (experimental)} {}
 
 if {![info exists building_qt5] && [variant_exists LTO] && [variant_isset LTO]} {
     configure.cflags-append     -flto
