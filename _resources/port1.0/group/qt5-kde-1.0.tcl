@@ -301,20 +301,24 @@ set qt5_stubports   {qtbase qtdeclarative qtserialport qtsensors \
                 sqlite-plugin}
 
 if {![info exists building_qt5]} {
+    global qt5_dependency
+    global qt5webkit_dependency
     if {${os.platform} eq "darwin"} {
-
         # see if the framework install exists, and if so depend on it;
         # if not, depend on the library version
-
-        global qt5_dependency
         if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
             set qt5_pathlibspec path:libexec/${qt_name}/Library/Frameworks/QtCore.framework/QtCore
         } else {
             set qt5_pathlibspec path:libexec/${qt_name}/lib/libQtCore.${qt_libs_ext}
         }
         set qt5_dependency ${qt5_pathlibspec}:qt5-kde
-        depends_lib-append ${qt5_dependency} \
-                path:libexec/${qt_name}/Library/Frameworks/QtWebKit.framework/QtWebKit:qt5-kde-qtwebkit
+        if {[file exists ${qt_frameworks_dir}/QtWebKit.framework/QtWebKit]} {
+            set qt5_pathlibspec path:libexec/${qt_name}/Library/Frameworks/QtWebKit.framework/QtWebKit
+        } else {
+            set qt5_pathlibspec path:libexec/${qt_name}/lib/libQtWebKit.${qt_libs_ext}
+        }
+        set qt5webkit_dependency ${qt5_pathlibspec}:qt5-kde-qtwebkit
+        depends_lib-append ${qt5_dependency} ${qt5webkit_dependency}
         if {[info exists qt5.depends_qtwebengine] && ${qt5.depends_qtwebengine}} {
             depends_lib-append \
                 path:libexec/${qt_name}/Library/Frameworks/QtWebEngineCore.framework/QtWebEngineCore:qt5-kde-qtwebengine
@@ -322,8 +326,8 @@ if {![info exists building_qt5]} {
     } elseif {${os.platform} eq "linux"} {
         set qt5_pathlibspec path:libexec/${qt_name}/lib/libQt5Core.${qt_libs_ext}
         set qt5_dependency ${qt5_pathlibspec}:qt5-kde
-        depends_lib-append ${qt5_dependency} \
-                path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext}:qt5-kde-qtwebkit
+        set qt5webkit_dependency path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext}:qt5-kde-qtwebkit
+        depends_lib-append ${qt5_dependency} ${qt5webkit_dependency}
         if {[info exists qt5.depends_qtwebengine] && ${qt5.depends_qtwebengine}} {
             depends_lib-append \
                 path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext}:qt5-kde-qtwebengine
@@ -477,6 +481,6 @@ post-destroot {
 }
 
 array set qt5_component_lib {
-     qtwebkit path:libexec/${qt_name}/Library/Frameworks/QtWebKitCore.framework/QtWebKitCore
-     qtwebengine path:libexec/${qt_name}/Library/Frameworks/QtWebEngine.framework/QtWebEngine
+     qtwebkit path:libexec/qt5/Library/Frameworks/QtWebKit.framework/QtWebKit
+     qtwebengine path:libexec/qt5/Library/Frameworks/QtWebEngine.framework/QtWebEngine
 }
