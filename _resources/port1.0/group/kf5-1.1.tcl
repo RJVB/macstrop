@@ -39,7 +39,7 @@ PortGroup               qt5 1.0
 PortGroup               active_variants 1.1
 
 if {!${qt5.using_kde}} {
-    ui_msg "It is strongly advised to install KF5 ports against port:qt5-kde or port:qt5-kde-devel."
+    ui_warn "It is strongly advised to install KF5 ports against port:qt5-kde or port:qt5-kde-devel."
 }
 
 ########################################################################
@@ -165,7 +165,7 @@ depends_lib-append      path:share/ECM/cmake/ECMConfig.cmake:kde-extra-cmake-mod
 # configure.args-append   -G "\"CodeBlocks - Unix Makefiles\""
 
 # Use directory set by qt5-kde or qt5-mac
-configure.args-append   -DECM_MKSPECS_INSTALL_DIR=${qt_mkspecs_dir}
+configure.args-append   -DECM_MKSPECS_INSTALL_DIR=${qt_mkspecs_dir}/modules
 
 # set a best-compromise plugin destination directory, the one from Qt5.
 # this is also what Kubuntu does, and possibly the only way to ensure that Qt5
