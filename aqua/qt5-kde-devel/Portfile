@@ -26,8 +26,9 @@ if {${os.platform} eq "darwin" && ${os.major} <= 10} {
 #### revision magic
 platform darwin {
     if {${subport} eq "${name}-x11"} {
-        # this is for the inclusion of the no-DBus-in-platformsupport patch
-        revision    [expr ${revision} + 1]
+        # +1 for the inclusion of the no-DBus-in-platformsupport patch
+        # +1 for dropping the inclusion of the Apple OpenGL and AGL frameworks
+        revision    [expr ${revision} + 2]
     }
 }
 # (Qt 5.6.1 / 201610) this is for the now functional split-off of QtWebkit into its own proper subport
@@ -66,11 +67,13 @@ if {![info exists qt5.using_kde] || !${qt5.using_kde}} {
 
 set branch          [join [lrange [split ${version} .] 0 1] .]
 # minimal version variables:
+# TODO: clean this up
 if {[expr ${branch} >= 5.4]} {
     if {[expr ${branch} >= 5.6]} {
         set QT56    yes
         set PPREF   ""
     } else {
+        # things specific to Qt 5.4 and 5.5
         set QT56    no
         set PPREF   qt551/
     }
@@ -699,7 +702,11 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         patchfiles-append       ${PPREF}patch-to-build-xcb.diff
         post-patch {
             # this may already have been done in patch-enable-qgenericunixservices.diff
-            reinplace "s|unix:!mac|unix|g" ${worksrcpath}/qtbase/src/platformsupport/services/services.pri
+            reinplace -W ${worksrcpath}/qtbase/src "s|unix:!mac|unix|g" platformsupport/services/services.pri
+            # avoid introducing dependencies on the OpenGL frameworks; that means not building the cocoa QPA
+            # which is fine because we don't need it (and it's already installed).
+            reinplace -W ${worksrcpath}/qtbase/src "s|mac:|cocoa:|g" platformsupport/cglconvenience/cglconvenience.pri
+            reinplace -W ${worksrcpath}/qtbase/src "s|mac |cocoa |g" plugins/platforms/platforms.pro
         }
         configure.args-delete   -no-xinput2 -no-xcb -no-xcb-xlib
         configure.args-append   -xcb -xcb-xlib -qpa xcb
@@ -707,6 +714,8 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
             configure.args-append   -I ${prefix}/include -L ${prefix}/lib
             patchfiles-append   qt532/patch-xcb-XOpenGL.diff \
                                 qt532/patch-xcb-missing-functions.diff
+        } elseif {${QT56}} {
+            patchfiles-append   ${PPREF}patch-xcb-XOpenGL-full.diff
         }
     } else {
         # make sure that the Designer doesn't try to use a global menubar when using the xcb plugin.
@@ -1483,12 +1492,16 @@ pre-destroot {
 
 subport ${name}-x11 {
     if {${os.platform} eq "darwin"} {
+#         PortGroup           conflicts_build 1.0
         depends_lib-append  port:xorg-xcb-util port:xorg-xcb-util-wm port:xorg-xcb-util-image \
                             port:xorg-xcb-util-keysyms port:xorg-inputproto \
-                            port:xrender port:mesa path:${qt_bins_dir}/qmake:${name}
+                            port:xrender port:mesa
+#         conflicts_build     qt5-kde-devel qt5-kde
+        depends_run         ${qt5_dependency}
         description         ${description} - the xcb (X11) platform plugin
         long_description    ${long_description} This port installs just the xcb \
-                            platform plugin, which allows rendering to (remote) X11 servers.
+                            platform plugin, which allows rendering to (remote) X11 servers. \
+                            It is useless without port:qt5-kde or port:qt5-kde-devel.
 
         # extract only the qtbase component
         extract.post_args-append    ${distname}/qtbase ${distname}/qtx11extras ${distname}/configure ${distname}/qt.pro
