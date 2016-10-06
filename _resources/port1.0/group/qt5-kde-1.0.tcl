@@ -65,6 +65,9 @@ if {[file exists ${prefix}/libexec/qt5/plugins]
     }
 }
 
+# our directory:
+set currentportgroupdir [file dirname [dict get [info frame 0] file]]
+
 # Ports that want to provide a universal variant need to use the muniversal PortGroup explicitly.
 universal_variant no
 
@@ -212,7 +215,6 @@ global qt_qmake_spec_32
 global qt_qmake_spec_64
 
 PortGroup                   compiler_blacklist_versions 1.0
-PortGroup                   macports_clang_selection 1.0
 if {${os.platform} eq "darwin"} {
     compiler.whitelist      clang
 #     compiler.whitelist      clang macports-clang-3.7 macports-clang-3.6 macports-clang-3.5 macports-clang-3.4
@@ -233,13 +235,17 @@ compiler.blacklist-append   {clang < 500}
 #         }
 #     }
 # }
-if {${os.platform} eq "darwin"} {
-    if {${os.platform} > 10} {
-        whitelist_macports_clang_versions   {3.7 3.6 3.5 3.4}
-    } else {
-        whitelist_macports_clang_versions   {3.5 3.4}
+
+if {[file exists ${currentportgroupdir}/macports_clang_selection-1.0.tcl]} {
+    PortGroup               macports_clang_selection 1.0
+    if {${os.platform} eq "darwin"} {
+        if {${os.platform} > 10} {
+            whitelist_macports_clang_versions   {3.7 3.6 3.5 3.4}
+        } else {
+            whitelist_macports_clang_versions   {3.5 3.4}
+        }
+        blacklist_macports_clang_versions       {< 3.4}
     }
-    blacklist_macports_clang_versions       {< 3.4}
 }
 
 # set Qt understood arch types, based on user preference
@@ -454,29 +460,36 @@ if {![info exists building_qt5]} {
 # }
 
 # provide a variant to prune provided translations
-PortGroup   locale_select 1.0
-# Qt translations don't go into ${prefix}/opt/local/share/locale:
-post-destroot {
-    if {![info exists keep_languages]} {
-        if {[file exists ${prefix}/etc/macports/locales.tcl] && [file exists ${destroot}${qt_translations_dir}]} {
-            if {[catch {source "${prefix}/etc/macports/locales.tcl"} err]} {
-                ui_error "Error reading ${prefix}/etc/macports/locales.tcl: $err"
-                return -code error "Error reading ${prefix}/etc/macports/locales.tcl"
+# make this optional if the locale_select portgroup exists
+# the easy way to do that would be to catch the PortGroup statement
+# but that will print warnings for everyone who doesn't have the
+# the PortGroup installed. Not very elegant; just check if the file
+# exists in the same directory as this PortGroup.
+if {[file exists ${currentportgroupdir}/locale_select-1.0.tcl]} {
+    PortGroup   locale_select 1.0
+    # Qt translations don't go into ${prefix}/opt/local/share/locale:
+    post-destroot {
+        if {![info exists keep_languages]} {
+            if {[file exists ${prefix}/etc/macports/locales.tcl] && [file exists ${destroot}${qt_translations_dir}]} {
+                if {[catch {source "${prefix}/etc/macports/locales.tcl"} err]} {
+                    ui_error "Error reading ${prefix}/etc/macports/locales.tcl: $err"
+                    return -code error "Error reading ${prefix}/etc/macports/locales.tcl"
+                }
             }
         }
-    }
-    if {[info exists keep_languages]} {
-        foreach l [glob -nocomplain ${destroot}${qt_translations_dir}/*.qm] {
-            set langcomps [split [file rootname [file tail ${l}]] _]
-            set simplelang [lindex ${langcomps} end]
-            set complang [join [lrange ${langcomps} end-1 end] _]
-            if {[lsearch -exact ${keep_languages} ${simplelang}] ne "-1"} {
-                ui_debug "won't delete ${l} (${simplelang})"
-            } elseif {[lsearch -exact ${keep_languages} ${complang}] ne "-1"} {
-                ui_debug "won't delete ${l} (${complang})"
-            } else {
-                ui_debug "rm ${l}"
-                file delete -force ${l}
+        if {[info exists keep_languages]} {
+            foreach l [glob -nocomplain ${destroot}${qt_translations_dir}/*.qm] {
+                set langcomps [split [file rootname [file tail ${l}]] _]
+                set simplelang [lindex ${langcomps} end]
+                set complang [join [lrange ${langcomps} end-1 end] _]
+                if {[lsearch -exact ${keep_languages} ${simplelang}] ne "-1"} {
+                    ui_debug "won't delete ${l} (${simplelang})"
+                } elseif {[lsearch -exact ${keep_languages} ${complang}] ne "-1"} {
+                    ui_debug "won't delete ${l} (${complang})"
+                } else {
+                    ui_debug "rm ${l}"
+                    file delete -force ${l}
+                }
             }
         }
     }
