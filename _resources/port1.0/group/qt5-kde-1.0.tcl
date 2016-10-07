@@ -285,9 +285,12 @@ set qt_host_data_dir   ${prefix}/share/${qt_name}
 global qt_cmake_defines
 set qt_cmake_defines    \
     "-DQT_QT_INCLUDE_DIR=${qt_includes_dir} \
-     -DQT_QMAKESPEC=${qt_qmake_spec} \
      -DQT_ZLIB_LIBRARY=${prefix}/lib/libz.dylib \
      -DQT_PNG_LIBRARY=${prefix}/lib/libpng.dylib"
+if {${qt_qmake_spec} ne ""} {
+    set qt_cmake_defines \
+        "${qt_cmake_defines} -DQT_QMAKESPEC=${qt_qmake_spec}"
+}
 
 if {${os.platform} eq "darwin"} {
     # extensions on shared libraries
@@ -377,7 +380,9 @@ if {![info exists building_qt5]} {
         MOC=${qt_moc_cmd}
 
     if { ![option universal_variant] || ![variant_isset universal] } {
-        configure.env-append QMAKESPEC=${qt_qmake_spec}
+        if {${qt_qmake_spec} ne ""} {
+            configure.env-append QMAKESPEC=${qt_qmake_spec}
+        }
     } else {
         set merger_configure_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
         set merger_configure_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
@@ -404,7 +409,9 @@ if {![info exists building_qt5]} {
         MOC=${qt_moc_cmd}
 
     if { ![option universal_variant] || ![variant_isset universal] } {
-        build.env-append QMAKESPEC=${qt_qmake_spec}
+        if {${qt_qmake_spec} ne ""} {
+            build.env-append QMAKESPEC=${qt_qmake_spec}
+        }
     } else {
         set merger_build_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
         set merger_build_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
@@ -442,7 +449,9 @@ if {![info exists building_qt5]} {
         MOC=${qt_moc_cmd}
 
     if { ![option universal_variant] || ![variant_isset universal] } {
-        build.env-append QMAKESPEC=${qt_qmake_spec}
+        if {${qt_qmake_spec} ne ""} {
+            build.env-append QMAKESPEC=${qt_qmake_spec}
+        }
     } else {
         set destroot_build_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
         set destroot_build_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
