@@ -1,5 +1,6 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
 # $Id: cmake-1.0.tcl 143801 2015-12-22 01:37:59Z ryandesign@macports.org $
+# $Id: cmake-1.1.tcl 143801 2016-09-11 16:28:00Z gmail.com:rjvbertin $
 #
 # Copyright (c) 2009 Orville Bennett <illogical1 at gmail.com>
 # Copyright (c) 2010-2015 The MacPorts Project
@@ -32,7 +33,12 @@
 #
 #
 # Usage:
-# PortGroup     cmake 1.0
+# PortGroup     cmake 1.1
+
+namespace eval cmake {
+    # our directory:
+    variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
+}
 
 options cmake.out_of_source cmake.build_dir
 

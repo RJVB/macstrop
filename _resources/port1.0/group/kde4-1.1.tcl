@@ -34,8 +34,13 @@
 # PortGroup     kde4 1.1
 
 # Use CMake and Qt4 port groups
-PortGroup               cmake 1.0
+PortGroup               cmake 1.1
 PortGroup               qt4 1.0
+
+namespace eval kde4 {
+    # our directory:
+    variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
+}
 
 # Make sure to not use any already installed headers and libraries;
 # these are set in CPATH and LIBRARY_PATH anyway.

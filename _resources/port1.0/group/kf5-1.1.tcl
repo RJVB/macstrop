@@ -33,7 +33,7 @@
 # Usage:
 # PortGroup     kf5 1.1
 
-PortGroup               cmake 1.0
+PortGroup               cmake 1.1
 set qt5.prefer_kde      1
 PortGroup               qt5 1.0
 PortGroup               active_variants 1.1
