@@ -39,8 +39,31 @@
 # will be ports providing software not provided through/for the KDE
 # organisation, for example Qt applications that use just a select
 # number of frameworks (like QupZilla can provide a KWallet backend).
+#
+# Usage:
+#
+# kf5.depends_frameworks :
+# appends the ports corresponding to the KF5 Frameworks short names to
+# depends_lib. This procedure also adds the build dependencies that
+# KI18n imposes
+# Caution though: some KF5 packages will let the KI18n dependency be added
+# through cmake's public link interface handling, rather than declaring an
+# explicit dependency themselves that is listed in the printed summary.
+#
+# kf5.depends_build_frameworks :
+# the equivalent to kf5.depends_frameworks for declaring build dependencies.
+#
+# For more precise control one can use kf5::framework_dependency (note
+# the :: instead of a "."!). For instance:
+# depends_run-append    [kf5::framework_dependency kded]
+# or by accessing the dependency variable directly:
+# depends_run-append    ${kf5::kded_dep}
+
 
 namespace eval kf5 {
+
+    # internal and (hopefully) rarely used stuff is put in the KF5 namespace
+
     variable pyversion       2.7
     variable pybranch        [join [lrange [split ${pyversion} .] 0 1] ""]
     if {${os.platform} eq "darwin"} {
@@ -104,12 +127,6 @@ namespace eval kf5 {
     }
 }
 
-# kf5.depends_frameworks appends the ports corresponding to the KF5 Frameworks
-# short names to depends_lib
-# This procedure also adds the build dependencies that KI18n imposes
-# Caution though: some KF5 packages will let the KI18n dependency be added
-# through cmake's public link interface handling, rather than declaring an
-# explicit dependency themselves that is listed in the printed summary.
 proc kf5.depends_frameworks {first args} {
     # join ${first} and (the optional) ${args}
     set args [linsert $args[set list {}] 0 ${first}]
@@ -146,7 +163,6 @@ proc kf5.depends_frameworks {first args} {
     }
 }
 
-# the equivalent to kf5.depends_frameworks for declaring build dependencies.
 proc kf5.depends_build_frameworks {first args} {
     # join ${first} and (the optional) ${args}
     set args [linsert $args[set list {}] 0 ${first}]
