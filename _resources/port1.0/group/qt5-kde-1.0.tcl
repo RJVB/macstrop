@@ -65,8 +65,10 @@ if {[file exists ${prefix}/libexec/qt5/plugins]
     }
 }
 
-# our directory:
-set currentportgroupdir [file dirname [dict get [info frame 0] file]]
+namespace eval qt5 {
+    # our directory:
+    variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
+}
 
 # Ports that want to provide a universal variant need to use the muniversal PortGroup explicitly.
 universal_variant no
@@ -236,7 +238,7 @@ compiler.blacklist-append   {clang < 500}
 #     }
 # }
 
-if {[file exists ${currentportgroupdir}/macports_clang_selection-1.0.tcl]} {
+if {[file exists ${qt5::currentportgroupdir}/macports_clang_selection-1.0.tcl]} {
     PortGroup               macports_clang_selection 1.0
     if {${os.platform} eq "darwin"} {
         if {${os.platform} > 10} {
@@ -465,7 +467,7 @@ if {![info exists building_qt5]} {
 # but that will print warnings for everyone who doesn't have the
 # the PortGroup installed. Not very elegant; just check if the file
 # exists in the same directory as this PortGroup.
-if {[file exists ${currentportgroupdir}/locale_select-1.0.tcl]} {
+if {[file exists ${qt5::currentportgroupdir}/locale_select-1.0.tcl]} {
     PortGroup   locale_select 1.0
     # Qt translations don't go into ${prefix}/opt/local/share/locale:
     post-destroot {
