@@ -533,7 +533,7 @@ if {[file exists ${kf5::currentportgroupdir}/kf5-frameworks-1.0.tcl]} {
 }
 
 # not a framework; use the procedure to define the path-style dependency
-kf5.framework_dependency    cli-tools libkdeinit5_kcmshell5 ""
+kf5::framework_dependency    cli-tools libkdeinit5_kcmshell5 ""
 
 # see also http://api.kde.org/frameworks-api/frameworks5-apidocs/attica/html/index.html
 
