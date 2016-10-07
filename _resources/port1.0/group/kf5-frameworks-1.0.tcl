@@ -40,39 +40,52 @@
 # organisation, for example Qt applications that use just a select
 # number of frameworks (like QupZilla can provide a KWallet backend).
 
+namespace eval kf5 {
+    variable pyversion       2.7
+    variable pybranch        [join [lrange [split ${pyversion} .] 0 1] ""]
+    if {${os.platform} eq "darwin"} {
+        # this should probably become under control of a variant
+        variable pythondep   port:python27
+        variable pylibdir    ${frameworks_dir}/Python.framework/Versions/${pyversion}/lib/python${pyversion}
+    } elseif {${os.platform} eq "linux"} {
+        # for personal use: don't add a python dependency.
+        variable pythondep   bin:python:python27
+    }
+}
+
 # variables to facilitate setting up dependencies to KF5 frameworks that may (or not)
 # also exist as port:kf5-foo-devel .
 # This may be extended to provide path-style *runtime* dependencies on framework executables;
 # kf5.framework_runtime_dependency{name {executable 0}} and kf5.depends_run_frameworks
 # (which would have to add a library dependency if no executable dependency is defined).
 proc kf5.framework_dependency {name {library 0} {soversion 5}} {
-    upvar #0 kf5.${name}_dep dep
-    upvar #0 kf5.${name}_lib lib
+    namespace upvar kf5 ${name}_dep dep
+    namespace upvar kf5 ${name}_lib lib
     if {${library} ne 0} {
         global os.platform build_arch
         if {${os.platform} eq "darwin"} {
-            set kf5.lib_path    lib
+            set lib_path        lib
             if {${soversion} ne ""} {
-                set kf5.lib_ext 5.dylib
+                set lib_ext     5.dylib
             } else {
-                set kf5.lib_ext dylib
+                set lib_ext     dylib
             }
         } elseif {${os.platform} eq "linux"} {
-            set kf5.lib_path    lib/${build_arch}-linux-gnu
+            set lib_path        lib/${build_arch}-linux-gnu
             if {${soversion} ne ""} {
-                set kf5.lib_ext so.5
+                set lib_ext     so.5
             } else {
-                set kf5.lib_ext so
+                set lib_ext     so
             }
         }
-        set lib                 ${kf5.lib_path}/${library}.${kf5.lib_ext}
+        set lib                 ${lib_path}/${library}.${lib_ext}
         set dep                 path:${lib}:kf5-${name}
         ui_debug "Dependency expression for KF5ramework ${name}: ${dep}"
     } else {
         if {[info exists dep]} {
             return ${dep}
         } else {
-            set allknown [info global "kf5.*_dep"]
+            set allknown [string map {"::kf5::" "" "_dep" ""} [info vars "kf5::*_dep"]]
             ui_error "No KF5 framework is known corresponding to \"${name}\""
             ui_msg "Known framework ports: ${allknown}"
             return -code error "Unknown KF5 framework ${name}"
@@ -81,15 +94,13 @@ proc kf5.framework_dependency {name {library 0} {soversion 5}} {
 }
 
 proc kf5.has_translations {} {
-    global kf5.pythondep
-    global kf5.pyversion
     global prefix
-    ui_debug "Adding gettext and ${kf5.pythondep} build dependencies because of KI18n"
+    ui_debug "Adding gettext and ${kf5::pythondep} build dependencies because of KI18n"
     depends_build-append \
                         port:gettext \
-                        ${kf5.pythondep}
+                        ${kf5::pythondep}
     configure.args-append \
-                        -DPYTHON_EXECUTABLE=${prefix}/bin/python${kf5.pyversion}
+                        -DPYTHON_EXECUTABLE=${prefix}/bin/python${kf5::pyversion}
 }
 
 
@@ -156,7 +167,7 @@ kf5.framework_dependency    kconfig libKF5ConfigCore
 kf5.framework_dependency    kcodecs libKF5Codecs
 kf5.framework_dependency    ki18n libKF5I18n
 # kf5-kdoctools does install a static library but I don't know if it has dependents
-set kf5.kdoctools_dep       path:bin/meinproc5:kf5-kdoctools
+set kf5::kdoctools_dep       path:bin/meinproc5:kf5-kdoctools
 kf5.framework_dependency    kguiaddons libKF5GuiAddons
 kf5.framework_dependency    kwidgetsaddons libKF5WidgetsAddons
 kf5.framework_dependency    kconfigwidgets libKF5ConfigWidgets
@@ -164,14 +175,14 @@ kf5.framework_dependency    kitemviews libKF5ItemViews
 kf5.framework_dependency    kiconthemes libKF5IconThemes
 kf5.framework_dependency    kwindowsystem libKF5WindowSystem
 kf5.framework_dependency    kcrash libKF5Crash
-set kf5.kapidox_dep         path:bin/kgenapidox:kf5-kapidox
+set kf5::kapidox_dep         path:bin/kgenapidox:kf5-kapidox
 kf5.framework_dependency    kdbusaddons libKF5DBusAddons
 kf5.framework_dependency    kdnssd libKF5DNSSD
 kf5.framework_dependency    kidletime libKF5IdleTime
-set kf5.kimageformats_dep   port:kf5-kimageformats
+set kf5::kimageformats_dep   port:kf5-kimageformats
 kf5.framework_dependency    kitemmodels libKF5ItemModels
 kf5.framework_dependency    kplotting libKF5Plotting
-set kf5.oxygen-icons_dep    path:share/icons/oxygen/index.theme:kf5-oxygen-icons5
+set kf5::oxygen-icons_dep    path:share/icons/oxygen/index.theme:kf5-oxygen-icons5
 kf5.framework_dependency    solid libKF5Solid
 kf5.framework_dependency    sonnet libKF5SonnetCore
 kf5.framework_dependency    threadweaver libKF5ThreadWeaver
@@ -201,7 +212,7 @@ kf5.framework_dependency    kinit libkdeinit5_klauncher ""
 kf5.framework_dependency    kded libkdeinit5_kded5 ""
 kf5.framework_dependency    kparts libKF5Parts
 kf5.framework_dependency    kdewebkit libKF5WebKit
-set kf5.kdesignerplugin_dep path:bin/kgendesignerplugin:kf5-kdesignerplugin
+set kf5::kdesignerplugin_dep path:bin/kgendesignerplugin:kf5-kdesignerplugin
 kf5.framework_dependency    kpty libKF5Pty
 kf5.framework_dependency    kdelibs4support libKF5KDELibs4Support
 kf5.framework_dependency    frameworkintegration libKF5Style

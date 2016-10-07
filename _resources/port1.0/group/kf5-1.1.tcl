@@ -70,6 +70,11 @@ if {!${qt5.using_kde}} {
 # call kf5.use_latest kf5.release|kf5.version|kf5.plasma .
 ########################################################################
 
+namespace eval kf5 {
+    # our directory:
+    set currentportgroupdir [file dirname [dict get [info frame 0] file]]
+}
+
 if { ![ info exists kf5.project ] } {
     ui_debug "kf5.project is not defined; falling back to \"manual\" configuration"
 } else {
@@ -117,16 +122,8 @@ if {![info exists kf5.dont_use_xz]} {
     use_xz              yes
 }
 
-set kf5.pyversion       2.7
-set kf5.pybranch        [join [lrange [split ${kf5.pyversion} .] 0 1] ""]
-if {${os.platform} eq "darwin"} {
-    # this should probably become under control of a variant
-    set kf5.pythondep   port:python27
-    set kf5.pylibdir    ${frameworks_dir}/Python.framework/Versions/${kf5.pyversion}/lib/python${kf5.pyversion}
-} elseif {${os.platform} eq "linux"} {
-    # for personal use: don't add a python dependency.
-    set kf5.pythondep   bin:python:python27
-}
+# kf5.py* variable definitions (now kf5::py* namespaced variables) were
+# here; moved to kf5-frameworks-1.0.tcl
 
 platform darwin {
     variant nativeQSP description {use the native Apple-style QStandardPaths locations} {}
@@ -306,12 +303,15 @@ platform darwin {
     }
 }
 
+namespace eval kf5 {
+    variable libs_ext
+}
 if {${os.platform} eq "darwin"} {
-   set kf5.libs_dir    ${prefix}/lib
-   set kf5.libs_ext    dylib
+    set kf5.libs_dir    ${prefix}/lib
+    set kf5::libs_ext   dylib
 } elseif {${os.platform} eq "linux"} {
-   set kf5.libs_dir    ${prefix}/lib/${build_arch}-linux-gnu
-   set kf5.libs_ext    so
+    set kf5.libs_dir    ${prefix}/lib/${build_arch}-linux-gnu
+    set kf5::libs_ext   so
 }
 
 if {![info exists kf5.framework] && ![info exists kf5.portingAid]} {
@@ -320,35 +320,35 @@ if {![info exists kf5.framework] && ![info exists kf5.portingAid]} {
     configure.args-append \
                         -DDOCBOOKXSL_DIR=${prefix}/share/xsl/docbook-xsl \
                         -DGETTEXT_INCLUDE_DIR=${prefix}/include \
-                        -DGETTEXT_LIBRARY=${prefix}/lib/libgettextlib.${kf5.libs_ext} \
+                        -DGETTEXT_LIBRARY=${prefix}/lib/libgettextlib.${kf5::libs_ext} \
                         -DGIF_INCLUDE_DIR=${prefix}/include \
-                        -DGIF_LIBRARY=${prefix}/lib/libgif.${kf5.libs_ext} \
+                        -DGIF_LIBRARY=${prefix}/lib/libgif.${kf5::libs_ext} \
                         -DJASPER_INCLUDE_DIR=${prefix}/include \
-                        -DJASPER_LIBRARY=${prefix}/lib/libjasper.${kf5.libs_ext} \
+                        -DJASPER_LIBRARY=${prefix}/lib/libjasper.${kf5::libs_ext} \
                         -DJPEG_INCLUDE_DIR=${prefix}/include \
-                        -DJPEG_LIBRARY=${prefix}/lib/libjpeg.${kf5.libs_ext} \
-                        -DLBER_LIBRARIES=${prefix}/lib/liblber.${kf5.libs_ext} \
+                        -DJPEG_LIBRARY=${prefix}/lib/libjpeg.${kf5::libs_ext} \
+                        -DLBER_LIBRARIES=${prefix}/lib/liblber.${kf5::libs_ext} \
                         -DLDAP_INCLUDE_DIR=${prefix}/include \
-                        -DLDAP_LIBRARIES=${prefix}/lib/libldap.${kf5.libs_ext} \
+                        -DLDAP_LIBRARIES=${prefix}/lib/libldap.${kf5::libs_ext} \
                         -DLIBEXSLT_INCLUDE_DIR=${prefix}/include \
-                        -DLIBEXSLT_LIBRARIES=${prefix}/lib/libexslt.${kf5.libs_ext} \
-                        -DLIBICALSS_LIBRARY=${prefix}/lib/libicalss.${kf5.libs_ext} \
+                        -DLIBEXSLT_LIBRARIES=${prefix}/lib/libexslt.${kf5::libs_ext} \
+                        -DLIBICALSS_LIBRARY=${prefix}/lib/libicalss.${kf5::libs_ext} \
                         -DLIBICAL_INCLUDE_DIRS=${prefix}/include \
-                        -DLIBICAL_LIBRARY=${prefix}/lib/libical.${kf5.libs_ext} \
+                        -DLIBICAL_LIBRARY=${prefix}/lib/libical.${kf5::libs_ext} \
                         -DLIBINTL_INCLUDE_DIR=${prefix}/include \
-                        -DLIBINTL_LIBRARY=${prefix}/lib/libintl.${kf5.libs_ext} \
+                        -DLIBINTL_LIBRARY=${prefix}/lib/libintl.${kf5::libs_ext} \
                         -DLIBXML2_INCLUDE_DIR=${prefix}/include/libxml2 \
-                        -DLIBXML2_LIBRARIES=${prefix}/lib/libxml2.${kf5.libs_ext} \
+                        -DLIBXML2_LIBRARIES=${prefix}/lib/libxml2.${kf5::libs_ext} \
                         -DLIBXML2_XMLLINT_EXECUTABLE=${prefix}/bin/xmllint \
                         -DLIBXSLT_INCLUDE_DIR=${prefix}/include \
-                        -DLIBXSLT_LIBRARIES=${prefix}/lib/libxslt.${kf5.libs_ext} \
+                        -DLIBXSLT_LIBRARIES=${prefix}/lib/libxslt.${kf5::libs_ext} \
                         -DOPENAL_INCLUDE_DIR=/System/Library/Frameworks/OpenAL.framework/Headers \
                         -DOPENAL_LIBRARY=/System/Library/Frameworks/OpenAL.framework
 #                         -DPNG_INCLUDE_DIR=${prefix}/include \
 #                         -DPNG_PNG_INCLUDE_DIR=${prefix}/include \
-#                         -DPNG_LIBRARY=${prefix}/lib/libpng.${kf5.libs_ext} \
+#                         -DPNG_LIBRARY=${prefix}/lib/libpng.${kf5::libs_ext} \
 #                         -DTIFF_INCLUDE_DIR=${prefix}/include \
-#                         -DTIFF_LIBRARY=${prefix}/lib/libtiff.${kf5.libs_ext}
+#                         -DTIFF_LIBRARY=${prefix}/lib/libtiff.${kf5::libs_ext}
 }
 
 proc kf5.set_paths {} {
@@ -520,7 +520,17 @@ proc kf5.add_test_library_path {path} {
 }
 
 ### kf5.depends_frameworks and the framework dependency defs used to be inlined here
-PortGroup               kf5-frameworks 1.0
+### include the dedicated file in which they are housed now, but only if it
+### resides in the same directory as ourselves:
+if {[file exists ${kf5::currentportgroupdir}/kf5-frameworks-1.0.tcl]} {
+    if {[catch {source "${kf5::currentportgroupdir}/kf5-frameworks-1.0.tcl"} err]} {
+        ui_error "Error reading ${kf5::currentportgroupdir}/kf5-frameworks-1.0.tcl: $err"
+        return -code error "Error importing the kf5-frameworks 1.0 PortGroup"
+    }
+} else {
+    ui_error "The kf5 1.0 and kf5-frameworks 1.0 PortGroups should reside in the same directory"
+    return -code error "KF5 PortGroup installation error"
+}
 
 # not a framework; use the procedure to define the path-style dependency
 kf5.framework_dependency    cli-tools libkdeinit5_kcmshell5 ""
