@@ -42,6 +42,16 @@
 
 PortGroup                       qt5 1.0
 
+# with the -r option, the examples do not install correctly (no source code)
+#     the install_sources target is not created in the Makefile(s)
+configure.cmd                   ${qt_qmake_cmd}
+#configure.cmd                   ${qt_qmake_cmd} -r
+
+configure.pre_args-replace      --prefix=${prefix} "PREFIX=${prefix}"
+configure.universal_args-delete --disable-dependency-tracking
+
+### now follows some port-specific bits which require us to know
+### (or pretend to know) if qt5-kde is being used.
 if {![info exists qt5.using_kde]} {
     ui_debug "qmake5 PortGroup : no qt5-kde info was provided by the Qt5 PortGroup"
     set qt5.using_kde           no
@@ -49,38 +59,28 @@ if {![info exists qt5.using_kde]} {
 
 if {${qt5.using_kde}} {
 
-    #configure.cmd                   ${qt_qmake_cmd} -r
-    configure.cmd                   ${qt_qmake_cmd}
-    configure.pre_args-replace      --prefix=${prefix} PREFIX=${prefix}
-    configure.universal_args-delete --disable-dependency-tracking
-
-    # qmake defaults to -mmacosx-version-min=10.6, which implies stdlib is libstdc++, which caused problems
-    #    (see https://trac.macports.org/wiki/FAQ#libcpp)
-    # override QMAKE_MACOSX_DEPLOYMENT_TARGET set in ${prefix}/libexec/qt5/mkspecs/macx-clang/qmake.conf
-    # see #50249
-    configure.pre_args-append       "QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}"
+    ### using port:qt5-kde
+    # we use a somewhat simpler qmake cookbook, which doesn't require the magic related
+    # to providing all Qt components through subports. We also provide a different +debug
+    # variant which dependents don't need to know anything about.
 
     if {[variant_exists universal] && [variant_isset universal]} {
-        set merger_configure_args(i386)     "CONFIG+=\"x86\" -spec ${qt_qmake_spec_32}"
-        set merger_configure_args(x86_64)   "-spec ${qt_qmake_spec_64}"
+        set merger_configure_args(i386) \
+                                    "CONFIG+=\"x86\" -spec ${qt_qmake_spec_32}"
+        set merger_configure_args(x86_64) \
+                                    "-spec ${qt_qmake_spec_64}"
+    } elseif {${qt_qmake_spec} ne ""} {
+        configure.args-append       -spec ${qt_qmake_spec}
     }
 
     # qt5-kde does not currently support a debug variant, but does provide (some) debugging information
-    configure.pre_args-append       "CONFIG+=release"   
+    configure.pre_args-append       "CONFIG+=release"
 
 } else {
 
-    # using the mainstream port:qt5
+    ### using the mainstream port:qt5
 
     PortGroup                       active_variants 1.1
-
-    # with the -r option, the examples do not install correctly (no source code)
-    #     the install_sources target is not created in the Makefile(s)
-    configure.cmd                   ${qt_qmake_cmd}
-    #configure.cmd                   ${qt_qmake_cmd} -r
-
-    configure.pre_args-replace      --prefix=${prefix} "PREFIX=${prefix}"
-    configure.universal_args-delete --disable-dependency-tracking
 
     # specify build configuration (compiler, 32-bit/64-bit, etc.)
     if { ![option universal_variant] || ![variant_isset universal] } {
@@ -108,10 +108,6 @@ if {${qt5.using_kde}} {
                 QT_TARGET_ARCH=${arch}
         }
     }
-
-    # override QMAKE_MACOSX_DEPLOYMENT_TARGET set in ${prefix}/libexec/qt5/mkspecs/macx-clang/qmake.conf
-    # see #50249
-    configure.args-append QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}
 
     if {![info exists qt5_qmake_request_no_debug]} {
         variant debug description {Build both release and debug libraries} {}
@@ -145,6 +141,12 @@ if {${qt5.using_kde}} {
     }
 
 }
+
+### back to common code:
+
+# override QMAKE_MACOSX_DEPLOYMENT_TARGET set in ${prefix}/libexec/qt5/mkspecs/macx-clang/qmake.conf
+# see #50249
+configure.args-append QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}
 
 # override C++11 flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
 #    so value of ${configure.cxx_stdlib} can always be used

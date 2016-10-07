@@ -64,6 +64,12 @@ if {[file exists ${prefix}/libexec/qt5/plugins]
         ui_info "Qt5 has been installed through port:qt5 or its subports; you can build but not install ${subport}"
     }
 }
+if {[info exists qt5.using_kde] && !${qt5.using_kde}} {
+    # checks if the other Qt5 PortGroup has already been included.
+    # NB: this works only when that happened through the qt5-1.0.tcl!
+    ui_error "qt5-kde-1.0.tcl is being imported after qt5-mac-1.0.tcl"
+    return -code error "importing 2 incompatible Qt5 PortGroups"
+}
 
 namespace eval qt5 {
     # our directory:
