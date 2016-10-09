@@ -1,9 +1,9 @@
 ###          freetype2-infinality-ultimate settings          ###
-###           rev. 0.4.8.3, for freetype2 v.2.5.x            ###
-###             also used for freetype2 v.2.6.x              ###
+###              rev. 0.5, for freetype2 v.2.6.3             ###
 ###                                                          ###
 ###                Copyright (c) 2014 bohoomil               ###
-###                Copyright (c) 2014 rjvbertin              ###
+###                Copyright (c) 2014,15 rjvbertin           ###
+###                Copyright (c) 2015 bohoomil               ###
 ### The MIT License (MIT) http://opensource.org/licenses/MIT ###
 ###      part of infinality-bundle  http://bohoomil.com      ###
 
@@ -27,7 +27,7 @@ Xft.rgba:       rgb" | xrdb -merge >& /dev/null
 ### create custom ones if necessary. Once modified, "infinality-settings.sh"
 ### needs to be copied to "/etc/X11/xinit/xinitrc.d/".
 ###
-### There are three basic levels of customization available to a user:
+### There are two levels of customization available to a user:
 ###
 ### 1. A set of 7 preconfigured styles selectable by name.
 
@@ -39,7 +39,6 @@ Xft.rgba:       rgb" | xrdb -merge >& /dev/null
 ### ultimate5 <> darkest & heaviest ("MacIsh")
 ### osx       <> Apple OS X
 ### windowsxp <> MS Windows XP
-### custom    <> user defined
 
 ### If you want to use a style from the list, uncomment the variable below
 ### and set its name as the value.
@@ -48,17 +47,10 @@ Xft.rgba:       rgb" | xrdb -merge >& /dev/null
 #setenv INFINALITY_FT "ultimate3"
 
 
-### 2. Additionally, the chosen style can be adjusted by setting custom
-###    filter parameters. If you want to use this functionality, uncomment
-###    the variable below and enter custom values.
-
-
-#setenv INFINALITY_FT_FILTER_PARAMS "08 24 36 24 08"
-
-
-### 3. Setting the rendering style to "custom" lets you create custom styles
-###    from scratch. Uncomment the variables below and enter the values
-###    of your choice.
+### 2. If you want to create a custom style, uncomment the variables below
+###    and enter the values of your choice.
+### Please refer to "infinality-settings-explained.sh" file for detailed explanation
+### of customization options and provided examples.
 
 
 #setenv INFINALITY_FT_FILTER_PARAMS "08 24 36 24 08"
@@ -70,6 +62,8 @@ Xft.rgba:       rgb" | xrdb -merge >& /dev/null
 #setenv INFINALITY_FT_CHROMEOS_STYLE_SHARPENING_STRENGTH "0"
 #setenv INFINALITY_FT_STEM_ALIGNMENT_STRENGTH "15"
 #setenv INFINALITY_FT_STEM_FITTING_STRENGTH "15"
+#setenv INFINALITY_FT_STEM_DARKENING_AUTOFIT="false"
+#setenv INFINALITY_FT_STEM_DARKENING_CFF="false"
 #setenv INFINALITY_FT_GAMMA_CORRECTION "0 100"
 #setenv INFINALITY_FT_BRIGHTNESS "0"
 #setenv INFINALITY_FT_CONTRAST "0"
