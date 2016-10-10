@@ -425,6 +425,10 @@ proc kf5.set_project {project} {
                         version \
                             ${kf5.release}
                     }
+                    livecheck.url \
+                                http://download.kde.org/stable/${kf5.virtualPath}
+                    livecheck.regex \
+                                (\\d+\\.\\d+\\.\\d)
                 }
             }
         }
