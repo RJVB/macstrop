@@ -4,6 +4,7 @@
 # $Id: qt5-1.0.tcl 113952 2013-11-26 18:01:53Z michaelld@macports.org $
 
 # Copyright (c) 2014 The MacPorts Project
+# Copyright (c) 2015, 2016 R.J.V. Bertin
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
