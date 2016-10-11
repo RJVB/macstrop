@@ -88,7 +88,8 @@ if {![info exists kf5.version]} {
     # kf5.latest_version is supposed to be used only in the KF5-Frameworks Portfile
     # when updating it to the new version (=kf5.latest_version).
     set kf5.latest_version \
-                        5.27.0
+                        5.24.0
+    # currently upgrading to 5.27.0
 }
 
 # KF5 Applications version
