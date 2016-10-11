@@ -39,7 +39,7 @@ set qt5.prefer_kde      1
 PortGroup               qt5 1.0
 PortGroup               active_variants 1.1
 
-if {!${qt5.using_kde}} {
+if {![info exists qt5.using_kde] || !${qt5.using_kde}} {
     ui_warn "It is strongly advised to install KF5 ports against port:qt5-kde or port:qt5-kde-devel."
 }
 
@@ -88,7 +88,7 @@ if {![info exists kf5.version]} {
     # kf5.latest_version is supposed to be used only in the KF5-Frameworks Portfile
     # when updating it to the new version (=kf5.latest_version).
     set kf5.latest_version \
-                        5.24.0
+                        5.27.0
 }
 
 # KF5 Applications version
@@ -688,6 +688,42 @@ proc platform {os args} {
         uplevel 1 $code
     } elseif {${altcode} ne ""} {
         uplevel 1 $altcode
+    }
+}
+
+if {![info exists qt5.depends_component]} {
+    # apparently the qt5-kde PortGroup is not being used,
+    # provide a simplified local copy of qt5.depends_component;
+    # a procedure for declaring dependencies on Qt5 components, which will expand them
+    # into the appropriate subports for the Qt5 flavour installed (presumably port:qt5)
+    # e.g. qt5.depends_component qtbase qtsvg qtdeclarative
+    proc qt5.depends_component {first args} {
+        # join ${first} and (the optional) ${args}
+        set args [linsert $args[set list {}] 0 ${first}]
+        set qt5pprefix "qt5"
+        foreach comp ${args} {
+            if {${comp} eq "qt5"} {
+                depends_lib-append port:${qt5pprefix}
+            } else {
+                set portname "${qt5pprefix}-${comp}"
+                depends_lib-append port:${portname}
+            }
+        }
+    }
+}
+
+proc kf5.depends_qt5_components {first args} {
+    global qt5.using_kde
+    set args [linsert $args[set list {}] 0 ${first}]
+    if {![info exists qt5.using_kde] || !${qt5.using_kde}} {
+        ui_msg "bla"
+        qt5.depends_component ${args}
+    } else {
+        foreach comp ${args} {
+            if {${comp} eq "qtwebkit" || ${comp} eq "qtwebengine"} {
+                qt5.depends_component ${comp}
+            }
+        }
     }
 }
 
