@@ -7,14 +7,11 @@ PortGroup           muniversal 1.0
 PortGroup           compiler_blacklist_versions 1.0
 PortGroup           active_variants 1.1
 
-name                ffmpeg
-conflicts           ffmpeg-devel
-epoch               1
-version             2.8.6
 # the actual compat_version would be something like 24 but that looks weird and
 # the first ABI change after v2.4.0 came at v3.0.0 so we can just use "2"
 set compat_version  2
-revision            1
+name                ffmpeg-${compat_version}
+version             2.8.6
 license             LGPL-2.1+
 categories          multimedia
 maintainers         devans jeremyhu openmaintainer
@@ -56,12 +53,10 @@ master_sites        http://www.ffmpeg.org/releases/
 
 use_bzip2           yes
 
+dist_subdir         ffmpeg
+distname            ffmpeg-${version}
 checksums           rmd160  5b61b6b0521d39ca31dcfb7fff1dfa26d9e7667a \
                     sha256  40611e329bc354592c6f8f1deb033c31b91f80e91f5707ca4f9afceca78d8e62
-
-depends_build       port:pkgconfig \
-                    port:gmake \
-                    port:texinfo
 
 # subport ffmpeg-${compat_version} {
 #     description-append \
@@ -73,12 +68,27 @@ depends_build       port:pkgconfig \
 #     # that's why this subport is commented for now.
 # }
 
-# libvpx is static only so can be considered a build dependency (#47934)
+variant exclusive description {Replace the current, 3.x ffmpeg port with this legacy version} {
+    # an (unl)awful hack, mostly untested for now.
+    # the proper implementation will be to introduce a variant to port:ffmpeg
+    # making it a stub depending on port:ffmpeg-2
+    # I'm hoping that won't be necessary; should be the case as long as no ports
+    # depend on and use ffmpeg libraries from 2.x and 3.x passing along data
+    # between them
+    name ffmpeg
+}
 
-depends_build-append \
+platform darwin {
+    depends_build   port:pkgconfig \
+                    port:gmake \
+                    port:texinfo
+
+    # libvpx is static only so can be considered a build dependency (#47934)
+
+    depends_build-append \
                     port:libvpx
 
-depends_lib         port:lame \
+    depends_lib     port:lame \
                     port:libiconv \
                     port:libvorbis \
                     port:libopus \
@@ -100,7 +110,17 @@ depends_lib         port:lame \
                     port:xz \
                     port:zlib
 
-build.cmd           ${prefix}/bin/gmake
+    build.cmd       ${prefix}/bin/gmake
+}
+platform linux {
+    depends_build   port:pkgconfig \
+                    port:libiconv \
+                    port:bzip2 \
+                    port:xz \
+                    port:zlib
+    depends_build-append \
+                    port:libvpx
+}
 build.env-append    V=1
 
 #
@@ -150,8 +170,6 @@ configure.args      --progs-suffix="-${compat_version}" --build-suffix="-${compa
                     --disable-libxcb-xfixes \
                     --disable-indev=jack \
                     --disable-outdev=xv \
-                    --disable-vda \
-                    --disable-videotoolbox \
                     --enable-shared --enable-pthreads \
                     --cc=${configure.cc}
 
@@ -159,6 +177,9 @@ configure.args      --progs-suffix="-${compat_version}" --build-suffix="-${compa
 # libblueray doesn't build on Tiger so disable for now (#39442)
 
 platform darwin {
+    configure.args-append \
+                    --disable-vda \
+                    --disable-videotoolbox
     if {${os.major} < 9} {
         depends_lib-delete    port:libbluray
         configure.args-delete --enable-libbluray
@@ -212,7 +233,7 @@ post-destroot {
         set lf [strsed ${dst} "s/-${compat_version}//"]
         ln -s ${dst} ${destroot}${prefix}/lib/${lf}
     }
-    if {${subport} ne "${name}-${compat_version}"} {
+    if {${name} ne "ffmpeg-${compat_version}" || [variant_isset exclusive]} {
         # if we're not installing as a legacy port, install symlinks that hide the fact that we're using
         # a suffix
         foreach m [glob -nocomplain ${destroot}${prefix}/share/doc/ffmpeg-${compat_version}/man/*] {
@@ -242,8 +263,10 @@ post-destroot {
         # legacy mode: remove symlinked shared libraries that shouldn't be there (= only leave the runtime libraries)
         foreach f {libavcodec libavdevice libavfilter libavformat libavresample libavutil libpostproc libswresample libswscale} {
             set lf ${destroot}${prefix}/lib/${f}
-            if {[file exists ${lf}]} {
-                file delete -force ${lf}
+            foreach ext {a dylib so} {
+                if {[file exists ${lf}.${ext}]} {
+                    file delete -force ${lf}.${ext}
+                }
             }
         }
     }
@@ -283,14 +306,19 @@ if {[variant_isset universal]} {
         configure.args-append --enable-yasm
     }
 }
+platform linux {
+    depends_build-delete    port:yasm
+}
 
 variant x11 {
 #
 # enable x11grab_xcb input device
 #
-    depends_lib-append      port:xorg-libxcb \
+    platform darwin {
+        depends_lib-append  port:xorg-libxcb \
                             port:xorg-libXext \
                             port:xorg-libXfixes
+    }
 
     configure.args-delete   --disable-libxcb \
                             --disable-libxcb-shm \
@@ -299,10 +327,12 @@ variant x11 {
 
 default_variants +x11
 
-if {[variant_isset x11]} {
-    require_active_variants libsdl x11
-} else {
-    require_active_variants libsdl "" x11
+platform darwin {
+    if {[variant_isset x11]} {
+        require_active_variants libsdl x11
+    } else {
+        require_active_variants libsdl "" x11
+    }
 }
 
 variant libdc1394 description {Enable IIDC-1394 frame grabbing using libdc1394 (experimental)} {
@@ -351,8 +381,10 @@ variant gpl2 description {Enable GPL code, license will be GPL-2+} {
                             --enable-postproc \
                             --enable-libx264 \
                             --enable-libxvid
-    depends_lib-append      port:XviD \
+    platform darwin {
+        depends_lib-append  port:XviD \
                             port:x264
+    }
 
     license                 GPL-2+
 }
@@ -363,8 +395,10 @@ variant gpl3 requires gpl2 description {Enable GPL code, license will be GPL-3+}
                             --enable-libopencore-amrwb \
                             --enable-libsmbclient
 
-    depends_lib-append      port:opencore-amr \
+    platform darwi {
+        depends_lib-append  port:opencore-amr \
                             port:samba3
+    }
 
     license                 GPL-3+
 }
@@ -376,8 +410,10 @@ variant nonfree description {enable nonfree code, libraries and binaries will no
     configure.args-append   --enable-nonfree \
                             --enable-libfdk-aac \
                             --enable-libfaac
-    depends_lib-append      port:libfdk-aac \
+    platform darwin {
+        depends_lib-append  port:libfdk-aac \
                             port:faac
+    }
     license                 Restrictive
 }
 
