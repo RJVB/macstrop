@@ -692,7 +692,7 @@ proc platform {os args} {
     }
 }
 
-if {![info exists qt5.depends_component]} {
+if {[info procs qt5.depends_component] eq ""} {
     # apparently the qt5-kde PortGroup is not being used,
     # provide a simplified local copy of qt5.depends_component;
     # a procedure for declaring dependencies on Qt5 components, which will expand them
