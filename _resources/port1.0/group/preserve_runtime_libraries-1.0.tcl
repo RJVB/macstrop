@@ -32,32 +32,52 @@
 #
 # Usage:
 # PortGroup     preserve_runtime_libraries 1.0
+#
+# in the post-destroot, call preserve_libraries with the directory
+# holding the libraries to preserve and a filename pattern. Example:
+#
+# post-destroot {
+#   preserve_libraries ${prefix}/lib libwebp*.*.dylib
+# }
+#
+# This will create a copy of the pre-existing libraries not installed
+# by the current ${subport} to be stored in ${prefix}/${srcdir}/previous/${subport}
+# with a symlink in ${prefix}/${srcdir} .
+# Using a special repository makes it immediately clear which port a
+# legacy runtime belongs to; the symlink makes it easy to test whether
+# the copy is still used.
+
+# Note that ports that depend on poppler via poppler-qt4-mac or
+# poppler-qt5-mac do not need this trick to avoid rebuilding.
 
 # set libraries_to_preserve ""
-proc preserve_libraries {libs} {
-    upvar #0 libraries_to_preserve liblist
-    foreach l ${libs} {
-        if {[info exists liblist]} {
-            set liblist "${liblist} ${l}"
+proc preserve_libraries {srcdir pattern} {
+    global prefix subport destroot
+    if {[variant_isset preserve_runtime_libraries]} {
+        if {[file type ${srcdir}] eq "directory"} {
+            set prevdir "previous/${subport}"
+            xinstall -m 755 -d ${destroot}${srcdir}/${prevdir}
+            foreach l [glob -nocomplain ${srcdir}/${pattern} ${srcdir}/${prevdir}/${pattern}] {
+                if {[file type ${l}] ne "link"} {
+                    set lib [file tail ${l}]
+                    set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
+                    if {![file exists ${prevlib}] && ![file exists ${destroot}${l}]} {
+                        ui_info "Preserving previous runtime shared library ${l} as ${prevlib}"
+                        copy ${l} ${prevlib}
+                        ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
+                    }
+                }
+            }
         } else {
-            set liblist ${l}
+            ui_warn "Source for previous runtime libraries (${srcdir}) should be a directory"
         }
+    } else {
+        ui_debug "The preserve_runtime_libraries variant isn't set; ignoring the call to preserve_libraries"
     }
 }
 
 variant preserve_runtime_libraries description {Experimental variant that preserves the pre-existing runtime \
-                                        libraries to ease the rebuilding load during upgrades. Note that\
-                                        ports that depend on poppler via poppler-qt4-mac or poppler-qt5-mac \
-                                        do not need this trick to avoid rebuilding.} {
-    post-destroot {
-        foreach l ${libraries_to_preserve} {
-            if {![file exists ${destroot}${l}]} {
-                ui_info "Preserving previous runtime shared library ${l}"
-                copy ${l} ${destroot}${l}
-            }
-        }
-    }
-}
+                                        libraries to ease the rebuilding load during upgrades.} {}
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
 
