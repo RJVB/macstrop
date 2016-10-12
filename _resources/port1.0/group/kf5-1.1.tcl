@@ -534,8 +534,11 @@ if {[file exists ${kf5::currentportgroupdir}/kf5-frameworks-1.0.tcl]} {
         return -code error "Error importing the kf5-frameworks 1.0 PortGroup"
     }
 } else {
-    ui_error "The kf5 1.0 and kf5-frameworks 1.0 PortGroups should reside in the same directory"
-    return -code error "KF5 PortGroup installation error"
+    # raise an error, but only if we're not being read from a registry copy
+    if {[string first "registry/portgroup" ${kf5::currentportgroupdir}] < 0} {
+        ui_error "The kf5 1.0 and kf5-frameworks 1.0 PortGroups should reside in the same directory (${in_registry})"
+        return -code error "KF5 PortGroup installation error"
+    }
 }
 
 # not a framework; use the procedure to define the path-style dependency
