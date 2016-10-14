@@ -84,17 +84,16 @@ if { ![ info exists kf5.project ] } {
 
 # KF5 frameworks current version, which is the same for all frameworks
 if {![info exists kf5.version]} {
-    set kf5.version     5.24.0
+    set kf5.version     5.27.0
     # kf5.latest_version is supposed to be used only in the KF5-Frameworks Portfile
     # when updating it to the new version (=kf5.latest_version).
     set kf5.latest_version \
-                        5.24.0
-    # currently upgrading to 5.27.0
+                        5.27.0
 }
 
 # KF5 Applications version
 if {![ info exists kf5.release ]} {
-    set kf5.release     16.04.3
+    set kf5.release     16.08.0
     set kf5.latest_release \
                         16.08.0
 }
@@ -387,6 +386,10 @@ proc kf5.is_portingAid {} {
     kf5.set_paths
 }
 
+namespace eval kf5 {
+    set cat ""
+}
+
 proc kf5.set_project {project} {
     upvar #0 kf5.project p
     upvar #0 kf5.folder f
@@ -401,6 +404,8 @@ proc kf5.set_project {project} {
     global filespath
     global version
     set p ${project}
+    # get rid of the currently registered category:
+    categories-delete       ${kf5::cat}
     if { ![info exists kf5.framework] && ![info exists kf5.portingAid] } {
         if { ![ info exists kf5.virtualPath ] } {
             ui_error "You haven't defined kf5.virtualPath, which is mandatory for any KF5 port that uses kf5.project. \
@@ -413,16 +418,13 @@ proc kf5.set_project {project} {
             } else {
                 if {${kf5.virtualPath} eq "plasma"} {
                     set f   "${kf5.virtualPath}/${kf5.plasma}"
-#                     distname \
-#                             ${project}-${kf5.plasma}
                     if {![info exists version]} {
                         version \
                             ${kf5.plasma}
                     }
+                    set kf5::cat "Plasma5"
                 } else {
                     set f   "${kf5.virtualPath}/${kf5.release}/src"
-#                     distname \
-#                             ${project}-${kf5.release}
                     if {![info exists version]} {
                         version \
                             ${kf5.release}
@@ -431,6 +433,7 @@ proc kf5.set_project {project} {
                                 http://download.kde.org/stable/${kf5.virtualPath}
                     livecheck.regex \
                                 (\\d+\\.\\d+\\.\\d)
+                    set kf5::cat "Applications"
                 }
             }
         }
@@ -438,8 +441,8 @@ proc kf5.set_project {project} {
         if {![info exists version]} {
             version         ${kf5.version}
         }
-#         distname            ${project}-${kf5.version}
     }
+    categories-append       ${kf5::cat}
     distname                ${project}-${version}
     if {[info exists kf5.category]} {
         homepage            http://www.kde.org/${kf5.virtualPath}/${kf5.category}/${project}
