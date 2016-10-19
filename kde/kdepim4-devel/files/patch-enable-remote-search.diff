@@ -1,0 +1,231 @@
+diff --git messagelist/CMakeLists.txt messagelist/CMakeLists.txt
+index d2ebf80..0a00d57 100644
+--- messagelist/CMakeLists.txt
++++ messagelist/CMakeLists.txt
+@@ -7,10 +7,12 @@ add_definitions("-DQT_NO_CAST_FROM_ASCII -DQT_NO_CAST_TO_ASCII")
+ option(KDEPIM_FOLDEROPEN_PROFILE "Enable debug output for timing folder loading" FALSE)
+ configure_file(config-messagelist.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/config-messagelist.h)
+ 
++# mailcommon is included because of SearchAllowRemote functionality
+ include_directories(
+   ${Boost_INCLUDE_DIRS}
+   ${BALOO_INCLUDE_DIR}
+   ${CMAKE_CURRENT_BINARY_DIR}
++  ${CMAKE_SOURCE_DIR}/mailcommon
+   ${CMAKE_SOURCE_DIR}/messagecore
+   ${CMAKE_SOURCE_DIR}/pimcommon
+   )
+@@ -91,6 +93,7 @@ kde4_add_kcfg_files(libmessagelist_SRCS USE_RELATIVE_PATH
+ )
+ 
+ kde4_add_library(messagelist ${LIBRARY_TYPE} ${libmessagelist_SRCS})
++# mailcommon added because of SearchAllowRemote
+ target_link_libraries(messagelist
+   ${KDE4_KDEUI_LIBS}
+   ${KDE4_KIO_LIBS}
+@@ -100,6 +103,7 @@ target_link_libraries(messagelist
+   ${BALOO_LIBRARIES}
+   messagecore
+   pimcommon
++  mailcommon
+ )
+ 
+ set_target_properties(messagelist PROPERTIES
+diff --git messagelist/core/filter.cpp messagelist/core/filter.cpp
+index 7f242ef..0588253 100644
+--- messagelist/core/filter.cpp
++++ messagelist/core/filter.cpp
+@@ -24,6 +24,11 @@
+ #include <baloo/pim/emailquery.h>
+ #include <baloo/pim/resultiterator.h>
+ 
++#include <akonadi/searchcreatejob.h>
++#include <akonadi/searchquery.h>
++#include <mailcommon/search/searchpattern.h>
++#include <mailcommon/search/searchrule/searchrule.h>
++
+ using namespace MessageList::Core;
+ 
+ Filter::Filter(QObject *parent)
+@@ -148,25 +153,49 @@ void Filter::setSearchString( const QString &search, QuickSearchLine::SearchOpti
+     }
+     if (!newStr.trimmed().isEmpty()) {
+         Baloo::PIM::EmailQuery query;
++        QByteArray rField = "<message>";
+         if (options & QuickSearchLine::SearchEveryWhere) {
+             query.matches(newStr);
+             query.setSplitSearchMatchString(needToSplitString);
++            rField = "<message>";
+         } else if (options & QuickSearchLine::SearchAgainstSubject) {
+             query.subjectMatches(newStr);
++            rField = "subject";
+         } else if (options & QuickSearchLine::SearchAgainstBody) {
+             query.bodyMatches(newStr);
++            rField = "<body>";
+         } else if (options & QuickSearchLine::SearchAgainstFrom) {
+             query.setFrom(newStr);
++            rField = "from";
+         } else if (options & QuickSearchLine::SearchAgainstBcc) {
+             query.setBcc(QStringList() << newStr);
++            rField = "bcc";
+         } else if (options & QuickSearchLine::SearchAgainstTo) {
+             query.setTo(QStringList() << newStr);
++            rField = "to";
+         }
+ 
++        Akonadi::SearchCreateJob *remoteJob = NULL;
+ 
+         //If the collection is virtual we're probably trying to filter the search collection, so we just search globally
+         if (mCurrentFolder.isValid() && !mCurrentFolder.isVirtual()) {
+             query.addCollection(mCurrentFolder.id());
++            if (options & QuickSearchLine::SearchAllowRemote) {
++                Akonadi::SearchQuery rQuery;
++                MailCommon::SearchPattern p;
++                p.append(MailCommon::SearchRule::createInstance(rField, MailCommon::SearchRule::FuncContains, newStr));
++                MailCommon::SearchPattern::SparqlQueryError queryError = p.asAkonadiQuery(rQuery);
++                if (queryError == MailCommon::SearchPattern::NoError) {
++                    remoteJob = new Akonadi::SearchCreateJob(newStr, rQuery, this);
++                    remoteJob->setSearchMimeTypes(QStringList() << QLatin1String("message/rfc822"));
++                    remoteJob->setSearchCollections(Akonadi::Collection::List() << mCurrentFolder);
++                    remoteJob->setRecursive(true);
++                    remoteJob->setRemoteSearchEnabled(true);
++                    connect(remoteJob, SIGNAL(result(KJob*)), SLOT(remoteSearchDone(KJob*)));
++                } else {
++                    qWarning() << Q_FUNC_INFO << "Could not create query from pattern" << p << "for" << newStr << ":" << queryError;
++                }
++            }
+         }
+ 
+         Baloo::PIM::ResultIterator it = query.exec();
+@@ -177,3 +206,17 @@ void Filter::setSearchString( const QString &search, QuickSearchLine::SearchOpti
+     emit finished();
+ }
+ 
++void Filter::remoteSearchDone(KJob *job)
++{
++    Akonadi::SearchCreateJob *searchJob = qobject_cast<Akonadi::SearchCreateJob*>(job);
++    if (!searchJob) {
++        qWarning() << Q_FUNC_INFO << "called with invalid job";
++        return;
++    }
++    if ( job->error() ) {
++        qWarning() << i18n("Cannot get search result. %1", job->errorString());
++    }
++    const Akonadi::Collection searchCollection = searchJob->createdCollection();
++    qDebug() << "remote search returned collection" << searchCollection;
++    searchJob->deleteLater();
++}
+diff --git messagelist/core/filter.h messagelist/core/filter.h
+index db90f98..6d2e309 100644
+--- messagelist/core/filter.h
++++ messagelist/core/filter.h
+@@ -29,6 +29,8 @@
+ #include <Akonadi/Collection>
+ #include "widgets/quicksearchline.h"
+ 
++class KJob;
++
+ namespace MessageList
+ {
+ 
+@@ -109,6 +111,8 @@ public:
+     QuickSearchLine::SearchOptions currentOptions() const;
+ Q_SIGNALS:
+     void finished();
++private Q_SLOTS:
++    void remoteSearchDone(KJob *job);
+ 
+ private:
+     bool containString(const QString &searchInString) const;
+diff --git messagelist/core/widgets/quicksearchline.cpp messagelist/core/widgets/quicksearchline.cpp
+index 58aa655..330c289 100644
+--- messagelist/core/widgets/quicksearchline.cpp
++++ messagelist/core/widgets/quicksearchline.cpp
+@@ -37,7 +37,9 @@
+ #include <QLabel>
+ #include <QKeyEvent>
+ #include <QSignalMapper>
++#include <QCheckBox>
+ 
++static bool allowRemoteSearch = false;
+ 
+ using namespace MessageList::Core;
+ QuickSearchLine::QuickSearchLine(QWidget *parent)
+@@ -119,6 +121,16 @@ QuickSearchLine::QuickSearchLine(QWidget *parent)
+     mExtraOption->setLayout(hbox);
+     mExtraOption->hide();
+ 
++    mRemoteSearch = new QCheckBox(i18n("Remote search"), this);
++    mRemoteSearch->setObjectName(QLatin1String("remote_search"));
++    mRemoteSearch->setCheckable(true);
++    mRemoteSearch->setChecked(allowRemoteSearch);
++    // put the tickbox to the right of the label, to blend in better with the rest of the toolbar
++    mRemoteSearch->setLayoutDirection(Qt::RightToLeft);
++    mRemoteSearch->setToolTip(i18n("This controls whether or not remote search is enabled in IMAP folders"));
++    connect( mRemoteSearch, SIGNAL(stateChanged(int)), this, SLOT(slotRemoteSearch(int)) );
++    hbox->addWidget(mRemoteSearch);
++
+     hbox->addStretch(0);
+     QLabel *lab = new QLabel(i18n("Filter message by:"));
+     hbox->addWidget(lab);
+@@ -203,6 +215,12 @@ void QuickSearchLine::slotSearchBy()
+     slotSearchOptionChanged();
+ }
+ 
++void QuickSearchLine::slotRemoteSearch(int state)
++{
++    allowRemoteSearch = state != Qt::Unchecked;
++    slotSearchOptionChanged();
++}
++
+ void QuickSearchLine::slotMoreOptionClicked(bool b)
+ {
+     mQuickSearchFilterWidget->setVisible(b);
+@@ -266,6 +284,9 @@ QuickSearchLine::SearchOptions QuickSearchLine::searchOptions() const
+     if (mSearchAgainstBcc->isChecked()) {
+         searchOptions |= SearchAgainstBcc;
+     }
++    if (mRemoteSearch->isChecked()) {
++        searchOptions |= SearchAllowRemote;
++    }
+     return searchOptions;
+ }
+ 
+diff --git messagelist/core/widgets/quicksearchline.h messagelist/core/widgets/quicksearchline.h
+index cb330df..bbb873e 100644
+--- messagelist/core/widgets/quicksearchline.h
++++ messagelist/core/widgets/quicksearchline.h
+@@ -31,6 +31,7 @@ class QToolButton;
+ class QPushButton;
+ class QSignalMapper;
+ class KPushButton;
++class QCheckBox;
+ namespace MessageList {
+ namespace Core {
+ class MESSAGELIST_EXPORT QuickSearchLine : public QWidget
+@@ -46,7 +47,8 @@ public:
+         SearchAgainstSubject = 4,
+         SearchAgainstFrom = 8,
+         SearchAgainstBcc = 16,
+-        SearchAgainstTo = 32
++        SearchAgainstTo = 32,
++        SearchAllowRemote = 64
+     };
+ 
+     Q_ENUMS(SearchOption)
+@@ -85,6 +87,7 @@ private slots:
+     void slotClearButtonClicked();
+     void slotMoreOptionClicked(bool b);    
+     void slotSearchBy();
++    void slotRemoteSearch(int state);
+ 
+ private:
+     void initializeStatusSearchButton(QLayout *quickSearchButtonLayout);
+@@ -95,6 +98,7 @@ private:
+     KComboBox *mTagFilterCombo;
+     QToolButton *mLockSearch;
+     KPushButton *mMoreOptions;
++    QCheckBox   *mRemoteSearch;
+     QPushButton *mSearchEveryWhere;
+     QPushButton *mSearchAgainstBody;
+     QPushButton *mSearchAgainstSubject;
