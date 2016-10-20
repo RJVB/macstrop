@@ -2,17 +2,19 @@ diff --git plugins/patchreview/patchreviewtoolview.cpp plugins/patchreview/patch
 index de52800..8efbc80 100644
 --- plugins/patchreview/patchreviewtoolview.cpp
 +++ plugins/patchreview/patchreviewtoolview.cpp
-@@ -431,8 +431,10 @@ void PatchReviewToolView::fileItemChanged( QStandardItem* item )
-             }
+@@ -397,7 +397,11 @@ void PatchReviewToolView::open( const QUrl& url, bool activate ) const
          }
-     } else if (!doc) {
-+        bool updateRecent = ICore::self()->documentController()->updateRecentFilesMenu(false);
-         // Maybe the file was unchecked before, or it  was just loaded.
-         open( url, false );
-+        ICore::self()->documentController()->updateRecentFilesMenu(updateRecent);
      }
- }
  
+-    IDocument* newDoc = ICore::self()->documentController()->openDocument(url, KTextEditor::Range::invalid(), activate ? IDocumentController::DefaultMode : IDocumentController::DoNotActivate, QLatin1String(""), buddyDoc);
++    // we simplify and assume that documents to be opened without activating them also need not be
++    // added to the Files/Open Recent menu.
++    IDocument* newDoc = ICore::self()->documentController()->openDocument(url, KTextEditor::Range::invalid(),
++                          activate ? IDocumentController::DefaultMode : IDocumentController::DoNotActivate|IDocumentController::DoNotAddToRecentOpen,
++                          QLatin1String(""), buddyDoc);
+ 
+     KTextEditor::View* view = nullptr;
+     if(newDoc)
 diff --git plugins/patchreview/patchreview.cpp plugins/patchreview/patchreview.cpp
 index 1ddec7f..8b26180 100644
 --- plugins/patchreview/patchreview.cpp
@@ -33,20 +35,22 @@ index 1ddec7f..8b26180 100644
      switchToEmptyReviewArea();
  
 -    IDocument* futureActiveDoc = ICore::self()->documentController()->openDocument( m_patch->file() );
++    KTextEditor::Range wholeDoc = KTextEditor::Range::invalid();
 +    KDevelop::IDocumentController *docController = ICore::self()->documentController();
 +    // don't add documents opened automatically to the Files/Open Recent list
-+    bool updateRecent = docController->updateRecentFilesMenu(false);
-+
-+    IDocument* futureActiveDoc = docController->openDocument( m_patch->file() );
++    IDocument* futureActiveDoc = docController->openDocument( m_patch->file(), wholeDoc,
++                                                              IDocumentController::DoNotAddToRecentOpen );
  
      updateKompareModel();
  
-@@ -455,29 +461,28 @@ void PatchReviewPlugin::updateReview()
+@@ -454,28 +460,26 @@ void PatchReviewPlugin::updateReview()
+     KTextEditor::ModificationInterface* modif = dynamic_cast<KTextEditor::ModificationInterface*>( futureActiveDoc->textDocument() );
      modif->setModifiedOnDiskWarning( false );
  
-     Q_ASSERT( futureActiveDoc );
+-    Q_ASSERT( futureActiveDoc );
 -    ICore::self()->documentController()->activateDocument( futureActiveDoc );
-+    docController->activateDocument( futureActiveDoc );
++    // activate the Review (patch) view without adding it to the Files/Open Recent menu
++    docController->openDocument( futureActiveDoc->url(), wholeDoc, IDocumentController::DoNotAddToRecentOpen );
  
      PatchReviewToolView* toolView = qobject_cast<PatchReviewToolView*>(ICore::self()->uiController()->findToolView( i18n( "Patch Review" ), m_factory ));
      Q_ASSERT( toolView );
@@ -82,102 +86,31 @@ index 1ddec7f..8b26180 100644
 +            qCDebug(PLUGIN_PATCHREVIEW) << "could not open" << absoluteUrl << "because it doesn't exist";
          }
      }
-+    docController->updateRecentFilesMenu(updateRecent);
  }
- 
- void PatchReviewPlugin::setPatch( IPatchSource* patch ) {
 diff --git shell/documentcontroller.cpp shell/documentcontroller.cpp
 index c1e9c4c..51f5588 100644
 --- shell/documentcontroller.cpp
 +++ shell/documentcontroller.cpp
-@@ -87,6 +87,7 @@ struct DocumentControllerPrivate
-         : controller(c)
-         , fileOpenRecent(nullptr)
-         , globalTextEditorInstance(nullptr)
-+        , updateFileOpenRecent(true)
-     {
-     }
- 
-@@ -138,7 +139,7 @@ struct DocumentControllerPrivate
-         auto parent = Core::self()->uiControllerInternal()->defaultMainWindow();
- 
-         // use special dialogs in a KDE session, native dialogs elsewhere
--        if (qEnvironmentVariableIsSet("KDE_FULL_SESSION")) {
-+        /*if (qEnvironmentVariableIsSet("KDE_FULL_SESSION"))*/ {
-             const auto result = KEncodingFileDialog::getOpenUrlsAndEncoding(QString(), dir,
-                 filter, parent, caption);
-             return {result.URLs, result.encoding};
-@@ -185,7 +186,7 @@ struct DocumentControllerPrivate
- 
-                 documents.insert(document->url(), document);
- 
--                if (!controller->isEmptyDocumentUrl(document->url()))
-+                if (updateFileOpenRecent && !controller->isEmptyDocumentUrl(document->url()))
-                 {
-                     fileOpenRecent->addUrl(document->url());
-                 }
-@@ -508,7 +509,7 @@ struct DocumentControllerPrivate
+@@ -508,7 +511,7 @@ struct DocumentControllerPrivate
                  uiController->activeSublimeWindow()->activateView(
                      partView, !activationParams.testFlag(IDocumentController::DoNotFocus));
              }
 -            if (!controller->isEmptyDocumentUrl(url))
-+            if (updateFileOpenRecent && !controller->isEmptyDocumentUrl(url))
++            if (!activationParams.testFlag(IDocumentController::DoNotAddToRecentOpen) && !controller->isEmptyDocumentUrl(url))
              {
                  fileOpenRecent->addUrl( url );
              }
-@@ -561,6 +562,7 @@ struct DocumentControllerPrivate
-     QPointer<QAction> closeAllOthers;
-     KRecentFilesAction* fileOpenRecent;
-     KTextEditor::Document* globalTextEditorInstance;
-+    bool updateFileOpenRecent;
- };
- 
- DocumentController::DocumentController( QObject *parent )
-@@ -1238,6 +1240,13 @@ void DocumentController::vcsAnnotateCurrentDocument()
-     }
- }
- 
-+bool DocumentController::updateRecentFilesMenu(bool update)
-+{
-+    bool prev = d->updateFileOpenRecent;
-+    d->updateFileOpenRecent = update;
-+    return prev;
-+}
-+
- }
- 
- #include "moc_documentcontroller.cpp"
-diff --git shell/documentcontroller.h shell/documentcontroller.h
-index 35c2057..bbb31e5 100644
---- shell/documentcontroller.h
-+++ shell/documentcontroller.h
-@@ -114,6 +114,11 @@ public:
- 
-     KTextEditor::Document* globalTextEditorInstance() override;
-     
-+    /// Determine whether or not to update the "File/Open Recent" menu when opening
-+    /// new documents.
-+    /// Returns the current state.
-+    bool updateRecentFilesMenu(bool update) override;
-+
- public Q_SLOTS:
-     /**Opens a new or existing document.
-     @param url The full Url of the document to open. If it is empty, a dialog to choose the document will be opened.
 diff --git interfaces/idocumentcontroller.h interfaces/idocumentcontroller.h
 index b8a41f0..28315cd 100644
 --- interfaces/idocumentcontroller.h
 +++ interfaces/idocumentcontroller.h
-@@ -98,6 +98,13 @@ public:
-     Q_SCRIPTABLE virtual KTextEditor::Document* globalTextEditorInstance()=0;
+@@ -58,7 +58,8 @@ public:
+         DefaultMode = 0,            /**Activate document and create a view if no other flags passed.*/
+         DoNotActivate = 1,          /**Don't activate the Document.*/
+         DoNotCreateView = 2,        /**Don't create and show the view for the Document.*/
+-        DoNotFocus = 4              /**Don't change the keyboard focus.*/
++        DoNotFocus = 4,             /**Don't change the keyboard focus.*/
++        DoNotAddToRecentOpen = 8,   /**Don't add the document to the File/Open Recent menu.*/
+     };
+     Q_DECLARE_FLAGS(DocumentActivationParams, DocumentActivation)
  
-     /**
-+     * Determine whether or not to update the "File/Open Recent" menu when opening
-+     * new documents.
-+     * Returns the current state.
-+     */
-+    virtual bool updateRecentFilesMenu(bool update) = 0;
-+
-+    /**
-      * @returns the KTextEditor::View of the current document, in case it is a text document
-      */
-     virtual KTextEditor::View* activeTextDocumentView() const = 0;
