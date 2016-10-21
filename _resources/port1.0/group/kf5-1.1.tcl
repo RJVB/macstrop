@@ -95,7 +95,7 @@ if {![info exists kf5.version]} {
 if {![ info exists kf5.release ]} {
     set kf5.release     16.08.0
     set kf5.latest_release \
-                        16.08.0
+                        16.08.2
 }
 
 # KF5 Plasma version
@@ -744,6 +744,12 @@ proc kf5.depends_qt5_components {first args} {
             }
         }
     }
+}
+
+if {[variant_exists debug] && [variant_isset debug]} {
+    configure.optflags-append   -fno-limit-debug-info
+    configure.clags-append      -fno-limit-debug-info
+    configure.cxxlags-append    -fno-limit-debug-info
 }
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
