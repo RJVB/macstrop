@@ -501,13 +501,15 @@ post-fetch {
     }
 }
 
-post-build {
-    if {[file exists ${prefix}/bin/afsctool]} {
-        ui_msg "--->  Compressing build directory ..."
-        if {[catch {system "${prefix}/bin/afsctool -cfvv -8 -J${build.jobs} ${build.dir} 2>&1"} result context]} {
-            ui_msg "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
-        } else {
-            ui_debug "Compressing ${build.dir}: ${result}"
+if {[info exist ::env(MACPORTS_COMPRESS_WORKDIR)] && $::env(MACPORTS_COMPRESS_WORKDIR)} {
+    post-build {
+        if {[file exists ${prefix}/bin/afsctool]} {
+            ui_msg "--->  Compressing build directory ..."
+            if {[catch {system "${prefix}/bin/afsctool -cfvv -8 -J${build.jobs} ${build.dir} 2>&1"} result context]} {
+                ui_msg "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
+            } else {
+                ui_debug "Compressing ${build.dir}: ${result}"
+            }
         }
     }
 }
