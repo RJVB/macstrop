@@ -150,10 +150,12 @@ if {${QT53}} {
 dist_subdir         qt5-mac
 
 if {${os.platform} eq "darwin"} {
-    # Qt5 is huge. Enable HFS compression if bsdtar is already installed
-    # This doesn't change the built/installed files, so should be acceptable runtime behaviour
-    if {[file exists ${prefix}/bin/bsdtar]} {
-        extract.post_args       "| bsdtar -x -k --hfsCompression"
+    if {[info exist ::env(MACPORTS_COMPRESS_WORKDIR)] && $::env(MACPORTS_COMPRESS_WORKDIR)} {
+        # Qt5 is huge. Enable HFS compression if bsdtar is already installed
+        # This doesn't change the built/installed files, so should be acceptable runtime behaviour
+        if {[file exists ${prefix}/bin/bsdtar]} {
+            extract.post_args       "| ${prefix}/bin/bsdtar -x -k --hfsCompression"
+        }
     }
 } else {
     if {[variant_isset universal]} {
@@ -904,19 +906,6 @@ if { (${subport} eq ${name}) \
     if {${subport} eq "${name}-x11"} {
         #default configure.cmd   {../${worksrcdir}/qtbase/configure}
         default configure.cmd   {../${worksrcdir}/configure}
-    } elseif {${subport} eq "${name}-qtwebengine"} {
-        if {!${QT56}} {
-            # see https://codereview.qt-project.org/#/c/125968/
-            patchfiles-append   ${PPREF}patch-qtwebengine-mkspec32.diff
-            # see https://codereview.qt-project.org/#/c/127759/
-            patchfiles-append   ${PPREF}patch-handle-tbd-files.diff
-        }
-        # at some point prior to OS X 10.11, MIDI types were unified
-        patchfiles-append   ${PPREF}patch-midifix.diff
-        # UsingTheRightCompiler (https://trac.macports.org/wiki/UsingTheRightCompiler)
-        build.env-append    CXX=${configure.cxx}
-        configure.args      -Wall -r ../${worksrcdir}/qtwebengine/qtwebengine.pro \
-                            QMAKE_LINK=${configure.cxx}
     } else {
         default configure.cmd   {../${worksrcdir}/configure}
     }
@@ -1265,6 +1254,11 @@ if { (${subport} eq ${name}) \
             if {[file exists ${destroot}${qt_mkspecs_dir}/qmodule.pri]} {
                 correct_qmodulepri_flags  ${destroot}${qt_mkspecs_dir}/qmodule.pri
             }
+            # experimental: don't export the SDK used to build Qt via qdevice.pri
+            if {[file exists ${destroot}${qt_mkspecs_dir}/qdevice.pri]} {
+                reinplace "s|^!host_build:QMAKE_MAC_SDK = |# !host_build:QMAKE_MAC_SDK = |g" \
+                                    ${destroot}${qt_mkspecs_dir}/qdevice.pri
+            }
         }
         platform linux {
             if {[file exists ${destroot}${qt_libs_dir}/pkgconfig]
@@ -1472,18 +1466,20 @@ pre-build {
         set env(OBJCXX)     ${configure.objcxx}
     }
 }
-post-build {
-    if {[file exists ${prefix}/bin/afsctool]} {
-        ui_msg "--->  Compressing the build directory ..."
-        if {${use_parallel_build}} {
-            set compjobs "-J${build.jobs}"
-        } else {
-            set compjobs ""
-        }
-        if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} ${build.dir} 2>&1"} result context]} {
-            ui_msg "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
-        } else {
-            ui_debug "Compressing ${build.dir}: ${result}"
+if {[info exist ::env(MACPORTS_COMPRESS_WORKDIR)] && $::env(MACPORTS_COMPRESS_WORKDIR)} {
+    post-build {
+        if {[file exists ${prefix}/bin/afsctool]} {
+            ui_msg "--->  Compressing the build directory ..."
+            if {${use_parallel_build}} {
+                set compjobs "-J${build.jobs}"
+            } else {
+                set compjobs ""
+            }
+            if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} ${build.dir} 2>&1"} result context]} {
+                ui_msg "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
+            } else {
+                ui_debug "Compressing ${build.dir}: ${result}"
+            }
         }
     }
 }
@@ -1687,6 +1683,22 @@ if {${QT56}} {
 
 if {${QT54}} {
     subport ${name}-qtwebengine {
+        version             5.7.0
+        set branch          [join [lrange [split ${version} .] 0 1] .]
+        distname            qtwebengine-opensource-src-${version}
+        distfiles \
+                            ${distname}${extract.suffix}
+        master_sites        http://download.qt.io/official_releases/qt/${branch}/${version}/submodules/
+        checksums           rmd160  5e1be5d4acb04cf0a3b69788eb4a58a2feb19069 \
+                            sha256  985762fff5cd8a1a0d2a644a4a51238676898685f9ff1a78c3f2800025d6dc5d
+        patch.pre_args      -Np2
+        if {[vercmp ${macosx_deployment_target} 10.9] < 0} {
+            ui_error "qtwebengine 5.7 won't build"
+            return -code error "unsupported OS X version"
+        } elseif {${macosx_deployment_target} eq "10.9"} {
+            set macosx_deployment_target 10.10
+        }
+
         conflicts-append    qt5-qtwebengine, qt5-kde-qtwebengine
         description         ${description} - the QtWebEngine component
         long_description    ${long_description} This port installs the  \
@@ -1718,10 +1730,36 @@ if {${QT54}} {
         # qtwebengine/src/3rdparty/ninja/bootstrap.py calls g++ (must set CXX)
         build.env-append    CXX=${configure.cxx}
 
-        # extract only the qtwebengine component
-        extract.post_args-append \
+        if {${distname} ne "qtwebengine-opensource-src-${version}"} {
+            # extract only the qtwebengine component
+            extract.post_args-append \
                             ${distname}/qtwebengine
+        }
+
+        if {!${QT56}} {
+            # see https://codereview.qt-project.org/#/c/125968/
+            patchfiles-append   ${PPREF}patch-qtwebengine-mkspec32.diff
+            # see https://codereview.qt-project.org/#/c/127759/
+            patchfiles-append   ${PPREF}patch-handle-tbd-files.diff
+        }
+        # https://bugreports.qt.io/browse/QTBUG-54486
+        patchfiles-append   patch-build-qwebeng-on-109.diff
+        if {${distname} ne "qtwebengine-opensource-src-${version}"} {
+            # at some point prior to OS X 10.11, MIDI types were unified
+            # bug fixed after 5.6.1
+            patchfiles-append   ${PPREF}patch-midifix.diff
+            configure.args  -Wall -r ../${worksrcdir}/qtwebengine/qtwebengine.pro \
+                            QMAKE_LINK=${configure.cxx}
+        } else {
+            configure.args  -Wall -r ../${worksrcdir}/qtwebengine.pro \
+                            QMAKE_LINK=${configure.cxx}
+        }
+        # UsingTheRightCompiler (https://trac.macports.org/wiki/UsingTheRightCompiler)
+        build.env-append    CXX=${configure.cxx}
+
         configure.args-append \
+                            QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target} \
+                            QMAKE_MAC_SDK=macosx10.10 \
                             WEBENGINE_CONFIG+=use_proprietary_codecs \
                             CONFIG-=debug
         platform linux {
