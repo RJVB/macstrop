@@ -65,7 +65,7 @@ depends_lib-append      port:phonon
 # set compiler to Apple's GCC 4.2
 switch ${os.platform}_${os.major} {
     darwin_8 {
-        configure.compiler  pple-gcc-4.2
+        configure.compiler  apple-gcc-4.2
     }
     darwin_9 {
         configure.compiler  gcc-4.2
