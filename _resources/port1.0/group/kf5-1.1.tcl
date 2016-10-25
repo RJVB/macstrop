@@ -535,7 +535,7 @@ proc kf5.add_test_library_path {path} {
 ### resides in the same directory as ourselves.
 ### Do NOT impose this restriction if we're reading a copy stored in the registry!
 if {[string first "registry/portgroup" ${kf5::currentportgroupdir}] < 0} {
-    if {[file exists ${kf5::currentportgroupdir}/kf5-frameworks-1.0.tcl]} {
+    if {![file exists ${kf5::currentportgroupdir}/kf5-frameworks-1.0.tcl]} {
         ui_error "The kf5 1.0 and kf5-frameworks 1.0 PortGroups should reside in the same directory"
         return -code error "KF5 PortGroup installation error"
     }
