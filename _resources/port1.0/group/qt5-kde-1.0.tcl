@@ -472,23 +472,19 @@ if {![info exists building_qt5]} {
     }
 }
 
-# proc qt_branch {} {
-#     global version
-#     return [join [lrange [split ${version} .] 0 1] .]
-# }
-
 # provide a variant to prune provided translations
-# make this optional if the locale_select portgroup exists
+# make this optional so the locale_select portgroup doesn't need to be made public/official
 # the easy way to do that would be to catch the PortGroup statement
 # but that will print warnings for everyone who doesn't have the
-# the PortGroup installed. Not very elegant; just check if the file
-# exists in the same directory as this PortGroup.
-if {[file exists ${qt5::currentportgroupdir}/locale_select-1.0.tcl]} {
+# the PortGroup installed. Other solution: check for
+# [info exist ::env(MACPORTS_QT5KDE_LANGSELECT)] && $::env(MACPORTS_QT5KDE_LANGSELECT)
+# Easy solution: check if the config file exists because without that the feature is disabled anyway.
+if {[file exists ${prefix}/etc/macports/locales.tcl]} {
     PortGroup   locale_select 1.0
     # Qt translations don't go into ${prefix}/opt/local/share/locale:
     post-destroot {
         if {![info exists keep_languages]} {
-            if {[file exists ${prefix}/etc/macports/locales.tcl] && [file exists ${destroot}${qt_translations_dir}]} {
+            if {[file exists ${destroot}${qt_translations_dir}]} {
                 if {[catch {source "${prefix}/etc/macports/locales.tcl"} err]} {
                     ui_error "Error reading ${prefix}/etc/macports/locales.tcl: $err"
                     return -code error "Error reading ${prefix}/etc/macports/locales.tcl"
