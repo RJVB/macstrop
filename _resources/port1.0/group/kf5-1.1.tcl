@@ -532,19 +532,18 @@ proc kf5.add_test_library_path {path} {
 
 ### kf5.depends_frameworks and the framework dependency defs used to be inlined here
 ### include the dedicated file in which they are housed now, but only if it
-### resides in the same directory as ourselves:
-if {[file exists ${kf5::currentportgroupdir}/kf5-frameworks-1.0.tcl]} {
-    if {[catch {source "${kf5::currentportgroupdir}/kf5-frameworks-1.0.tcl"} err]} {
-        ui_error "Error reading ${kf5::currentportgroupdir}/kf5-frameworks-1.0.tcl: $err"
-        return -code error "Error importing the kf5-frameworks 1.0 PortGroup"
-    }
-} else {
-    # raise an error, but only if we're not being read from a registry copy
-    if {[string first "registry/portgroup" ${kf5::currentportgroupdir}] < 0} {
-        ui_error "The kf5 1.0 and kf5-frameworks 1.0 PortGroups should reside in the same directory (${in_registry})"
+### resides in the same directory as ourselves.
+### Do NOT impose this restriction if we're reading a copy stored in the registry!
+if {[string first "registry/portgroup" ${kf5::currentportgroupdir}] < 0} {
+    if {[file exists ${kf5::currentportgroupdir}/kf5-frameworks-1.0.tcl]} {
+        ui_error "The kf5 1.0 and kf5-frameworks 1.0 PortGroups should reside in the same directory"
         return -code error "KF5 PortGroup installation error"
     }
+} else {
+    ui_debug "Reading a registry copy of the KF5 PortGroup from ${kf5::currentportgroupdir}"
 }
+PortGroup kf5-frameworks 1.0
+# TODO: raise error if inclusion failed
 
 # not a framework; use the procedure to define the path-style dependency
 kf5::framework_dependency    cli-tools libkdeinit5_kcmshell5 ""
