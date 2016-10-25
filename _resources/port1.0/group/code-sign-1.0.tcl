@@ -69,8 +69,10 @@ proc codesign {app {sign_identity 0} {sign_user ""}} {
         close $fd
     }
     if {${sign_identity} ne 0} {
-        set identity ${sign_identity}
-        ui_info "Set sign identity from arguments; ${identity}"
+        if {${sign_identity} ne "-" || ![info exists identity] || ${identity} eq ""} {
+            set identity ${sign_identity}
+            ui_info "Set sign identity from arguments; ${identity}"
+        }
     }
     if {${sign_user} ne ""} {
         set user ${sign_user}
