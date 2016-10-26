@@ -519,3 +519,12 @@ platform linux {
     set qt5_component_lib(qtwebkit)     path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext}
     set qt5_component_lib(qtwebengine)  path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext}
 }
+
+# convenience function for revision management
+proc revbump_for_version {r v} {
+    global version revision subport
+    if {[vercmp ${version} ${v}] > 0} {
+        return -code error "remove revbump (revision ${r}) for ${subport}"
+    }
+    uplevel set revision ${r}
+}
