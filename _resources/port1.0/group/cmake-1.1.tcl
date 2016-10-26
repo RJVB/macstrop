@@ -41,10 +41,17 @@ namespace eval cmake {
     variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
 }
 
-options cmake.out_of_source cmake.build_dir
+options cmake.out_of_source cmake.build_dir cmake.set_osx_architectures
 
-default cmake.out_of_source no
-default cmake.build_dir {${workpath}/build}
+# make out-of-source builds the default (finally)
+default cmake.out_of_source         yes
+
+# set CMAKE_OSX_ARCHITECTURES when necessary.
+# This can be deactivated when (non-Apple) compilers are used
+# that don't support the corresponding -arch options.
+default cmake.set_osx_architectures yes
+
+default cmake.build_dir             {${workpath}/build}
 
 # standard place to install extra CMake modules
 set cmake_share_module_dir ${prefix}/share/cmake/Modules
@@ -251,15 +258,17 @@ platform darwin {
             if {[info exists universal_archs_supported]} {
                 merger_arch_compiler no
                 merger_arch_flag no
-                global merger_configure_args
-                foreach arch ${universal_archs_to_use} {
-                    lappend merger_configure_args(${arch}) -DCMAKE_OSX_ARCHITECTURES=${arch}
+                if {${cmake.set_osx_architectures}} {
+                    global merger_configure_args
+                    foreach arch ${universal_archs_to_use} {
+                        lappend merger_configure_args(${arch}) -DCMAKE_OSX_ARCHITECTURES=${arch}
+                    }
                 }
-            } else {
+            } elseif {${cmake.set_osx_architectures}} {
                 configure.universal_args-append \
                     -DCMAKE_OSX_ARCHITECTURES="[join ${configure.universal_archs} \;]"
             }
-        } else {
+        } elseif {${cmake.set_osx_architectures}} {
             configure.args-append \
                 -DCMAKE_OSX_ARCHITECTURES="${configure.build_arch}"
         }
