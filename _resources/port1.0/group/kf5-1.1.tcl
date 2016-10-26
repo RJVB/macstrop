@@ -68,7 +68,9 @@ if {![info exists qt5.using_kde] || !${qt5.using_kde}} {
 # variables which should never be anterior to the main version.
 # Usage:
 # After the regular command sequency leading up to the PortGroup include
-# call kf5.use_latest kf5.release|kf5.version|kf5.plasma .
+# call kf5.use_latest kf5.release|kf5.version|kf5.plasma
+# or
+# call kf5.use_latest applications|frameworks|plasma .
 ########################################################################
 
 namespace eval kf5 {
