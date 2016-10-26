@@ -335,23 +335,20 @@ if {${os.platform} eq "darwin"} {
         set qt5_pathlibspec path:libexec/${qt_name}/lib/libQtWebKit.${qt_libs_ext}
     }
     set qt5webkit_dependency ${qt5_pathlibspec}:qt5-kde-qtwebkit
+    set qt5webengine_dependency \
+                        path:libexec/${qt_name}/Library/Frameworks/QtWebEngineCore.framework/QtWebEngineCore:qt5-kde-qtwebengine
 } elseif {${os.platform} eq "linux"} {
     set qt5_pathlibspec path:libexec/${qt_name}/lib/libQt5Core.${qt_libs_ext}
     set qt5_dependency ${qt5_pathlibspec}:qt5-kde
     set qt5webkit_dependency path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext}:qt5-kde-qtwebkit
+    set qt5webengine_dependency \
+                        path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext}:qt5-kde-qtwebengine
 }
 if {![info exists building_qt5]} {
     depends_lib-append ${qt5_dependency}
-    if {${os.platform} eq "darwin"} {
-        if {[info exists qt5.depends_qtwebengine] && ${qt5.depends_qtwebengine}} {
-            depends_lib-append \
-                        path:libexec/${qt_name}/Library/Frameworks/QtWebEngineCore.framework/QtWebEngineCore:qt5-kde-qtwebengine
-        }
-    } elseif {${os.platform} eq "linux"} {
-        if {[info exists qt5.depends_qtwebengine] && ${qt5.depends_qtwebengine}} {
-            depends_lib-append \
-                        path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext}:qt5-kde-qtwebengine
-        }
+    if {[info exists qt5.depends_qtwebengine] && ${qt5.depends_qtwebengine}} {
+        depends_lib-append \
+                        ${qt5webengine_dependency}
     }
 }
 
