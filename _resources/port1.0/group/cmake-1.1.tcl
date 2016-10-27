@@ -42,6 +42,7 @@ namespace eval cmake {
 }
 
 options cmake.out_of_source cmake.build_dir cmake.set_osx_architectures
+options cmake.install_rpath
 
 # make out-of-source builds the default (finally)
 default cmake.out_of_source         yes
@@ -52,6 +53,9 @@ default cmake.out_of_source         yes
 default cmake.set_osx_architectures yes
 
 default cmake.build_dir             {${workpath}/build}
+
+# minimal/initial value for the install rpath:
+default cmake.install_rpath         ${prefix}/lib
 
 # standard place to install extra CMake modules
 set cmake_share_module_dir ${prefix}/share/cmake/Modules
@@ -79,38 +83,17 @@ configure.cmd       ${prefix}/bin/cmake
 
 configure.pre_args  -DCMAKE_INSTALL_PREFIX=${prefix}
 
-set cmake_install_rpath ${prefix}/lib
-
-configure.args      -DCMAKE_VERBOSE_MAKEFILE=ON \
+configure.args \
+                    -DCMAKE_VERBOSE_MAKEFILE=ON \
                     -DCMAKE_COLOR_MAKEFILE=ON \
                     -DCMAKE_BUILD_TYPE=MacPorts \
                     -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-                    -DCMAKE_INSTALL_RPATH="${cmake_install_rpath}" \
                     -DCMAKE_INSTALL_NAME_DIR=${prefix}/lib \
                     -DCMAKE_SYSTEM_PREFIX_PATH="${prefix}\;/usr" \
                     -DCMAKE_MODULE_PATH=${cmake_share_module_dir} \
                     -DCMAKE_FIND_FRAMEWORK=LAST \
                     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
                     -Wno-dev
-
-proc cmake.install_rpath {mode path} {
-    upvar #0 cmake_install_rpath rpath
-    if {${path} ne ""} {
-        switch -nocase ${mode} {
-            append  {set newpath "${rpath}\;${path}"}
-            prepend {set newpath "${path}\;${rpath}"}
-            reset   {set newpath "${path}"}
-            default {
-                ui_error "Usage: cmake.install_rpath <append|prepend|reset> <path>"
-                return -code error "Invalid invocation of cmake.install_rpath"
-            }
-        }
-        configure.args-replace \
-                    -DCMAKE_INSTALL_RPATH="${rpath}" \
-                    -DCMAKE_INSTALL_RPATH="${newpath}"
-        set rpath ${newpath}
-    }
-}
 
 default configure.post_args {${worksrcpath}}
 
@@ -205,6 +188,11 @@ pre-configure {
             configure.args-append   -DINCLUDE_DIRECTORIES:PATH="${configure.cppflags}"
         }
         ui_debug "CFLAGS=\"${configure.cflags}\" CXXFLAGS=\"${configure.cxxflags}\""
+    }
+
+    if {${cmake.install_rpath} ne ""} {
+        ui_debug "Adding -DCMAKE_INSTALL_RPATH=[join ${cmake.install_rpath} \;] to configure.args"
+        configure.args-append -DCMAKE_INSTALL_RPATH="[join ${cmake.install_rpath} \;]"
     }
 }
 
