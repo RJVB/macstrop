@@ -206,11 +206,15 @@ if {${os.platform} eq "darwin"} {
     set kf5.applications_dir \
                         ${prefix}/bin
     set kf5.libexec_dir ${prefix}/lib/${build_arch}-linux-gnu/libexec
-    configure.args-delete \
-                        -DCMAKE_INSTALL_RPATH="${prefix}/lib"
+#     configure.args-delete \
+#                         -DCMAKE_INSTALL_RPATH="${prefix}/lib"
+#     configure.args-append \
+#                         -DCMAKE_PREFIX_PATH=${prefix} \
+#                         -DCMAKE_INSTALL_RPATH="${prefix}/lib/${build_arch}-linux-gnu\;${prefix}/lib"
+    cmake.install_rpath-prepend \
+                        ${prefix}/lib/${build_arch}-linux-gnu
     configure.args-append \
-                        -DCMAKE_PREFIX_PATH=${prefix} \
-                        -DCMAKE_INSTALL_RPATH="${prefix}/lib/${build_arch}-linux-gnu\;${prefix}/lib"
+                        -DCMAKE_PREFIX_PATH=${prefix}
 }
 configure.args-append   -DSYSCONF_INSTALL_DIR="${prefix}/etc"
 set kf5.docs_dir        ${prefix}/share/doc/kf5
