@@ -99,8 +99,10 @@ proc kde4.use_legacy_prefix {{autorestore 1}} {
     global kde4.include_dirs
     configure.pre_args-replace \
                     -DCMAKE_INSTALL_PREFIX=${prefix} -DCMAKE_INSTALL_PREFIX=${kde4.legacy_prefix}
-    configure.args-replace \
-                    -DCMAKE_INSTALL_RPATH=${prefix}/lib -DCMAKE_INSTALL_RPATH="${prefix}/lib\;${kde4.legacy_prefix}/lib"
+#     configure.args-replace \
+#                     -DCMAKE_INSTALL_RPATH=${prefix}/lib -DCMAKE_INSTALL_RPATH="${prefix}/lib\;${kde4.legacy_prefix}/lib"
+    cmake.install_rpath-append \
+                    ${kde4.legacy_prefix}/lib
     # changing the install prefix will override the KDE4_INCLUDE_INSTALL_DIR path normally set
     # to ${kde4.include_dirs} by kdelibs4's cmake modules. Make sure to override it back to that setting.
     configure.args-append \
