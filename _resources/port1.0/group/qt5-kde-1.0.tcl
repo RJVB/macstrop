@@ -518,10 +518,12 @@ platform linux {
 }
 
 # convenience function for revision management
-proc revbump_for_version {r v} {
-    global version revision subport
-    if {[vercmp ${version} ${v}] > 0} {
-        return -code error "remove revbump (revision ${r}) for ${subport}"
+proc revbump_for_version {r v {p 0}} {
+    global version revision subport os.platform
+    if {${p} eq 0 || ${os.platform} eq ${p}} {
+        if {[vercmp ${version} ${v}] > 0} {
+            return -code error "remove revbump (revision ${r}) for ${subport}"
+        }
+        uplevel set revision ${r}
     }
-    uplevel set revision ${r}
 }
