@@ -44,6 +44,23 @@
 # Define qt5.depends_qtwebengine before including the portgroup to add
 # a dependency on qt5-kde-qtwebengine .
 
+# shameless copy from the qt5-mac 1.0 PortGroup
+# Qt has what is calls reference configurations, which are said to be thoroughly tested
+# Qt also has configurations which are occasionally tested
+# see http://doc.qt.io/qt-5/supported-platforms.html#reference-configurations
+global qt5_min_tested_version
+global qt5_max_tested_version
+global qt5_min_reference_version
+global qt5_max_reference_version
+set qt5_min_tested_version     11
+set qt5_max_tested_version     14
+set qt5_min_reference_version  12
+set qt5_max_reference_version  14
+
+if {[tbool just_want_qt5_version_info]} {
+    return
+}
+
 if {[file exists ${prefix}/libexec/qt5/plugins]
         && [file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
     # Qt5 has been installed through port:qt5, which leads to certain incompatibilities
