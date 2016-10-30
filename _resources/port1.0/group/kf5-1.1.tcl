@@ -290,6 +290,8 @@ if {![variant_isset docs]} {
         if {[file exists ${worksrcpath}/CMakeLists.txt]} {
             reinplace "/add_subdirectory.*(\[ ]*docs\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
             reinplace "/add_subdirectory.*(\[ \]*doc\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
+            reinplace "/ADD_SUBDIRECTORY.*(\[ ]*docs\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
+            reinplace "/ADD_SUBDIRECTORY.*(\[ \]*doc\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
         }
     }
 }
