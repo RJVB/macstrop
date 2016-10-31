@@ -10,7 +10,7 @@ REVIEW: 128201
  1 file changed, 49 insertions(+), 14 deletions(-)
 
 diff --git shell/progresswidget/statusbarprogresswidget.cpp shell/progresswidget/statusbarprogresswidget.cpp
-index da18aad..533a916 100644
+index da18aad..2b63f40 100644
 --- shell/progresswidget/statusbarprogresswidget.cpp
 +++ shell/progresswidget/statusbarprogresswidget.cpp
 @@ -53,6 +53,9 @@
@@ -23,7 +23,7 @@ index da18aad..533a916 100644
  
  using namespace KDevelop;
  
-@@ -66,38 +69,74 @@ StatusbarProgressWidget::StatusbarProgressWidget( ProgressDialog* progressDialog
+@@ -66,38 +69,92 @@ StatusbarProgressWidget::StatusbarProgressWidget( ProgressDialog* progressDialog
      box = new QHBoxLayout( this );
      box->setMargin(0);
      box->setSpacing(0);
@@ -59,6 +59,19 @@ index da18aad..533a916 100644
 +                                                QSizePolicy::Fixed ) );
      m_pProgressBar->installEventFilter( this );
      m_pProgressBar->setMinimumWidth( w );
+-    stack->insertWidget( 1,m_pProgressBar );
+-
+-    m_pLabel = new QLabel( QString(), this );
+-    m_pLabel->setAlignment( Qt::AlignHCenter | Qt::AlignVCenter );
+-    m_pLabel->installEventFilter( this );
+-    m_pLabel->setMinimumWidth( w );
+-    stack->insertWidget( 2, m_pLabel );
+-
+-#ifndef Q_OS_MAC
+-    // Currently on OSX this causes the button to be cut-off
+-    // It isn't necessary because on OSX the button's minimumSizeHint is small enough
+-    m_pButton->setMaximumHeight( maximumHeight );
+-#endif
 +    m_pProgressBar->setAttribute( Qt::WA_LayoutUsesWidgetRect, true );
 +
 +    // Determine maximumHeight from the progressbar's height and scale the icon.
@@ -95,23 +108,92 @@ index da18aad..533a916 100644
 +
 +    box->addWidget( stack );
 +
-     stack->insertWidget( 1,m_pProgressBar );
- 
-     m_pLabel = new QLabel( QString(), this );
--    m_pLabel->setAlignment( Qt::AlignHCenter | Qt::AlignVCenter );
-+    m_pLabel->setSizePolicy( QSizePolicy( QSizePolicy::Fixed,
-+                                          QSizePolicy::Fixed ) );
-+    m_pLabel->setAlignment( Qt::AlignHCenter );
-     m_pLabel->installEventFilter( this );
-     m_pLabel->setMinimumWidth( w );
-+    m_pLabel->setMaximumHeight( maximumHeight );
-     stack->insertWidget( 2, m_pLabel );
- 
--#ifndef Q_OS_MAC
--    // Currently on OSX this causes the button to be cut-off
--    // It isn't necessary because on OSX the button's minimumSizeHint is small enough
--    m_pButton->setMaximumHeight( maximumHeight );
--#endif
++    stack->insertWidget( 1, m_pProgressBar );
++
++    if (m_bShowButton) {
++        // create an empty, inactive QToolButton that's as high as m_pButton but only 1 pixel wide
++        // this will act as a placeholder when the widget is invisible.
++        m_pPlaceHolder.button = new QToolButton(this);
++        m_pPlaceHolder.button->setSizePolicy( QSizePolicy( QSizePolicy::Fixed,
++                                           QSizePolicy::Fixed ) );
++        m_pPlaceHolder.button->setMinimumHeight(m_pButton->minimumSizeHint().height());
++        m_pPlaceHolder.button->setMaximumWidth(1);
++        m_pPlaceHolder.button->setAutoRaise(true);
++        m_pPlaceHolder.button->setAttribute( Qt::WA_LayoutUsesWidgetRect, true );
++        m_pPlaceHolder.button->setEnabled(false);
++        m_pPlaceHolder.button->installEventFilter( this );
++        // the placeholder button should not go into the stack to avoid misalignment
++        box->addWidget( m_pPlaceHolder.button );
++        m_pPlaceHolder.button->hide();
++    } else {
++        // when the widget doesn't show m_pButton we can use a QLabel as the placeholder.
++        m_pPlaceHolder.label = new QLabel( QString(), this );
++        m_pPlaceHolder.label->setSizePolicy( QSizePolicy( QSizePolicy::Fixed,
++                                              QSizePolicy::Fixed ) );
++        m_pPlaceHolder.label->setAlignment( Qt::AlignHCenter );
++        m_pPlaceHolder.label->installEventFilter( this );
++        m_pPlaceHolder.label->setMinimumWidth( w );
++        m_pPlaceHolder.label->setMaximumHeight( maximumHeight );
++        stack->insertWidget( 2, m_pPlaceHolder.label );
++    }
++
      setMinimumWidth( minimumSizeHint().width() );
  
      mode = None;
+@@ -223,12 +280,16 @@ void StatusbarProgressWidget::slotProgressItemProgress( ProgressItem *item, unsi
+ void StatusbarProgressWidget::setMode() {
+     switch ( mode ) {
+     case None:
++        m_pButton->hide();
+         if ( m_bShowButton ) {
+-            m_pButton->hide();
++            // show the empty button in order to make the status bar look better
++            m_pPlaceHolder.button->show();
++        } else {
++            // show the empty label in order to make the status bar look better
++            stack->setCurrentWidget( m_pPlaceHolder.label );
+         }
+-        // show the empty label in order to make the status bar look better
++        m_pProgressBar->hide();
+         stack->show();
+-        stack->setCurrentWidget( m_pLabel );
+ #ifdef Q_OS_OSX
+         MacDockProgressView::setProgressVisible( false );
+ #endif
+@@ -236,9 +297,11 @@ void StatusbarProgressWidget::setMode() {
+ 
+     case Progress:
+         stack->show();
++        m_pProgressBar->show();
+         stack->setCurrentWidget( m_pProgressBar );
+         if ( m_bShowButton ) {
+             m_pButton->show();
++            m_pPlaceHolder.button->hide();
+         }
+ #ifdef Q_OS_OSX
+         MacDockProgressView::setProgressVisible( true );
+@@ -252,7 +315,7 @@ void StatusbarProgressWidget::slotClean()
+     // check if a new item showed up since we started the timer. If not, clear
+     if ( ProgressManager::instance()->isEmpty() ) {
+         m_pProgressBar->setValue( 0 );
+-        //m_pLabel->clear();
++        //m_pPlaceHolder.label->clear();
+         mode = None;
+         setMode();
+     }
+diff --git shell/progresswidget/statusbarprogresswidget.h shell/progresswidget/statusbarprogresswidget.h
+index e6e8ed8..aff6b5e 100644
+--- shell/progresswidget/statusbarprogresswidget.h
++++ shell/progresswidget/statusbarprogresswidget.h
+@@ -72,7 +72,10 @@ protected:
+ 
+ private:
+     QProgressBar* m_pProgressBar;
+-    QLabel* m_pLabel;
++    union {
++        QLabel* label;
++        QToolButton* button;
++    } m_pPlaceHolder;
+     QToolButton* m_pButton;
+ 
+     enum Mode { None, /*Label,*/ Progress };
