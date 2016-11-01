@@ -26,27 +26,43 @@ patch.pre_args      -Np1
 
 cmake.out_of_source yes
 
-platform darwin {
-    # define subports for the supported/available Clang versions. Those are not complete
-    # definitions, post-patch and post-destroot operations have to be done outside of
-    # the definition loop.
-    foreach lv {3.6 3.7 3.8 3.9} {
-        subport ${name}-${lv} {
-            variant system_cxx description \
-                {build using the system C++ compiler instead of the target clang++ version} {}
-            depends_lib-append \
-                    port:llvm-${lv} port:clang-${lv}
+# define subports for the supported/available Clang versions. Those are not complete
+# definitions, post-patch and post-destroot operations have to be done outside of
+# the definition loop.
+set llvm_versions {3.6 3.7 3.8 3.9}
+foreach lv ${llvm_versions} {
+    subport ${name}-${lv} {
+        variant system_cxx description \
+            {build using the system C++ compiler instead of the target clang++ version} {}
+        depends_lib-append \
+                port:llvm-${lv} port:clang-${lv}
+        platform darwin {
             patchfiles-append \
-                    patch-CMakeLists.diff \
-                    patch-wrapper.diff
+                patch-CMakeLists.diff
+        }
+        patchfiles-append \
+                patch-wrapper.diff
+        configure.args-append \
+                -DLLVM_ROOT=${prefix}/libexec/llvm-${lv} \
+                -DCLAZY_INSTALL_NO_HEADERS=ON
+        if {![variant_isset system_cxx]} {
             configure.args-append \
-                    -DLLVM_ROOT=${prefix}/libexec/llvm-${lv} \
-                    -DCLAZY_INSTALL_NO_HEADERS=ON
-            if {![variant_isset system_cxx]} {
-                configure.args-append \
-                    -DCMAKE_C_COMPILER=${prefix}/bin/clang-mp-${lv} \
-                    -DCMAKE_CXX_COMPILER=${prefix}/bin/clang++-mp-${lv}
+                -DCMAKE_C_COMPILER=${prefix}/bin/clang-mp-${lv} \
+                -DCMAKE_CXX_COMPILER=${prefix}/bin/clang++-mp-${lv}
+        }
+        platform darwin {
+            configure.args-append \
+                -DCMAKE_INSTALL_LIBDIR=${prefix}/libexec/llvm-${lv}
+        }
+        platform linux {
+            foreach v ${llvm_versions} {
+                if {${v} ne ${lv}} {
+                    conflicts-append ${name}-${v}
+                }
             }
+            configure.args-append \
+                -DCMAKE_PREFIX_PATH=${prefix} \
+                -DCMAKE_INSTALL_LIBDIR=${prefix}/lib
         }
     }
 }
@@ -72,7 +88,7 @@ if {${subport} eq "${name}"} {
             return -code error "This port is not installable"
         }
     }
-    # rest is for ~darwin
+    # rest is for ~darwin using whatever clang is provided by the system
 } elseif {${subport} eq "${name}-dev"} {
     destroot {
         xinstall -m 755 -d ${destroot}${prefix}/include/clazy
@@ -126,13 +142,15 @@ if {${subport} eq "${name}"} {
         }
     }
     post-destroot {
-        # reuse $lip(${subport}) without further need for testing if it exists
-        system "install_name_tool -id ${prefix}/$lip(${subport})/lib/libclazylib.0.dylib \
-            ${destroot}${prefix}/$lip(${subport})/lib/libclazylib.0.dylib"
-        system "install_name_tool -id ${prefix}/$lip(${subport})/lib/ClangLazy.dylib \
-            ${destroot}${prefix}/$lip(${subport})/lib/ClangLazy.dylib"
-        system "install_name_tool -change ${prefix}/lib/libclazylib.0.dylib ${prefix}/$lip(${subport})/lib/libclazylib.0.dylib \
-            ${destroot}${prefix}/$lip(${subport})/lib/ClangLazy.dylib"
+        platform darwin {
+            # reuse $lip(${subport}) without further need for testing if it exists
+            system "install_name_tool -id ${prefix}/$lip(${subport})/lib/libclazylib.0.dylib \
+                ${destroot}${prefix}/$lip(${subport})/lib/libclazylib.0.dylib"
+            system "install_name_tool -id ${prefix}/$lip(${subport})/lib/ClangLazy.dylib \
+                ${destroot}${prefix}/$lip(${subport})/lib/ClangLazy.dylib"
+            system "install_name_tool -change ${prefix}/lib/libclazylib.0.dylib ${prefix}/$lip(${subport})/lib/libclazylib.0.dylib \
+                ${destroot}${prefix}/$lip(${subport})/lib/ClangLazy.dylib"
+        }
         reinplace "s|xCLANGPPx|$ccxx(${subport})|g" ${destroot}${prefix}/bin/clazy
         file rename ${destroot}${prefix}/bin/clazy ${destroot}${prefix}/bin/$wrappername(${subport})
 #         file delete -force ${destroot}${prefix}/include/clazy
