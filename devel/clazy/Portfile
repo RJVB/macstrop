@@ -5,11 +5,12 @@ PortSystem          1.0
 PortGroup           cmake 1.1
 PortGroup           github 1.0
 
-github.setup        KDE clazy 1c0c5b24c2ac7599459754f1d0e2d9201c983c5d
+# v1.0-17-gd06a981
+github.setup        KDE clazy d06a981605de9c3c4f7ab6bf2ef4de952ee345bf
 fetch.type          git
 
 name                clazy
-version             0
+version             1.0.17
 categories          devel
 maintainers         gmail.com:rjvbertin
 license             LGPL-2
@@ -21,50 +22,89 @@ platforms           darwin
 # fetching via git means a more convenient constant distname can be used.
 distname            ${name}-git
 
-variant system_cxx description {build using the system C++ compiler instead of the target clang++ version} {}
-
-patchfiles-append   patch-CMakeLists.diff \
-                    patch-wrapper.diff
+patch.pre_args      -Np1
 
 cmake.out_of_source yes
 
-# define subports for the supported/available Clang versions. Those are not complete
-# definitions, post-patch and post-destroot operations have to be done outside of
-# the definition loop.
-foreach lv {3.6 3.7 3.8} {
-    subport ${name}-${lv} {
-        depends_lib-append \
+platform darwin {
+    # define subports for the supported/available Clang versions. Those are not complete
+    # definitions, post-patch and post-destroot operations have to be done outside of
+    # the definition loop.
+    foreach lv {3.6 3.7 3.8 3.9} {
+        subport ${name}-${lv} {
+            variant system_cxx description \
+                {build using the system C++ compiler instead of the target clang++ version} {}
+            depends_lib-append \
                     port:llvm-${lv} port:clang-${lv}
-        configure.args-append \
-                    -DLLVM_ROOT=${prefix}/libexec/llvm-${lv}
-        if {![variant_isset system_cxx]} {
+            patchfiles-append \
+                    patch-CMakeLists.diff \
+                    patch-wrapper.diff
             configure.args-append \
+                    -DLLVM_ROOT=${prefix}/libexec/llvm-${lv} \
+                    -DCLAZY_INSTALL_NO_HEADERS=ON
+            if {![variant_isset system_cxx]} {
+                configure.args-append \
                     -DCMAKE_C_COMPILER=${prefix}/bin/clang-mp-${lv} \
                     -DCMAKE_CXX_COMPILER=${prefix}/bin/clang++-mp-${lv}
+            }
         }
     }
 }
 
+subport ${name}-dev {
+    description-append \
+                    Development headers.
+    long_description-append \
+                    Development headers.
+    installs_libs   no
+    supported_archs noarch
+    post-extract {
+        file delete ${worksrcpath}/CMakeLists.txt
+        xinstall -m 755 ${filespath}/CMakeLists-headers.txt ${worksrcpath}/CMakeLists.txt
+    }
+    build {}
+}
+
 if {${subport} eq "${name}"} {
-    pre-fetch {
-        ui_error "This port provides the LLVM version-specific subports and is not supposed to be installed"
-        return -code error "This port is not installable"
+    platform darwin {
+        pre-fetch {
+            ui_error "This port provides the LLVM version-specific subports and is not supposed to be installed"
+            return -code error "This port is not installable"
+        }
+    }
+    # rest is for ~darwin
+} elseif {${subport} eq "${name}-dev"} {
+    destroot {
+        xinstall -m 755 -d ${destroot}${prefix}/include/clazy
+        foreach h [glob -nocomplain ${worksrcpath}/*.h] {
+            switch [file tail ${h}] {
+                "MethodSignatureUtils.h" {}
+                "" {}
+                default {
+                    xinstall -m 644 ${h} ${destroot}${prefix}/include/clazy/
+                }
+            }
+        }
+        xinstall -m 644 ${build.dir}/clazylib_export.h ${destroot}${prefix}/include/clazy/
     }
 } else {
     array set lip {
         clazy-3.6 libexec/llvm-3.6
         clazy-3.7 libexec/llvm-3.7
         clazy-3.8 libexec/llvm-3.8
+        clazy-3.9 libexec/llvm-3.9
     }
     array set ccxx {
         clazy-3.6 clang++-mp-3.6
         clazy-3.7 clang++-mp-3.7
         clazy-3.8 clang++-mp-3.8
+        clazy-3.9 clang++-mp-3.9
     }
     array set wrappername {
         clazy-3.6 clazy-mp-3.6
         clazy-3.7 clazy-mp-3.7
         clazy-3.8 clazy-mp-3.8
+        clazy-3.9 clazy-mp-3.9
     }
     post-patch {
         # cmake's "find_package(clang ...)" command will provide an LLVM_INSTALL_PREFIX
@@ -87,12 +127,17 @@ if {${subport} eq "${name}"} {
     }
     post-destroot {
         # reuse $lip(${subport}) without further need for testing if it exists
+        system "install_name_tool -id ${prefix}/$lip(${subport})/lib/libclazylib.0.dylib \
+            ${destroot}${prefix}/$lip(${subport})/lib/libclazylib.0.dylib"
         system "install_name_tool -id ${prefix}/$lip(${subport})/lib/ClangLazy.dylib \
             ${destroot}${prefix}/$lip(${subport})/lib/ClangLazy.dylib"
-        reinplace "s|@CLANGPP@|$ccxx(${subport})|g" ${destroot}${prefix}/bin/clazy
+        system "install_name_tool -change ${prefix}/lib/libclazylib.0.dylib ${prefix}/$lip(${subport})/lib/libclazylib.0.dylib \
+            ${destroot}${prefix}/$lip(${subport})/lib/ClangLazy.dylib"
+        reinplace "s|xCLANGPPx|$ccxx(${subport})|g" ${destroot}${prefix}/bin/clazy
         file rename ${destroot}${prefix}/bin/clazy ${destroot}${prefix}/bin/$wrappername(${subport})
+#         file delete -force ${destroot}${prefix}/include/clazy
         xinstall -m 755 -d ${destroot}${prefix}/share/doc/${subport}
-        xinstall -m 644 ${worksrcpath}/README ${worksrcpath}/HOWTO \
+        xinstall -m 644 ${worksrcpath}/README.md ${worksrcpath}/HOWTO \
             ${destroot}${prefix}/share/doc/${subport}
     }
 }
