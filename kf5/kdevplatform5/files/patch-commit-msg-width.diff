@@ -1,37 +1,90 @@
-diff --git a/vcs/widgets/vcsdiffpatchsources.cpp b/vcs/widgets/vcsdiffpatchsources.cpp
-index 42cf1d8..cbba87a 100644
---- a/vcs/widgets/vcsdiffpatchsources.cpp
-+++ b/vcs/widgets/vcsdiffpatchsources.cpp
-@@ -53,6 +53,10 @@ VCSCommitDiffPatchSource::VCSCommitDiffPatchSource(VCSDiffUpdater* updater)
-     m_commitMessageEdit = new KTextEdit;
+diff --git vcs/widgets/vcsdiffpatchsources.cpp vcs/widgets/vcsdiffpatchsources.cpp
+index 42cf1d8..c9190c4 100644
+--- vcs/widgets/vcsdiffpatchsources.cpp
++++ vcs/widgets/vcsdiffpatchsources.cpp
+@@ -19,6 +19,7 @@
+ #include "vcsdiffpatchsources.h"
+ 
+ #include <QBoxLayout>
++#include <QSizePolicy>
+ #include <QDir>
+ #include <QFontDatabase>
+ #include <QLabel>
+@@ -43,6 +44,22 @@
+ 
+ using namespace KDevelop;
+ 
++class VCSCommitMessageEditor : public KTextEdit {
++    Q_OBJECT
++public:
++    void setMinWidth(int w)
++    {
++        m_minWidth = w;
++        setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
++    }
++    QSize minimumSizeHint() const override
++    {
++        return QSize(m_minWidth, KTextEdit::minimumSizeHint().height());
++    }
++protected:
++    int m_minWidth;
++};
++
+ VCSCommitDiffPatchSource::VCSCommitDiffPatchSource(VCSDiffUpdater* updater)
+     : VCSDiffPatchSource(updater), m_vcs(updater->vcs())
+ {
+@@ -50,13 +67,21 @@ VCSCommitDiffPatchSource::VCSCommitDiffPatchSource(VCSDiffUpdater* updater)
+     m_commitMessageWidget = new QWidget;
+     QVBoxLayout* layout = new QVBoxLayout(m_commitMessageWidget.data());
+ 
+-    m_commitMessageEdit = new KTextEdit;
++    VCSCommitMessageEditor *editor = new VCSCommitMessageEditor;
++    m_commitMessageEdit = editor;
      m_commitMessageEdit.data()->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
      m_commitMessageEdit.data()->setLineWrapMode(QTextEdit::NoWrap);
 +    // set the message editor to be 72 characters wide.
 +    // Given the widget margins that requires 74 actual characters.
-+    int w72 = m_commitMessageEdit.data()->fontMetrics().width(QString(74, 'm'));
-+    m_commitMessageEdit.data()->setMinimumSize(QSize(w72,0));
++    editor->setMinWidth(editor->fontMetrics().width(QString(74, 'm')));
      m_vcs->setupCommitMessageEditor(updater->url(), m_commitMessageEdit.data());
  
      QHBoxLayout* titleLayout = new QHBoxLayout;
-@@ -211,7 +215,9 @@ void VCSDiffPatchSource::update() {
+-    titleLayout->addWidget(new QLabel(i18n("Commit Message:")));
++    QLabel *label = new QLabel(i18n("Commit Message:"));
++    // KTextEdit toolTips aren't always reliable, so if one was added to the message editor
++    // during set-up, we copy to the label's tooltip.
++    label->setToolTip(m_commitMessageEdit.data()->toolTip());
++    titleLayout->addWidget(label);
+ 
+     m_oldMessages = new KComboBox(m_commitMessageWidget.data());
+ 
+@@ -211,7 +236,10 @@ void VCSDiffPatchSource::update() {
  }
  
  VCSCommitDiffPatchSource::~VCSCommitDiffPatchSource() {
 -    delete m_commitMessageWidget.data();
++//     delete m_commitMessageWidget.data();
 +    if (m_commitMessageWidget.data()) {
 +        m_commitMessageWidget.data()->deleteLater();
 +    }
  }
  
  bool VCSCommitDiffPatchSource::canSelectFiles() const {
-diff --git a/plugins/git/gitmessagehighlighter.cpp b/plugins/git/gitmessagehighlighter.cpp
-index da7660d..a4cd2f8 100644
---- a/plugins/git/gitmessagehighlighter.cpp
-+++ b/plugins/git/gitmessagehighlighter.cpp
-@@ -38,6 +38,11 @@ void GitMessageHighlighter::applyErrorFormat(GitMessageHighlighter* text, bool w
-     format.setFontUnderline(true);
-     format.setUnderlineStyle(QTextCharFormat::SpellCheckUnderline);
-     format.setUnderlineColor(warning ? Qt::yellow : Qt::red);
+@@ -316,3 +344,4 @@ VCSStandardDiffUpdater::~VCSStandardDiffUpdater() {
+ VCSDiffUpdater::~VCSDiffUpdater() {
+ }
+ 
++#include "vcsdiffpatchsources.moc"
+diff --git plugins/git/gitmessagehighlighter.cpp plugins/git/gitmessagehighlighter.cpp
+index da7660d..b55a390 100644
+--- plugins/git/gitmessagehighlighter.cpp
++++ plugins/git/gitmessagehighlighter.cpp
+@@ -35,15 +35,22 @@ static const int lineLenLimit = 72;
+ void GitMessageHighlighter::applyErrorFormat(GitMessageHighlighter* text, bool warning, const QString& tooltip, int startPos, int endPos)
+ {
+     QTextCharFormat format;
+-    format.setFontUnderline(true);
+-    format.setUnderlineStyle(QTextCharFormat::SpellCheckUnderline);
+-    format.setUnderlineColor(warning ? Qt::yellow : Qt::red);
 +    if (warning) {
 +        format.setFontItalic(true);
 +    } else {
@@ -40,3 +93,23 @@ index da7660d..a4cd2f8 100644
      format.setToolTip(tooltip);
      text->setFormat(startPos, endPos, format);
  }
+ 
+ GitMessageHighlighter::GitMessageHighlighter(QTextEdit* parent): Sonnet::Highlighter(parent)
+ {
++    if (parent) {
++        parent->setToolTip(i18n("Suggested commit format: a summary line of about %1 characters maximum,\n"
++            "an empty line, and optional details with a max. line length of %2 characters.",
++            summarySoftLimit, lineLenLimit));
++    }
+ }
+ 
+ GitMessageHighlighter::~GitMessageHighlighter()
+@@ -77,7 +84,7 @@ void GitMessageHighlighter::highlightBlock(const QString& text)
+                     applyErrorFormat(this,
+                         lineLength <= summaryHardLimit,
+                         i18n("Try to keep summary length below %1 characters.", summarySoftLimit),
+-                        startPos, endPos
++                        startPos+summarySoftLimit, endPos
+                     );
+                 } else {
+                     for(int i=startPos; i<endPos; i++) {
