@@ -118,9 +118,6 @@ set kf5.branch           [join [lrange [split ${kf5.version} .] 0 1] .]
 configure.ldflags-delete  -L${prefix}/lib
 configure.cppflags-delete -I${prefix}/include
 
-# setup all KF5 ports to build in a separate directory from the source:
-cmake.out_of_source     yes
-
 if {![info exists kf5.dont_use_xz]} {
     use_xz              yes
 }
@@ -219,16 +216,8 @@ if {${os.platform} eq "darwin"} {
 configure.args-append   -DSYSCONF_INSTALL_DIR="${prefix}/etc"
 set kf5.docs_dir        ${prefix}/share/doc/kf5
 
-set kf5.allow_docs_generation \
-                        yes
-proc kf5.allow_docs_generation {val} {
-    upvar #0 kf5.allow_docs_generation adg
-    if {${val}} {
-        set adg yes
-    } else {
-        set adg no
-    }
-}
+options kf5.allow_docs_generation
+default kf5.allow_docs_generation yes
 
 variant docs description {build and install the API documentation, for use with Qt's Assistant and KDevelop} {
     configure.args-delete \
