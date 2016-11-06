@@ -370,4 +370,14 @@ if {[string first "--enable-debug" ${configure.args}] > -1} {
 
 default build.dir {${configure.dir}}
 
+pre-build {
+    if {${cmake.generator} eq "Ninja"} {
+        if {![tbool use_parallel_build]} {
+            # ninja builds in parallel mode by default
+            build.post_args-append -j1
+        } elseif {${build.jobs} >= 1} {
+            build.post_args-append -j${build.jobs}
+        }
+    }
+}
 
