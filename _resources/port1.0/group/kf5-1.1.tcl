@@ -339,9 +339,9 @@ if {![info exists kf5.framework] && ![info exists kf5.portingAid]} {
                         -DLIBXML2_LIBRARIES=${prefix}/lib/libxml2.${kf5::libs_ext} \
                         -DLIBXML2_XMLLINT_EXECUTABLE=${prefix}/bin/xmllint \
                         -DLIBXSLT_INCLUDE_DIR=${prefix}/include \
-                        -DLIBXSLT_LIBRARIES=${prefix}/lib/libxslt.${kf5::libs_ext} \
-                        -DOPENAL_INCLUDE_DIR=/System/Library/Frameworks/OpenAL.framework/Headers \
-                        -DOPENAL_LIBRARY=/System/Library/Frameworks/OpenAL.framework
+                        -DLIBXSLT_LIBRARIES=${prefix}/lib/libxslt.${kf5::libs_ext}
+#                         -DOPENAL_INCLUDE_DIR=/System/Library/Frameworks/OpenAL.framework/Headers \
+#                         -DOPENAL_LIBRARY=/System/Library/Frameworks/OpenAL.framework
 #                         -DPNG_INCLUDE_DIR=${prefix}/include \
 #                         -DPNG_PNG_INCLUDE_DIR=${prefix}/include \
 #                         -DPNG_LIBRARY=${prefix}/lib/libpng.${kf5::libs_ext} \
