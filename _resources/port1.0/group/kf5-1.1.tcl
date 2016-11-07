@@ -746,8 +746,8 @@ proc kf5.depends_qt5_components {first args} {
 
 if {[variant_exists debug] && [variant_isset debug]} {
     configure.optflags-append   -fno-limit-debug-info
-    configure.clags-append      -fno-limit-debug-info
-    configure.cxxlags-append    -fno-limit-debug-info
+    configure.cflags-append     -fno-limit-debug-info
+    configure.cxxflags-append   -fno-limit-debug-info
 }
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
