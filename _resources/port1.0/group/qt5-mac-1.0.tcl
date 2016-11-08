@@ -1,7 +1,7 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
-# $Id: qt5-1.0.tcl 113952 2013-11-26 18:01:53Z michaelld@macports.org $
+# $Id: qt5-1.0.tcl bb693ed 20161106 07:46:54-7 mcalhoun@macports.org $
 
-# Copyright (c) 2014 The MacPorts Project
+# Copyright (c) 2014-2016 The MacPorts Project
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -36,7 +36,7 @@
 # PortGroup     qt5 1.0
 
 # Qt has what is calls reference configurations, which are said to be thoroughly tested
-# Qt also has configurations which are occasionally tested
+# Qt also has configurations which are "occasionally tested" or are "[d]eployment only"
 # see http://doc.qt.io/qt-5/supported-platforms.html#reference-configurations
 global qt5_min_tested_version
 global qt5_max_tested_version
@@ -49,15 +49,6 @@ set qt5_max_reference_version  14
 
 if {[tbool just_want_qt5_version_info]} {
     return
-}
-
-# no universal binary support in Qt 5
-#     see http://lists.qt-project.org/pipermail/interest/2012-December/005038.html
-#     and https://bugreports.qt.io/browse/QTBUG-24952
-supported_archs i386 x86_64
-if { ![exists universal_variant] || [option universal_variant] } {
-    PortGroup muniversal 1.0
-    universal_archs_supported i386 x86_64
 }
 
 # standard Qt5 name
@@ -167,6 +158,30 @@ set qt_lupdate_cmd     ${qt_dir}/bin/lupdate
 global qt_pkg_config_dir
 set qt_pkg_config_dir   ${qt_libs_dir}/pkgconfig
 
+# no universal binary support in Qt 5
+#     see http://lists.qt-project.org/pipermail/interest/2012-December/005038.html
+#     and https://bugreports.qt.io/browse/QTBUG-24952
+default supported_archs {"i386 x86_64"}
+# override universal_setup found in portutil.tcl so it uses muniversal PortGroup
+# see https://trac.macports.org/ticket/51643
+proc universal_setup {args} {
+    if {[variant_exists universal]} {
+        ui_debug "universal variant already exists, so not adding the default one"
+    } elseif {[exists universal_variant] && ![option universal_variant]} {
+        ui_debug "universal_variant is false, so not adding the default universal variant"
+    } elseif {[exists use_xmkmf] && [option use_xmkmf]} {
+        ui_debug "using xmkmf, so not adding the default universal variant"
+    } elseif {![exists os.universal_supported] || ![option os.universal_supported]} {
+        ui_debug "OS doesn't support universal builds, so not adding the default universal variant"
+    } elseif {[llength [option supported_archs]] == 1} {
+        ui_debug "only one arch supported, so not adding the default universal variant"
+    } else {
+        ui_debug "adding universal variant via PortGroup muniversal"
+        uplevel "PortGroup muniversal 1.0"
+        uplevel "default universal_archs_supported {\"i386 x86_64\"}"
+    }
+}
+
 # standard qmake spec
 # other platforms required
 #     see http://doc.qt.io/qt-5/supported-platforms.html
@@ -189,14 +204,6 @@ if { ![option universal_variant] || ![variant_isset universal] } {
     set qt_qmake_spec ""
 }
 
-# standard cmake info for Qt5
-#global qt_cmake_defines
-#set qt_cmake_defines    \
-#    "-DQT_QT_INCLUDE_DIR=${qt_includes_dir} \
-#     -DQT_QMAKESPEC=${qt_qmake_spec} \
-#     -DQT_ZLIB_LIBRARY=${prefix}/lib/libz.dylib \
-#     -DQT_PNG_LIBRARY=${prefix}/lib/libpng.dylib"
-
 # do not try to install if qt5-qtbase dependency will fail to build
 # warn about non-reference configurations
 if { ${os.major} < ${qt5_min_tested_version} } {
@@ -208,43 +215,6 @@ if { ${os.major} < ${qt5_min_tested_version} } {
 
 if {![info exists building_qt5]} {
     depends_lib-append port:qt5-qtbase
-}
-
-# standard configure environment, when not building qt5
-
-if {![info exists building_qt5]} {
-#    configure.env-append \
-#        QTDIR=${qt_dir} \
-#        QMAKE=${qt_qmake_cmd} \
-#        MOC=${qt_moc_cmd}
-
-    # make sure the Qt binaries' directory is in the path, if it is
-    # not the current prefix
-
-#    if {${qt_dir} ne ${prefix}} {
-#        configure.env-append PATH=${qt_dir}/bin:$env(PATH)
-#    }
-
-    # standard build environment, when not building qt5
-
-    #build.env-append \
-        #QTDIR=${qt_dir} \
-        #QMAKE=${qt_qmake_cmd} \
-        #MOC=${qt_moc_cmd}
-
-    #if { ![option universal_variant] || ![variant_isset universal] } {
-    #    build.env-append QMAKESPEC=${qt_qmake_spec}
-    #} else {
-    #    set merger_build_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
-    #    set merger_build_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
-    #}
-
-    # make sure the Qt binaries' directory is in the path, if it is
-    # not the current prefix
-
-    #if {${qt_dir} ne ${prefix}} {
-    #    build.env-append    PATH=${qt_bins_dir}:$env(PATH)
-    #}
 }
 
 # use PKGCONFIG for Qt discovery in configure scripts
@@ -259,26 +229,3 @@ if { ![option universal_variant] || ![variant_isset universal] } {
         lappend merger_destroot_env($arch) INSTALL_ROOT=${workpath}/destroot-${arch}
     }
 }
-
-# standard destroot environment, when not building qt5
-
-#if {![info exists building_qt5]} {
-#    destroot.env-append \
-#        QTDIR=${qt_dir} \
-#        QMAKE=${qt_qmake_cmd} \
-#        MOC=${qt_moc_cmd}
-
-#    if { ![option universal_variant] || ![variant_isset universal] } {
-#        build.env-append QMAKESPEC=${qt_qmake_spec}
-#    } else {
-#        set destroot_build_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
-#        set destroot_build_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
-#    }
-
-    # make sure the Qt binaries' directory is in the path, if it is
-    # not the current prefix
-
-#    if {${qt_dir} ne ${prefix}} {
-#        destroot.env-append PATH=${qt_dir}/bin:$env(PATH)
-#    }
-#}
