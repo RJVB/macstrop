@@ -2,7 +2,6 @@
 # $Id: cmake-1.0.tcl 143801 2015-12-22 01:37:59Z ryandesign@macports.org $
 # $Id: cmake-1.1.tcl 143801 2016-09-11 16:28:00Z gmail.com:rjvbertin $
 # $Id: cmake-1.1.tcl 154368 2016-10-28 20:12:22Z mk@macports.org $
-# $Id: cmake-1.1.tcl 154368 2016-10-28 20:12:22Z mk@macports.org $
 #
 # Copyright (c) 2009 Orville Bennett <illogical1 at gmail.com>
 # Copyright (c) 2010-2015 The MacPorts Project
@@ -60,7 +59,7 @@ default cmake.build_dir             {${workpath}/build}
 # minimal/initial value for the install rpath:
 default cmake.install_rpath         ${prefix}/lib
 
-# CMake provides several different generators corresponding to different utities
+# CMake provides several different generators corresponding to different utilities
 # (and IDEs) used for building the sources. We support "Unix Makefiles" (the default)
 # and Ninja, a leaner-and-meaner alternative.
 #
@@ -90,9 +89,10 @@ proc _cmake_get_build_dir {} {
     return [option worksrcpath]
 }
 
-option_proc cmake.generator handle_generator
-proc handle_generator {option action args} {
-    global cmake.generator destroot destroot.target build.cmd build.post_args depends_build destroot.post_args
+option_proc cmake.generator cmake::handle_generator
+proc cmake::handle_generator {option action args} {
+    global cmake.generator destroot destroot.target build.cmd build.post_args
+    global depends_build destroot.post_args build.jobs
     if {${action} eq "set"} {
         switch -nocase ${args} {
             "{Unix Makefiles}" {
@@ -100,32 +100,25 @@ proc handle_generator {option action args} {
                 cmake.generator     "Unix Makefiles"
                 depends_build-delete \
                                     port:ninja
-                default build.cmd   make
-                default build.post_args \
-                                    {VERBOSE=ON}
-                default destroot.target \
-                                    install/fast
-                default destroot.post_args \
-                                    "DESTDIR=${destroot}"
+                build.cmd           make
+                build.post_args     VERBOSE=ON
+                destroot.target     install/fast
+                destroot.destdir    DESTDIR=${destroot}
                 # unset the DESTDIR env. variable if it has been set before
-                if {[info exists ::env(DESTDIR)]} {
-                    unset ::env(DESTDIR)
-                }
+                destroot.env-delete DESTDIR=${destroot}
             }
             Ninja {
                 ui_debug "Selecting the Ninja generator"
                 cmake.generator     Ninja
                 depends_build-append \
                                     port:ninja
-                default build.cmd  ninja
-                default build.post_args \
-                                    ""
-                default destroot.target \
-                                    install
+                build.cmd           ninja
+                # force Ninja to use the exact number of requested build jobs
+                build.post_args     -j${build.jobs}
+                destroot.target     install
                 # ninja needs the DESTDIR argument in the environment
-                default destroot.post_args \
-                                    ""
-                set ::env(DESTDIR)  ${destroot}
+                destroot.destdir    ""
+                destroot.env-append DESTDIR=${destroot}
             }
             default {
                 return -code error "The \"${args}\" cmake generator is not currently known/supported"
@@ -359,7 +352,22 @@ platform darwin {
 configure.universal_args-delete --disable-dependency-tracking
 
 variant debug description "Enable debug binaries" {
-    configure.args-replace  -DCMAKE_BUILD_TYPE=Release -DCMAKE_BUILD_TYPE=Debug
+    # this PortGroup uses a custom CMAKE_BUILD_TYPE giving complete control over
+    # the compiler flags. We use that here: replace the default -O2 with -O0
+    # (meaning the user can still decide to use some other form of optimisation)
+    configure.cflags-replace         -O2 -O0
+    configure.cxxflags-replace       -O2 -O0
+    configure.objcflags-replace      -O2 -O0
+    configure.objcxxflags-replace    -O2 -O0
+    configure.ldflags-replace        -O2 -O0
+    # get most if not all possible debug info
+    configure.cflags-append         -g -fno-limit-debug-info
+    configure.cxxflags-append       -g -fno-limit-debug-info
+    configure.objcflags-append      -g -fno-limit-debug-info
+    configure.objcxxflags-append    -g -fno-limit-debug-info
+    configure.ldflags-append        -g -fno-limit-debug-info
+    # try to ensure that info won't get stripped
+    configure.args-append           -DCMAKE_STRIP:FILEPATH=/bin/echo
 }
 
 # cmake doesn't like --enable-debug, so in case a portfile sets
@@ -369,15 +377,3 @@ if {[string first "--enable-debug" ${configure.args}] > -1} {
 }
 
 default build.dir {${configure.dir}}
-
-pre-build {
-    if {${cmake.generator} eq "Ninja"} {
-        if {![tbool use_parallel_build]} {
-            # ninja builds in parallel mode by default
-            build.post_args-append -j1
-        } elseif {${build.jobs} >= 1} {
-            build.post_args-append -j${build.jobs}
-        }
-    }
-}
-
