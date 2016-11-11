@@ -733,7 +733,6 @@ proc kf5.depends_qt5_components {first args} {
     global qt5.using_kde
     set args [linsert $args[set list {}] 0 ${first}]
     if {![info exists qt5.using_kde] || !${qt5.using_kde}} {
-        ui_msg "bla"
         qt5.depends_component ${args}
     } else {
         foreach comp ${args} {
