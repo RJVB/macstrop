@@ -121,7 +121,12 @@ proc cmake::handle_generator {option action args} {
                 destroot.env-append DESTDIR=${destroot}
             }
             default {
-                ui_error "Ignoring the \"${args}\" cmake generator which is not currently known/supported"
+                if {[file tail ${cmake::currentportgroupdir}] eq "group"} {
+                    # we're not being run from the registry so we can raise errors
+                    return -code error "The \"${args}\" generator is not currently known/supported"
+                } else {
+                    ui_error "Ignoring the \"${args}\" cmake generator which is not currently known/supported"
+                }
             }
         }
     }
