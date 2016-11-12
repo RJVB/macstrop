@@ -94,8 +94,8 @@ proc cmake::handle_generator {option action args} {
     global cmake.generator destroot destroot.target build.cmd build.post_args
     global depends_build destroot.post_args build.jobs
     if {${action} eq "set"} {
-        switch -nocase ${args} {
-            "{Unix Makefiles}" {
+        switch -nocase -glob ${args} {
+            "*Unix Makefiles*" {
                 ui_debug "Selecting the 'Unix Makefiles' generator"
                 cmake.generator     "Unix Makefiles"
                 depends_build-delete \
@@ -121,7 +121,7 @@ proc cmake::handle_generator {option action args} {
                 destroot.env-append DESTDIR=${destroot}
             }
             default {
-                return -code error "The \"${args}\" cmake generator is not currently known/supported"
+                ui_error "Ignoring the \"${args}\" cmake generator which is not currently known/supported"
             }
         }
     }
