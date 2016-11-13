@@ -2,7 +2,7 @@
 # $Id: qmake5-1.0.tcl 145157 2016-01-27 04:47:20Z mcalhoun@macports.org $
 
 #
-# Copyright (c) 2013 The MacPorts Project
+# Copyright (c) 2013-2016 The MacPorts Project
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -72,6 +72,8 @@ if {${qt5.using_kde}} {
     } elseif {${qt_qmake_spec} ne ""} {
         configure.args-append       -spec ${qt_qmake_spec}
     }
+    configure.args-append           QT_ARCH=${build_arch} \
+                                    QT_TARGET_ARCH=${build_arch}
 
     # qt5-kde does not currently support a debug variant, but does provide (some) debugging information
     configure.pre_args-append       "CONFIG+=release"
@@ -82,30 +84,32 @@ if {${qt5.using_kde}} {
 
     PortGroup                       active_variants 1.1
 
-    # specify build configuration (compiler, 32-bit/64-bit, etc.)
-    if { ![option universal_variant] || ![variant_isset universal] } {
-        configure.args-append -spec ${qt_qmake_spec}
-    } else {
-        lappend merger_configure_args(i386)   -spec ${qt_qmake_spec_32}
-        lappend merger_configure_args(x86_64) -spec ${qt_qmake_spec_64}
-    }
+    pre-configure {
+        #
+        # set QT_ARCH and QT_TARGET_ARCH manually since they may be
+        #     incorrect in ${qt_mkspecs_dir}/qconfig.pri
+        #     if qtbase was built universal
+        #
+        # -spec specifies build configuration (compiler, 32-bit/64-bit, etc.)
+        #
+        if {[variant_exists universal] && [variant_isset universal]} {
+            global merger_configure_args
 
-    # if qtbase was build as a universal,
-    #    QT_ARCH and QT_TARGET_ARCH may be set incorrectly in ${qt_mkspecs_dir}/qconfig.pri,
-    #    so set them manually
-    if { ![option universal_variant] || ![variant_isset universal] } {
-        pre-configure {
-            if {[active_variants qt5-qtbase universal ""]} {
-                configure.args-append \
-                    QT_ARCH=${build_arch} \
-                    QT_TARGET_ARCH=${build_arch}
+            lappend merger_configure_args(i386)   -spec ${qt_qmake_spec_32}
+            lappend merger_configure_args(x86_64) -spec ${qt_qmake_spec_64}
+
+            foreach arch ${configure.universal_archs} {
+                lappend merger_configure_args(${arch}) \
+                    QT_ARCH=${arch} \
+                    QT_TARGET_ARCH=${arch}
             }
-        }
-    } else {
-        foreach arch ${configure.universal_archs} {
-            lappend merger_configure_args(${arch}) \
-                QT_ARCH=${arch} \
-                QT_TARGET_ARCH=${arch}
+        } else {
+
+            configure.args-append -spec ${qt_qmake_spec}
+
+            configure.args-append \
+                QT_ARCH=${build_arch} \
+                QT_TARGET_ARCH=${build_arch}
         }
     }
 

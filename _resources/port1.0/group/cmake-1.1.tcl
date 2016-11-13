@@ -70,7 +70,7 @@ default cmake.install_rpath         ${prefix}/lib
 # cmake.generator "Unix Makefiles"
 # or even
 # cmake.generator "Eclipse CDT4 - Ninja"
-# if maintaining the port means editing it using an IDE.
+# if maintaining the port means editing it using an IDE of choice.
 #
 default cmake.generator             "Unix Makefiles"
 # CMake generates Unix Makefiles that contain a special "fast" install target
