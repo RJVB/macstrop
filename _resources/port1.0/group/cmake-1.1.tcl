@@ -67,9 +67,12 @@ default cmake.install_rpath         ${prefix}/lib
 #
 # cmake.generator Ninja
 # or
-# cmake.generator Unix Makefiles    # no quotes!
+# cmake.generator "Unix Makefiles"
+# or even
+# cmake.generator "Eclipse CDT4 - Ninja"
+# if maintaining the port means editing it using an IDE.
 #
-default cmake.generator             {"Unix Makefiles"}
+default cmake.generator             "Unix Makefiles"
 # CMake generates Unix Makefiles that contain a special "fast" install target
 # which skips the whole "let's see if there's anything left to (re)build before
 # we install" you normally get with `make install`. That check should be
@@ -94,10 +97,9 @@ proc cmake::handle_generator {option action args} {
     global cmake.generator destroot destroot.target build.cmd build.post_args
     global depends_build destroot.post_args build.jobs
     if {${action} eq "set"} {
-        switch -nocase -glob ${args} {
+        switch -glob ${args} {
             "*Unix Makefiles*" {
-                ui_debug "Selecting the 'Unix Makefiles' generator"
-                cmake.generator     "Unix Makefiles"
+                ui_debug "Selecting the 'Unix Makefiles' generator ($args)"
                 depends_build-delete \
                                     port:ninja
                 build.cmd           make
@@ -107,9 +109,8 @@ proc cmake::handle_generator {option action args} {
                 # unset the DESTDIR env. variable if it has been set before
                 destroot.env-delete DESTDIR=${destroot}
             }
-            Ninja {
-                ui_debug "Selecting the Ninja generator"
-                cmake.generator     Ninja
+            "*Ninja" {
+                ui_debug "Selecting the Ninja generator ($args)"
                 depends_build-append \
                                     port:ninja
                 build.cmd           ninja
@@ -121,11 +122,16 @@ proc cmake::handle_generator {option action args} {
                 destroot.env-append DESTDIR=${destroot}
             }
             default {
+                if {[llength ${args}] > 1 || [llength ${args}] <= 0} {
+                    set msg "cmake.generator requires a single value (not \"${args}\")"
+                } else {
+                    set msg "The \"${args}\" generator is not currently known/supported (cmake.generator is case-sensitive!)"
+                }
                 if {[file tail ${cmake::currentportgroupdir}] eq "group"} {
                     # we're not being run from the registry so we can raise errors
-                    return -code error "The \"${args}\" generator is not currently known/supported"
+                    return -code error ${msg}
                 } else {
-                    ui_error "Ignoring the \"${args}\" cmake generator which is not currently known/supported"
+                    ui_error "${msg} (ignoring)"
                 }
             }
         }
