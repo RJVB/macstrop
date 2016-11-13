@@ -52,10 +52,10 @@ global qt5_min_tested_version
 global qt5_max_tested_version
 global qt5_min_reference_version
 global qt5_max_reference_version
-set qt5_min_tested_version     11
-set qt5_max_tested_version     14
+set qt5_min_tested_version     12
+set qt5_max_tested_version     15
 set qt5_min_reference_version  12
-set qt5_max_reference_version  14
+set qt5_max_reference_version  15
 
 if {[tbool just_want_qt5_version_info]} {
     return
