@@ -1,1 +1,0 @@
-/opt/local/var/macports/sources/svn.macports.org/trunk/dports/aqua/qt5/Portfile
