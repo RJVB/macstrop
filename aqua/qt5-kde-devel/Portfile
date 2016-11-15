@@ -59,6 +59,11 @@ if {![info exists qt5.using_kde] || !${qt5.using_kde}} {
     return -code error "Qt5 PortGroup mismatch"
 }
 
+# optional support for HFS-compression of the source and build dirs
+if {[file exists ${qt5::currentportgroupdir}/compress_workdir-1.0.tcl]} {
+    PortGroup       compress_workdir 1.0
+}
+
 set branch          [join [lrange [split ${version} .] 0 1] .]
 # minimal version variables:
 # TODO: clean this up
@@ -143,17 +148,9 @@ if {${QT53}} {
 # Share the distfiles dir with port:qt5
 dist_subdir         qt5
 
-if {${os.platform} eq "darwin"} {
-    if {[info exist ::env(MACPORTS_COMPRESS_WORKDIR)] && $::env(MACPORTS_COMPRESS_WORKDIR)} {
-        # Qt5 is huge. Enable HFS compression if bsdtar is already installed
-        # This doesn't change the built/installed files, so should be acceptable runtime behaviour
-        if {[file exists ${prefix}/bin/bsdtar]} {
-            extract.post_args       "| ${prefix}/bin/bsdtar -x -k --hfsCompression"
-        }
-    }
-} else {
+if {${os.platform} ne "darwin"} {
     if {[variant_isset universal]} {
-        return -code error "The universal variant doesn't make sense on Linux"
+        return -code error "The universal variant only makes sense on Darwin/OS X"
     }
 }
 
@@ -1407,23 +1404,6 @@ pre-build {
         set env(OBJCXX)     ${configure.objcxx}
     }
 }
-if {[info exist ::env(MACPORTS_COMPRESS_WORKDIR)] && $::env(MACPORTS_COMPRESS_WORKDIR)} {
-    post-build {
-        if {[file exists ${prefix}/bin/afsctool]} {
-            ui_msg "--->  Compressing the build directory ..."
-            if {${use_parallel_build}} {
-                set compjobs "-J${build.jobs}"
-            } else {
-                set compjobs ""
-            }
-            if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} ${build.dir} 2>&1"} result context]} {
-                ui_msg "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
-            } else {
-                ui_debug "Compressing ${build.dir}: ${result}"
-            }
-        }
-    }
-}
 
 set webcorestlib ${build.dir}/Source/WebCore/release/libWebCore.a
 set compress_webcorestlib   no
@@ -1474,8 +1454,10 @@ subport ${name}-x11 {
 subport ${name}-zz-docs {
     description         ${description} - the documentation
     long_description    ${long_description}. This subport installs the documentation \
-                        and has a -zz- in its name to ensure it's the last one to be \
-                        processed during upgrading an existing install.
+                        and has -zz- in its name to ensure it's the last one to be \
+                        processed during upgrading an existing install, so it doesn't \
+                        have to rebuild anything but the documentation.\n See the port notes \
+                        about Assistant stability after upgrades.
 
     variant html description {Install the HTML documentation in addition to the Qt help (.qch) files (obsolete variant for default behaviour)} {}
     variant qch conflicts html description {Install only the Qt help (.qch) files} {}
@@ -1496,7 +1478,8 @@ subport ${name}-zz-docs {
     }
 
     if {![variant_isset qtwebengine]} {
-        extract.post_args-append    --exclude ${distname}/qtwebengine
+        extract.post_args-append \
+                            --exclude ${distname}/qtwebengine
     }
     patchfiles-append       ${PPREF}patch-configure-docs-no-build-qmake.diff
 
@@ -1518,6 +1501,9 @@ subport ${name}-zz-docs {
             ln -s ${qt_bins_dir}/qdoc ${worksrcpath}/qttools/src/qdoc/
             ln -s ${qt_bins_dir}/qdoc ${worksrcpath}/qttools/bin
             ln -s ${qt_bins_dir}/qmake ${worksrcpath}/qtbase/bin
+            ln -s ${qt_bins_dir}/moc ${worksrcpath}/qtbase/bin
+            ln -s ${qt_bins_dir}/rcc ${worksrcpath}/qtbase/bin
+            ln -s ${qt_bins_dir}/uic ${worksrcpath}/qtbase/bin
         } else {
             ln -s ${qt_bins_dir}/qdoc ${worksrcpath}/qtbase/src/tools/qdoc/
             ln -s ${qt_bins_dir}/qdoc ${worksrcpath}/qtbase/bin
@@ -1532,6 +1518,11 @@ subport ${name}-zz-docs {
             touch ${worksrcpath}/qtwebkit/Source/WebCore/generated/InspectorBackendCommands.qrc
         }
     }
+    notes-append \n\
+        "Qt's Assistant has a tendency to become unstable after upgrading. This can be prevented in 2 ways:\n\
+        1) remove all documentation entries for the old Qt5 version in the Preferences/Documentation page \
+        *before* doing the upgrade.\n\
+        2) remote ~/Library/Application Support/QtProject/Assistant in case of post-upgrade instability."
 }
 
 # See http://qt-project.org/doc/qt-5/sql-driver.html for info on building SQL Database Drivers
