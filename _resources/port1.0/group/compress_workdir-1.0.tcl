@@ -46,6 +46,8 @@ namespace eval compress_workdir {
 }
 
 platform darwin {
+    # sadly we cannot rely on [file system <name>] to determine if we're on a
+    # filesystem supporting HFS compression so we need to rely on the user.
     if {[info exist ::env(MACPORTS_COMPRESS_WORKDIR)] && $::env(MACPORTS_COMPRESS_WORKDIR)} {
 
         # Enable HFS compression if bsdtar is already installed
