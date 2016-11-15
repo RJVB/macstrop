@@ -169,4 +169,9 @@ if {${configure.cxx_stdlib} ne ""} {
         QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
 }
 
+configure.args-append \
+        QMAKE_CXXFLAGS+="${configure.cxxflags}" \
+        QMAKE_CFLAGS+="${configure.cflags}" \
+        QMAKE_LFLAGS+="${configure.ldflags}"
+
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
