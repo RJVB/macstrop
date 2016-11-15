@@ -72,7 +72,7 @@ default cmake.install_rpath         ${prefix}/lib
 # cmake.generator "Eclipse CDT4 - Ninja"
 # if maintaining the port means editing it using an IDE of choice.
 #
-default cmake.generator             "Unix Makefiles"
+default cmake.generator             {"Unix Makefiles"}
 # CMake generates Unix Makefiles that contain a special "fast" install target
 # which skips the whole "let's see if there's anything left to (re)build before
 # we install" you normally get with `make install`. That check should be
@@ -118,11 +118,11 @@ proc cmake::handle_generator {option action args} {
                 build.post_args     -j${build.jobs}
                 destroot.target     install
                 # ninja needs the DESTDIR argument in the environment
-                destroot.destdir    ""
+                destroot.destdir
                 destroot.env-append DESTDIR=${destroot}
             }
             default {
-                if {[llength ${args}] > 1 || [llength ${args}] <= 0} {
+                if {[llength $args] != 1]} {
                     set msg "cmake.generator requires a single value (not \"${args}\")"
                 } else {
                     set msg "The \"${args}\" generator is not currently known/supported (cmake.generator is case-sensitive!)"

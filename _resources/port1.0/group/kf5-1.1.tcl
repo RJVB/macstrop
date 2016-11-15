@@ -78,6 +78,10 @@ namespace eval kf5 {
     set currentportgroupdir [file dirname [dict get [info frame 0] file]]
 }
 
+if {[file exists ${kf5::currentportgroupdir}/compress_workdir-1.0.tcl]} {
+    PortGroup           compress_workdir 1.0
+}
+
 if { ![ info exists kf5.project ] } {
     ui_debug "kf5.project is not defined; falling back to \"manual\" configuration"
 } else {
@@ -495,19 +499,6 @@ proc kf5.use_latest {lversion} {
 post-fetch {
     if {[file exists ${worksrcpath}/examples] && [file isdirectory ${worksrcpath}/examples] && ![variant_exists examples]} {
         ui_msg "This port could provide a +examples variant"
-    }
-}
-
-if {[info exist ::env(MACPORTS_COMPRESS_WORKDIR)] && $::env(MACPORTS_COMPRESS_WORKDIR)} {
-    post-build {
-        if {[file exists ${prefix}/bin/afsctool]} {
-            ui_msg "--->  Compressing build directory ..."
-            if {[catch {system "${prefix}/bin/afsctool -cfvv -8 -J${build.jobs} ${build.dir} 2>&1"} result context]} {
-                ui_msg "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
-            } else {
-                ui_debug "Compressing ${build.dir}: ${result}"
-            }
-        }
     }
 }
 
