@@ -140,8 +140,8 @@ if {${QT53}} {
 #     }
 }
 
-# we'll stick to the qt5-mac name for some purposes for now:
-dist_subdir         qt5-mac
+# Share the distfiles dir with port:qt5
+dist_subdir         qt5
 
 if {${os.platform} eq "darwin"} {
     if {[info exist ::env(MACPORTS_COMPRESS_WORKDIR)] && $::env(MACPORTS_COMPRESS_WORKDIR)} {
@@ -1042,6 +1042,85 @@ if { (${subport} eq ${name}) \
     }
 }
 
+# link includes and libraries for each actual installed framework
+proc proxy_includes_and_libs {} {
+    global destroot qt_includes_dir qt_frameworks_dir qt_libs_dir qt_pkg_config_dir version
+    # make sure that the target directories exist
+    xinstall -m 755 -d ${destroot}${qt_includes_dir}
+    xinstall -m 755 -d ${destroot}${qt_libs_dir}
+#     ui_info "Exposing Framework headers via ${qt_includes_dir} and creating .dylib stubs for the frameworks"
+    ui_info "Exposing Framework headers via ${qt_includes_dir}"
+    foreach fixfile [exec find ${destroot}${qt_frameworks_dir} \
+                         -name "*.framework" | \
+                         sed -e "s@${destroot}@@g"] {
+
+        set tf_full [strsed ${fixfile} {s@\\.framework@@}]
+        set tf [strsed ${tf_full} {g@.*\/@@}]
+
+        # link headers into ${qt_includes_dir}, removing directories
+        # if they are already there first
+
+        set inc_file ${destroot}${qt_includes_dir}/${tf}
+        if {[file exists ${inc_file}]} {
+            system "ls -l ${inc_file}"
+            ui_msg "*Warning* replacing directory ${inc_file} with a symlink to ${tf_full}.framework/Headers!"
+            file delete -force ${inc_file}
+        }
+        ln -s ${tf_full}.framework/Headers ${inc_file}
+        if {[file exists ${destroot}${tf_full}.framework/Headers/${version}/${tf}/private] \
+                && ![file exist ${destroot}${tf_full}.framework/Headers/private]} {
+            # the symlink will appear also as ${inc_file}/private but since ${inc_file} is itself a symlink
+            # that isn't supposed to be pointing anywhere right now we use the correct actual destination in ${destroot}
+            ui_debug "ln -s ${tf_full}.framework/Headers/${version}/${tf}/private ${inc_file}/private"
+            ln -s ${tf_full}.framework/Headers/${version}/${tf}/private ${destroot}${tf_full}.framework/Headers/private
+        }
+
+# This is legacy code from port:qt4-mac which is probably redundant. Keep the code around for a while in the -devel port.
+#         # link libraries into ${qt_libs_dir}, all 4 number variants
+#         set dr_qt_libs_dir ${destroot}${qt_libs_dir}
+#         ln -s ${tf_full}.framework/${tf} ${dr_qt_libs_dir}/lib${tf}.dylib
+#         ln -s ${tf_full}.framework/${tf} ${dr_qt_libs_dir}/lib${tf}.${qt_major}.dylib
+#         ln -s ${tf_full}.framework/${tf} ${dr_qt_libs_dir}/lib${tf}.${qt_major}.${qt_minor}.dylib
+#         ln -s ${tf_full}.framework/${tf} ${dr_qt_libs_dir}/lib${tf}.${qt_major}.${qt_minor}.${qt_patch}.dylib
+#
+#         # copy .prl file, then correct it for library usage
+#         if {[file exists ${destroot}${tf_full}.framework/${tf}.prl]} {
+#             copy ${destroot}${tf_full}.framework/${tf}.prl ${dr_qt_libs_dir}/lib${tf}.prl
+#
+#             # fix TARGET in .prl file
+#             reinplace "/QMAKE_PRL_TARGET/s|Qt\\(\[^ \]*\\)|libQt\\1.${qt_major}.${qt_minor}.${qt_patch}.dylib|" ${dr_qt_libs_dir}/lib${tf}.prl
+#
+#             # fix PRL_LIBS -F -> -L in .prl file
+#             reinplace "/QMAKE_PRL_LIBS/s|-F${qt_frameworks_dir}|-L${qt_libs_dir}|" ${dr_qt_libs_dir}/lib${tf}.prl
+#
+#             # fix "-framework Qt*" -> "-lQt*" in .prl file
+#             reinplace "/QMAKE_PRL_LIBS/s|-framework Qt|-lQt|g" \
+#                 ${dr_qt_libs_dir}/lib${tf}.prl
+#
+#             # remove the QMAKE_PRL_BUILD_DIR line from the .prl file
+#             reinplace "/QMAKE_PRL_BUILD_DIR/d" ${dr_qt_libs_dir}/lib${tf}.prl
+#         }
+    }
+
+    xinstall -m 775 -d ${destroot}${qt_pkg_config_dir}
+    ui_info "moving the pkg-config files to ${qt_pkg_config_dir}"
+    foreach f [glob -nocomplain -directory ${destroot}${qt_frameworks_dir}/pkgconfig *.pc] {
+        file rename ${f} ${destroot}${qt_pkg_config_dir}
+    }
+    xinstall -m 775 -d ${destroot}${qt_libs_dir}/
+    ui_info "moving static libraries and .prl files to ${qt_libs_dir}"
+    foreach f [glob -nocomplain -directory ${destroot}${qt_frameworks_dir} *.{a,prl,la}] {
+        file rename ${f} ${destroot}${qt_libs_dir}/
+    }
+
+    # link back the static libraries to where some Qt components expect them:
+    foreach f [exec find ${destroot}${qt_libs_dir} \
+                         -name "*.a" | \
+                         sed -e "s@${destroot}@@g"] {
+        ln -s ${f} ${destroot}${qt_frameworks_dir}/
+    }
+}
+
 if { (${subport} eq ${name}) \
     || (${subport} eq "${name}-x11") || (${subport} eq "${name}-qtwebengine")
     || (${QT56} && ![info exists qtwebkit_is_stub] && (${subport} eq "${name}-qtwebkit")) } {
@@ -1062,77 +1141,7 @@ if { (${subport} eq ${name}) \
 #             }
             # move items out of the Frameworks directory that are more appropriate to the lib directory
 
-            # link includes and libraries for each actual installed framework
-
-            # make sure that the target directories exist
-            exec mkdir -p ${destroot}${qt_includes_dir} ${destroot}${qt_libs_dir}
-#             ui_info "Exposing Framework headers via ${qt_includes_dir} and creating .dylib stubs for the frameworks"
-            ui_info "Exposing Framework headers via ${qt_includes_dir}"
-            foreach fixfile [exec find ${destroot}${qt_frameworks_dir} \
-                                 -name "*.framework" | \
-                                 sed -e "s@${destroot}@@g"] {
-
-                set tf_full [strsed ${fixfile} {s@\\.framework@@}]
-                set tf [strsed ${tf_full} {g@.*\/@@}]
-
-                # link headers into ${qt_includes_dir}, removing directories
-                # if they are already there first
-
-                set inc_file ${destroot}${qt_includes_dir}/${tf}
-                if {[file exists ${inc_file}]} {
-                    ui_msg "*Warning* replacing directory ${inc_file} with a symlink to ${tf_full}.framework/Headers!"
-                    file delete -force ${inc_file}
-                }
-                ln -s ${tf_full}.framework/Headers ${inc_file}
-                if {[file exists ${destroot}${tf_full}.framework/Headers/${version}/${tf}/private] && ![file exist ${inc_file}/private]} {
-                    ui_debug "ln -s ${tf_full}.framework/Headers/${version}/${tf}/private ${inc_file}/private"
-                    ln -s ${tf_full}.framework/Headers/${version}/${tf}/private ${inc_file}/private
-                }
-
-# This is legacy code from port:qt4-mac which is probably redundant. Keep the code around for a while in the -devel port.
-#                 # link libraries into ${qt_libs_dir}, all 4 number variants
-#                 set dr_qt_libs_dir ${destroot}${qt_libs_dir}
-#                 ln -s ${tf_full}.framework/${tf} ${dr_qt_libs_dir}/lib${tf}.dylib
-#                 ln -s ${tf_full}.framework/${tf} ${dr_qt_libs_dir}/lib${tf}.${qt_major}.dylib
-#                 ln -s ${tf_full}.framework/${tf} ${dr_qt_libs_dir}/lib${tf}.${qt_major}.${qt_minor}.dylib
-#                 ln -s ${tf_full}.framework/${tf} ${dr_qt_libs_dir}/lib${tf}.${qt_major}.${qt_minor}.${qt_patch}.dylib
-#
-#                 # copy .prl file, then correct it for library usage
-#                 if {[file exists ${destroot}${tf_full}.framework/${tf}.prl]} {
-#                     copy ${destroot}${tf_full}.framework/${tf}.prl ${dr_qt_libs_dir}/lib${tf}.prl
-#
-#                     # fix TARGET in .prl file
-#                     reinplace "/QMAKE_PRL_TARGET/s|Qt\\(\[^ \]*\\)|libQt\\1.${qt_major}.${qt_minor}.${qt_patch}.dylib|" ${dr_qt_libs_dir}/lib${tf}.prl
-#
-#                     # fix PRL_LIBS -F -> -L in .prl file
-#                     reinplace "/QMAKE_PRL_LIBS/s|-F${qt_frameworks_dir}|-L${qt_libs_dir}|" ${dr_qt_libs_dir}/lib${tf}.prl
-#
-#                     # fix "-framework Qt*" -> "-lQt*" in .prl file
-#                     reinplace "/QMAKE_PRL_LIBS/s|-framework Qt|-lQt|g" \
-#                         ${dr_qt_libs_dir}/lib${tf}.prl
-#
-#                     # remove the QMAKE_PRL_BUILD_DIR line from the .prl file
-#                     reinplace "/QMAKE_PRL_BUILD_DIR/d" ${dr_qt_libs_dir}/lib${tf}.prl
-#                 }
-            }
-
-            xinstall -m 775 -d ${destroot}${qt_pkg_config_dir}
-            ui_info "moving the pkg-config files to ${qt_pkg_config_dir}"
-            foreach f [glob -nocomplain -directory ${destroot}${qt_frameworks_dir}/pkgconfig *.pc] {
-                file rename ${f} ${destroot}${qt_pkg_config_dir}
-            }
-            xinstall -m 775 -d ${destroot}${qt_libs_dir}/
-            ui_info "moving static libraries and .prl files to ${qt_libs_dir}"
-            foreach f [glob -nocomplain -directory ${destroot}${qt_frameworks_dir} *.{a,prl,la}] {
-                file rename ${f} ${destroot}${qt_libs_dir}/
-            }
-
-            # link back the static libraries to where some Qt components expect them:
-            foreach f [exec find ${destroot}${qt_libs_dir} \
-                                 -name "*.a" | \
-                                 sed -e "s@${destroot}@@g"] {
-                ln -s ${f} ${destroot}${qt_frameworks_dir}/
-            }
+            proxy_includes_and_libs
             # certain applications might expect to find the following .prl files in ${qt_frameworks_dir}
             foreach fixfile { libQt5OpenGLExtensions_debug.prl libQt5PlatformSupport_debug.prl \
                                 libQt5QmlDevTools.prl libQt5UiTools.prl libQt5UiTools_debug.prl } {
@@ -1694,16 +1703,17 @@ if {${QT54}} {
             # https://bugreports.qt.io/browse/QTBUG-54486
             patchfiles-append \
                             patch-qwe-build-on-109.diff
-            patchfiles-append \
-                            patch-qwe-bluetooth.diff
         }
         if {${distname} ne "qtwebengine-opensource-src-${version}"} {
             # at some point prior to OS X 10.11, MIDI types were unified
             # bug fixed after 5.6.1
-            patchfiles-append   ${PPREF}patch-midifix.diff
+            patchfiles-append   ${PPREF}patch-midifix.diff \
+                            patch-qwe-bluetooth.diff
             configure.args  -Wall -r ../${worksrcdir}/qtwebengine/qtwebengine.pro \
                             QMAKE_LINK=${configure.cxx}
         } else {
+            patchfiles-append \
+                            patch-qwe-bluetooth-57x.diff
             configure.args  -Wall -r ../${worksrcdir}/qtwebengine.pro \
                             QMAKE_LINK=${configure.cxx}
         }
@@ -1720,9 +1730,6 @@ if {${QT54}} {
             # it's damn tricky to get this component to build with MacPorts' gettext active
             conflicts_build \
                             gettext git libvpx-dev
-#             # https://codereview.qt-project.org/#/c/156378 ; fixed after 5.6.1
-#             patchfiles-append \
-#                             patch-qwe-ffmpeg3.diff
             patchfiles-append \
                             patch-qwe-disable-libvpx.diff
             configure.args-append \
@@ -1735,6 +1742,9 @@ if {${QT54}} {
             if {[vercmp ${version} ${qt_version}] > 0} {
                 reinplace "s|${version} \$\{_Qt5WebEngineCore_FIND_VERSION_EXACT\}|${qt_version} \$\{_Qt5WebEngineCore_FIND_VERSION_EXACT\}|g" \
                     ${destroot}${qt_cmake_module_dir}/Qt5WebEngineCore/Qt5WebEngineCoreConfig.cmake
+            }
+            platform darwin {
+                proxy_includes_and_libs
             }
         }
     }
@@ -1753,6 +1763,11 @@ if {${QT54}} {
         configure.pre_args-append \
                                 ../${worksrcdir}/qtwebview/qtwebview.pro
         default build.dir       {${workpath}/build}
+        platform darwin {
+            post-destroot {
+                proxy_includes_and_libs
+            }
+        }
     }
 }
 
