@@ -35,7 +35,7 @@ ${ECHO} mkdir -p "${DEST}/_resources/port1.0/group/"
 ${ECHO} rsync -aAXHv --delete ${PORTGROUPS} "${DEST}/_resources/port1.0/group/"
 
 ${ECHO} mkdir -p "${DEST}/${CATDIR}"
-${ECHO} rsync -aAXHv --delete "${CATDIR}/${PORTDIR}" "${DEST}/${CATDIR}/"
+${ECHO} rsync -aAXHv --delete "${CATDIR}/${PORTDIR}" "${CATDIR}/qt5-kde" "${DEST}/${CATDIR}/"
 
 ${ECHO} mkdir -p "${DEST}/kde"
 ${ECHO} rsync -aAXHv --delete kde/Ciment-icons kde/OSXdg-icons "${DEST}/kde/"
