@@ -227,7 +227,7 @@ variant docs description {build and install the API documentation, for use with 
     configure.args-delete \
                         -DBUILD_doc=OFF \
                         -DBUILD_docs=OFF
-    if {${subport} ne "kf5-kapidox"} {
+    if {${subport} ne "kf5-kapidox" && ${subport} ne "kf5-kapidox-devel"} {
         if {![info exists kf5.framework]} {
             kf5.depends_build_frameworks \
                         kdoctools
