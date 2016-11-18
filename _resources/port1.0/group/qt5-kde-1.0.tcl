@@ -247,7 +247,6 @@ if {${os.platform} eq "darwin"} {
 }
 compiler.blacklist-append   macports-llvm-gcc-4.2 llvm-gcc-4.2
 compiler.blacklist-append   gcc-4.2 apple-gcc-4.2 gcc-4.0
-# compiler.blacklist-append   macports-clang-3.1 macports-clang-3.0 macports-clang-3.2 macports-clang-3.3
 compiler.blacklist-append   {clang < 500}
 # # starting with the one-but-newest macports-clang in the whitelist, check it it is
 # # installed and blacklist the other values so that the automatic selection mechanism
