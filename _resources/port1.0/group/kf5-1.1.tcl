@@ -249,6 +249,7 @@ variant docs description {build and install the API documentation, for use with 
             post-build {
                 ui_msg "--->  Generating documentation for ${subport} (this can take a while)"
                 # generate the documentation, working from ${build.dir}
+                file delete -force ${workpath}/apidocs
                 xinstall -m 755 -d ${workpath}/apidocs
                 # this appears to be necessary, sometimes:
                 system "chmod 755 ${workpath}/apidocs"
