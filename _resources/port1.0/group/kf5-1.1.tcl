@@ -233,45 +233,57 @@ variant docs description {build and install the API documentation, for use with 
                         kdoctools
         }
         if {[info exists kf5.allow_docs_generation] && ${kf5.allow_docs_generation}} {
-            kf5.depends_build_frameworks \
+            if {[info exists kf5.framework]} {
+                # KF5 frameworks are more or less guaranteed to have a metainfo.yaml file
+                # which is required for newer kapidox versions. We could check for
+                # the existence of that file, but that would mean depending on both
+                # versions of the framework.
+                kf5.depends_build_frameworks \
                         kapidox
-            post-destroot {
-                ui_msg "--->  Generating documentation for ${subport}"
+            } else {
+                # other software will be processed by an older KApiDox version,
+                # installed under the name kf5-kgenapidox
+                kf5.depends_build_frameworks \
+                        kgenapidox
+            }
+            post-build {
+                ui_msg "--->  Generating documentation for ${subport} (this can take a while)"
                 # generate the documentation, working from ${build.dir}
-                xinstall -m 755 -d ${destroot}${kf5.docs_dir}
+                xinstall -m 755 -d ${workpath}/apidocs
                 # this appears to be necessary, sometimes:
-                system "chmod 755 ${destroot}${kf5.docs_dir}"
-                if {[file exists ${prefix}/bin/kgenapidox]} {
+                system "chmod 755 ${workpath}/apidocs"
+                if {[info exists kf5.framework]} {
+                    if {[catch {system -W ${build.dir} "kapidox_generate --qhp --searchengine --api-searchbox \
+                        --qtdoc-dir ${qt_docs_dir} --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"} result context]} {
+                        ui_msg "Failure generating documentation: ${result}"
+                    }
+                    # after creating the destination, copy all generated qch documentation to it
+                    foreach doc [glob -nocomplain ${build.dir}/frameworks/*/qch/*.qch ${build.dir}/*/qch/*.qch] {
+                        if {[file tail ${doc}] ne "None.qch"} {
+                            xinstall -m 644 ${doc} ${workpath}/apidocs/
+                        }
+                    }
+                    file delete -force ${build.dir}/${kf5.framework}-${version}
+                } else {
                     system -W ${build.dir} "kgenapidox --qhp --searchengine --api-searchbox \
                         --qtdoc-dir ${qt_docs_dir} --kdedoc-dir ${kf5.docs_dir} \
                         --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"
                     # after creating the destination, copy all generated qch documentation to it
                     foreach doc [glob -nocomplain ${build.dir}/apidocs/qch/*.qch] {
-                        if {${doc} ne "${build.dir}/apidocs/qch/None.qch"} {
-                            xinstall -m 644 ${doc} ${destroot}${kf5.docs_dir}
-                        }
-                    }
-                } else {
-                    if {[info exists kf5.framework]} {
-                        if {[catch {system -W ${build.dir} "kapidox_generate --qhp --searchengine --api-searchbox \
-                            --qtdoc-dir ${qt_docs_dir} --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"} result context]} {
-                            ui_msg "Failure generating documentation: ${result}"
-                        }
-                    } else {
-                        if {[catch {system -W ${build.dir} "kapidox_generate --qhp --searchengine \
-                            --qtdoc-dir ${qt_docs_dir} --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"} result context]} {
-                            ui_msg "Failure generating documentation: ${result}"
-                        }
-                    }
-                    # after creating the destination, copy all generated qch documentation to it
-                    foreach doc [glob -nocomplain ${build.dir}/frameworks/*/qch/*.qch] {
                         if {[file tail ${doc}] ne "None.qch"} {
-                            xinstall -m 644 ${doc} ${destroot}${kf5.docs_dir}
+                            xinstall -m 644 ${doc} ${workpath}/apidocs/
                         }
                     }
+                    file delete -force ${build.dir}/apidocs
                 }
-                # cleanup
-                file delete -force ${build.dir}/apidocs
+            }
+            post-destroot {
+                xinstall -m 755 -d ${destroot}${kf5.docs_dir}
+                # this appears to be necessary, sometimes:
+                system "chmod 755 ${destroot}${kf5.docs_dir}"
+                foreach doc [glob -nocomplain ${workpath}/apidocs/*.qch] {
+                    xinstall -m 644 ${doc} ${destroot}${kf5.docs_dir}
+                }
             }
         }
     }
