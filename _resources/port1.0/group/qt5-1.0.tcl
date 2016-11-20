@@ -109,7 +109,7 @@ proc qt5.depends_component {first args} {
     if {([info exists qt5.using_kde] && ${qt5.using_kde}) || ${os.major} == 10} {
         set qt5pprefix  "qt5-kde"
     } elseif {${os.major} == 11} {
-        set qt5pprefix   "qt55"
+        set qt5pprefix  "qt55"
     } else {
         set qt5pprefix  "qt5"
     }
