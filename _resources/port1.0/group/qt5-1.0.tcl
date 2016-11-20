@@ -45,8 +45,9 @@
 
 # Check what Qt5 installation flavour already exists, or if not if the port calling us
 # indicated a preference. If not, use the default/mainstream port:qt5 .
-if {[file exists ${prefix}/include/qt5/QtCore/QtCore]
-        && ![info exists qt5.prefer_default]} {
+# Also use qt5-kde if we're on 10.6 because qt5-kde provides a fallback to Qt 5.3.2 on that OS version
+if {([file exists ${prefix}/include/qt5/QtCore/QtCore]
+        && ![info exists qt5.prefer_default]) || ${os.major} == 10} {
     # Qt5 has been installed through port:qt5-kde and is not the be reinstalled the other way
     ui_debug "Qt5 is provided by port:qt5-kde"
     PortGroup   qt5-kde 1.0
@@ -101,15 +102,16 @@ proc qt_branch {} {
 # into the appropriate subports for the Qt5 flavour installed
 # e.g. qt5.depends_component qtbase qtsvg qtdeclarative
 proc qt5.depends_component {first args} {
-    global qt5_component_lib
-    global qt5.using_kde
+    global qt5_component_lib qt5.using_kde os.major
     # join ${first} and (the optional) ${args}
     set args [linsert $args[set list {}] 0 ${first}]
     # select the Qt5 port prefix, depending on which Qt5 port is installed
-    if {[info exists qt5.using_kde] && ${qt5.using_kde}} {
-        set qt5pprefix "qt5-kde"
+    if {([info exists qt5.using_kde] && ${qt5.using_kde}) || ${os.major} == 10} {
+        set qt5pprefix  "qt5-kde"
+    } elseif {${os.major} == 11} {
+        set qt5pprefix   "qt55"
     } else {
-        set qt5pprefix "qt5"
+        set qt5pprefix  "qt5"
     }
     foreach comp ${args} {
         if {${comp} eq "qt5"} {
