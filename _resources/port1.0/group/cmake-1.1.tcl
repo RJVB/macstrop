@@ -299,7 +299,7 @@ post-configure {
             puts ${fd} "configure.optflags=\"${configure.optflags}\""
         }
         puts ${fd} "\ncd ${worksrcpath}"
-        puts ${fd} "${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}"
+        puts ${fd} "${configure.cmd} [join ${configure.pre_args}] [join ${configure.args}] [join ${configure.post_args}]"
         close ${fd}
         unset fd
     }
