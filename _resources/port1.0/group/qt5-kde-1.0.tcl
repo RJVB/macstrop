@@ -327,7 +327,7 @@ if {${os.platform} eq "darwin"} {
 
 # allow for depending on either qt5[-mac] or qt5[-mac]-devel or qt5[-mac]*-kde, simultaneously
 
-set qt5_stubports   {qtbase qtdeclarative qtserialport qtsensors \
+set qt5_stubports   {qtbase qtdeclarative qtserialbus qtserialport qtsensors \
                 qtquick1 qtwebchannel qtimageformats qtsvg qtmacextras \
                 qtlocation qtxmlpatterns qtcanvas3d qtgraphicaleffects qtmultimedia \
                 qtscript qt3d qtconnectivity qttools qtquickcontrols qtenginio \
