@@ -613,20 +613,12 @@ proc kf5.check_qspXDG {name} {
 
 
 # create a wrapper script in ${prefix}/bin for an application bundle in kf5.applications_dir
-set kf5.wrapper_env_additions ""
+options kf5.wrapper_env_additions
+default kf5.wrapper_env_additions ""
 proc kf5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""}} {
-    global kf5.applications_dir destroot prefix os.platform kf5.wrapper_env_additions subport
-    system "echo \"#!/bin/sh\n\
-        if \[ -r ~/.kf5.env \] ;then\n\
-        \t. ~/.kf5.env\n\
-        else\n\
-        \texport KDE_SESSION_VERSION=5\n\
-        fi\" > ${destroot}${prefix}/bin/${wrappername}"
-    if {[info exists kf5.wrapper_env_additions] && ${kf5.wrapper_env_additions} ne ""} {
-        system "echo \"# Additional env. variables specified by port:${subport} :\" >> ${destroot}${prefix}/bin/${wrappername}"
-        system "echo \"export ${kf5.wrapper_env_additions}\" >> ${destroot}${prefix}/bin/${wrappername}"
-        system "echo \"#\" >> ${destroot}${prefix}/bin/${wrappername}"
-    }
+    global kf5.applications_dir os.platform kf5.wrapper_env_additions
+
+    qt5.wrapper_env_additions "[join ${kf5.wrapper_env_additions}]"
     if {${os.platform} eq "darwin"} {
         if {${bundlename} eq ""} {
             set bundlename ${wrappername}
@@ -634,7 +626,6 @@ proc kf5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""}} {
         if {${bundleexec} eq ""} {
             set bundleexec ${bundlename}
         }
-        system "echo \"exec \\\"${kf5.applications_dir}/${bundlename}.app/Contents/MacOS/${bundleexec}\\\" \\\"\\\$\@\\\"\" >> ${destroot}${prefix}/bin/${wrappername}"
     } else {
         global kf5.project qt_libs_dir
         # no app bundles on this platform, but provide the same API by pretending there are.
@@ -646,10 +637,8 @@ proc kf5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""}} {
         if {${bundleexec} eq ""} {
             set bundleexec ${bundlename}
         }
-        system "echo \"export LD_LIBRARY_PATH=\$\{LD_LIBRARY_PATH\}:${prefix}/lib:${qt_libs_dir}\" >> ${destroot}${prefix}/bin/${wrappername}"
-        system "echo \"exec \\\"${kf5.applications_dir}/${bundleexec}\\\" \\\"\\\$\@\\\"\" >> ${destroot}${prefix}/bin/${wrappername}"
     }
-    system "chmod 755 ${destroot}${prefix}/bin/${wrappername}"
+    qt5.add_app_wrapper ${wrappername} ${bundlename} ${bundleexec} ${kf5.applications_dir}
 }
 
 # procedure to record a conflict with a KDE4 port if kde4compat isn't active
