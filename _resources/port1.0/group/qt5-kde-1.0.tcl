@@ -522,17 +522,6 @@ if {[file exists ${prefix}/etc/macports/locales.tcl]} {
     }
 }
 
-# define the qt5_component_lib array element-by-element instead of in a table;
-# using a table wouldn't allow the use of variables (they wouldn't be expanded)
-platform darwin {
-    set qt5_component_lib(qtwebkit)     path:libexec/${qt_name}/Library/Frameworks/QtWebKit.framework/QtWebKit
-    set qt5_component_lib(qtwebengine)  path:libexec/${qt_name}/Library/Frameworks/QtWebEngine.framework/QtWebEngine
-}
-platform linux {
-    set qt5_component_lib(qtwebkit)     path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext}
-    set qt5_component_lib(qtwebengine)  path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext}
-}
-
 # convenience function for revision management
 proc revbump_for_version {r v {p 0}} {
     global version revision subport os.platform
@@ -543,3 +532,72 @@ proc revbump_for_version {r v {p 0}} {
         uplevel set revision ${r}
     }
 }
+
+# create a wrapper script in ${prefix}/bin for an application bundle in qt_apps_dir
+options qt5.wrapper_env_additions
+default qt5.wrapper_env_additions ""
+
+proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""}} {
+    global qt_apps_dir destroot prefix os.platform qt5.wrapper_env_additions subport
+    if {${appdir} eq ""} {
+        set appdir ${qt_apps_dir}
+    }
+    xinstall -m 755 -d ${destroot}${prefix}/bin
+    if {![catch {set fd [open "${destroot}${prefix}/bin/${wrappername}" "w"]} err]} {
+        # this wrapper exists to a large extent to improve integration of "pure" qt5
+        # apps with KF5 apps, in particular through the use of the KDE platform theme plugin
+        # Hence the reference to KDE things in the preamble.
+        puts ${fd} "#!/bin/sh\n\
+            if \[ -r ~/.kf5.env \] ;then\n\
+            \t. ~/.kf5.env\n\
+            else\n\
+            \texport KDE_SESSION_VERSION=5\n\
+            fi"
+        set wrapper_env_additions "[join ${qt5.wrapper_env_additions}]"
+        if {${wrapper_env_additions} ne ""} {
+            puts ${fd} "# Additional env. variables specified by port:${subport} :"
+            puts ${fd} "export ${wrapper_env_additions}"
+            puts ${fd} "#"
+        }
+        if {${os.platform} eq "darwin"} {
+            if {${bundlename} eq ""} {
+                set bundlename ${wrappername}
+            }
+            if {${bundleexec} eq ""} {
+                set bundleexec ${bundlename}
+            }
+            puts ${fd} "exec \"${appdir}/${bundlename}.app/Contents/MacOS/${bundleexec}\" \"\$\@\""
+        } else {
+            global qt_libs_dir
+            # no app bundles on this platform, but provide the same API by pretending there are.
+            # If unset, use ${subport} to guess the exec. name because evidently we cannot
+            # symlink ${wrappername} onto itself.
+            if {${bundlename} eq ""} {
+                set bundlename ${subport}
+            }
+            if {${bundleexec} eq ""} {
+                set bundleexec ${bundlename}
+            }
+            puts ${fd} "export LD_LIBRARY_PATH=\$\{LD_LIBRARY_PATH\}:${prefix}/lib:${qt_libs_dir}"
+            puts ${fd} "exec \"${appdir}/${bundleexec}\" \"\$\@\""
+            close ${fd}
+        }
+        system "chmod 755 ${destroot}${prefix}/bin/${wrappername}"
+    } else {
+        ui_error "Failed to (re)create \"${destroot}${prefix}/bin/${wrappername}\" : ${err}"
+        return -code error ${err}
+    }
+}
+
+###############################################################################
+# define the qt5_component_lib array element-by-element instead of in a table;
+# using a table wouldn't allow the use of variables (they wouldn't be expanded)
+platform darwin {
+    set qt5_component_lib(qtwebkit)     path:libexec/${qt_name}/Library/Frameworks/QtWebKit.framework/QtWebKit
+        set qt5_component_lib(qtwebengine)  path:libexec/${qt_name}/Library/Frameworks/QtWebEngine.framework/QtWebEngine
+}
+platform linux {
+    set qt5_component_lib(qtwebkit)     path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext}
+        set qt5_component_lib(qtwebengine)  path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext}
+}
+
