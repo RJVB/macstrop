@@ -706,8 +706,7 @@ proc kf5.kde4compat {args} {
 }
 
 # this should hopefully be temporary: redefine the platform statement so it takes an "else" clause
-# TODO: rename to ifplatform
-proc platform {os args} {
+proc ifplatform {os args} {
     global os.platform os.subplatform os.arch os.major
 
     set len [llength $args]
@@ -746,7 +745,7 @@ proc platform {os args} {
     if {$match} {
         uplevel 1 $code
     } elseif {${altcode} ne ""} {
-        ui_msg "### Executing platform 'else' condition"
+        ui_debug "### Executing ifplatform 'else' condition"
         uplevel 1 $altcode
     }
 }
