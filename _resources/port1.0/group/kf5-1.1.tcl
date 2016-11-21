@@ -641,23 +641,72 @@ proc kf5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""}} {
     qt5.add_app_wrapper ${wrappername} ${bundlename} ${bundleexec} ${kf5.applications_dir}
 }
 
-# procedure to record a conflict with a KDE4 port if kde4compat isn't active
-proc kf5.kde4compat {{kde4port ""}} {
+# procedure to record a conflict with a KDE4 port if kde4compat isn't active. This procedure
+# creates the kde4compat variant with a boilerplate description (if it doesn't exist yet).
+# If the variant has to conflict with other variants it must be declared explicitly before
+# calling kf5.kde4compat.
+# To be used outside of any special blocks (post/pre - configure/build/destroot)
+#
+# kf5.kde4compat [-port kde4port] [{compat code}] [else {KDE4 INcompatibility code\}]
+# (where square brackets enclose optional arguments
+#
+proc kf5.kde4compat {args} {
     global subport
-    if {[variant_exists kde4compat] && ![variant_isset kde4compat]} {
-        if {${kde4port} eq ""} {
-            if {[string first "kf5-" ${subport}] >= 0} {
-                conflicts-append \
-                        [string range ${subport} 4 end]
+    set len [llength ${args}]
+    set kde4port ""
+    set codeArg 0
+    set argError no
+    if {${len} >= 1} {
+        if {[lindex ${args} 0] eq "-port"} {
+            if {${len} >= 2} {
+                set kde4port [lindex ${args} 1]
+                set codeArg 2
+            } else {
+                set argError yes
             }
-        } else {
-            conflicts-append \
-                        ${kde4port}
         }
+    }
+    if {${len} >= ${codeArg}+1} {
+        set code [lindex ${args} ${codeArg}]
+        if {${len} > ${codeArg}+1} {
+            if {[lindex ${args} ${codeArg}+1] eq "else"} {
+                set altcode [lindex ${args} ${codeArg}+2]
+            } else {
+                set argError yes
+            }
+        }
+    } elseif {${len} < ${codeArg}} {
+        set argError yes
+    }
+    if {${argError}} {
+        ui_error "kf5.kde4compat \[-port kde4port\] \[\{compat code\}\] \[else \{KDE4 INcompatibility code\}\]"
+        return -code error "Malformed kf5.kde4compat invocation"
+    }
+    if {${kde4port} eq ""} {
+        if {[string first "kf5-" ${subport}] >= 0} {
+            set kde4port [string range ${subport} 4 end]
+        } else {
+            ui_error "kf5.kde4compat cannot determine the related KDE4 port for \"${subport}\""
+            return -code error "Improper use of kf5.kde4compat"
+        }
+    }
+    if {![variant_exists kde4compat]} {
+        variant kde4compat description "Allow installation alongside KDE4's port:${kde4port}" {}
+    }
+    if {![variant_isset kde4compat]} {
+        conflicts-append ${kde4port}
+        if {[info exists altcode]} {
+            ui_debug "### Executing -kde4compat code"
+            uplevel 1 ${altcode}
+        }
+    } elseif {[info exists code]} {
+        ui_debug "### Executing +kde4compat code"
+        uplevel 1 ${code}
     }
 }
 
 # this should hopefully be temporary: redefine the platform statement so it takes an "else" clause
+# TODO: rename to ifplatform
 proc platform {os args} {
     global os.platform os.subplatform os.arch os.major
 
@@ -697,6 +746,7 @@ proc platform {os args} {
     if {$match} {
         uplevel 1 $code
     } elseif {${altcode} ne ""} {
+        ui_msg "### Executing platform 'else' condition"
         uplevel 1 $altcode
     }
 }
