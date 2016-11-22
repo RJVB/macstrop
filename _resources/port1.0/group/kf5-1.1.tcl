@@ -705,6 +705,43 @@ proc kf5.kde4compat {args} {
     }
 }
 
+proc kf5.require_kf5compat {args} {
+    global subport
+    set len [llength ${args}]
+    set kde4port ""
+    set argError no
+    if {${len} >= 1} {
+        if {[lindex ${args} 0] eq "-port"} {
+            if {${len} >= 2} {
+                set kde4port [lindex ${args} 1]
+            } else {
+                set argError yes
+            }
+        }
+    }
+    if {${argError}} {
+        ui_error "kf5.require_kf5compat \[-port kde4port\]"
+        return -code error "Malformed kf5.require_kf5compat invocation"
+    }
+    if {${kde4port} eq ""} {
+        if {[string first "kf5-" ${subport}] >= 0} {
+            set kde4port [string range ${subport} 4 end]
+        } else {
+            ui_error "kf5.require_kf5compat cannot determine the related KDE4 port for \"${subport}\""
+            return -code error "Improper use of kf5.require_kf5compat"
+        }
+    }
+    if {![catch {set result [active_variants ${kde4port} kf5compat ""]}]} {
+        if {!${result}} {
+            conflicts-append ${kde4port}
+        } else {
+            ui_debug "${kde4port} installed with +kf5compat"
+        }
+    } else {
+        ui_debug "${kde4port} not installed (OK)"
+    }
+}
+
 # this should hopefully be temporary: redefine the platform statement so it takes an "else" clause
 proc ifplatform {os args} {
     global os.platform os.subplatform os.arch os.major
