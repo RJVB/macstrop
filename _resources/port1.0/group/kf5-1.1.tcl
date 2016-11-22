@@ -726,8 +726,6 @@ proc kf5.require_kf5compat {args} {
     }
     if {${len} >= ${nextArg}+1} {
         set unwantedFile [lindex ${args} ${nextArg}]
-    } else {
-        set argError yes
     }
     if {${argError}} {
         ui_error "kf5.require_kf5compat \[-port kde4port\]"
