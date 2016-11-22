@@ -791,4 +791,4 @@ if {[variant_exists debug] && [variant_isset debug]} {
     configure.cxxflags-append   -fno-limit-debug-info
 }
 
-# kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
+# kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax MacPorts/Portfile; tab-indents true; tab-width 4;
