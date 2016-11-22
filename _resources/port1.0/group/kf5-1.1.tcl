@@ -706,18 +706,26 @@ proc kf5.kde4compat {args} {
 }
 
 proc kf5.require_kf5compat {args} {
-    global subport
+    global subport prefix
     set len [llength ${args}]
     set kde4port ""
+    set unwantedFile ""
     set argError no
+    set nextArg 0
     if {${len} >= 1} {
         if {[lindex ${args} 0] eq "-port"} {
             if {${len} >= 2} {
                 set kde4port [lindex ${args} 1]
+                set nextArg 2
             } else {
                 set argError yes
             }
         }
+    }
+    if {${len} >= ${nextArg}+1} {
+        set unwantedFile [lindex ${args} ${nextArg}]
+    } else {
+        set argError yes
     }
     if {${argError}} {
         ui_error "kf5.require_kf5compat \[-port kde4port\]"
@@ -731,14 +739,23 @@ proc kf5.require_kf5compat {args} {
             return -code error "Improper use of kf5.require_kf5compat"
         }
     }
-    if {![catch {set result [active_variants ${kde4port} kf5compat ""]}]} {
-        if {!${result}} {
-            conflicts-append ${kde4port}
+    if {${unwantedFile} eq ""} {
+        if {![catch {set result [active_variants ${kde4port} kf5compat ""]}]} {
+            if {!${result}} {
+                conflicts-append ${kde4port}
+            } else {
+                ui_debug "${kde4port} installed with +kf5compat"
+            }
         } else {
-            ui_debug "${kde4port} installed with +kf5compat"
+            ui_debug "${kde4port} not installed (OK)"
         }
     } else {
-        ui_debug "${kde4port} not installed (OK)"
+        if {[file exists ${prefix}/${unwantedFile}]} {
+            ui_debug "Incompatible ${kde4port} installed (has ${prefix}/${unwantedFile})"
+            conflicts-append ${kde4port}
+        } else {
+            ui_debug "${kde4port} installed with +kf5compat or not at all"
+        }
     }
 }
 
