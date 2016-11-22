@@ -649,6 +649,8 @@ proc kf5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""}} {
 #
 # kf5.kde4compat [-port kde4port] [{compat code}] [else {KDE4 INcompatibility code\}]
 # (where square brackets enclose optional arguments
+# Note that `kde4port` can contain a list of ports enclosed in double quotes
+# (-port "a b c").
 #
 proc kf5.kde4compat {args} {
     global subport
