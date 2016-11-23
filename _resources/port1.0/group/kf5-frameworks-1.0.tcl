@@ -186,6 +186,7 @@ kf5::framework_dependency    ki18n libKF5I18n
 # kf5-kdoctools does install a static library but I don't know if it has dependents
 set kf5::kdoctools_dep       path:bin/meinproc5:kf5-kdoctools
 kf5::framework_dependency    kguiaddons libKF5GuiAddons
+kf5::framework_dependency    ksyntaxhighlighting libKF5SyntaxHighlighting
 kf5::framework_dependency    kwidgetsaddons libKF5WidgetsAddons
 kf5::framework_dependency    kconfigwidgets libKF5ConfigWidgets
 kf5::framework_dependency    kitemviews libKF5ItemViews
