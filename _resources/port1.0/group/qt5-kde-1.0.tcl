@@ -97,22 +97,6 @@ namespace eval qt5 {
 # Ports that want to provide a universal variant need to use the muniversal PortGroup explicitly.
 universal_variant no
 
-# check for +debug variant of this port, and make sure Qt was
-# installed with +debug as well; if not, error out.
-platform darwin {
-    pre-extract {
-        if {[variant_exists debug] && \
-            [variant_isset debug] && \
-           ![info exists building_qt5]} {
-            if {![file exists ${qt_frameworks_dir}/QtCore.framework/QtCore_debug]} {
-                return -code error "\n\nERROR:\n\
-In order to install this port as +debug,
-Qt5 must also be installed with +debug.\n"
-            }
-        }
-    }
-}
-
 if {![variant_exists qt5kde]} {
     # define a variant that will be set default when port:qt5-kde or port:qt5-kde-devel is
     # installed. This means that a user doing a new install (or upgrade) of a port depending
