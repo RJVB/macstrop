@@ -115,14 +115,14 @@ proc cmake::handle_generator {option action args} {
                                     port:ninja
                 build.cmd           ninja
                 # force Ninja to use the exact number of requested build jobs
-                build.post_args     -j${build.jobs}
+                build.post_args     -j${build.jobs} -v
                 destroot.target     install
                 # ninja needs the DESTDIR argument in the environment
                 destroot.destdir
                 destroot.env-append DESTDIR=${destroot}
             }
             default {
-                if {[llength $args] != 1]} {
+                if {[llength $args] != 1} {
                     set msg "cmake.generator requires a single value (not \"${args}\")"
                 } else {
                     set msg "The \"${args}\" generator is not currently known/supported (cmake.generator is case-sensitive!)"
