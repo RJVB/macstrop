@@ -180,10 +180,11 @@ kf5::framework_dependency    attica libKF5Attica
 kf5::framework_dependency    karchive libKF5Archive
 kf5::framework_dependency    kcoreaddons libKF5CoreAddons
 kf5::framework_dependency    kauth libKF5Auth
+set kf5::breeze-icons_dep    path:share/icons/breeze/index.theme:kf5-breeze-icons
 kf5::framework_dependency    kconfig libKF5ConfigCore
 kf5::framework_dependency    kcodecs libKF5Codecs
 kf5::framework_dependency    ki18n libKF5I18n
-# kf5-kdoctools does install a static library but I don't know if it has dependents
+# kf5-kdoctools does install a static library but meinproc5 is what's used more visibly
 set kf5::kdoctools_dep       path:bin/meinproc5:kf5-kdoctools
 kf5::framework_dependency    kguiaddons libKF5GuiAddons
 kf5::framework_dependency    ksyntaxhighlighting libKF5SyntaxHighlighting
@@ -222,7 +223,7 @@ kf5::framework_dependency    baloo libKF5Baloo
 kf5::framework_dependency    kdeclarative libKF5Declarative
 kf5::framework_dependency    kcmutils libKF5KCMUtils
 kf5::framework_dependency    kemoticons libKF5Emoticons
-# this is really a framework...
+# this is really a framework... (but is being phased out)
 kf5::framework_dependency    gpgmepp libKF5Gpgmepp
 # kf5-kinit does install a library but it may not be the best choice as a dependency:
 # hard to tell at this moment how many dependents actually use that rather than
