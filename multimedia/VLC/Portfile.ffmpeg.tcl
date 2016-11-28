@@ -10,7 +10,7 @@ version             2.8.6
 revision            1
 license             LGPL-2.1+
 categories          multimedia
-maintainers         gmail.com:rjvbertin openmaintainer
+maintainers         @RJVB openmaintainer
 
 description         Custom FFMpeg build for port:VLC and port:libVLC.
 long_description    Custom FFMpeg build for port:VLC and port:libVLC.

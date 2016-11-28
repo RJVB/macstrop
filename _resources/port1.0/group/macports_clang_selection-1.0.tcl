@@ -1,5 +1,5 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
-# $Id: qt5-1.0.tcl 113952 2015-06-11 16:30:53Z gmail.com:rjvbertin $
+# $Id: qt5-1.0.tcl 113952 2015-06-11 16:30:53Z @RJVB $
 
 # Copyright (c) 2015 René J.V. Bertin
 # All rights reserved.

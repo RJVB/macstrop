@@ -1,6 +1,6 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
-# $Id: qt5-1.0.tcl 113952 2015-06-11 16:30:53Z gmail.com:rjvbertin $
+# $Id: qt5-1.0.tcl 113952 2015-06-11 16:30:53Z @RJVB $
 # $Id: qt5-1.0.tcl 113952 2013-11-26 18:01:53Z michaelld@macports.org $
 
 # Copyright (c) 2014 The MacPorts Project

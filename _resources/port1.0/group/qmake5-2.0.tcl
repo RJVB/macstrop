@@ -1,5 +1,5 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
-# $Id: qmake5-2.0.tcl 106930 2015-01-12 15:45:56Z gmail.com:rjvbertin $
+# $Id: qmake5-2.0.tcl 106930 2015-01-12 15:45:56Z @RJVB $
 # $Id: qmake-1.0.tcl 106930 2013-06-12 03:13:56Z ryandesign@macports.org $
 
 #
