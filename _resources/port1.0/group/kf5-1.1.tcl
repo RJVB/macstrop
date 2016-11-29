@@ -132,23 +132,15 @@ if {![info exists kf5.dont_use_xz]} {
 platform darwin {
     variant nativeQSP description {use the native Apple-style QStandardPaths locations} {}
 
-    if {![file exists ${qt_includes_dir}/QtCore/qextstandardpaths.h]} {
+#     if {![file exists ${qt_includes_dir}/QtCore/qextstandardpaths.h]}
+    if {![catch {set result [active_variants qt5-qtbase {}]}]} {
+        ui_debug "port:qt5-qtbase is installed and active"
         default_variants    +nativeQSP
     }
 
     if {![variant_isset nativeQSP]} {
         configure.cppflags-append \
                         -DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_ALT_DEFAULT=true
-    }
-}
-
-# A transitional procedure that adds definitions that are likely to become the default
-proc kf5.use_QExtStandardPaths {} {
-    if {[variant_isset nativeQSP]} {
-        ui_error "Port ${subport} shouldn't call kf5.use_QExtStandardPaths with +nativeQSP"
-        return -code error "kf5.use_QExtStandardPaths shouldn't be called"
-    } else {
-        ui_msg "kf5.use_QExtStandardPaths is obsolete"
     }
 }
 
