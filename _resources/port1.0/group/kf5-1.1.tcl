@@ -837,4 +837,7 @@ if {[variant_exists debug] && [variant_isset debug]} {
     configure.cxxflags-append   -fno-limit-debug-info
 }
 
+# create a .macports-$subport-configure.cmd file containing the cmake invocation details
+cmake.save_configure_cmd
+
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax MacPorts/Portfile; tab-indents true; tab-width 4;
