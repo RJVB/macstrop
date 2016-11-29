@@ -289,6 +289,9 @@ post-activate {
     }
 }
 
+# create a .macports-$subport-configure.cmd file containing the cmake invocation details
+cmake.save_configure_cmd
+
 notes-append "
 Don't forget that dbus needs to be started as the local\
 user (not with sudo) before any KDE programs will launch.
