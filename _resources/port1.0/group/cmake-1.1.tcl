@@ -97,7 +97,7 @@ proc cmake::handle_generator {option action args} {
     global cmake.generator destroot destroot.target build.cmd build.post_args
     global depends_build destroot.post_args build.jobs
     if {${action} eq "set"} {
-        switch -glob ${args} {
+        switch -glob [lindex ${args} 0] {
             "*Unix Makefiles*" {
                 ui_debug "Selecting the 'Unix Makefiles' generator ($args)"
                 depends_build-delete \
@@ -139,18 +139,20 @@ proc cmake::handle_generator {option action args} {
 }
 
 default configure.dir {[_cmake_get_build_dir]}
+default build.dir {${configure.dir}}
+default build.post_args {VERBOSE=ON}
 
 #FIXME: ccache works with cmake on linux
 configure.ccache    no
 
 configure.cmd       ${prefix}/bin/cmake
 
-configure.pre_args  -DCMAKE_INSTALL_PREFIX=${prefix}
-
-configure.args \
+default configure.pre_args {[list \
+                    -DCMAKE_INSTALL_PREFIX=${prefix} \
+                    {-DCMAKE_C_COMPILER="$CC"} \
+                    {-DCMAKE_CXX_COMPILER="$CXX"} \
                     -DCMAKE_VERBOSE_MAKEFILE=ON \
                     -DCMAKE_COLOR_MAKEFILE=ON \
-                    -DCMAKE_BUILD_TYPE=MacPorts \
                     -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
                     -DCMAKE_INSTALL_NAME_DIR=${prefix}/lib \
                     -DCMAKE_SYSTEM_PREFIX_PATH="${prefix}\;/usr" \
@@ -158,6 +160,9 @@ configure.args \
                     -DCMAKE_FIND_FRAMEWORK=LAST \
                     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
                     -Wno-dev
+]}
+
+configure.args      -DCMAKE_BUILD_TYPE=MacPorts
 
 default configure.post_args {${worksrcpath}}
 
@@ -201,65 +206,33 @@ pre-configure {
     # optimization flags by default).
     # NB: more recent CMake versions (>=3?) no longer take the env. variables into
     # account, and thus require explicit use of ${configure.c*flags} below:
-#     if {${configure.optflags} ne ""} {
-#         configure.args-append   -DCMAKE_C_FLAGS="-DNDEBUG ${configure.cflags}" \
-#                                 -DCMAKE_CXX_FLAGS="-DNDEBUG ${configure.cxxflags}"
-#     }
     # Using a custom BUILD_TYPE we can simply append to the env. variables,
-    # but why do we set -DNDEBUG?
-    configure.cflags-append     -DNDEBUG
-    configure.cxxflags-append   -DNDEBUG
-    # force newer CMake versions to take a change in compiler choice into account
-    # even if it is invoked in a build.dir that was configured before.
-    if {${configure.cc} ne ""} {
-        configure.args-append \
-                    -DCMAKE_C_COMPILER=${configure.cc}
-    }
-    if {${configure.cxx} ne ""} {
-        configure.args-append \
-                    -DCMAKE_CXX_COMPILER=${configure.cxx}
+    if {![variant_isset debug]} {
+        configure.cflags-append     -DNDEBUG
+        configure.cxxflags-append   -DNDEBUG
     }
 
-
-    # process ${configure.cppflags} to extract include directives and other options
+    # process ${configure.cppflags} because CMake ignores $CPPFLAGS
     if {${configure.cppflags} ne ""} {
         set cppflags [split ${configure.cppflags}]
         # reset configure.cppflags; we don't want options in double in CPPFLAGS and CFLAGS/CXXFLAGS
-        set configure.cppflags ""
-        set next_is_path 0
+        configure.cppflags
+        # copy the cppflags arguments one by one into cflags and family
+        # CMake does have an INCLUDE_DIRECTORIES variable but setting it from the commandline
+        # doesn't have the intended effect (any longer).
         foreach flag ${cppflags} {
-            if {${next_is_path}} {
-                # previous option was a lone -I
-                configure.cppflags-append       -I${flag}
-                set next_is_path 0
-            } else {
-                if {[string match "-I" ${flag}]} {
-                    # lone -I, store the next argument as a path
-                    # (or ignore if this is the last argument)
-                    set next_is_path 1
-                } elseif {[string match "-I*" ${flag}]} {
-                    # a -Ipath option
-                    configure.cppflags-append   ${flag}
-                } else {
-                    # everything else must go into CFLAGS and CXXFLAGS
-                    configure.cflags-append     ${flag}
-                    configure.cxxflags-append   ${flag}
-                    # append to the ObjC flags too, even if CMake ignores them:
-                    configure.objcflags-append  ${flag}
-                    configure.objcxxflags-append   ${flag}
-                }
-            }
-        }
-        if {${configure.cppflags} ne ""} {
-            ui_debug "-DINCLUDE_DIRECTORIES=${configure.cppflags}"
-            configure.args-append   -DINCLUDE_DIRECTORIES:PATH="${configure.cppflags}"
+            configure.cflags-append     ${flag}
+            configure.cxxflags-append   ${flag}
+            # append to the ObjC flags too, even if CMake ignores them:
+            configure.objcflags-append  ${flag}
+            configure.objcxxflags-append   ${flag}
         }
         ui_debug "CFLAGS=\"${configure.cflags}\" CXXFLAGS=\"${configure.cxxflags}\""
     }
 
     if {${cmake.install_rpath} ne ""} {
         ui_debug "Adding -DCMAKE_INSTALL_RPATH=[join ${cmake.install_rpath} \;] to configure.args"
-        configure.args-append -DCMAKE_INSTALL_RPATH="[join ${cmake.install_rpath} \;]"
+        configure.post_args-prepend -DCMAKE_INSTALL_RPATH="[join ${cmake.install_rpath} \;]"
     }
     configure.pre_args-prepend "-G \"[join ${cmake.generator}]\""
 }
@@ -274,34 +247,40 @@ post-configure {
             close ${fd}
         }
     }
-    if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
-        foreach var [array names ::env] {
-            puts ${fd} "${var}=$::env(${var})"
+}
+
+proc cmake.save_configure_cmd {} {
+    post-configure {
+        if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
+            foreach var [array names ::env] {
+                puts ${fd} "${var}=$::env(${var})"
+            }
+            puts ${fd} "[join [lrange [split ${configure.env} " "] 0 end] "\n"]"
+            # the following variables are no longer set in the environment at this point:
+            puts ${fd} "CPP=\"${configure.cpp}\""
+            # these are particularly relevant because referenced in the configure.pre_args:
+            puts ${fd} "CC=\"${configure.cc}\""
+            puts ${fd} "CXX=\"${configure.cxx}\""
+            if {${configure.objcxx} ne ${configure.cxx}} {
+                puts ${fd} "OBJCXX=\"${configure.objcxx}\""
+            }
+            puts ${fd} "CFLAGS=\"${configure.cflags}\""
+            puts ${fd} "CXXFLAGS=\"${configure.cxxflags}\""
+            if {${configure.objcflags} ne ${configure.cflags}} {
+                puts ${fd} "OBJCFLAGS=\"${configure.objcflags}\""
+            }
+            if {${configure.objcxxflags} ne ${configure.cxxflags}} {
+                puts ${fd} "OBJCXXFLAGS=\"${configure.objcxxflags}\""
+            }
+            puts ${fd} "LDFLAGS=\"${configure.ldflags}\""
+            if {${configure.optflags} ne ""} {
+                puts ${fd} "configure.optflags=\"${configure.optflags}\""
+            }
+            puts ${fd} "\ncd ${worksrcpath}"
+            puts ${fd} "${configure.cmd} [join ${configure.pre_args}] [join ${configure.args}] [join ${configure.post_args}]"
+            close ${fd}
+            unset fd
         }
-        puts ${fd} "[join [lrange [split ${configure.env} " "] 0 end] "\n"]"
-        # the following variables are no longer set in the environment at this point:
-        puts ${fd} "CPP=\"${configure.cpp}\""
-        puts ${fd} "CC=\"${configure.cc}\""
-        puts ${fd} "CXX=\"${configure.cxx}\""
-        if {${configure.objcxx} ne ${configure.cxx}} {
-            puts ${fd} "OBJCXX=\"${configure.objcxx}\""
-        }
-        puts ${fd} "CFLAGS=\"${configure.cflags}\""
-        puts ${fd} "CXXFLAGS=\"${configure.cxxflags}\""
-        if {${configure.objcflags} ne ${configure.cflags}} {
-            puts ${fd} "OBJCFLAGS=\"${configure.objcflags}\""
-        }
-        if {${configure.objcxxflags} ne ${configure.cxxflags}} {
-            puts ${fd} "OBJCXXFLAGS=\"${configure.objcxxflags}\""
-        }
-        puts ${fd} "LDFLAGS=\"${configure.ldflags}\""
-        if {${configure.optflags} ne ""} {
-            puts ${fd} "configure.optflags=\"${configure.optflags}\""
-        }
-        puts ${fd} "\ncd ${worksrcpath}"
-        puts ${fd} "${configure.cmd} [join ${configure.pre_args}] [join ${configure.args}] [join ${configure.post_args}]"
-        close ${fd}
-        unset fd
     }
 }
 
@@ -364,18 +343,18 @@ configure.universal_args-delete --disable-dependency-tracking
 
 variant debug description "Enable debug binaries" {
     # this PortGroup uses a custom CMAKE_BUILD_TYPE giving complete control over
-    # the compiler flags. We use that here: replace the default -O2 with -O0
-    # (meaning the user can still decide to use some other form of optimisation)
+    # the compiler flags. We use that here: replace the default -O2 with -O0, add
+    # debugging options and do otherwise an exactly identical build.
     configure.cflags-replace         -O2 -O0
     configure.cxxflags-replace       -O2 -O0
     configure.objcflags-replace      -O2 -O0
     configure.objcxxflags-replace    -O2 -O0
     configure.ldflags-replace        -O2 -O0
     # get most if not all possible debug info
-    configure.cflags-append         -g -fno-limit-debug-info
-    configure.cxxflags-append       -g -fno-limit-debug-info
-    configure.objcflags-append      -g -fno-limit-debug-info
-    configure.objcxxflags-append    -g -fno-limit-debug-info
+    configure.cflags-append         -g -fno-limit-debug-info -DDEBUG
+    configure.cxxflags-append       -g -fno-limit-debug-info -DDEBUG
+    configure.objcflags-append      -g -fno-limit-debug-info -DDEBUG
+    configure.objcxxflags-append    -g -fno-limit-debug-info -DDEBUG
     configure.ldflags-append        -g -fno-limit-debug-info
     # try to ensure that info won't get stripped
     configure.args-append           -DCMAKE_STRIP:FILEPATH=/bin/echo
@@ -386,5 +365,3 @@ variant debug description "Enable debug binaries" {
 if {[string first "--enable-debug" ${configure.args}] > -1} {
     configure.args-delete     --enable-debug
 }
-
-default build.dir {${configure.dir}}
