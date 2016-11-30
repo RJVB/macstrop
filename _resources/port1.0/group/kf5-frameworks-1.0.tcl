@@ -78,6 +78,15 @@ namespace eval kf5 {
 
     variable dbus_start_warning_printed no
 
+    # wrapper meant to draw the user's attention to the fact that this port has notes
+    # that are of interest before installation. Print the banner once only for every port
+    # that has such notes.
+    proc add_warning_note {msg} {
+        global subport
+        ui_warn_once "kf5::warning_note-${subport}" ">>> Please read the notes before installing (port notes ${subport})! <<<\n"
+        notes-append ${msg}
+    }
+
     # variables to facilitate setting up dependencies to KF5 frameworks that may (or not)
     # also exist as port:kf5-foo-devel .
     # This may be extended to provide path-style *runtime* dependencies on framework executables;
@@ -153,12 +162,6 @@ namespace eval kf5 {
                         ${kf5::pythondep}
         configure.args-append \
                         -DPYTHON_EXECUTABLE=${prefix}/bin/python${kf5::pyversion}
-    }
-
-    proc add_warning_note {msg} {
-        global subport
-        ui_warn_once "kf5::warning_note" ">>> Please read the notes! (port notes ${subport}) <<<\n"
-        notes-append ${msg}
     }
 }
 
