@@ -126,6 +126,19 @@ namespace eval kf5 {
         configure.args-append \
                         -DPYTHON_EXECUTABLE=${prefix}/bin/python${kf5::pyversion}
     }
+
+    if {![info exists warning_printed]} {
+        set warning_printed no
+    }
+    proc add_warning_note {msg} {
+        global long_description subport
+        if {!${kf5::warning_printed}} {
+            ## this doesn't work of course; long_description will often be (re)set after we get here.
+            long_description-append "\n>>>Please look at the notes! (port notes ${subport}) <<<"
+            set kf5::warning_printed yes
+        }
+        notes-append ${msg}
+    }
 }
 
 proc kf5.depends_frameworks {first args} {
