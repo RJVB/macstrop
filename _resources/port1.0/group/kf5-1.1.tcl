@@ -802,6 +802,7 @@ if {[info procs qt5.depends_component] eq ""} {
     # a procedure for declaring dependencies on Qt5 components, which will expand them
     # into the appropriate subports for the Qt5 flavour installed (presumably port:qt5)
     # e.g. qt5.depends_component qtbase qtsvg qtdeclarative
+    # We ignore the new port:qt55 because KF5 requires Qt >= 5.6.0
     proc qt5.depends_component {first args} {
         # join ${first} and (the optional) ${args}
         set args [linsert $args[set list {}] 0 ${first}]
@@ -824,8 +825,13 @@ proc kf5.depends_qt5_components {first args} {
         qt5.depends_component ${args}
     } else {
         foreach comp ${args} {
-            if {${comp} eq "qtwebkit" || ${comp} eq "qtwebengine"} {
-                qt5.depends_component ${comp}
+            switch ${comp} {
+                "qtwebkit" -
+                "qtwebengine" -
+                "qtwebview" {
+                    qt5.depends_component ${comp}
+                }
+                # default is to ignore (component is part of port:qt5-kde)
             }
         }
     }
