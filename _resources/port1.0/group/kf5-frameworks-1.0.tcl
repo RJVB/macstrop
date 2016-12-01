@@ -84,6 +84,7 @@ namespace eval kf5 {
     proc add_warning_note {msg} {
         global subport
         ui_warn_once "kf5::warning_note-${subport}" ">>> Please read the notes before installing (port notes ${subport})! <<<\n"
+        ui_info ${msg}
         notes-append ${msg}
     }
 
