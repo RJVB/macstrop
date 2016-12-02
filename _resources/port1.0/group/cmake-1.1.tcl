@@ -69,7 +69,7 @@ proc cmake::rpath_flags {} {
     if {[llength [option cmake.install_rpath]]} {
         # make sure a ${cmake.install_prefix} is included in the rpath
         # careful, we are likely to be called more than once.
-        if {[string first [option cmake.install_prefix] [option cmake.install_rpath]] == -1} {
+        if {[lsearch -exact [option cmake.install_rpath] [option cmake.install_prefix]/lib] == -1} {
             cmake.install_rpath-append [option cmake.install_prefix]/lib
         }
         return [list \
