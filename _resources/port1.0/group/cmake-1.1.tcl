@@ -42,22 +42,39 @@ namespace eval cmake {
     variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
 }
 
-options cmake.out_of_source cmake.build_dir cmake.set_osx_architectures
-options cmake.install_rpath
-options cmake.generator
+options                             cmake.build_dir \
+                                    cmake.generator \
+                                    cmake.install_prefix \
+                                    cmake.install_rpath \
+                                    cmake_share_module_dir \
+                                    cmake.out_of_source \
+                                    cmake.set_osx_architectures
 
 # make out-of-source builds the default (finally)
-default cmake.out_of_source         yes
+default cmake.out_of_source         {yes}
 
 # set CMAKE_OSX_ARCHITECTURES when necessary.
 # This can be deactivated when (non-Apple) compilers are used
 # that don't support the corresponding -arch options.
-default cmake.set_osx_architectures yes
+default cmake.set_osx_architectures {yes}
 
 default cmake.build_dir             {${workpath}/build}
 
+# cmake-based ports may want to modify the install prefix(?!)
+default cmake.install_prefix        {${prefix}}
 # minimal/initial value for the install rpath:
-default cmake.install_rpath         ${prefix}/lib
+default cmake.install_rpath         {${cmake.install_prefix}/lib}
+proc cmake::rpath_flags {} {
+    if {[llength [option cmake.install_rpath]]} {
+        return [list \
+            -DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=ON \
+            -DCMAKE_INSTALL_RPATH="[join [option cmake.install_rpath] \;]"
+        ]
+    }
+    # always build with full RPATH; this is the default on Mac.
+    # Let ports deactivate it explicitly if they need to.
+    return -DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=ON
+}
 
 # CMake provides several different generators corresponding to different utilities
 # (and IDEs) used for building the sources. We support "Unix Makefiles" (the default)
@@ -77,13 +94,13 @@ default cmake.generator             {"Unix Makefiles"}
 # which skips the whole "let's see if there's anything left to (re)build before
 # we install" you normally get with `make install`. That check should be
 # redundant in normal destroot steps, because we just completed the build step.
-default destroot.target             install/fast
+default destroot.target             {install/fast}
 
 # standard place to install extra CMake modules
-set cmake_share_module_dir ${prefix}/share/cmake/Modules
+default cmake_share_module_dir      {${cmake.install_prefix}/share/cmake/Modules}
 
 # can use cmake or cmake-devel; default to cmake if not installed
-depends_build-append path:bin/cmake:cmake
+depends_build-append                path:bin/cmake:cmake
 
 proc _cmake_get_build_dir {} {
     if {[option cmake.out_of_source]} {
@@ -147,18 +164,21 @@ configure.ccache    no
 
 configure.cmd       ${prefix}/bin/cmake
 
+# appropriate default settings for configure.pre_args
+# variables are grouped thematically, with the more important ones
+# at the beginning or end for somewhat easier at-a-glance verification.
 default configure.pre_args {[list \
-                    -DCMAKE_INSTALL_PREFIX=${prefix} \
+                    -DCMAKE_INSTALL_PREFIX="${cmake.install_prefix}" \
+                    -DCMAKE_INSTALL_NAME_DIR=${cmake.install_prefix}/lib \
+                    -DCMAKE_SYSTEM_PREFIX_PATH="${cmake.install_prefix}\;/usr" \
                     {-DCMAKE_C_COMPILER="$CC"} \
                     {-DCMAKE_CXX_COMPILER="$CXX"} \
                     -DCMAKE_VERBOSE_MAKEFILE=ON \
                     -DCMAKE_COLOR_MAKEFILE=ON \
-                    -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-                    -DCMAKE_INSTALL_NAME_DIR=${prefix}/lib \
-                    -DCMAKE_SYSTEM_PREFIX_PATH="${prefix}\;/usr" \
-                    -DCMAKE_MODULE_PATH=${cmake_share_module_dir} \
                     -DCMAKE_FIND_FRAMEWORK=LAST \
                     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+                    -DCMAKE_MODULE_PATH=${cmake_share_module_dir} \
+                    {*}[cmake::rpath_flags] \
                     -Wno-dev
 ]}
 
@@ -230,11 +250,13 @@ pre-configure {
         ui_debug "CFLAGS=\"${configure.cflags}\" CXXFLAGS=\"${configure.cxxflags}\""
     }
 
-    if {${cmake.install_rpath} ne ""} {
-        ui_debug "Adding -DCMAKE_INSTALL_RPATH=[join ${cmake.install_rpath} \;] to configure.args"
-        configure.post_args-prepend -DCMAKE_INSTALL_RPATH="[join ${cmake.install_rpath} \;]"
-    }
+#     if {${cmake.install_rpath} ne ""} {
+#         ui_debug "Adding -DCMAKE_INSTALL_RPATH=[join ${cmake.install_rpath} \;] to configure.args"
+#         configure.post_args-prepend -DCMAKE_INSTALL_RPATH="[join ${cmake.install_rpath} \;]"
+#     }
     configure.pre_args-prepend "-G \"[join ${cmake.generator}]\""
+    # CMake doesn't like --enable-debug, so remove it unconditionally.
+    configure.args-delete --enable-debug
 }
 
 post-configure {
