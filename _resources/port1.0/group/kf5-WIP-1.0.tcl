@@ -8,7 +8,8 @@
 #
 # stuff for development of KF5 ports that aren't ready for prime-time
 #
-# Example used for testing (here port:kf5-ark):
+# Example used for testing (here port:kf5-ark)
+# (NB: doesn't currently work fully on Linux, might be an issue in its cmake build system)
 #
 # PortGroup           kf5-WIP 1.0
 # kf5.use_playground  ${kf5::playground}
@@ -28,15 +29,29 @@ proc kf5.use_playground {subprefix {autolink 1}} {
     global prefix subport kf5.applications_dir
     namespace upvar ::kf5 playground_linked linked
     namespace upvar ::kf5 playground_autolink dolink
-    configure.pre_args-replace \
-                    -DCMAKE_INSTALL_PREFIX=${prefix} -DCMAKE_INSTALL_PREFIX=${subprefix}
-    cmake.install_rpath-append \
-                    ${subprefix}/lib
-    set kf5::playground ${subprefix}
-    configure.args-replace \
+    # tell CMake to install to the selected "sub prefix"
+    cmake.install_prefix ${subprefix}
+    ifplatform linux {
+        global build_arch
+        cmake.install_rpath-append \
+                        ${subprefix}/lib/${build_arch}-linux-gnu
+        configure.args-append \
+                        -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON \
+                        -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+        configure.ldflags-append \
+                        "-Wl,-R,${prefix}/lib/${build_arch}-linux-gnu" \
+                        "-Wl,-R,${subprefix}/lib/${build_arch}-linux-gnu"
+        set kf5.applications_dir \
+                        ${subprefix}/bin
+    } else {
+        # first replace
+        configure.args-replace \
                         -DBUNDLE_INSTALL_DIR=${kf5.applications_dir} \
                         -DBUNDLE_INSTALL_DIR=${kf5.applications_dir}/WiP
-    set kf5.applications_dir ${kf5.applications_dir}/WiP
+        # then redefine
+        set kf5.applications_dir ${kf5.applications_dir}/WiP
+    }
+    set kf5::playground ${subprefix}
     set linked no
     if {(${autolink} eq 1) || (${autolink} eq yes)} {
         set dolink yes

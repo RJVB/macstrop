@@ -1,6 +1,6 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
 # $Id: cmake-1.0.tcl 143801 2015-12-22 01:37:59Z ryandesign@macports.org $
-# $Id: cmake-1.1.tcl 143801 2016-09-11 16:28:00Z @RJVB $
+# $Id: cmake-1.1.tcl 143801 2016-09-11 16:28:00Z gmail.com:rjvbertin $
 # $Id: cmake-1.1.tcl 154368 2016-10-28 20:12:22Z mk@macports.org $
 #
 # Copyright (c) 2009 Orville Bennett <illogical1 at gmail.com>
@@ -69,7 +69,7 @@ proc cmake::rpath_flags {} {
     if {[llength [option cmake.install_rpath]]} {
         # make sure a ${cmake.install_prefix} is included in the rpath
         # careful, we are likely to be called more than once.
-        if {[string first [option cmake.install_prefix] [option cmake.install_rpath]] == -1} {
+        if {[lsearch -exact [option cmake.install_rpath] [option cmake.install_prefix]/lib] == -1} {
             cmake.install_rpath-append [option cmake.install_prefix]/lib
         }
         return [list \

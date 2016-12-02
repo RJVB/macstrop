@@ -499,7 +499,7 @@ proc kf5.use_latest {lversion} {
     }
 }
 
-# maintainers             @RJVB mk openmaintainer
+# maintainers             gmail.com:rjvbertin mk openmaintainer
 
 post-fetch {
     if {[file exists ${worksrcpath}/examples] && [file isdirectory ${worksrcpath}/examples] && ![variant_exists examples]} {
