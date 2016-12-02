@@ -63,9 +63,15 @@ default cmake.build_dir             {${workpath}/build}
 # cmake-based ports may want to modify the install prefix(?!)
 default cmake.install_prefix        {${prefix}}
 # minimal/initial value for the install rpath:
-default cmake.install_rpath         {${cmake.install_prefix}/lib}
+default cmake.install_rpath         {${prefix}/lib}
 proc cmake::rpath_flags {} {
+    global prefix
     if {[llength [option cmake.install_rpath]]} {
+        # make sure a ${cmake.install_prefix} is included in the rpath
+        # careful, we are likely to be called more than once.
+        if {[string first [option cmake.install_prefix] [option cmake.install_rpath]] == -1} {
+            cmake.install_rpath-append [option cmake.install_prefix]/lib
+        }
         return [list \
             -DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=ON \
             -DCMAKE_INSTALL_RPATH="[join [option cmake.install_rpath] \;]"
@@ -74,6 +80,19 @@ proc cmake::rpath_flags {} {
     # always build with full RPATH; this is the default on Mac.
     # Let ports deactivate it explicitly if they need to.
     return -DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=ON
+}
+
+proc cmake::system_prefix_path {} {
+    global prefix
+    if {[option cmake.install_prefix] ne ${prefix}} {
+        return [list \
+                 -DCMAKE_SYSTEM_PREFIX_PATH="${prefix}\;[option cmake.install_prefix]\;/usr"
+        ]
+    } else {
+        return [list \
+                 -DCMAKE_SYSTEM_PREFIX_PATH="${prefix}\;/usr"
+        ]
+    }
 }
 
 # CMake provides several different generators corresponding to different utilities
@@ -97,7 +116,7 @@ default cmake.generator             {"Unix Makefiles"}
 default destroot.target             {install/fast}
 
 # standard place to install extra CMake modules
-default cmake_share_module_dir      {${cmake.install_prefix}/share/cmake/Modules}
+default cmake_share_module_dir      {${prefix}/share/cmake/Modules}
 
 # can use cmake or cmake-devel; default to cmake if not installed
 depends_build-append                path:bin/cmake:cmake
@@ -170,7 +189,7 @@ configure.cmd       ${prefix}/bin/cmake
 default configure.pre_args {[list \
                     -DCMAKE_INSTALL_PREFIX="${cmake.install_prefix}" \
                     -DCMAKE_INSTALL_NAME_DIR=${cmake.install_prefix}/lib \
-                    -DCMAKE_SYSTEM_PREFIX_PATH="${cmake.install_prefix}\;/usr" \
+                    {*}[cmake::system_prefix_path] \
                     {-DCMAKE_C_COMPILER="$CC"} \
                     {-DCMAKE_CXX_COMPILER="$CXX"} \
                     -DCMAKE_VERBOSE_MAKEFILE=ON \
