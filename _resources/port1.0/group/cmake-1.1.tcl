@@ -60,7 +60,7 @@ default cmake.set_osx_architectures {yes}
 
 default cmake.build_dir             {${workpath}/build}
 
-# cmake-based ports may want to modify the install prefix(?!)
+# cmake-based ports may want to modify the install prefix
 default cmake.install_prefix        {${prefix}}
 # minimal/initial value for the install rpath:
 default cmake.install_rpath         {${prefix}/lib}
