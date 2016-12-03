@@ -263,4 +263,7 @@ kf5::framework_dependency    khtml libKF5KHtml
 kf5::framework_dependency    krunner libKF5Runner
 kf5::framework_dependency    kwayland libKF5WaylandClient
 
+# not a framework; use the procedure to define the path-style dependency
+kf5::framework_dependency    cli-tools libkdeinit5_kcmshell5 ""
+
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax MacPorts/Portfile; tab-indents true; tab-width 4;

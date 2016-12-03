@@ -1,9 +1,7 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
-# kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
-# $Id: qt5-1.0.tcl 113952 2015-06-11 16:30:53Z gmail.com:rjvbertin $
-# $Id: qt5-1.0.tcl 113952 2013-11-26 18:01:53Z michaelld@macports.org $
 
 # Copyright (c) 2014 The MacPorts Project
+# Copyright (c) 2013-11-26 michaelld@macports.org
 # Copyright (c) 2015, 2016 R.J.V. Bertin
 # All rights reserved.
 #
@@ -577,11 +575,16 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
 # define the qt5_component_lib array element-by-element instead of in a table;
 # using a table wouldn't allow the use of variables (they wouldn't be expanded)
 platform darwin {
-    set qt5_component_lib(qtwebkit)     path:libexec/${qt_name}/Library/Frameworks/QtWebKit.framework/QtWebKit
-        set qt5_component_lib(qtwebengine)  path:libexec/${qt_name}/Library/Frameworks/QtWebEngine.framework/QtWebEngine
+    array set qt5_component_lib [list \
+        qtwebkit        path:libexec/${qt_name}/Library/Frameworks/QtWebKit.framework/QtWebKit \
+        qtwebengine     path:libexec/${qt_name}/Library/Frameworks/QtWebEngine.framework/QtWebEngine \
+    ]
 }
 platform linux {
-    set qt5_component_lib(qtwebkit)     path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext}
-        set qt5_component_lib(qtwebengine)  path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext}
+    array set qt5_component_lib [list \
+        qtwebkit        path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext} \
+        qtwebengine     path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext} \
+    ]
 }
 
+# kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
