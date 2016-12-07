@@ -215,8 +215,8 @@ if {${kf5::includecounter} == 0} {
     configure.args-append   -DSYSCONF_INSTALL_DIR="${prefix}/etc"
     set kf5.docs_dir        ${prefix}/share/doc/kf5
 
-    options kf5.allow_docs_generation
-    default kf5.allow_docs_generation yes
+    options kf5.allow_apidocs_generation
+    default kf5.allow_apidocs_generation {yes}
 
     variant docs description {build and install the API documentation, for use with Qt's Assistant and KDevelop} {
         configure.args-delete \
@@ -227,7 +227,7 @@ if {${kf5::includecounter} == 0} {
                 kf5.depends_build_frameworks \
                             kdoctools
             }
-            if {[info exists kf5.allow_docs_generation] && ${kf5.allow_docs_generation}} {
+            if {[info exists kf5.allow_apidocs_generation] && ${kf5.allow_apidocs_generation}} {
                 if {[info exists kf5.framework]} {
                     # KF5 frameworks are more or less guaranteed to have a metainfo.yaml file
                     # which is required for newer kapidox versions. We could check for
