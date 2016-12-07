@@ -59,15 +59,17 @@ proc preserve_libraries {srcdir pattern} {
             set prevdir "previous/${subport}"
             xinstall -m 755 -d ${destroot}${srcdir}/${prevdir}
             foreach l [glob -nocomplain ${srcdir}/${pattern} ${srcdir}/${prevdir}/${pattern}] {
-                if {[file type ${l}] ne "link"} {
+                #if {[file type ${l}] ne "link"} {
                     set lib [file tail ${l}]
                     set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
                     if {![file exists ${prevlib}] && ![file exists ${destroot}${l}]} {
-                        ui_info "Preserving previous runtime shared library ${l} as ${prevlib}"
+                        ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
+                        set perms [file attributes ${l} -permissions]
                         copy ${l} ${prevlib}
+                        file attributes ${prevlib} -permissions ${perms}
                         ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
                     }
-                }
+                #}
             }
         } else {
             ui_warn "Source for previous runtime libraries (${srcdir}) should be a directory"
