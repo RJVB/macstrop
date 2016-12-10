@@ -260,6 +260,7 @@ kf5::framework_dependency    knotifyconfig libKF5NotifyConfig
 kf5::framework_dependency    plasma-framework libKF5Plasma
 kf5::framework_dependency    kjs libKF5JS
 kf5::framework_dependency    khtml libKF5KHtml
+kf5::framework_dependency    kross libKF5KrossCore
 kf5::framework_dependency    krunner libKF5Runner
 kf5::framework_dependency    kwayland libKF5WaylandClient
 

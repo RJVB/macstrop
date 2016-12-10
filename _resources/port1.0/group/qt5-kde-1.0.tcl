@@ -350,7 +350,9 @@ if {![info exists building_qt5]} {
     }
 }
 
-variant LTO description {Build with Link-Time Optimisation (LTO) (experimental)} {}
+if {![info exists QT53] || !${QT53}} {
+    variant LTO description {Build with Link-Time Optimisation (LTO) (experimental)} {}
+}
 
 if {![info exists building_qt5] && [variant_exists LTO] && [variant_isset LTO]} {
     configure.cflags-append     -flto
