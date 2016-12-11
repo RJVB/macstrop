@@ -56,11 +56,11 @@ if {![info exists building_qt4] || ![info exists name] || (${name} ne "qt4-mac" 
         PortGroup   qt4-mac 1.0
         if {[info exists depends_lib] && (${curdeps} eq "" || [string first ${curdeps} ${depends_lib}] >= 0)} {
             set qt4_dependency [string map {${curdeps} ""} ${depends_lib}]
-            ui_info "depends_libs change: ${qt4_dependency}"
+            ui_warn "depends_libs change: ${qt4_dependency}"
         } else {
             set qt4_dependency port:qt4-mac
         }
-        ui_info "Using the mainstream/official Qt4 portgroup"
+        ui_warn "Using the mainstream/official Qt4 portgroup"
         return -code ok
         ui_msg "This should never print!"
     }
