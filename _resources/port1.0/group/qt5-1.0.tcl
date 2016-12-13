@@ -134,4 +134,11 @@ proc qt5.depends_component {first args} {
 # Ports that want to provide a universal variant need to use the muniversal PortGroup explicitly.
 universal_variant no
 
+global available_qt_versions
+set available_qt_versions {
+    qt5
+    qt55
+    qt5-kde
+}
+
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
