@@ -4,7 +4,7 @@ if [ "${prefix}" = "" ] ;then
     prefix=/opt/local
 fi
 
-version=5.27.0
+version=5.29.0
 branch=${version%.0}
 
 METAPORT="KF5-Frameworks"
