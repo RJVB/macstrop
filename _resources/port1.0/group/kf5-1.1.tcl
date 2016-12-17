@@ -161,7 +161,7 @@ if {${kf5::includecounter} == 0} {
     #depends_lib-append      port:phonon
 
     # This is used by all KF5 frameworks
-    depends_lib-append      path:share/ECM/cmake/ECMConfig.cmake:kde-extra-cmake-modules
+    depends_build-append    path:share/ECM/cmake/ECMConfig.cmake:kde-extra-cmake-modules
 
     # configure.args-append   -G "\"CodeBlocks - Unix Makefiles\""
 
