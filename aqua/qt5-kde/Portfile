@@ -32,6 +32,10 @@ if {${os.platform} eq "darwin" && ${os.major} <= 10} {
 #     revision        [expr ${revision} + 1]
 # }
 # }
+if {${subport} eq "${name}" } {
+    # revbump for moving the Assistant to a subport
+    revision        [expr ${revision} + 1]
+}
 ####
 
 #====================================================================
@@ -446,7 +450,8 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         if {${subport} eq "${name}"} {
             # https://codereview.qt-project.org/#/c/172619/
             patchfiles-append \
-                            ${PPREF}patch-qtconn-for-10.12.diff
+                            ${PPREF}patch-qtconn-for-10.12.diff \
+                            ${PPREF}patch-qttools-skip-assistant.diff
         }
     }
 
@@ -1017,6 +1022,32 @@ proc proxy_includes_and_libs {} {
     }
 }
 
+proc move_and_proxy_appbundles {} {
+    global destroot prefix qt_apps_dir qt_bins_dir filespath
+    platform darwin {
+        # Move .apps into the applications_dir, and link each .app's
+        # executable back into ${qt_bins_dir}
+        set dr_qt_apps_dir ${destroot}${qt_apps_dir}
+        set dr_qt_bins_dir ${destroot}${qt_bins_dir}
+        xinstall -m 755 -d ${dr_qt_apps_dir}
+        foreach app [glob -nocomplain ${dr_qt_bins_dir}/*.app] {
+            # remove the leading stuff
+            set app [lindex [split ${app} /] end]
+            # move the .app
+            move ${dr_qt_bins_dir}/${app} ${dr_qt_apps_dir}
+            # link it back
+            ln -s ${qt_apps_dir}/${app} ${dr_qt_bins_dir}
+            # provide a proxy to the app's executable; symlinks won't
+            # be accepted by qtchooser if the user has that port installed.
+            set appName [strsed ${app} {g@\.app@@}]
+            set appProxy [string tolower ${appName}]
+            qt5.add_app_wrapper ${appProxy} ${appName}
+            # add_app_wrapper installs to ${prefix}/bin; move the wrapper
+            file rename ${destroot}${prefix}/bin/${appProxy} ${dr_qt_bins_dir}/${appProxy}
+        }
+    }
+}
+
 if { (${subport} eq ${name}) \
     || (${subport} eq "${name}-x11") || (${subport} eq "${name}-qtwebengine")
     || (!${QT53} && ![info exists qtwebkit_is_stub] && (${subport} eq "${name}-qtwebkit")) } {
@@ -1046,26 +1077,7 @@ if { (${subport} eq ${name}) \
                 }
             }
 
-            # Move .apps into the applications_dir, and link each .app's
-            # executable back into ${qt_bins_dir}
-            set dr_qt_apps_dir ${destroot}${qt_apps_dir}
-            set dr_qt_bins_dir ${destroot}${qt_bins_dir}
-            xinstall -m 755 -d ${dr_qt_apps_dir}
-            foreach app [glob -nocomplain ${dr_qt_bins_dir}/*.app] {
-                # remove the leading stuff
-                set app [lindex [split ${app} /] end]
-                # move the .app
-                move ${dr_qt_bins_dir}/${app} ${dr_qt_apps_dir}
-                # link it back
-                ln -s ${qt_apps_dir}/${app} ${dr_qt_bins_dir}
-                # provide a proxy to the app's executable; symlinks won't
-                # be accepted by qtchooser if the user has that port installed.
-                set texe [strsed ${app} {g@\.app@@}]
-                set appProxy ${dr_qt_bins_dir}/[string tolower ${texe}]
-                copy ${filespath}/appProxy.sh ${appProxy}
-                reinplace "s|@BUNDLEEXEC@|${qt_apps_dir}/${app}/Contents/MacOS/${texe}|g" ${appProxy}
-
-            }
+            move_and_proxy_appbundles
 
             if {${QT53}} {
                 # create our own compiler symlinks in qt_bins_dir:
@@ -1891,6 +1903,43 @@ subport ${name}-settingseditor {
             file rename ${destroot}${qt_examples_dir}/widgets/tools/settingseditor/settingseditor \
                 ${destroot}${qt_apps_dir}
         }
+    }
+}
+
+subport ${name}-assistant {
+    PortGroup                   qmake5 1.0
+
+    description                 ${description} - the documentation browser
+    long_description            Qt Assistant is the documentation browser from the QtTools component. \
+                                Its full feature set and optimum rendering depends on the now deprecated \
+                                QtWebKit component.
+    universal_variant           no
+    conflicts-append            port:${basename}-devel-assistant
+
+    # extract only the examples
+    extract.post_args-append    ${distname}/qttools/src/assistant ${distname}/qttools/src/shared
+    depends_lib-append          ${qt5_dependency}
+
+    variant qtwebkit description {build the full-featured version that uses QtWebKit for rendering} {}
+    if {[variant_isset qtwebkit]} {
+        qt5.depends_component   qtwebkit
+        patchfiles-append       ${PPREF}patch-assistant-with-qtwebkit.diff
+    } else {
+        patchfiles-append       ${PPREF}patch-assistant-without-qtwebkit.diff
+    }
+
+    patchfiles-append           ${PPREF}patch-fontpanel.diff
+
+    default configure.dir       {${workpath}/build}
+    configure.pre_args-append   ../${worksrcdir}/qttools/src/assistant/assistant/assistant.pro
+    default build.dir           {${workpath}/build}
+    destroot {
+        # sic, we destroot to qt_bins_dir; post-destroot will correct this
+        xinstall -m 755 -d ${destroot}${qt_bins_dir}
+        file copy ${build.dir}/Assistant.app ${destroot}${qt_bins_dir}
+    }
+    post-destroot {
+        move_and_proxy_appbundles
     }
 }
 
