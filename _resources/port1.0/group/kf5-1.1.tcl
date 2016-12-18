@@ -218,6 +218,10 @@ if {${kf5::includecounter} == 0} {
     options kf5.allow_apidocs_generation
     default kf5.allow_apidocs_generation {yes}
 
+    variant chm requires docs description {when building the API documentation, also create a .chm version} {
+        depends_build-append \
+                            port:chmcmd-fpc
+    }
     variant docs description {build and install the API documentation, for use with Qt's Assistant and KDevelop} {
         configure.args-delete \
                             -DBUILD_doc=OFF \
@@ -246,7 +250,7 @@ if {${kf5::includecounter} == 0} {
                     # generate the documentation, working from ${build.dir}
                     file delete -force ${workpath}/apidocs
                     xinstall -m 755 -d ${workpath}/apidocs
-                    if {[file exists ${prefix}/bin/chmcmd]} {
+                    if {[variant_exists chm] && [variant_isset chm]} {
                         set chmargs "--chm --chmcompiler ${prefix}/bin/chmcmd"
                     } else {
                         set chmargs ""
