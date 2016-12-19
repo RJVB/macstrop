@@ -22,6 +22,9 @@ mkdir -p "${DISTDIR}"
 for F in ${FRAMEWORKS} ;do
     # remove the "kf5-" prefix
     FW="${F#kf5-}"
+    if [ "${FW}" = "ksyntaxhighlighting" ] ;then
+        FW="syntax-highlighting"
+    fi
     DISTFILE="${DISTDIR}/${FW}-${version}.tar.xz"
     if [ ! -e "${DISTFILE}" ] ;then
         wget -P "${DISTDIR}" "${MASTERSITE}/${FW}-${version}.tar.xz"
