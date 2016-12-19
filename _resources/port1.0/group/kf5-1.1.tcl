@@ -48,10 +48,19 @@ if {${kf5::includecounter} == 0} {
     set qt5.prefer_kde  1
     PortGroup           qt5 1.0
     PortGroup           active_variants 1.1
-}
 
-if {![info exists qt5.using_kde] || !${qt5.using_kde}} {
-    ui_warn "It is strongly advised to install KF5 ports against port:qt5-kde or port:qt5-kde-devel."
+    if {![info exists qt5.using_kde] || !${qt5.using_kde}} {
+        pre-fetch {
+            ui_warn "It is strongly advised to install KF5 ports against port:qt5-kde or port:qt5-kde-devel; any other configuration is not supported."
+        }
+        pre-configure {
+            ui_warn "It is strongly advised to install KF5 ports against port:qt5-kde or port:qt5-kde-devel; any other configuration is not supported."
+        }
+                notes-append "It is strongly advised to install KF5 ports against port:qt5-kde or port:qt5-kde-devel; any other configuration is not supported."
+        # pull in a build dependency that port:qt5-kde includes by default in the main port:
+        depends_build-append \
+                        qt5-qttools
+    }
 }
 
 ########################################################################
