@@ -1,0 +1,122 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+# $Id$
+
+PortSystem          1.0
+PortGroup           preserve_runtime_libraries 1.0
+
+name                gpgme
+version             1.8.0
+categories          devel security crypto
+license             {LGPL-2.1+ GPL-3+}
+maintainers         schenkel.net:leonardo devans openmaintainer
+description         A library for easy acces to GnuPG.
+long_description    GnuPG Made Easy (GPGME) is a library designed to make access \
+                    to GnuPG easier for applications. It provides a High-Level \
+                    Crypto API for encryption, decryption, signing, signature \
+                    verification and key management. Currently it uses GnuPG \
+                    as its backend but the API isn't restricted to this engine \
+                    in fact we have already developed a backend for CMS (S/MIME).
+
+platforms           darwin
+
+homepage            http://www.gnupg.org/related_software/gpgme/
+master_sites        gnupg
+use_bzip2           yes
+
+checksums           rmd160  b21a322ddbaf160538267cf201aeec207b8287f6 \
+                    sha256  596097257c2ce22e747741f8ff3d7e24f6e26231fa198a41b2a072e62d1e5d33
+
+# either gnupg2 (the default) or gnupg21 is needed for running the unit tests
+# and at runtime but does not link directly with gpgme
+depends_build       port:pkgconfig \
+                    path:bin/gpg2:gnupg2
+
+depends_lib         port:pth \
+                    port:libgpg-error \
+                    port:libassuan
+
+depends_run         path:bin/gpg2:gnupg2
+
+use_parallel_build  yes
+
+patchfiles          patch-configure.ac.diff \
+                    patch-tests-gpg-Makefile.am.diff
+
+post-patch {
+    reinplace "s|thread_modules=\"\"|thread_modules=\"pthread\"|" ${worksrcpath}/src/gpgme-config.in
+    reinplace "s|@GPG@|${prefix}/bin/gpg2|" ${worksrcpath}/src/gpgme-config.in
+    reinplace "s|@GPGSM@|${prefix}/bin/gpgsm|" ${worksrcpath}/src/gpgme-config.in
+}
+
+use_autoreconf      yes
+autoreconf.args     -fvi
+
+# enable cl cpp language bindings for now to avoid opportunistic failures (#52341)
+# TODO: add bindings for python and qt
+
+lappend languages cl
+
+# cpp bindings require libc++
+
+platform darwin {
+    patchfiles-append \
+                    patch-missing-prototypes.diff
+    if {${configure.cxx_stdlib} eq "libc++"} {
+        lappend languages cpp
+    }
+    post-configure {
+        reinplace "s|CC -dynamiclib|CC -dynamiclib [get_canonical_archflags]|g" ${worksrcpath}/libtool
+    }
+}
+
+variant qt5 description {build Qt5 support (qgpgme)} {}
+if {[variant_isset qt5]} {
+    set qt5.prefer_kde 1
+    PortGroup       qt5 1.0
+    lappend languages qt
+    # rename libqgpgme to libq5gpgme to avoid conflicts with port:kdepimlibs4
+    # (and having to modify that port once more to co-exist with us).
+    # The library is found through CMake files (also modified), so well behaved
+    # software (presumably KF5) won't have issues with the non-standard name.
+    patchfiles-append \
+                    patch-libqgpgme-name.diff
+}
+
+configure.args      --disable-dependency-tracking \
+                    --enable-languages="${languages}" \
+                    --enable-static
+
+test.run            yes
+test.target         check
+
+preserve_libraries  ${prefix}/lib libgpgme-pthread.*.dylib
+post-destroot {
+    xinstall -m 755 -d ${destroot}${prefix}/share/doc/${name}
+    xinstall -m 644 -W ${worksrcpath} AUTHORS COPYING COPYING.LESSER \
+        ChangeLog INSTALL NEWS README THANKS TODO \
+        ${destroot}${prefix}/share/doc/${name}
+    platform darwin {
+        if {[variant_isset qt5]} {
+            reinplace "s|.so|.dylib|g" ${destroot}${prefix}/lib/cmake/QGpgme/QGpgmeConfig.cmake
+        }
+    }
+    reinplace "s|@libsuffix@|.dylib|g" ${destroot}${prefix}/lib/cmake/Gpgmepp/GpgmeppConfig.cmake
+    reinplace "s|.so|.dylib|g" ${destroot}${prefix}/lib/cmake/Gpgmepp/GpgmeppConfig.cmake
+}
+
+# deactivate kdepimlibs4 earlier than 4.14.3_4 to avoid
+# activation conflict on ${prefix}/include/gpgme++/*
+
+pre-activate {
+    if {![catch {set installed [lindex [registry_active kdepimlibs4] 0]}]} {
+        set _version [lindex $installed 1]
+        set _revision [lindex $installed 2]
+        if {[vercmp $_version 4.14.3] < 0 || ([vercmp $_version 4.14.3] == 0 && $_revision < 4)} {
+            registry_deactivate_composite kdepimlibs4 "" [list ports_nodepcheck 1]
+        }
+    }
+}
+
+livecheck.type      regex
+livecheck.url       ftp://ftp.gnupg.org/gcrypt/gpgme/
+livecheck.regex     "${name}-(\\d+(?:\\.\\d+)*)${extract.suffix}"
