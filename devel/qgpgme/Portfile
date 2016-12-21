@@ -1,0 +1,95 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+# $Id$
+
+PortSystem          1.0
+PortGroup           cxx11 1.0
+# qgpgme is mostly used as a KDE dependency, so prefer qt5-kde
+set qt5.prefer_kde  1
+PortGroup           qt5 1.0
+
+name                qgpgme
+version             1.7.0
+revision            2
+categories          devel security crypto
+license             GPL-2+
+maintainers         gmail.com:rjvbertin mk openmaintainer
+description         Qt5 wrapper for the gpgme library for easy acces to GnuPG.
+long_description    QGpgME is the Qt5 wrapper for GnuPG Made Easy (GPGME).
+
+platforms           darwin linux
+
+homepage            http://www.gnupg.org/related_software/gpgme/
+master_sites        gnupg
+use_bzip2           yes
+
+distname            gpgme-${version}
+# we use the same distfiles as port:gpgme:
+dist_subdir         gpgme
+checksums           rmd160  3159142bd912fe482566a78f48d19fe6a4d3221e \
+                    sha256  71f55fed0f2b3eaf7a606e59772aa645ce3ffff322d361ce359951b3f755cc48
+
+# either gnupg2 (the default) or gnupg21 is needed for running the unit tests
+# and at runtime but nothing from gnupg2 links directly with qgpgme
+depends_build       port:pkgconfig \
+                    path:bin/gpg2:gnupg2
+
+# this is not actually how things work currently, we actually build
+# much of gpgme again. However, depending on port:gpgme will ensure
+# that all dependencies are there, and simplifies the depspec (maintenance).
+depends_lib         port:gpgme
+
+depends_run         path:bin/gpg2:gnupg2
+
+use_parallel_build  yes
+
+# do everything as usual, except for the destroot step which is done from the lang/qt subdir
+destroot.dir        ${worksrcpath}/lang/qt
+
+patchfiles          patch-configure.ac.diff \
+                    patch-tests-gpg-Makefile.am.diff
+
+post-patch {
+    reinplace "s|thread_modules=\"\"|thread_modules=\"pthread\"|" ${worksrcpath}/src/gpgme-config.in
+    reinplace "s|@GPG@|${prefix}/bin/gpg2|" ${worksrcpath}/src/gpgme-config.in
+    reinplace "s|@GPGSM@|${prefix}/bin/gpgsm|" ${worksrcpath}/src/gpgme-config.in
+}
+
+# cpp bindings require libc++ which we can rely on thanks to the cxx11 portgroup
+lappend languages cpp qt
+
+use_autoreconf      yes
+autoreconf.args     -fvi
+
+post-configure {
+    reinplace "s|CC -dynamiclib|CC -dynamiclib [get_canonical_archflags]|g" ${worksrcpath}/libtool
+}
+
+# rename libqgpgme to libq5gpgme to avoid conflicts with port:kdepimlibs4
+# (and having to modify that port once more to co-exist with us).
+# The library is found through CMake files (also modified), so well behaved
+# software (presumably KF5) won't have issues with the non-standard name.
+patchfiles-append   patch-libqgpgme-name.diff
+
+patchfiles-append   patch-missing-prototypes.diff
+
+configure.args      --disable-dependency-tracking \
+                    --enable-languages="${languages}"
+
+test.run            yes
+test.target         check
+test.dir            ${destroot.dir}
+pre-test {
+    ui_warn "enter \"abc\" when a passphrase is requested"
+}
+
+post-destroot {
+    reinplace "s|.so|.dylib|g" ${destroot}${prefix}/lib/cmake/Gpgmepp/QGpgmeConfig.cmake
+    xinstall -m 755 -d ${destroot}${prefix}/share/doc/${name}
+    ln -s ../gpgme  ${destroot}${prefix}/share/doc/${name}
+    xinstall -m 644 -W ${worksrcpath} lang/qt/README \
+        ${destroot}${prefix}/share/doc/${name}
+}
+
+livecheck.type      regex
+livecheck.url       ftp://ftp.gnupg.org/gcrypt/gpgme/
+livecheck.regex     "${name}-(\\d+(?:\\.\\d+)*)${extract.suffix}"
