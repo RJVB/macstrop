@@ -573,8 +573,8 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
             }
             puts ${fd} "export LD_LIBRARY_PATH=\$\{LD_LIBRARY_PATH\}:${prefix}/lib:${qt_libs_dir}"
             puts ${fd} "exec \"${appdir}/${bundleexec}\" \"\$\@\""
-            close ${fd}
         }
+        close ${fd}
         system "chmod 755 ${destroot}${prefix}/bin/${wrappername}"
     } else {
         ui_error "Failed to (re)create \"${destroot}${prefix}/bin/${wrappername}\" : ${err}"
