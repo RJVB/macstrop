@@ -124,7 +124,7 @@ if {![ info exists kf5.release ]} {
 if {![ info exists kf5.plasma ]} {
     set kf5.plasma      5.8.2
     set kf5.latest_plasma \
-                        5.8.2
+                        5.8.4
 }
 
 platforms               darwin linux
