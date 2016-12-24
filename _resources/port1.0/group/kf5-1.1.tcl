@@ -115,7 +115,7 @@ if {![info exists kf5.version]} {
 
 # KF5 Applications version
 if {![ info exists kf5.release ]} {
-    set kf5.release     16.08.2
+    set kf5.release     16.12.0
     set kf5.latest_release \
                         16.12.0
 }
