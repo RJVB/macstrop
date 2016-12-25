@@ -58,18 +58,31 @@ proc preserve_libraries {srcdir pattern} {
         if {[file type ${srcdir}] eq "directory"} {
             set prevdir "previous/${subport}"
             xinstall -m 755 -d ${destroot}${srcdir}/${prevdir}
-            foreach l [glob -nocomplain ${srcdir}/${pattern} ${srcdir}/${prevdir}/${pattern}] {
-                #if {[file type ${l}] ne "link"} {
-                    set lib [file tail ${l}]
-                    set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
-                    if {![file exists ${prevlib}] && ![file exists ${destroot}${l}]} {
-                        ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
-                        set perms [file attributes ${l} -permissions]
-                        copy ${l} ${prevlib}
-                        file attributes ${prevlib} -permissions ${perms}
-                        ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
-                    }
-                #}
+            # first handle the preserved backups that already exist
+            foreach l [glob -nocomplain ${srcdir}/${prevdir}/${pattern}] {
+                set lib [file tail ${l}]
+                set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
+                if {![file exists ${prevlib}] && ![file exists ${destroot}${l}]} {
+                    ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
+                    set perms [file attributes ${l} -permissions]
+                    copy ${l} ${prevlib}
+                    file attributes ${prevlib} -permissions ${perms}
+                    ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
+                }
+            }
+            # now we can do the libraries to backup from ${prefix}/lib (srcdir) itself
+            # any of those that are symlinks into ${prevdir} will be pruned because they
+            # have already been handled.
+            foreach l [glob -nocomplain ${srcdir}/${pattern}] {
+                set lib [file tail ${l}]
+                set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
+                if {![file exists ${prevlib}] && ![file exists ${destroot}${l}]} {
+                    ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
+                    set perms [file attributes ${l} -permissions]
+                    copy ${l} ${prevlib}
+                    file attributes ${prevlib} -permissions ${perms}
+                    ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
+                }
             }
         } else {
             ui_warn "Source for previous runtime libraries (${srcdir}) should be a directory"
