@@ -533,7 +533,7 @@ proc kf5.set_project {project} {
                                 http://download.kde.org/stable/${kf5.virtualPath}
                     livecheck.regex \
                                 (\\d+\\.\\d+\\.\\d)
-                    set kf5::cat "Applications"
+                    set kf5::cat "KF5-Applications"
                 }
             }
         }
