@@ -305,9 +305,10 @@ if {${kf5::includecounter} == 0} {
                     foreach doc [glob -nocomplain ${workpath}/apidocs/*.qch] {
                         xinstall -m 644 ${doc} ${destroot}${kf5.docs_dir}
                     }
-                    if {[file exists ${workpath}/apidocs/kapidox.chm]} {
-                        set doc [string map {".qch" ".chm"} [file tail ${doc}]]
-                        xinstall -m 644 ${workpath}/apidocs/kapidox.chm ${destroot}${kf5.docs_dir}/${doc}
+                    if {[variant_exists chm] && [variant_isset chm]} {
+                        foreach doc [glob -nocomplain ${workpath}/apidocs/*.chm] {
+                            xinstall -m 644 ${doc} ${destroot}${kf5.docs_dir}
+                        }
                     }
                 }
             }
