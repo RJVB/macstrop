@@ -232,7 +232,7 @@ compiler.blacklist-append   gcc-4.2 apple-gcc-4.2 gcc-4.0
 compiler.blacklist-append   {clang < 500}
 platform darwin {
     if {${os.major} >= 13} {
-        compiler.blacklist *gcc*
+        compiler.blacklist-append *gcc*
     }
 }
 
