@@ -873,9 +873,10 @@ if {${kf5::includecounter} == 0} {
     }
 
     if {[variant_exists debug] && [variant_isset debug]} {
-        configure.optflags-append   -fno-limit-debug-info
-        configure.cflags-append     -fno-limit-debug-info
-        configure.cxxflags-append   -fno-limit-debug-info
+        if {[string match *clang* ${configure.cxx}] || [string match *clang* ${configure.cc}]} {
+            configure.cflags-append     -fno-limit-debug-info
+            configure.cxxflags-append   -fno-limit-debug-info
+        }
     }
 
     # create a .macports-$subport-configure.cmd file containing the cmake invocation details

@@ -403,7 +403,7 @@ variant debug description "Enable debug binaries" {
     configure.objcxxflags-replace    -O2 -O0
     configure.ldflags-replace        -O2 -O0
     # get most if not all possible debug info
-    if {[string match *clang* ${configure.cxx}]} {
+    if {[string match *clang* ${configure.cxx}] || [string match *clang* ${configure.cc}]} {
         set cmake::debugopts "-g -fno-limit-debug-info -DDEBUG"
     } else {
         set cmake::debugopts "-g -DDEBUG"
