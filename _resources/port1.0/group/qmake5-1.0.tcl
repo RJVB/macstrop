@@ -92,6 +92,8 @@ if {${qt5.using_kde}} {
         #
         # -spec specifies build configuration (compiler, 32-bit/64-bit, etc.)
         #
+        # set -arch x86_64 since macx-clang spec file assumes it is the default
+        #
         if {[variant_exists universal] && [variant_isset universal]} {
             global merger_configure_args
 
@@ -103,6 +105,12 @@ if {${qt5.using_kde}} {
                     QT_ARCH=${arch} \
                     QT_TARGET_ARCH=${arch}
             }
+
+            lappend merger_configure_args(x86_64)  \
+                QMAKE_CFLAGS+='-arch x86_64'       \
+                QMAKE_CXXFLAGS+='-arch x86_64'     \
+                QMAKE_LFLAGS+='-arch x86_64'
+
         } else {
 
             configure.args-append -spec ${qt_qmake_spec}
@@ -110,7 +118,15 @@ if {${qt5.using_kde}} {
             configure.args-append \
                 QT_ARCH=${build_arch} \
                 QT_TARGET_ARCH=${build_arch}
+
+            if { ${configure.build_arch} eq "x86_64" } {
+                configure.args-append               \
+                    QMAKE_CFLAGS+="-arch x86_64"    \
+                    QMAKE_CXXFLAGS+="-arch x86_64"  \
+                    QMAKE_LFLAGS+="-arch x86_64"
+            }
         }
+
     }
 
     if {![info exists qt5_qmake_request_no_debug]} {
@@ -119,13 +135,22 @@ if {${qt5.using_kde}} {
         # accommodating variant request varies depending on how qtbase was built
         pre-configure {
 
-            # determine if qmake builds debug libraries by default (set via variants)
-            if {[active_variants qt5-qtbase debug ""]} {
-                set base_debug true
-            } else {
-                set base_debug false
+            set base_debug false
+            foreach qt_test_name ${available_qt_versions} {
+                if {![catch {set result [active_variants ${qt_test_name}-qtbase debug ""]}]} {
+                    if {$result} {
+                        # code to be executed if $depspec is active with at least all variants in
+                        # $required and none from $forbidden
+                        set base_debug true
+                        break
+                    } else {
+                        # code to be executed if $depspec is active, but either not with all
+                        # variants in $required or any variant in $forbidden
+                    }
+                } else {
+                    # code to be executed if $depspec isn't active
+                }
             }
-
             # determine if the user wants to build debug libraries
             if { [variant_exists debug] && [variant_isset debug] } {
                 set this_debug true
@@ -151,6 +176,19 @@ if {${qt5.using_kde}} {
 # override QMAKE_MACOSX_DEPLOYMENT_TARGET set in ${prefix}/libexec/qt5/mkspecs/macx-clang/qmake.conf
 # see #50249
 configure.args-append QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}
+
+# respect configure.sdkroot if it exists
+if {${configure.sdkroot} ne ""} {
+    configure.args-append \
+        QMAKE_MAC_SDK=[string tolower [join [lrange [split [lindex [split ${configure.sdkroot} "/"] end] "."] 0 end-1] "."]]
+}
+
+# respect configure.compiler but still allow qmake to find correct Xcode clang based on SDK
+if { ${configure.compiler} ne "clang" } {
+    configure.args-append \
+        QMAKE_CC=${configure.cc} \
+        QMAKE_CXX=${configure.cxx}
+}
 
 if { ${qt_name} eq "qt55" } {
 
