@@ -152,21 +152,39 @@ if {${qt5.using_kde}} {
 # see #50249
 configure.args-append QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}
 
-# override C++11 flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
-#    so value of ${configure.cxx_stdlib} can always be used
-# RJVB: only use cxx_stdlib when it is actually set and not equal to libc++ already.
-if {${configure.cxx_stdlib} ne ""} {
-    if {${configure.cxx_stdlib} ne "libc++"} {
-        configure.args-append \
-            QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++ \
-            QMAKE_LFLAGS_CXX11-=-stdlib=libc++   \
-            QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib} \
+if { ${qt_name} eq "qt55" } {
+
+    # always use the same standard library
+    configure.args-append                                \
+        QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}  \
+        QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
+
+    # override C++ flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
+    #    so value of ${configure.cxx_stdlib} can always be used
+    if { ${configure.cxx_stdlib} ne "libc++" } {
+        configure.args-append                                      \
+            QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++                   \
+            QMAKE_LFLAGS_CXX11-=-stdlib=libc++                     \
+            QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}  \
             QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
     }
-    # ensure ${configure.cxx_stdlib} is used for C++ stdlib
-    configure.args-append \
-        QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib} \
-        QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
+} else {
+    # override C++11 flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
+    #    so value of ${configure.cxx_stdlib} can always be used
+    # RJVB: only use cxx_stdlib when it is actually set and not equal to libc++ already.
+    if {${configure.cxx_stdlib} ne ""} {
+        if {${configure.cxx_stdlib} ne "libc++"} {
+            configure.args-append \
+                QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++ \
+                QMAKE_LFLAGS_CXX11-=-stdlib=libc++   \
+                QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib} \
+                QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
+        }
+        # ensure ${configure.cxx_stdlib} is used for C++ stdlib
+        configure.args-append \
+            QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib} \
+            QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
+    }
 }
 
 configure.args-append \
