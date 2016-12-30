@@ -507,7 +507,7 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         patchfiles-append   patch-restore-pc-files.diff
 
         # https://codereview.qt-project.org/157488 + https://codereview.qt-project.org/161056
-        patchfiles-append   patch-fix-dbus-crash-at-exit.diff
+        patchfiles-append   ${PF57x}patch-fix-dbus-crash-at-exit.diff
         if {${subport} eq "${name}"} {
             # https://codereview.qt-project.org/#/c/172619/
             patchfiles-append \
@@ -647,7 +647,7 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
             PKG_CONFIG_PATH=${PKG_CONFIG_PATH} PKG_CONFIG=/usr/bin/pkg-config
         if {${os.platform} eq "linux"} {
             patchfiles-append   \
-                patch-configure-for-linux.diff
+                ${PF57x}patch-configure-for-linux.diff
             post-patch {
                 reinplace "s/mac|/linux|mac|/g" ${worksrcpath}/qtbase/config.tests/unix/iconv/iconv.pro
             }
@@ -1631,15 +1631,10 @@ if {!${QT53}} {
         default build.dir           {${workpath}/build}
         # make sure qmake is called without unwanted arguments!
         configure.cmd               ${qt_qmake_cmd}
-        post-configure {
-            # there is no longer any need to call syncqt.pl in order to generate interface
-            # headers or to make educated guesses for files that even synqt.pl omits
-            # (code stripped that was commented-out in commit b4b5b934 of this Portfile).
-            # We just try to generate a more compact build
-            system -W ${worksrcpath} "echo 'QMAKE_CXXFLAGS -= -O3' >> .qmake.conf"
-            system -W ${worksrcpath} "echo 'QMAKE_CXXFLAGS -= -O2' >> .qmake.conf"
-            system -W ${worksrcpath} "echo 'QMAKE_CXXFLAGS += -Os' >> .qmake.conf"
-        }
+        configure.post_args-append -after QMAKE_CXXFLAGS-=-O3
+        configure.post_args-append QMAKE_CXXFLAGS-=-O2
+        configure.post_args-append QMAKE_CXXFLAGS-=-g
+        configure.post_args-append "QMAKE_CXXFLAGS+=\"${configure.cxxflags}\""
         # don't add the "all" target because that will interfere with generation of the interface headers
         build.pre_args-delete       all
         build {
@@ -1667,30 +1662,15 @@ if {!${QT53}} {
         distfiles \
                             ${distname}${extract.suffix}
         master_sites        http://download.qt.io/official_releases/qt/${branch}/${version}/submodules/
-#         checksums           rmd160  5e1be5d4acb04cf0a3b69788eb4a58a2feb19069 \
-#                             sha256  985762fff5cd8a1a0d2a644a4a51238676898685f9ff1a78c3f2800025d6dc5d
         checksums           rmd160  07bf263f775ac2a72f8db18ef53862b62be873a0 \
                             sha256  2101883e3d632b50133a14e3bbdc1d4d649e405c9618f2eef1b72a7b821ccc2b
         patch.pre_args      -Np2
-        platform darwin {
-            if {[vercmp ${macosx_deployment_target} 10.9] < 0} {
-                ui_error "qtwebengine 5.7 won't build"
-                return -code error "unsupported OS X version"
-            } elseif {${os.major} == 13} {
-                set macosx_deployment_target 10.10
-                # getting the CFAllocator context fails for me, so disable it
-                patchfiles-append \
-                            qt571/patch-qwe-no-allocator-context.diff
-                post-destroot {
-                    # correct the rpath to the CoreBluetooth framework binary.
-                    # Mostly required to satisfy `port rev-upgrade`
-                    system "install_name_tool -change /System/Library/Frameworks/CoreBluetooth.framework/Versions/A/CoreBluetooth \
-                        /System/Library/Frameworks/IOBluetooth.framework/Frameworks/CoreBluetooth.framework/Versions/A/CoreBluetooth \
-                        ${destroot}${prefix}/libexec/qt5/Library/Frameworks/QtWebEngineCore.framework/Versions/5/QtWebEngineCore"
-                }
-            }
-        }
         ########################################################################
+
+        if {(${os.platform} eq "darwin") && [vercmp ${macosx_deployment_target} 10.9] < 0} {
+            ui_error "qtwebengine 5.7 won't build"
+            return -code error "unsupported OS X version"
+        }
 
         conflicts-append    qt5-qtwebengine qt5-kde-qtwebengine
         description         ${description} - the QtWebEngine component
@@ -1732,22 +1712,29 @@ if {!${QT53}} {
                             ${distname}/qtwebengine
         }
 
-#         if {!${QT56}} {
-#             # see https://codereview.qt-project.org/#/c/125968/
-#             patchfiles-append   patch-qtwebengine-mkspec32.diff
-#             # see https://codereview.qt-project.org/#/c/127759/
-#             patchfiles-append   patch-handle-tbd-files.diff
-#         }
-        if {${distname} ne "qtwebengine-opensource-src-${version}"} {
-            # at some point prior to OS X 10.11, MIDI types were unified
-            # bug fixed after 5.6.1
-            patchfiles-append \
+        if {[vercmp ${version} 5.7.0] < 0} {
+            if {[vercmp ${version} 5.6.2] < 0} {
+                # at some point prior to OS X 10.11, MIDI types were unified
+                # bug fixed after 5.6.1
+                patchfiles-append \
                             patch-qwe-midifix.diff \
                             patch-qwe-bluetooth.diff
+            }
             configure.args  -Wall -r ../${worksrcdir}/qtwebengine/qtwebengine.pro \
                             QMAKE_LINK=${configure.cxx}
         } else {
             platform darwin 13 {
+                set macosx_deployment_target 10.10
+                # getting the CFAllocator context fails for me, so disable it
+                patchfiles-append \
+                            qt571/patch-qwe-no-allocator-context.diff
+                post-destroot {
+                    # correct the rpath to the CoreBluetooth framework binary.
+                    # Mostly required to satisfy `port rev-upgrade`
+                    system "install_name_tool -change /System/Library/Frameworks/CoreBluetooth.framework/Versions/A/CoreBluetooth \
+                        /System/Library/Frameworks/IOBluetooth.framework/Frameworks/CoreBluetooth.framework/Versions/A/CoreBluetooth \
+                        ${destroot}${prefix}/libexec/qt5/Library/Frameworks/QtWebEngineCore.framework/Versions/5/QtWebEngineCore"
+                }
 #                 # https://bugreports.qt.io/browse/QTBUG-54486
 #                 patchfiles-append \
 #                             patch-qwe-build-on-109.diff
@@ -1775,6 +1762,7 @@ if {!${QT53}} {
         configure.args-append \
                             WEBENGINE_CONFIG+=use_proprietary_codecs \
                             CONFIG-=debug \
+                            WEBENGINE_CONFIG+=reduce_binary_size \
                             WEBENGINE_CONFIG+=use_system_snappy \
                             WEBENGINE_CONFIG+=use_system_icu \
                             WEBENGINE_CONFIG+=use_system_ffmpeg
@@ -1790,6 +1778,10 @@ if {!${QT53}} {
             depends_lib-append \
                             port:libxml2
         }
+        configure.post_args-append -after QMAKE_CXXFLAGS-=-O3
+        configure.post_args-append QMAKE_CXXFLAGS-=-O2
+        configure.post_args-append QMAKE_CXXFLAGS-=-g
+        configure.post_args-append "QMAKE_CXXFLAGS+=\"${configure.cxxflags}\""
     }
 
     subport ${name}-qtwebview {
@@ -1837,30 +1829,45 @@ foreach sp ${qt5_stubports} {
         depends_build
         depends_run
         depends_lib         ${qt5_dependency}
-        if {${sp} eq "docs"} {
-            variant html description {passed on to ${name}-zz-docs} {}
-            variant qch conflicts html description {passed on to ${name}-zz-docs} {}
-            description     stub\; provided by port:${name}-zz-docs
-            long_description \
-                            this is a stub for port:${name}-zz-docs
-            depends_lib     port:${name}-zz-docs
-            depends_run     port:${name}-zz-docs
-            replaced_by     port:${name}-zz-docs
-        } elseif {${sp} eq "qtwebkit-examples"} {
-            description     stub\; part of port:${name}-examples
-            long_description \
-                            this is a stub for a subport that's included in port:${name}-examples
-            depends_run     port:${name}-examples
-        } else {
-            description     stub\; part of port:${name}
-            long_description \
-                            this is a stub for a subport that's included in port:${name}
-            if {${sp} eq "mysql-plugin"} {
-                # we're a stub but we still should pass through relevant variants
-                variant mariadb55 conflicts mysql56 description {use MariaDB v5.5} {}
-                variant mysql56 conflicts mariadb55 description {use MySQL v5.6} {}
-                default_variants \
-                            +mariadb55
+        switch ${sp} {
+            "docs" {
+                variant html description {passed on to ${name}-zz-docs} {}
+                variant qch conflicts html description {passed on to ${name}-zz-docs} {}
+                description     stub\; provided by port:${name}-zz-docs
+                long_description \
+                                this is a stub for the Qt5 documentation, provided by port:${name}-zz-docs
+                depends_lib     port:${name}-zz-docs
+                depends_run     port:${name}-zz-docs
+                replaced_by     port:${name}-zz-docs
+            }
+            "qtwebkit-examples" {
+                description     stub\; part of port:${name}-examples
+                long_description \
+                                this is a stub for a subport that's included in port:${name}-examples
+                depends_run     port:${name}-examples
+            }
+            "qtenginio" {
+                description     ${subport} was deprecated and removed
+                long_description \
+                                ${description}
+                if {[vercmp ${version} 5.7.0] >= 0} {
+                    pre-fetch {
+                        ui_error "QtEngioIO was deprecated and removed; this port no longer exists"
+                        return -code error "Obsolete port"
+                    }
+                }
+            }
+            default {
+                description     stub\; part of port:${name}
+                long_description \
+                                this is a stub subport for Qt5's ${sp} component which is included in port:${name}
+                if {${sp} eq "mysql-plugin"} {
+                    # we're a stub but we still should pass through relevant variants
+                    variant mariadb55 conflicts mysql56 description {use MariaDB v5.5} {}
+                    variant mysql56 conflicts mariadb55 description {use MySQL v5.6} {}
+                    default_variants \
+                                +mariadb55
+                }
             }
         }
         use_configure       no
