@@ -189,7 +189,7 @@ if {${configure.sdkroot} ne ""} {
 # see https://codereview.qt-project.org/#/c/165499/
 # see https://bugreports.qt.io/browse/QTBUG-56965
 pre-configure {
-    xinstall -m 755 -d ${build.dir}
+    xinstall -m 755 -d ${configure.dir}
     set cache [open "${configure.dir}/.qmake.cache" a 0644]
     puts ${cache} "QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}"
     if {${configure.sdkroot} ne ""} {
