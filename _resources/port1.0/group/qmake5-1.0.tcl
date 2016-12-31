@@ -188,8 +188,9 @@ if {${configure.sdkroot} ne ""} {
 # a change in Qt 5.7.1  made it more difficult to override sdk variables
 # see https://codereview.qt-project.org/#/c/165499/
 # see https://bugreports.qt.io/browse/QTBUG-56965
-post-extract {
-    set cache [open "${worksrcpath}/.qmake.cache" w 0644]
+pre-configure {
+    xinstall -m 755 -d ${build.dir}
+    set cache [open "${configure.dir}/.qmake.cache" a 0644]
     puts ${cache} "QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}"
     if {${configure.sdkroot} ne ""} {
         puts ${cache} \
