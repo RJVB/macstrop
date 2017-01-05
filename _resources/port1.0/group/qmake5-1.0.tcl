@@ -47,30 +47,28 @@ PortGroup                       qt5 1.0
 configure.cmd                   ${qt_qmake_cmd}
 #configure.cmd                   ${qt_qmake_cmd} -r
 
+options qt5.add_spec
+default qt5.add_spec            yes
+
 configure.pre_args-replace      --prefix=${prefix} "PREFIX=${prefix}"
 configure.universal_args-delete --disable-dependency-tracking
 
-### now follows some port-specific bits which require us to know
-### (or pretend to know) if qt5-kde is being used.
-if {![info exists qt5.using_kde]} {
-    ui_debug "qmake5 PortGroup : no qt5-kde info was provided by the Qt5 PortGroup"
-    set qt5.using_kde           no
-}
-
-if {${qt5.using_kde}} {
+if {[tbool qt5.using_kde]} {
 
     ### using port:qt5-kde
     # we use a somewhat simpler qmake cookbook, which doesn't require the magic related
     # to providing all Qt components through subports. We also provide a different +debug
     # variant which dependents don't need to know anything about.
 
-    if {[variant_exists universal] && [variant_isset universal]} {
-        set merger_configure_args(i386) \
+    if {[tbool qt5.add_spec]} {
+        if {[variant_exists universal] && [variant_isset universal]} {
+            set merger_configure_args(i386) \
                                     "CONFIG+=\"x86\" -spec ${qt_qmake_spec_32}"
-        set merger_configure_args(x86_64) \
-                                    "-spec ${qt_qmake_spec_64}"
-    } elseif {${qt_qmake_spec} ne ""} {
-        configure.args-append       -spec ${qt_qmake_spec}
+            set merger_configure_args(x86_64) \
+                                        "-spec ${qt_qmake_spec_64}"
+        } elseif {${qt_qmake_spec} ne ""} {
+            configure.args-append   -spec ${qt_qmake_spec}
+        }
     }
     configure.args-append           QT_ARCH=${build_arch} \
                                     QT_TARGET_ARCH=${build_arch}
@@ -99,8 +97,10 @@ if {${qt5.using_kde}} {
         if {[variant_exists universal] && [variant_isset universal]} {
             global merger_configure_args
 
-            lappend merger_configure_args(i386)   -spec ${qt_qmake_spec_32}
-            lappend merger_configure_args(x86_64) -spec ${qt_qmake_spec_64}
+            if { [tbool qt5.add_spec] } {
+                lappend merger_configure_args(i386)   -spec ${qt_qmake_spec_32}
+                lappend merger_configure_args(x86_64) -spec ${qt_qmake_spec_64}
+            }
 
             foreach arch ${configure.universal_archs} {
                 lappend merger_configure_args(${arch}) \
@@ -115,7 +115,9 @@ if {${qt5.using_kde}} {
 
         } else {
 
-            configure.args-append -spec ${qt_qmake_spec}
+            if { [tbool qt5.add_spec] } {
+                configure.args-append -spec ${qt_qmake_spec}
+            }
 
             configure.args-append \
                 QT_ARCH=${build_arch} \

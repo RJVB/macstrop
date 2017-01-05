@@ -218,7 +218,8 @@ if {${os.platform} eq "darwin"} {
 set qt_examples_dir         ${qt_apps_dir}/examples
 set qt_demos_dir            ${qt_apps_dir}/demos
 
-global qt_qmake_spec
+# global qt_qmake_spec
+options qt_qmake_spec
 global qt_qmake_spec_32
 global qt_qmake_spec_64
 
@@ -266,22 +267,27 @@ options qt_arch_types
 default qt_arch_types {[string map {i386 x86} [get_canonical_archs]]}
 
 if {${os.platform} eq "darwin"} {
-    set qt_qmake_spec_32 macx-clang-32
-    set qt_qmake_spec_64 macx-clang
+    set qt_qmake_spec_32        macx-clang-32
+    set qt_qmake_spec_64        macx-clang
 } elseif {${os.platform} eq "linux"} {
-    set qt_qmake_spec_32 linux-g++
-    set qt_qmake_spec_64 linux-g++-64
+    set qt_qmake_spec_32        linux-g++
+    set qt_qmake_spec_64        linux-g++-64
     compiler.blacklist-append   clang
 }
 
-if { ![option universal_variant] || ![variant_isset universal] } {
-    if { ${build_arch} eq "i386" } {
-        set qt_qmake_spec ${qt_qmake_spec_32}
+default qt_qmake_spec           {[qt5::get_default_spec]}
+
+proc qt5::get_default_spec {} {
+    global build_arch qt_qmake_spec_32 qt_qmake_spec_64
+    if { ![option universal_variant] || ![variant_isset universal] } {
+        if { ${build_arch} eq "i386" } {
+            set qt_qmake_spec   ${qt_qmake_spec_32}
+        } else {
+            set qt_qmake_spec   ${qt_qmake_spec_64}
+        }
     } else {
-        set qt_qmake_spec ${qt_qmake_spec_64}
+        set qt_qmake_spec       ""
     }
-} else {
-    set qt_qmake_spec ""
 }
 
 # standard PKGCONFIG path
