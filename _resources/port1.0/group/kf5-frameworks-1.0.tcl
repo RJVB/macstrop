@@ -98,7 +98,7 @@ namespace eval kf5 {
         namespace upvar ::kf5 ${name}_lib lib
         if {${library} ne 0} {
             global os.platform build_arch
-            ifplatform darwin {
+            if {${os.platform} eq "darwin"} {
                 set lib_path        lib
                 if {${soversion} ne ""} {
                     set lib_ext     5.dylib
