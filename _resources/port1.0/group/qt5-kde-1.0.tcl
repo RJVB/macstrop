@@ -457,12 +457,14 @@ if {![info exists building_qt5]} {
 depends_build-append    port:pkgconfig
 
 # standard destroot environment
-if { ![option universal_variant] || ![variant_isset universal] } {
-    destroot.env-append \
-        INSTALL_ROOT=${destroot}
-} else {
-    foreach arch ${configure.universal_archs} {
-        lappend merger_destroot_env($arch) INSTALL_ROOT=${workpath}/destroot-${arch}
+pre-destroot {
+    if { ![option universal_variant] || ![variant_isset universal] } {
+        destroot.env-append \
+            INSTALL_ROOT=${destroot}
+    } else {
+        foreach arch ${configure.universal_archs} {
+            lappend merger_destroot_env($arch) INSTALL_ROOT=${workpath}/destroot-${arch}
+        }
     }
 }
 
