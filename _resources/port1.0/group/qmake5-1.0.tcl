@@ -1,6 +1,4 @@
-# -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
-# $Id: qmake5-1.0.tcl 145157 2016-01-27 04:47:20Z mcalhoun@macports.org $
-
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 #
 # Copyright (c) 2013-2016 The MacPorts Project
 # All rights reserved.
@@ -35,217 +33,171 @@
 #
 # Usage:
 # PortGroup                     qmake5 1.0
-#
-# or
-# set qt5.prefer_kde            yes
-# PortGroup                     qmake5 1.0
 
 PortGroup                       qt5 1.0
+PortGroup                       active_variants 1.1
+
+options qt5.add_spec qt5.debug_variant
+default qt5.add_spec yes
+default qt5.debug_variant yes
 
 # with the -r option, the examples do not install correctly (no source code)
 #     the install_sources target is not created in the Makefile(s)
 configure.cmd                   ${qt_qmake_cmd}
 #configure.cmd                   ${qt_qmake_cmd} -r
 
-options qt5.add_spec
-default qt5.add_spec            yes
-
 configure.pre_args-replace      --prefix=${prefix} "PREFIX=${prefix}"
 configure.universal_args-delete --disable-dependency-tracking
 
+### transfer control to the qt5-kde variant
 if {[tbool qt5.using_kde]} {
+    PortGroup qmake5-kde 1.0
+    return
+}
+###
 
-    ### using port:qt5-kde
-    # we use a somewhat simpler qmake cookbook, which doesn't require the magic related
-    # to providing all Qt components through subports. We also provide a different +debug
-    # variant which dependents don't need to know anything about.
-
-    if {[tbool qt5.add_spec]} {
-        if {[variant_exists universal] && [variant_isset universal]} {
-            set merger_configure_args(i386) \
-                                    "CONFIG+=\"x86\" -spec ${qt_qmake_spec_32}"
-            set merger_configure_args(x86_64) \
-                                        "-spec ${qt_qmake_spec_64}"
-        } elseif {${qt_qmake_spec} ne ""} {
-            configure.args-append   -spec ${qt_qmake_spec}
-        }
-    }
-    configure.args-append           QT_ARCH=${build_arch} \
-                                    QT_TARGET_ARCH=${build_arch}
-
-    # qt5-kde does not currently support a debug variant, but does provide (some) debugging information
-    configure.pre_args-append       "CONFIG+=release"
-
-    default destroot.destdir        "INSTALL_ROOT=${destroot}"
-
-} else {
-
-    ### using the mainstream port:qt5
-
-    PortGroup                       active_variants 1.1
-
-    pre-configure {
-        #
-        # set QT_ARCH and QT_TARGET_ARCH manually since they may be
-        #     incorrect in ${qt_mkspecs_dir}/qconfig.pri
-        #     if qtbase was built universal
-        #
-        # -spec specifies build configuration (compiler, 32-bit/64-bit, etc.)
-        #
-        # set -arch x86_64 since macx-clang spec file assumes it is the default
-        #
+pre-configure {
+    #
+    # set QT_ARCH and QT_TARGET_ARCH manually since they may be
+    #     incorrect in ${qt_mkspecs_dir}/qconfig.pri
+    #     if qtbase was built universal
+    #
+    # -spec specifies build configuration (compiler, 32-bit/64-bit, etc.)
+    #
+    # set -arch x86_64 since macx-clang spec file assumes it is the default
+    #
+    if { [tbool qt5.add_spec] } {
         if {[variant_exists universal] && [variant_isset universal]} {
             global merger_configure_args
-
-            if { [tbool qt5.add_spec] } {
-                lappend merger_configure_args(i386)   -spec ${qt_qmake_spec_32}
-                lappend merger_configure_args(x86_64) -spec ${qt_qmake_spec_64}
-            }
-
-            foreach arch ${configure.universal_archs} {
-                lappend merger_configure_args(${arch}) \
-                    QT_ARCH=${arch} \
-                    QT_TARGET_ARCH=${arch}
-            }
-
-            lappend merger_configure_args(x86_64)  \
-                QMAKE_CFLAGS+='-arch x86_64'       \
-                QMAKE_CXXFLAGS+='-arch x86_64'     \
-                QMAKE_LFLAGS+='-arch x86_64'
-
+            lappend merger_configure_args(i386)   -spec ${qt_qmake_spec_32}
+            lappend merger_configure_args(x86_64) -spec ${qt_qmake_spec_64}
         } else {
-
-            if { [tbool qt5.add_spec] } {
-                configure.args-append -spec ${qt_qmake_spec}
-            }
-
-            configure.args-append \
-                QT_ARCH=${build_arch} \
-                QT_TARGET_ARCH=${build_arch}
-
-            if { ${configure.build_arch} eq "x86_64" } {
-                configure.args-append               \
-                    QMAKE_CFLAGS+="-arch x86_64"    \
-                    QMAKE_CXXFLAGS+="-arch x86_64"  \
-                    QMAKE_LFLAGS+="-arch x86_64"
-            }
-        }
-
-    }
-
-    if {![info exists qt5_qmake_request_no_debug]} {
-        variant debug description {Build both release and debug libraries} {}
-
-        # accommodating variant request varies depending on how qtbase was built
-        pre-configure {
-
-            set base_debug false
-            foreach qt_test_name ${available_qt_versions} {
-                if {![catch {set result [active_variants ${qt_test_name}-qtbase debug ""]}]} {
-                    if {$result} {
-                        # code to be executed if $depspec is active with at least all variants in
-                        # $required and none from $forbidden
-                        set base_debug true
-                        break
-                    } else {
-                        # code to be executed if $depspec is active, but either not with all
-                        # variants in $required or any variant in $forbidden
-                    }
-                } else {
-                    # code to be executed if $depspec isn't active
-                }
-            }
-            # determine if the user wants to build debug libraries
-            if { [variant_exists debug] && [variant_isset debug] } {
-                set this_debug true
-            } else {
-                set this_debug false
-            }
-
-            # determine of qmake's default and user requests are compatible; override qmake if necessary
-            if { ${this_debug} && !${base_debug}  } {
-                configure.args-append "QT_CONFIG+=\"debug_and_release build_all\""
-            }
-
-            if { !${this_debug} && ${base_debug}  } {
-                configure.args-append "QT_CONFIG-=\"debug_and_release build_all\" CONFIG-=\"debug\""
-            }
+            configure.args-append -spec ${qt_qmake_spec}
         }
     }
 
-}
-
-### back to common code:
-
-# override QMAKE_MACOSX_DEPLOYMENT_TARGET set in ${prefix}/libexec/qt5/mkspecs/macx-clang/qmake.conf
-# see #50249
-configure.args-append QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}
-
-# respect configure.sdkroot if it exists
-if {${configure.sdkroot} ne ""} {
-    configure.args-append \
-        QMAKE_MAC_SDK=[string tolower [join [lrange [split [lindex [split ${configure.sdkroot} "/"] end] "."] 0 end-1] "."]]
-}
-
-# a change in Qt 5.7.1  made it more difficult to override sdk variables
-# see https://codereview.qt-project.org/#/c/165499/
-# see https://bugreports.qt.io/browse/QTBUG-56965
-pre-configure {
-    xinstall -m 755 -d ${configure.dir}
-    set cache [open "${configure.dir}/.qmake.cache" a 0644]
+    # set QT and QMAKE values in a cache file
+    # previously, they were set using configure.args
+    # a cache file is used for two reasons
+    #
+    # 1) a change in Qt 5.7.1  made it more difficult to override sdk variables
+    #    see https://codereview.qt-project.org/#/c/165499/
+    #    see https://bugreports.qt.io/browse/QTBUG-56965
+    #
+    # 2) some ports (e.g. py-pyqt5 py-qscintilla2) call qmake indirectly and
+    #    do not pass on the configure.args values
+    #
+    set cache [open "${worksrcpath}/.qmake.cache" w 0644]
+    puts ${cache} "if(${qt_qmake_spec_64}) {"
+    puts ${cache} "  QT_ARCH=x86_64"
+    puts ${cache} "  QT_TARGET_ARCH=x86_64"
+    puts ${cache} "  QMAKE_CFLAGS+=-arch x86_64"
+    puts ${cache} "  QMAKE_CXXFLAGS+=-arch x86_64"
+    puts ${cache} "  QMAKE_LFLAGS+=-arch x86_64"
+    puts ${cache} "} else {"
+    puts ${cache} "  QT_ARCH=i386"
+    puts ${cache} "  QT_TARGET_ARCH=i386"
+    puts ${cache} "}"
     puts ${cache} "QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}"
     if {${configure.sdkroot} ne ""} {
         puts ${cache} \
             QMAKE_MAC_SDK=[string tolower [join [lrange [split [lindex [split ${configure.sdkroot} "/"] end] "."] 0 end-1] "."]]
     }
+    # respect configure.compiler but still allow qmake to find correct Xcode clang based on SDK
+    if { ${configure.compiler} ne "clang" } {
+        puts ${cache} "QMAKE_CC=${configure.cc}"
+        puts ${cache} "QMAKE_CXX=${configure.cxx}"
+    }
+
+    set qt_version [exec ${prefix}/bin/pkg-config --modversion Qt5Core]
+
+    if { [vercmp ${qt_version} 5.6.0] >= 0 } {
+        if { ${configure.cxx_stdlib} ne "libc++" } {
+            # override C++ flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
+            #    so value of ${configure.cxx_stdlib} can always be used
+            puts ${cache} QMAKE_CXXFLAGS-=-stdlib=libc++
+            puts ${cache} QMAKE_LFLAGS-=-stdlib=libc++
+            puts ${cache} QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}
+            puts ${cache} QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
+        }
+    } elseif { [vercmp ${qt_version} 5.5.0] == 0 } {
+
+        # always use the same standard library
+        puts ${cache} QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}
+        puts ${cache} QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
+
+        # override C++ flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
+        #    so value of ${configure.cxx_stdlib} can always be used
+        if { ${configure.cxx_stdlib} ne "libc++" } {
+            puts ${cache} QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++
+            puts ${cache} QMAKE_LFLAGS_CXX11-=-stdlib=libc++
+            puts ${cache} QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
+            puts ${cache} QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
+        }
+    } else {
+        # always use the same standard library
+        puts ${cache} QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}
+        puts ${cache} QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
+    }
+
+    # accommodating variant request varies depending on how qtbase was built
+    set base_debug false
+    foreach qt_test_name ${available_qt_versions} {
+        if { [string range ${qt_test_name} end-3 end] eq "-kde" } {
+            set qt_test_port_name ${qt_test_name}
+        } else {
+            set qt_test_port_name ${qt_test_name}-qtbase
+        }
+        if {![catch {set result [active_variants ${qt_test_port_name} debug ""]}]} {
+            if {$result} {
+                # code to be executed if $depspec is active with at least all variants in
+                # $required and none from $forbidden
+                set base_debug true
+                break
+            } else {
+                # code to be executed if $depspec is active, but either not with all
+                # variants in $required or any variant in $forbidden
+            }
+        } else {
+            # code to be executed if $depspec isn't active
+        }
+    }
+
+    # determine if the user wants to build debug libraries
+    if { [variant_exists debug] && [variant_isset debug] } {
+        set this_debug true
+    } else {
+        set this_debug false
+    }
+
+    # determine of qmake's default and user requests are compatible; override qmake if necessary
+    if { ${this_debug} && !${base_debug}  } {
+        puts ${cache} "QT_CONFIG+=debug_and_release build_all debug"
+        puts ${cache} "CONFIG+=debug"
+        puts ${cache} "CONFIG-=release"
+    }
+
+    if { !${this_debug} && ${base_debug}  } {
+        puts ${cache} "QT_CONFIG-=debug_and_release build_all debug"
+        puts ${cache} "CONFIG-=debug"
+        puts ${cache} "CONFIG+=release"
+    }
+
     close ${cache}
 }
 
-# respect configure.compiler but still allow qmake to find correct Xcode clang based on SDK
-if { ${configure.compiler} ne "clang" } {
-    configure.args-append \
-        QMAKE_CC=${configure.cc} \
-        QMAKE_CXX=${configure.cxx}
+# add debug variant if one does not exist and one is requested via qt5.debug_variant
+# variant is added in eval_variants so that qt5.debug_variant can be set anywhere in the Portfile
+rename ::eval_variants ::real_qmake5_eval_variants
+proc eval_variants {variations} {
+    global qt5.debug_variant
+    if { ![variant_exists debug] && [tbool qt5.debug_variant] } {
+        variant debug description {Build both release and debug libraries} {}
+    }
+    uplevel ::real_qmake5_eval_variants $variations
 }
 
-if { ${qt_name} eq "qt55" } {
 
-    # always use the same standard library
-    configure.args-append                                \
-        QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}  \
-        QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
+pre-configure {
 
-    # override C++ flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
-    #    so value of ${configure.cxx_stdlib} can always be used
-    if { ${configure.cxx_stdlib} ne "libc++" } {
-        configure.args-append                                      \
-            QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++                   \
-            QMAKE_LFLAGS_CXX11-=-stdlib=libc++                     \
-            QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}  \
-            QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
-    }
-} else {
-    # override C++11 flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
-    #    so value of ${configure.cxx_stdlib} can always be used
-    # RJVB: only use cxx_stdlib when it is actually set and not equal to libc++ already.
-    if {${configure.cxx_stdlib} ne ""} {
-        if {${configure.cxx_stdlib} ne "libc++"} {
-            configure.args-append \
-                QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++ \
-                QMAKE_LFLAGS_CXX11-=-stdlib=libc++   \
-                QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib} \
-                QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
-        }
-        # ensure ${configure.cxx_stdlib} is used for C++ stdlib
-        configure.args-append \
-            QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib} \
-            QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
-    }
 }
-
-configure.args-append \
-        QMAKE_CXXFLAGS+="${configure.cxxflags}" \
-        QMAKE_CFLAGS+="${configure.cflags}" \
-        QMAKE_LFLAGS+="${configure.ldflags}"
-
-# kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
