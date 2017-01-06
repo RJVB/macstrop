@@ -40,6 +40,8 @@
 # set qt5.prefer_kde            yes
 # PortGroup                     qmake5 1.0
 
+ui_warn "qmake5-kde-1.0.tcl is currently a work-in-progress!"
+
 ### implement exit-immediately-if-already-read mechanism
 PortGroup                       qt5-kde 1.0
 
