@@ -49,7 +49,8 @@ configure.cmd                   ${qt_qmake_cmd}
 configure.pre_args-replace      --prefix=${prefix} "PREFIX=${prefix}"
 configure.universal_args-delete --disable-dependency-tracking
 
-### transfer control to the qt5-kde variant
+### transfer control to the qt5-kde variant if necessary
+### The qt5 PortGroup determines this
 if {[tbool qt5.using_kde]} {
     PortGroup qmake5-kde 1.0
     return

@@ -1,8 +1,6 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
-# $Id: qmake5-1.0.tcl 145157 2016-01-27 04:47:20Z mcalhoun@macports.org $
-
 #
-# Copyright (c) 2013-2016 The MacPorts Project
+# Copyright (c) 2013-2017 The MacPorts Project
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -31,36 +29,47 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 #
-# This portgroup defines standard settings when using qmake with qt5-kde
+# This portgroup defines standard settings when using qmake with qt5-kde.
+# Not to be used directly.
 #
-# Usage:
-# PortGroup                     qmake5-kde 1.0
-#
-# or
 # set qt5.prefer_kde            yes
 # PortGroup                     qmake5 1.0
+
+if {![tbool qt5.using_kde]} {
+    ui_warn "The qmake5-kde PortGroup shouldn't be called directly"
+    # transfer control if qt5.using_kde isn't set
+    PortGroup                   qmake5 1.0
+    return
+}
+
+# if we're here, that means port:qt5-kde is installed, qt5.using_kde is set and
+# qmake5-1.0.tcl transferred control to us.
 
 ui_warn "qmake5-kde-1.0.tcl is currently a work-in-progress!"
 
 ### implement exit-immediately-if-already-read mechanism
+namespace eval qt5 {
+    set dont_include_twice      yes
+}
 PortGroup                       qt5-kde 1.0
+namespace eval qt5 {
+    unset dont_include_twice
+}
 
-# with the -r option, the examples do not install correctly (no source code)
-#     the install_sources target is not created in the Makefile(s)
-configure.cmd                   ${qt_qmake_cmd}
-#configure.cmd                   ${qt_qmake_cmd} -r
+if {![info exists qt5.add_spec]} {
+    ### avoid defining these twice:
 
-### avoid defining these twice:
-options qt5.add_spec qt5.debug_variant
-default qt5.add_spec            yes
-default qt5.debug_variants      yes
+    # with the -r option, the examples do not install correctly (no source code)
+    #     the install_sources target is not created in the Makefile(s)
+    configure.cmd               ${qt_qmake_cmd}
 
-configure.pre_args-replace      --prefix=${prefix} "PREFIX=${prefix}"
-configure.universal_args-delete --disable-dependency-tracking
+    options qt5.add_spec qt5.debug_variant
+    default qt5.add_spec        yes
+    default qt5.debug_variants  yes
 
-if {![tbool qt5.using_kde]} {
-    ui_error "qmake5-kde-1.0.tcl is used in a wrong context"
-    return -code error "invalid use of qmake5-kde-1.0.tcl"
+    configure.pre_args-replace  --prefix=${prefix} "PREFIX=${prefix}"
+    configure.universal_args-delete \
+                                --disable-dependency-tracking
 }
 
 ### using port:qt5-kde

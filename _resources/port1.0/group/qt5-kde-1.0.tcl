@@ -2,7 +2,7 @@
 
 # Copyright (c) 2014 The MacPorts Project
 # Copyright (c) 2013-11-26 michaelld@macports.org
-# Copyright (c) 2015, 2016 R.J.V. Bertin
+# Copyright (c) 2015-2017 R.J.V. Bertin
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -88,6 +88,10 @@ if {[info exists qt5.using_kde] && !${qt5.using_kde}} {
 }
 
 namespace eval qt5 {
+    if {[info exists dont_include_twice] && [info exists currentportgroupdir]} {
+        ui_debug "not including qt5-kde-1.0.tcl again"
+        return
+    }
     # our directory:
     variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
 }
