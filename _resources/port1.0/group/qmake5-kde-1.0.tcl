@@ -85,8 +85,6 @@ if {[tbool qt5.add_spec]} {
         configure.args-append   -spec ${qt_qmake_spec}
     }
 }
-configure.args-append           QT_ARCH=${build_arch} \
-                                QT_TARGET_ARCH=${build_arch}
 
 # qt5-kde does not currently support a debug variant, but does provide (some) debugging information
 configure.pre_args-append       "CONFIG+=release"
@@ -143,6 +141,10 @@ pre-configure {
             puts ${cache} \
                 QMAKE_MAC_SDK=[string tolower [join [lrange [split [lindex [split ${configure.sdkroot} "/"] end] "."] 0 end-1] "."]]
         }
+    }
+    platform linux {
+        puts ${cache} "QT_ARCH=${build_arch}"
+        puts ${cache} "QT_TARGET_ARCH=${build_arch}"
     }
     # respect configure.compiler but still allow qmake to find correct Xcode clang based on SDK
     if { ${configure.compiler} ne "clang" } {
