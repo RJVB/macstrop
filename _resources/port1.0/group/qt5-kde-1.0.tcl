@@ -325,21 +325,21 @@ if {${os.platform} eq "darwin"} {
 
 # allow for depending on either qt5[-mac] or qt5[-mac]-devel or qt5[-mac]*-kde, simultaneously
 
-if {[info exists building_qt5]} {
-    set qt5_stubports \
-                {qtbase qtdeclarative qtserialbus qtserialport qtsensors \
-                qtquick1 qtwebchannel qtimageformats qtsvg qtmacextras \
-                qtlocation qtxmlpatterns qtcanvas3d qtgraphicaleffects qtmultimedia \
-                qtscript qt3d qtconnectivity qttools qtquickcontrols qtenginio \
-                qtwebkit-examples qtwebsockets qttranslations mysql-plugin \
-                sqlite-plugin \
-                docs
-    }
-    # new in 5.7.1: qtcharts qtdatavis3d qtgamepad qtpurchasing qtscxml
-    # removed in 5.7: qtenginio (kept as stubport for 1 or 2 versions)
-    if {[vercmp ${version} 5.7.0] >= 0} {
-        lappend qt5_stubports qtcharts qtdatavis3d qtgamepad qtpurchasing qtscxml
-    }
+set qt5.kde_stubports \
+            {qtbase qtdeclarative qtserialbus qtserialport qtsensors \
+            qtquick1 qtwebchannel qtimageformats qtsvg qtmacextras \
+            qtlocation qtxmlpatterns qtcanvas3d qtgraphicaleffects qtmultimedia \
+            qtscript qt3d qtconnectivity qttools qtquickcontrols qtenginio \
+            qtwebkit-examples qtwebsockets qttranslations mysql-plugin \
+            sqlite-plugin \
+            docs
+}
+# new in 5.7.1: qtcharts qtdatavis3d qtgamepad qtpurchasing qtscxml
+# removed in 5.7: qtenginio (kept as stubport for 1 or 2 versions)
+if {![info exists building_qt5] || [vercmp ${version} 5.7.0] >= 0} {
+    # these stubports are added to the list for dependents, but not for port:qt5*-kde itself
+    # this allows to define them only in port:qt5-kde, not qt56-kde .
+    lappend qt5.kde_stubports qtcharts qtdatavis3d qtgamepad qtpurchasing qtscxml
 }
 
 global qt5_dependency
@@ -625,10 +625,8 @@ platform linux {
 # a procedure for declaring dependencies on Qt5 components, which will expand them
 # into the appropriate subports for the Qt5 flavour installed
 # e.g. qt5.depends_component qtbase qtsvg qtdeclarative
-proc qt5.depends_component {first args} {
-    global qt5_component_lib qt5.using_kde os.major
-    # join ${first} and (the optional) ${args}
-    set args [linsert $args[set list {}] 0 ${first}]
+proc qt5::depends_component_p {deptype args} {
+    global qt5_component_lib qt5.using_kde os.major qt5.kde_stubports version
     # select the Qt5 port prefix, depending on which Qt5 port is installed
     set is_qt5kde [expr [info exists qt5.using_kde] && ${qt5.using_kde}]
     if {${is_qt5kde} == 1 || ${os.major} == 10} {
@@ -639,16 +637,17 @@ proc qt5.depends_component {first args} {
     } else {
         set qt5pprefix  "qt5"
     }
-    foreach comp ${args} {
+    ui_debug "qt5::depends_component_p, deptype=${deptype} args=$args"
+    foreach comp $args {
         set done true
         switch ${comp} {
             "qt5" {
                 if {${is_qt5kde} == 1} {
                     global qt5_dependency
                     # qt5-kde-1.0.tcl exports the exact dependency expression in a variable
-                    depends_lib-append ${qt5_dependency}
+                    ${deptype}-append ${qt5_dependency}
                 } else {
-                    depends_lib-append port:${qt5pprefix}
+                    ${deptype}-append port:${qt5pprefix}
                 }
             }
             "qtwebkit" -
@@ -659,7 +658,7 @@ proc qt5.depends_component {first args} {
             }
             default {
                 # these components are included port:qt5-kde (and provided as additional stub subports)
-                if {${is_qt5kde} == 0} {
+                if {${is_qt5kde} == 0 || [lsearch -exact ${qt5.kde_stubports} ${comp}] < 0} {
                     set done false
                 }
             }
@@ -668,12 +667,20 @@ proc qt5.depends_component {first args} {
             set portname "${qt5pprefix}-${comp}"
             if {[info exists qt5_component_lib] && [info exists qt5_component_lib(${comp})]} {
                 # an explicit dependency pattern was given, e.g. path:foo
-                depends_lib-append "$qt5_component_lib(${comp}):${portname}"
+                ${deptype}-append "$qt5_component_lib(${comp}):${portname}"
             } else {
-                depends_lib-append port:${portname}
+                ${deptype}-append port:${portname}
             }
         }
     }
+}
+
+proc qt5.depends_component {args} {
+    return [qt5::depends_component_p depends_lib {*}${args}]
+}
+
+proc qt5.depends_build_component {args} {
+    return [qt5::depends_component_p depends_build {*}${args}]
 }
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
