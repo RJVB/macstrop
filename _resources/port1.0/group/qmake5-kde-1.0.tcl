@@ -45,12 +45,10 @@ if {![tbool qt5.using_kde]} {
 # if we're here, that means port:qt5-kde is installed, qt5.using_kde is set and
 # qmake5-1.0.tcl transferred control to us.
 
-ui_warn "qmake5-kde-1.0.tcl is currently a work-in-progress!"
-
-### implement exit-immediately-if-already-read mechanism
 namespace eval qt5 {
     set dont_include_twice      yes
 }
+# include qt5-kde only once from here
 PortGroup                       qt5-kde 1.0
 namespace eval qt5 {
     unset dont_include_twice
@@ -115,47 +113,64 @@ pre-extract {
     }
 }
 
-# a change in Qt 5.7.1  made it more difficult to override sdk variables
-# see https://codereview.qt-project.org/#/c/165499/
-# see https://bugreports.qt.io/browse/QTBUG-56965
 pre-configure {
+    # set QT and QMAKE values in a cache file
+    # previously, they were set using configure.args
+    # a cache file is used for two reasons
+    #
+    # 1) a change in Qt 5.7.1  made it more difficult to override sdk variables
+    #    see https://codereview.qt-project.org/#/c/165499/
+    #    see https://bugreports.qt.io/browse/QTBUG-56965
+    #
+    # 2) some ports (e.g. py-pyqt5 py-qscintilla2) call qmake indirectly and
+    #    do not pass on the configure.args values
+    #
     xinstall -m 755 -d ${configure.dir}
     set cache [open "${configure.dir}/.qmake.cache" a 0644]
-    puts ${cache} "QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}"
-    if {${configure.sdkroot} ne ""} {
-        puts ${cache} \
-            QMAKE_MAC_SDK=[string tolower [join [lrange [split [lindex [split ${configure.sdkroot} "/"] end] "."] 0 end-1] "."]]
+    platform darwin {
+        puts ${cache} "if(${qt_qmake_spec_64}) {"
+        puts ${cache} "  QT_ARCH=x86_64"
+        puts ${cache} "  QT_TARGET_ARCH=x86_64"
+        puts ${cache} "  QMAKE_CFLAGS+=-arch x86_64"
+        puts ${cache} "  QMAKE_CXXFLAGS+=-arch x86_64"
+        puts ${cache} "  QMAKE_LFLAGS+=-arch x86_64"
+        puts ${cache} "} else {"
+        puts ${cache} "  QT_ARCH=i386"
+        puts ${cache} "  QT_TARGET_ARCH=i386"
+        puts ${cache} "}"
+        puts ${cache} "QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}"
+        if {${configure.sdkroot} ne ""} {
+            puts ${cache} \
+                QMAKE_MAC_SDK=[string tolower [join [lrange [split [lindex [split ${configure.sdkroot} "/"] end] "."] 0 end-1] "."]]
+        }
     }
+    # respect configure.compiler but still allow qmake to find correct Xcode clang based on SDK
+    if { ${configure.compiler} ne "clang" } {
+        puts ${cache} "QMAKE_CC=${configure.cc}"
+        puts ${cache} "QMAKE_CXX=${configure.cxx}"
+    }
+
+    set qt_version [exec ${prefix}/bin/pkg-config --modversion Qt5Core]
+
+    if {${configure.cxx_stdlib} ne ""} {
+        # only use cxx_stdlib when it is actually set and not equal to libc++ already.
+        if { [vercmp ${qt_version} 5.6.0] >= 0 } {
+            if { ${configure.cxx_stdlib} ne "libc++" } {
+                # override C++ flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
+                #    so value of ${configure.cxx_stdlib} can always be used
+                puts ${cache} QMAKE_CXXFLAGS-=-stdlib=libc++
+                puts ${cache} QMAKE_LFLAGS-=-stdlib=libc++
+                puts ${cache} QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}
+                puts ${cache} QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
+            }
+        } else {
+            # always use the same standard library
+            puts ${cache} QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}
+            puts ${cache} QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
+        }
+    }
+
     close ${cache}
 }
-
-# respect configure.compiler but still allow qmake to find correct Xcode clang based on SDK
-if { ${configure.compiler} ne "clang" } {
-    configure.args-append \
-        QMAKE_CC=${configure.cc} \
-        QMAKE_CXX=${configure.cxx}
-}
-
-# override C++11 flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
-#    so value of ${configure.cxx_stdlib} can always be used
-# RJVB: only use cxx_stdlib when it is actually set and not equal to libc++ already.
-if {${configure.cxx_stdlib} ne ""} {
-    if {${configure.cxx_stdlib} ne "libc++"} {
-        configure.args-append \
-            QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++ \
-            QMAKE_LFLAGS_CXX11-=-stdlib=libc++   \
-            QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib} \
-            QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
-    }
-    # ensure ${configure.cxx_stdlib} is used for C++ stdlib
-    configure.args-append \
-        QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib} \
-        QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
-}
-
-configure.args-append \
-        QMAKE_CXXFLAGS+="${configure.cxxflags}" \
-        QMAKE_CFLAGS+="${configure.cflags}" \
-        QMAKE_LFLAGS+="${configure.ldflags}"
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
