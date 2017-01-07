@@ -645,7 +645,9 @@ proc qt5::depends_component_p {deptype args} {
                 if {${is_qt5kde} == 1} {
                     global qt5_dependency
                     # qt5-kde-1.0.tcl exports the exact dependency expression in a variable
-                    ${deptype}-append ${qt5_dependency}
+                    if {[lsearch -exact [option ${deptype}] ${qt5_dependency}] < 0} {
+                        ${deptype}-append ${qt5_dependency}
+                    }
                 } else {
                     ${deptype}-append port:${qt5pprefix}
                 }
