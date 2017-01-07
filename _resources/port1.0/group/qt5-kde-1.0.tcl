@@ -611,13 +611,69 @@ platform darwin {
     array set qt5_component_lib [list \
         qtwebkit        path:libexec/${qt_name}/Library/Frameworks/QtWebKit.framework/QtWebKit \
         qtwebengine     path:libexec/${qt_name}/Library/Frameworks/QtWebEngine.framework/QtWebEngine \
+        qtwebview       path:libexec/${qt_name}/Library/Frameworks/QtWebView.framework/QtWebView \
     ]
 }
 platform linux {
     array set qt5_component_lib [list \
         qtwebkit        path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext} \
         qtwebengine     path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext} \
+        qtwebview       path:libexec/${qt_name}/lib/libQt5WebView.${qt_libs_ext} \
     ]
+}
+
+# a procedure for declaring dependencies on Qt5 components, which will expand them
+# into the appropriate subports for the Qt5 flavour installed
+# e.g. qt5.depends_component qtbase qtsvg qtdeclarative
+proc qt5.depends_component {first args} {
+    global qt5_component_lib qt5.using_kde os.major
+    # join ${first} and (the optional) ${args}
+    set args [linsert $args[set list {}] 0 ${first}]
+    # select the Qt5 port prefix, depending on which Qt5 port is installed
+    set is_qt5kde [expr [info exists qt5.using_kde] && ${qt5.using_kde}]
+    if {${is_qt5kde} == 1 || ${os.major} == 10} {
+        # We have port:qt5-kde or we're on OS X 10.6 which only gets Qt 5.3.2 from that port
+        set qt5pprefix  "qt5-kde"
+    } elseif {${os.major} == 11} {
+        set qt5pprefix  "qt55"
+    } else {
+        set qt5pprefix  "qt5"
+    }
+    foreach comp ${args} {
+        set done true
+        switch ${comp} {
+            "qt5" {
+                if {${is_qt5kde} == 1} {
+                    global qt5_dependency
+                    # qt5-kde-1.0.tcl exports the exact dependency expression in a variable
+                    depends_lib-append ${qt5_dependency}
+                } else {
+                    depends_lib-append port:${qt5pprefix}
+                }
+            }
+            "qtwebkit" -
+            "qtwebengine" -
+            "qtwebview" {
+                # these components are never stub subports
+                set done false
+            }
+            default {
+                # these components are included port:qt5-kde (and provided as additional stub subports)
+                if {${is_qt5kde} == 0} {
+                    set done false
+                }
+            }
+        }
+        if {!${done}} {
+            set portname "${qt5pprefix}-${comp}"
+            if {[info exists qt5_component_lib] && [info exists qt5_component_lib(${comp})]} {
+                # an explicit dependency pattern was given, e.g. path:foo
+                depends_lib-append "$qt5_component_lib(${comp}):${portname}"
+            } else {
+                depends_lib-append port:${portname}
+            }
+        }
+    }
 }
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
