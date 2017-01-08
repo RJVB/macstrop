@@ -73,6 +73,8 @@ if {![info exists qt5.add_spec]} {
     configure.universal_args-delete \
                                 --disable-dependency-tracking
 }
+options qt5.rewind_qmake_cache
+default qt5.rewind_qmake_cache yes
 
 ### using port:qt5-kde
 # we use a somewhat simpler qmake cookbook, which doesn't require the magic related
@@ -83,13 +85,6 @@ if {![info exists qt5.add_spec]} {
 configure.pre_args-append       "CONFIG+=release"
 
 default destroot.destdir        "INSTALL_ROOT=${destroot}"
-
-pre-extract {
-    if {[info exists configure.dir]} {
-        # maintenance convenience: prevent growing .qmake.qt5::cache files
-        file delete -force ${configure.dir}/.qmake.cache
-    }
-}
 
 pre-configure {
     if {[tbool qt5.add_spec]} {
@@ -124,7 +119,11 @@ pre-configure {
     #    do not pass on the configure.args values
     #
     xinstall -m 755 -d ${configure.dir}
-    set qt5::cache [open "${configure.dir}/.qmake.cache" a 0644]
+    if {[tbool qt5.rewind_qmake_cache]} {
+        set qt5::cache [open "${configure.dir}/.qmake.cache" w 0644]
+    } else {
+        set qt5::cache [open "${configure.dir}/.qmake.cache" a 0644]
+    }
     platform darwin {
         puts ${qt5::cache} "if(${qt_qmake_spec_64}) {"
         puts ${qt5::cache} "  QT_ARCH=x86_64"
