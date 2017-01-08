@@ -142,10 +142,6 @@ pre-configure {
                 QMAKE_MAC_SDK=[string tolower [join [lrange [split [lindex [split ${configure.sdkroot} "/"] end] "."] 0 end-1] "."]]
         }
     }
-    platform linux {
-        puts ${cache} "QT_ARCH=${build_arch}"
-        puts ${cache} "QT_TARGET_ARCH=${build_arch}"
-    }
     # respect configure.compiler but still allow qmake to find correct Xcode clang based on SDK
     if { ${configure.compiler} ne "clang" } {
         puts ${cache} "QMAKE_CC=${configure.cc}"
