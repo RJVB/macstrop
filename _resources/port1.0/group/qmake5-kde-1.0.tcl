@@ -79,43 +79,39 @@ if {![info exists qt5.add_spec]} {
 # to providing all Qt components through subports. We also provide a different +debug
 # variant which dependents don't need to know anything about.
 
-if {[tbool qt5.add_spec]} {
-    if {[variant_exists universal] && [variant_isset universal]} {
-        set merger_configure_args(i386) \
-                                "CONFIG+=\"x86\" -spec ${qt_qmake_spec_32}"
-        set merger_configure_args(x86_64) \
-                                    "-spec ${qt_qmake_spec_64}"
-    } elseif {${qt_qmake_spec} ne ""} {
-        configure.args-append   -spec ${qt_qmake_spec}
-    }
-}
-
 # qt5-kde does not currently support a debug variant, but does provide (some) debugging information
 configure.pre_args-append       "CONFIG+=release"
 
 default destroot.destdir        "INSTALL_ROOT=${destroot}"
 
-
-### back to common code:
-
-# override QMAKE_MACOSX_DEPLOYMENT_TARGET set in ${prefix}/libexec/qt5/mkspecs/macx-clang/qmake.conf
-# see #50249
-configure.args-append QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}
-
-# respect configure.sdkroot if it exists
-if {${configure.sdkroot} ne ""} {
-    configure.args-append \
-        QMAKE_MAC_SDK=[string tolower [join [lrange [split [lindex [split ${configure.sdkroot} "/"] end] "."] 0 end-1] "."]]
-}
-
 pre-extract {
     if {[info exists configure.dir]} {
         # maintenance convenience: prevent growing .qmake.qt5::cache files
-        file delete -force ${configure.dir}/.qmake.qt5::cache
+        file delete -force ${configure.dir}/.qmake.cache
     }
 }
 
 pre-configure {
+    if {[tbool qt5.add_spec]} {
+        if {[variant_exists universal] && [variant_isset universal]} {
+            set merger_configure_args(i386) \
+                                    "CONFIG+=\"x86\" -spec ${qt_qmake_spec_32}"
+            set merger_configure_args(x86_64) \
+                                        "-spec ${qt_qmake_spec_64}"
+        } elseif {${qt_qmake_spec} ne ""} {
+            configure.args-append   -spec ${qt_qmake_spec}
+        }
+    }
+
+    #
+    # set QT_ARCH and QT_TARGET_ARCH manually since they may be
+    #     incorrect in ${qt_mkspecs_dir}/qconfig.pri
+    #     if qtbase was built universal
+    #
+    # -spec specifies build configuration (compiler, 32-bit/64-bit, etc.)
+    #
+    # set -arch x86_64 since macx-clang spec file assumes it is the default
+    #
     # set QT and QMAKE values in a qt5::cache file
     # previously, they were set using configure.args
     # a qt5::cache file is used for two reasons
@@ -140,7 +136,10 @@ pre-configure {
         puts ${qt5::cache} "  QT_ARCH=i386"
         puts ${qt5::cache} "  QT_TARGET_ARCH=i386"
         puts ${qt5::cache} "}"
+        # override QMAKE_MACOSX_DEPLOYMENT_TARGET set in ${prefix}/libexec/qt5/mkspecs/macx-clang/qmake.conf
+        # see #50249
         puts ${qt5::cache} "QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}"
+        # respect configure.sdkroot if it exists
         if {${configure.sdkroot} ne ""} {
             puts ${qt5::cache} \
                 QMAKE_MAC_SDK=[string tolower [join [lrange [split [lindex [split ${configure.sdkroot} "/"] end] "."] 0 end-1] "."]]
