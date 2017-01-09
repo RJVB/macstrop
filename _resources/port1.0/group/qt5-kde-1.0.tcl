@@ -222,11 +222,6 @@ if {${os.platform} eq "darwin"} {
 set qt_examples_dir         ${qt_apps_dir}/examples
 set qt_demos_dir            ${qt_apps_dir}/demos
 
-# global qt_qmake_spec
-options qt_qmake_spec
-global qt_qmake_spec_32
-global qt_qmake_spec_64
-
 PortGroup                   compiler_blacklist_versions 1.0
 if {${os.platform} eq "darwin"} {
     compiler.whitelist      clang
@@ -270,6 +265,11 @@ if {[file exists ${qt5::currentportgroupdir}/macports_clang_selection-1.0.tcl]} 
 options qt_arch_types
 default qt_arch_types {[string map {i386 x86} [get_canonical_archs]]}
 
+# global qt_qmake_spec
+options qt_qmake_spec
+global qt_qmake_spec_32
+global qt_qmake_spec_64
+
 if {${os.platform} eq "darwin"} {
     set qt_qmake_spec_32        macx-clang-32
     set qt_qmake_spec_64        macx-clang
@@ -279,19 +279,28 @@ if {${os.platform} eq "darwin"} {
     compiler.blacklist-append   clang
 }
 
-default qt_qmake_spec           {[qt5::get_default_spec]}
-
 proc qt5::get_default_spec {} {
     global build_arch qt_qmake_spec_32 qt_qmake_spec_64
     if { ![option universal_variant] || ![variant_isset universal] } {
         if { ${build_arch} eq "i386" } {
-            set qt_qmake_spec   ${qt_qmake_spec_32}
+            return ${qt_qmake_spec_32}
         } else {
-            set qt_qmake_spec   ${qt_qmake_spec_64}
+            return ${qt_qmake_spec_64}
         }
     } else {
-        set qt_qmake_spec       ""
+        return ""
     }
+}
+
+default qt_qmake_spec           {[qt5::get_default_spec]}
+
+if {![info exists qt_qmake_spec]} {
+    ui_warn "You're including a qt5 PortGroup from inside a variant declaration"
+    ui_warn "This is currently impossible. Instead, use"
+    ui_warn "if \{\[variant_isset foo\]\} \{"
+    ui_warn "    PortGroup qt5 1.0 # or PortGroup qt5-kde"
+    ui_warn "    ..."
+    ui_warn "\}"
 }
 
 # standard PKGCONFIG path
