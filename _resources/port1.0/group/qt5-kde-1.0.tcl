@@ -294,14 +294,15 @@ proc qt5::get_default_spec {} {
 
 default qt_qmake_spec           {[qt5::get_default_spec]}
 
-if {![info exists qt_qmake_spec]} {
-    ui_warn "You're including a qt5 PortGroup from inside a variant declaration"
-    ui_warn "This is currently impossible. Instead, use"
-    ui_warn "if \{\[variant_isset foo\]\} \{"
-    ui_warn "    PortGroup qt5 1.0 # or PortGroup qt5-kde"
-    ui_warn "    ..."
-    ui_warn "\}"
-}
+# if {![info exists qt_qmake_spec]} {
+#     ui_warn "You're including a qt5 PortGroup from inside a variant declaration"
+#     ui_warn "This is currently impossible. Instead, use"
+#     ui_warn "if \{\[variant_isset foo\]\} \{"
+#     ui_warn "    PortGroup qt5 1.0 # or PortGroup qt5-kde"
+#     ui_warn "    ..."
+#     ui_warn "\}"
+#     ui_warn "Port: ${subport}"
+# }
 
 # standard PKGCONFIG path
 global qt_pkg_config_dir
@@ -317,9 +318,9 @@ set qt_cmake_defines    \
     "-DQT_QT_INCLUDE_DIR=${qt_includes_dir} \
      -DQT_ZLIB_LIBRARY=${prefix}/lib/libz.dylib \
      -DQT_PNG_LIBRARY=${prefix}/lib/libpng.dylib"
-if {${qt_qmake_spec} ne ""} {
+if {[option qt_qmake_spec] ne ""} {
     set qt_cmake_defines \
-        "${qt_cmake_defines} -DQT_QMAKESPEC=${qt_qmake_spec}"
+        "${qt_cmake_defines} -DQT_QMAKESPEC=[option qt_qmake_spec]"
 }
 
 if {${os.platform} eq "darwin"} {
@@ -411,23 +412,22 @@ if {![info exists building_qt5] && [variant_exists LTO] && [variant_isset LTO]} 
 }
 
 # standard configure environment, when not building qt5
-
 if {![info exists building_qt5]} {
-    configure.env-append \
-        QTDIR=${qt_dir} \
-        QMAKE=${qt_qmake_cmd} \
-        MOC=${qt_moc_cmd}
-
-    if { ![option universal_variant] || ![variant_isset universal] } {
-        if {${qt_qmake_spec} ne ""} {
-            configure.env-append QMAKESPEC=${qt_qmake_spec}
-        }
-    } else {
-        set merger_configure_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
-        set merger_configure_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
-        set merger_arch_flag             yes
-        set merger_arch_compiler         yes
-    }
+#     configure.env-append \
+#         QTDIR=${qt_dir} \
+#         QMAKE=${qt_qmake_cmd} \
+#         MOC=${qt_moc_cmd}
+#
+#     if { ![option universal_variant] || ![variant_isset universal] } {
+#         if {${qt_qmake_spec} ne ""} {
+#             configure.env-append QMAKESPEC=${qt_qmake_spec}
+#         }
+#     } else {
+#         set merger_configure_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
+#         set merger_configure_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
+#         set merger_arch_flag             yes
+#         set merger_arch_compiler         yes
+#     }
 
     # make sure the Qt binaries' directory is in the path, if it is
     # not the current prefix
@@ -440,23 +440,22 @@ if {![info exists building_qt5]} {
 }
 
 # standard build environment, when not building qt5
-
 if {![info exists building_qt5]} {
-    build.env-append \
-        QTDIR=${qt_dir} \
-        QMAKE=${qt_qmake_cmd} \
-        MOC=${qt_moc_cmd}
-
-    if { ![option universal_variant] || ![variant_isset universal] } {
-        if {${qt_qmake_spec} ne ""} {
-            build.env-append QMAKESPEC=${qt_qmake_spec}
-        }
-    } else {
-        set merger_build_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
-        set merger_build_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
-        set merger_arch_flag             yes
-        set merger_arch_compiler         yes
-    }
+#     build.env-append \
+#         QTDIR=${qt_dir} \
+#         QMAKE=${qt_qmake_cmd} \
+#         MOC=${qt_moc_cmd}
+#
+#     if { ![option universal_variant] || ![variant_isset universal] } {
+#         if {${qt_qmake_spec} ne ""} {
+#             build.env-append QMAKESPEC=${qt_qmake_spec}
+#         }
+#     } else {
+#         set merger_build_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
+#         set merger_build_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
+#         set merger_arch_flag             yes
+#         set merger_arch_compiler         yes
+#     }
 
     # make sure the Qt binaries' directory is in the path, if it is
     # not the current prefix
@@ -482,21 +481,20 @@ pre-destroot {
 }
 
 # standard destroot environment, when not building qt5
-
 if {![info exists building_qt5]} {
-    destroot.env-append \
-        QTDIR=${qt_dir} \
-        QMAKE=${qt_qmake_cmd} \
-        MOC=${qt_moc_cmd}
-
-    if { ![option universal_variant] || ![variant_isset universal] } {
-        if {${qt_qmake_spec} ne ""} {
-            build.env-append QMAKESPEC=${qt_qmake_spec}
-        }
-    } else {
-        set destroot_build_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
-        set destroot_build_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
-    }
+#     destroot.env-append \
+#         QTDIR=${qt_dir} \
+#         QMAKE=${qt_qmake_cmd} \
+#         MOC=${qt_moc_cmd}
+#
+#     if { ![option universal_variant] || ![variant_isset universal] } {
+#         if {${qt_qmake_spec} ne ""} {
+#             build.env-append QMAKESPEC=${qt_qmake_spec}
+#         }
+#     } else {
+#         set destroot_build_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
+#         set destroot_build_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
+#     }
 
     # make sure the Qt binaries' directory is in the path, if it is
     # not the current prefix
