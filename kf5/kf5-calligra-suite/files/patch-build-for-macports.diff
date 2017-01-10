@@ -1,0 +1,152 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 13ac88f..24e04e5 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -107,9 +107,20 @@ message(STATUS "Release build: ${RELEASE_BUILD}")
+ #############
+ ############
+ 
++include(FeatureSummary)
++
+ option(GHNS "support Get Hot New Stuff" OFF)
+ option(PACKAGERS_BUILD "Build support of multiple CPU architectures in one binary. Should be used by packagers only." ON)
+ 
++# Generate a standalone app bundle when building on Apple's OS X
++# set this to build a more unix-traditional layout that uses and provides
++# shared libraries and other resources (e.g. for MacPorts, Fink, HomeBrew etc.)
++# TODO: Make this default - when the feature has been sorted out properly.
++if(APPLE)
++    option(APPLE_STANDALONE_BUNDLE "Generate a standalone app bundle when building on Apple's OS (experimental)" OFF)
++    add_feature_info("App Bundle" APPLE_STANDALONE_BUNDLE "Generate a standalone app bundle when building on Apple's OS (experimental)")
++endif()
++
+  #######################
+ ########################
+ ## Productset setting ##
+@@ -173,7 +184,6 @@ include(CheckFunctionExists)
+ include(CheckTypeSize)
+ include(CheckIncludeFile)
+ include(GenerateExportHeader)
+-include(FeatureSummary)
+ # ECM macros
+ include(ECMOptionalAddSubdirectory)
+ include(ECMInstallIcons)
+@@ -359,6 +369,10 @@ if(WIN32)
+     set(WIN32_PLATFORM_NET_LIBS ws2_32.lib netapi32.lib)
+ endif()
+ 
++if(APPLE AND APPLE_STANDALONE_BUNDLE)
++    add_definitions(-DAPPLE_STANDALONE_BUNDLE)
++endif()
++
+  ###########################
+ ############################
+ ## Required dependencies  ##
+diff --git a/libs/main/KoApplication.cpp b/libs/main/KoApplication.cpp
+index 7b23f8d..c248489 100644
+--- a/libs/main/KoApplication.cpp
++++ b/libs/main/KoApplication.cpp
+@@ -222,7 +222,7 @@ bool KoApplication::start()
+ 
+     aboutData.processCommandLine(&parser);
+ 
+-#if defined(Q_OS_WIN) || defined (Q_OS_MACX)
++#if defined(Q_OS_WIN) || defined (Q_OS_MACOS)
+ #ifdef ENV32BIT
+     if (isWow64()) {
+         KMessageBox::information(0,
+@@ -238,14 +238,26 @@ bool KoApplication::start()
+     appdir.cdUp();
+ 
+     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
++#ifdef Q_OS_WIN
+     if (!env.contains("XDG_DATA_DIRS")) {
+-        qputenv("XDG_DATA_DIRS", QFile::encodeName(appdir.absolutePath() + "/share"));
++        // add the paths that Krita5 sets in XDG_DATA_DIRS
++        qputenv("XDG_DATA_DIRS", QFile::encodeName(appdir.absolutePath() + "/share:" +
++            QFile::encodeName(QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation).join(QLatin1Char(':')))));
+     }
+     qputenv("PATH", QFile::encodeName(appdir.absolutePath() + "/bin" + ";"
+                                       + appdir.absolutePath() + "/lib" + ";"
+                                       + appdir.absolutePath() + "/lib/kde4" + ";"
+                                       + appdir.absolutePath() + "/Frameworks" + ";"
+                                       + appdir.absolutePath()));
++#elseif APPLE_STANDALONE_BUNDLE
++    // only change things w.r.t. standard Unix in standalone app bundle builds
++    // TODO: figure out the appropriate paths
++    qputenv("PATH", QFile::encodeName(appdir.absolutePath() + "/bin" + ":"
++                                      + appdir.absolutePath() + "/lib" + ":"
++                                      + appdir.absolutePath() + "/Frameworks" + ":"
++                                      + qgetenv("PATH")));
++//     qWarning() << Q_FUNC_INFO << "PATH=" << qgetenv("PATH");
++#endif
+ #endif
+ 
+     if (d->splashScreen) {
+diff --git a/libs/widgets/KoResourcePaths.h b/libs/widgets/KoResourcePaths.h
+index 8830a5a..df5ae74 100644
+--- a/libs/widgets/KoResourcePaths.h
++++ b/libs/widgets/KoResourcePaths.h
+@@ -27,6 +27,20 @@
+ class QStringList;
+ 
+ 
++#ifndef APPLE_STANDALONE_BUNDLE
++#define KoQSP_DataLocation      QStandardPaths::GenericDataLocation
++#define KoQSP_AppDataLocation   QStandardPaths::DataLocation
++#define KoQSP_LocaleLocation    QStandardPaths::GenericDataLocation
++#else
++    // use the QSP locations that point into the app bundle
++    // TODO: this will be /path/to/foo.app/Contents/Resources
++    //       set this location up with symlinks into ../share
++    //       or install directly into Resources if(APPLE_STANDALONE_BUNDLE).
++#define KoQSP_DataLocation      QStandardPaths::AppDataLocation
++#define KoQSP_AppDataLocation   QStandardPaths::AppDataLocation
++#define KoQSP_LocaleLocation    QStandardPaths::AppDataLocation
++#endif
++
+ namespace KoResourcePaths
+ {
+     enum SearchOption { NoSearchOptions = 0,
+diff --git a/libs/widgets/KoResourcePaths.cpp b/libs/widgets/KoResourcePaths.cpp
+index 7df9dc6..ef4a57b 100644
+--- a/libs/widgets/KoResourcePaths.cpp
++++ b/libs/widgets/KoResourcePaths.cpp
+@@ -40,14 +40,29 @@ class KoResourcePathsImpl
+ public:
+     static QStandardPaths::StandardLocation mapTypeToQStandardPaths(const QString &type)
+     {
+-        return
+-            type == QLatin1String("data") ?    QStandardPaths::GenericDataLocation :
+-            type == QLatin1String("config") ?  QStandardPaths::GenericConfigLocation :
+-            type == QLatin1String("cache") ?   QStandardPaths::CacheLocation :
+-            type == QLatin1String("tmp") ?     QStandardPaths::TempLocation :
+-            type == QLatin1String("appdata") ? QStandardPaths::DataLocation :
+-            type == QLatin1String("locale") ?  QStandardPaths::GenericDataLocation :
+-            /* default */                      QStandardPaths::GenericDataLocation;
++        static const QMap<QString,QStandardPaths::StandardLocation> qspFromType = {
++            {QStringLiteral("config"),  QStandardPaths::GenericConfigLocation},
++            {QStringLiteral("cache"),   QStandardPaths::CacheLocation},
++            {QStringLiteral("tmp"),     QStandardPaths::TempLocation},
++#ifndef APPLE_STANDALONE_BUNDLE
++            {QStringLiteral("data"),    QStandardPaths::GenericDataLocation},
++            {QStringLiteral("appdata"), QStandardPaths::DataLocation},
++            {QStringLiteral("locale"),  QStandardPaths::GenericDataLocation},
++#else
++            // use the QSP locations that point into the app bundle
++            // TODO: this will be /path/to/foo.app/Contents/Resources
++            //       set this location up with symlinks into ../share
++            //       or install directly into Resources if(APPLE_STANDALONE_BUNDLE).
++            {QStringLiteral("data"),    QStandardPaths::AppDataLocation},
++            {QStringLiteral("appdata"), QStandardPaths::AppDataLocation},
++            {QStringLiteral("locale"),  QStandardPaths::AppDataLocation},
++#endif
++        };
++        if (qspFromType.contains(type)) {
++            return qspFromType[type];
++        } else {
++            return QStandardPaths::GenericDataLocation;
++        }
+     }
+ 
+     KoResourcePathsImpl();
