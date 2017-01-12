@@ -118,11 +118,11 @@ pre-configure {
     # 2) some ports (e.g. py-pyqt5 py-qscintilla2) call qmake indirectly and
     #    do not pass on the configure.args values
     #
-    xinstall -m 755 -d ${configure.dir}
+    xinstall -m 755 -d ${qt5.top_level}
     if {[tbool qt5.rewind_qmake_cache]} {
-        set qt5::cache [open "${configure.dir}/.qmake.cache" w 0644]
+        set qt5::cache [open "${qt5.top_level}/.qmake.cache" w 0644]
     } else {
-        set qt5::cache [open "${configure.dir}/.qmake.cache" a 0644]
+        set qt5::cache [open "${qt5.top_level}/.qmake.cache" a 0644]
     }
     platform darwin {
         puts ${qt5::cache} "if(${qt_qmake_spec_64}) {"
