@@ -190,6 +190,15 @@ proc kf5.depends_build_frameworks {first args} {
     }
 }
 
+proc kf5.depends_run_frameworks {first args} {
+    # join ${first} and (the optional) ${args}
+    set args [linsert $args[set list {}] 0 ${first}]
+    foreach f ${args} {
+        depends_run-append \
+                        [kf5::framework_dependency ${f}]
+    }
+}
+
 kf5::framework_dependency    attica libKF5Attica
 kf5::framework_dependency    karchive libKF5Archive
 kf5::framework_dependency    kcoreaddons libKF5CoreAddons
