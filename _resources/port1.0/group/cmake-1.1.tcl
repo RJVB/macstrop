@@ -104,9 +104,14 @@ default cmake_share_module_dir      {${prefix}/share/cmake/Modules}
 default cmake.module_path           {}
 proc cmake::module_path {} {
     if {[llength [option cmake.module_path]]} {
-        return -DCMAKE_MODULE_PATH="[join [concat [option cmake_share_module_dir] [option cmake.module_path]] \;]"
+        set modpath "[join [concat [option cmake_share_module_dir] [option cmake.module_path]] \;]"
+    } else {
+        set modpath [option cmake_share_module_dir]
     }
-    return -DCMAKE_MODULE_PATH=[option cmake_share_module_dir]
+    return [list \
+        -DCMAKE_MODULE_PATH="${modpath}" \
+        -DCMAKE_PREFIX_PATH="${modpath}"
+    ]
 }
 
 # CMake provides several different generators corresponding to different utilities
