@@ -84,6 +84,7 @@ default qt5.rewind_qmake_cache yes
 # qt5-kde does not currently support a debug variant, but does provide (some) debugging information
 configure.pre_args-append       "CONFIG+=release"
 
+# see https://trac.macports.org/ticket/53186
 default destroot.destdir        "INSTALL_ROOT=${destroot}"
 
 pre-configure {
