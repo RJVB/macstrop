@@ -170,18 +170,14 @@ proc kde4.restore_from_legacy_prefix {} {
 
 # augment the CMake module lookup path, if necessary depending on
 # where Qt4 is installed.
+
+# prepend our own (new) install location for cmake modules:
+cmake.module_path-append ${kde4.cmake_module_dir}
 if {${qt_cmake_module_dir} ne ${cmake_share_module_dir}} {
-    ui_debug "set cmake_module_path kde4.cmake_module_dir\;cmake_share_module_dir\;qt_cmake_module_dir"
-    set cmake_module_path ${kde4.cmake_module_dir}\;${cmake_share_module_dir}\;${qt_cmake_module_dir}
-} else {
-    # prepend our own (new) install location for cmake modules:
-    ui_debug "set cmake_module_path kde4.cmake_module_dir\;cmake_share_module_dir"
-    set cmake_module_path ${kde4.cmake_module_dir}\;${cmake_share_module_dir}
+    cmake.module_path-append \
+                        ${qt_cmake_module_dir}
 }
-ui_debug "cmake_module_path=${cmake_module_path}"
-configure.args-delete -DCMAKE_MODULE_PATH=${cmake_share_module_dir}
-configure.args-append -DCMAKE_MODULE_PATH="${cmake_module_path}" \
-                        -DCMAKE_PREFIX_PATH="${cmake_module_path}"
+ui_debug "cmake.module_path: [cmake::module_path]"
 
 # standard configure args; virtually all KDE ports use CMake and Qt4.
 configure.args-append   -DBUILD_doc=OFF \
@@ -230,7 +226,8 @@ configure.args-append   -DDOCBOOKXSL_DIR=${prefix}/share/xsl/docbook-xsl \
                         -DPNG_PNG_INCLUDE_DIR=${prefix}/include \
                         -DPNG_LIBRARY=${prefix}/lib/libpng.dylib \
                         -DTIFF_INCLUDE_DIR=${prefix}/include \
-                        -DTIFF_LIBRARY=${prefix}/lib/libtiff.dylib
+                        -DTIFF_LIBRARY=${prefix}/lib/libtiff.dylib \
+                        -DSOPRANO_PREFIX=${prefix}
 
 # These two can be removed (see #46240):
 #                        -DQCA2_INCLUDE_DIR=${prefix}/include/QtCrypto \
