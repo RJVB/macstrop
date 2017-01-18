@@ -383,7 +383,9 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
     } else {
         # Mac menu items shouldn't have icons according to the HIG (and I agree)
         patchfiles-append   ${PF58x}patch-no-icons-in-menus.diff
-        if {!${QT58}} {
+        if {${QT58}} {
+            patchfiles-append   patch-find-opengl.diff
+        } else {
             # don't let configure use pkg-config to find OpenGL if building for Cocoa
             # (the patch tests for the selected QPA so is xcb-safe.)
             patchfiles-append   patch-configure-find-opengl-and-correct-rpath.diff
@@ -527,6 +529,10 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
                 patchfiles-append \
                             ${PF58x}patch-keyboard-mapping.diff
             }
+            if {${QT58} && ${os.platform} eq "darwin"} {
+                patchfiles-append \
+                            ${PF58x}patch-no-pulseaudio+gstreamer.diff
+            }
         }
     }
 
@@ -596,6 +602,22 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         -hostdatadir    ${qt_host_data_dir}
 
 # Configure options:
+
+    # set up things for an out-of-source build:
+    default configure.dir   {${workpath}/build}
+    default build.dir       {${workpath}/build}
+    if {${subport} eq "${name}-x11"} {
+        #default configure.cmd   {../${worksrcdir}/qtbase/configure}
+        default configure.cmd   {../${worksrcdir}/configure}
+    } else {
+        default configure.cmd   {../${worksrcdir}/configure}
+    }
+
+    if {[file exists ${configure.dir}/config.status]} {
+        # support reconfigure runs
+        ui_info "--> Reconfiguring"
+        configure.args-append -redo -recheck-all
+    }
     configure.args-append \
         -v                \
         -release          \
@@ -758,7 +780,7 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
             patchfiles-append   ${PF58x}patch-designer-show-menubar-on-xcb.diff
         }
                 # configure options that don't show up in configure --help
-        if {${os.platform} eq "darwin"} {
+        if {${os.platform} eq "darwin" && !${QT58}} {
             # openvg makes sense only when using X11 ...
             configure.args-append   -no-openvg
         }
@@ -901,7 +923,7 @@ if { (${subport} eq ${name}) \
         configure.ldflags-delete    -Wl,-headerpad_max_install_names
     }
 
-    extract.post_args-append        --exclude ${distname}/qtwayland
+    extract.post_args-append        --exclude ${distname}/qtwayland ${distname}/qttranslations
     if {${subport} ne "${name}-qtwebengine"} {
         extract.post_args-append    --exclude ${distname}/qtwebengine
     }
@@ -926,16 +948,6 @@ if { (${subport} eq ${name}) \
                 }
             }
         }
-    }
-
-    # set up things for an out-of-source build:
-    default configure.dir   {${workpath}/build}
-    default build.dir       {${workpath}/build}
-    if {${subport} eq "${name}-x11"} {
-        #default configure.cmd   {../${worksrcdir}/qtbase/configure}
-        default configure.cmd   {../${worksrcdir}/configure}
-    } else {
-        default configure.cmd   {../${worksrcdir}/configure}
     }
 
     if {${os.platform} eq "darwin"} {
@@ -1856,6 +1868,28 @@ if {!${QT53}} {
     }
 }
 
+subport ${name}-qttranslations {
+    PortGroup               qmake5 1.0
+
+    description             ${description} - translations
+    long_description        ${long_description} - translations.
+    conflicts-append        qt5-qttranslations qt5-kde-qttranslations qt5-kde-devel-qttranslations
+
+
+    extract.post_args-append \
+                            ${distname}/qttranslations
+    depends_lib-append      ${qt5_dependency}
+    default configure.dir   {${workpath}/build}
+    configure.pre_args-append \
+                            ../${worksrcdir}/qttranslations/qttranslations.pro
+    default build.dir       {${workpath}/build}
+    platform darwin {
+        post-destroot {
+            proxy_includes_and_libs
+        }
+    }
+}
+
 subport ${name}-sqlite3-plugin {
     replaced_by     ${name}-sqlite-plugin
 }
@@ -2210,6 +2244,32 @@ post-destroot {
     if {${compress_webcorestlib}} {
         ui_info "--->  Re-compressing libWebCore.a"
         system "bzip2 -9v ${webcorestlib} &"
+    }
+}
+
+destroot.violate_mtree yes
+post-destroot {
+    if {![file exists ${destroot}${prefix}/testing]} {
+        file rename ${destroot}${prefix} ${destroot}${prefix}-testing
+        xinstall -m 755 -d ${destroot}${prefix}
+        file rename ${destroot}${prefix}-testing ${destroot}${prefix}/testing
+        # I'm being lazy here, presuming qt_apps_dir is always a subdir of /Applications:
+        if {[file exists ${destroot}Applications]} {
+            file rename ${destroot}Applications ${destroot}${prefix}/testing/Applications
+        }
+        if {${subport} eq "${name}"} {
+            set fp [open "${destroot}${prefix}/bin/qt5kde-angel" w 0755]
+            puts ${fp} "#!/bin/sh"
+            platform darwin {
+                puts ${fp} "export DYLD_LIBRARY_PATH=${prefix}/testing/${qt_dir_rel}"
+            } else {
+                puts ${fp} "export LD_LIBRARY_PATH=${prefix}/testing/${qt_dir_rel}"
+            }
+            # warning, kludge!
+            puts ${fp} "export QT_PLUGIN_PATH=${prefix}/testing/share/qt5/plugins:${qt_plugins_dir}"
+            puts ${fp} "exec \"$@\""
+            close ${fp}
+        }
     }
 }
 
