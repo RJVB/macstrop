@@ -112,9 +112,7 @@ if {![variant_exists qt5kde]} {
 default_variants        +qt5kde
 
 # standard Qt5 name. This should be just "qt5" (or qt53 for instance when more
-# specific version info must be included). There is nothing but a historical reason
-# to call the Qt5 port itself qt5-mac, so that name should not appear on disk where
-# files could be installed that would be the distant descendants of files from qt4-x11
+# specific version info must be included).
 global qt_name
 set qt_name             qt5
 
