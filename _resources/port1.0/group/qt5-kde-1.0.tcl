@@ -114,7 +114,15 @@ default_variants        +qt5kde
 # standard Qt5 name. This should be just "qt5" (or qt53 for instance when more
 # specific version info must be included).
 global qt_name
-set qt_name             qt5
+if {[info exists qt5::rootname]} {
+    # a kludgy way to declare a different prefix for the Qt tooldir and bindir as well as the shared dirs.
+    # Deliberately user unfriendly.
+    set qt_name         ${qt5::rootname}
+} else {
+    set qt_name         qt5
+}
+
+ui_msg "${qt_name}"
 
 # global definitions with explanation; set the actual values below for cleanness.
 # standard install directory
