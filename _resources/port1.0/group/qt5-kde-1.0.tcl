@@ -343,8 +343,8 @@ set qt5.kde_stubports \
             {qtbase qtdeclarative qtserialbus qtserialport qtsensors \
             qtquick1 qtwebchannel qtimageformats qtsvg qtmacextras \
             qtlocation qtxmlpatterns qtcanvas3d qtgraphicaleffects qtmultimedia \
-            qtscript qt3d qtconnectivity qttools qtquickcontrols qtenginio \
-            qtwebkit-examples qtwebsockets qttranslations mysql-plugin \
+            qtscript qt3d qtconnectivity qttools qtquickcontrols qtquickcontrols2 \
+            qtenginio qtwebkit-examples qtwebsockets qttranslations mysql-plugin \
             sqlite-plugin \
             docs
 }
