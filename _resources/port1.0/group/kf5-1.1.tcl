@@ -117,7 +117,7 @@ if {![info exists kf5.version]} {
 if {![ info exists kf5.release ]} {
     set kf5.release     16.12.0
     set kf5.latest_release \
-                        16.12.0
+                        16.12.1
 }
 
 # KF5 Plasma version
@@ -831,27 +831,39 @@ if {${kf5::includecounter} == 0} {
         }
     }
 
-    if {[info procs qt5.depends_component] eq ""} {
-        # apparently the qt5-kde PortGroup is not being used,
-        # provide a simplified local copy of qt5.depends_component;
-        # a procedure for declaring dependencies on Qt5 components, which will expand them
-        # into the appropriate subports for the Qt5 flavour installed (presumably port:qt5)
-        # e.g. qt5.depends_component qtbase qtsvg qtdeclarative
-        # We ignore the new port:qt55 because KF5 requires Qt >= 5.6.0
-        proc qt5.depends_component {first args} {
-            # join ${first} and (the optional) ${args}
-            set args [linsert $args[set list {}] 0 ${first}]
-            set qt5pprefix "qt5"
-            foreach comp ${args} {
-                if {${comp} eq "qt5"} {
-                    depends_lib-append port:${qt5pprefix}
-                } else {
-                    set portname "${qt5pprefix}-${comp}"
-                    depends_lib-append port:${portname}
-                }
+    if {[info procs qt5.active_version] eq ""} {
+        proc qt5.active_version {} {
+            global prefix
+            if {[file exists ${prefix}/bin/pkg-config]} {
+                return [exec ${prefix}/bin/pkg-config --modversion Qt5Core]
+            } else {
+                return 0.0.0
             }
         }
     }
+
+# all Qt5 PGs should now have a qt5.depends_component procedure
+#     if {[info procs qt5.depends_component] eq ""} {
+#         # apparently the qt5-kde PortGroup is not being used,
+#         # provide a simplified local copy of qt5.depends_component;
+#         # a procedure for declaring dependencies on Qt5 components, which will expand them
+#         # into the appropriate subports for the Qt5 flavour installed (presumably port:qt5)
+#         # e.g. qt5.depends_component qtbase qtsvg qtdeclarative
+#         # We ignore the new port:qt55 because KF5 requires Qt >= 5.6.0
+#         proc qt5.depends_component {first args} {
+#             # join ${first} and (the optional) ${args}
+#             set args [linsert $args[set list {}] 0 ${first}]
+#             set qt5pprefix "qt5"
+#             foreach comp ${args} {
+#                 if {${comp} eq "qt5"} {
+#                     depends_lib-append port:${qt5pprefix}
+#                 } else {
+#                     set portname "${qt5pprefix}-${comp}"
+#                     depends_lib-append port:${portname}
+#                 }
+#             }
+#         }
+#     }
 
     proc kf5.depends_qt5_components {first args} {
         global qt5.using_kde
