@@ -151,7 +151,7 @@ pre-configure {
         puts ${qt5::cache} "QMAKE_CXX=${configure.cxx}"
     }
 
-    set qt5::qt_version [exec ${prefix}/bin/pkg-config --modversion Qt5Core]
+    set qt5::qt_version [qt5.active_version]
 
     if {${configure.cxx_stdlib} ne ""} {
         # only use cxx_stdlib when it is actually set and not equal to libc++ already.

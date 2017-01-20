@@ -700,4 +700,13 @@ proc qt5.depends_build_component {args} {
     return [qt5::depends_component_p depends_build {*}${args}]
 }
 
+proc qt5.active_version {} {
+    global prefix
+    if {[file exists ${prefix}/bin/pkg-config]} {
+        return [exec ${prefix}/bin/pkg-config --modversion Qt5Core]
+    } else {
+        return 0.0.0
+    }
+}
+
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
