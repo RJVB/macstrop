@@ -94,7 +94,7 @@ if {[expr ${branch} >= 5.4]} {
 categories          aqua
 platforms           macosx
 maintainers         gmail.com:rjvbertin mk
-license             {LGPL-2.1 GPL-3}
+license             {LGPL-2.1 LGPL-3 GPL-3}
 
 homepage            http://qt.io
 description         Qt Tool Kit ${branch}, tuned for an improved KF5 experience
@@ -106,7 +106,8 @@ long_description    Qt Tool Kit: A cross-platform framework \
                     and enables useful backtraces into Qt code for debugging.\
                     It provides most of Qt in a single port rather than using port:qt5's one-component-per-subport approach because \
                     it is believed most components would be installed anyway, which wouldn't justify the additional port complexity. \
-                    It does provide the same subports port:qt5 provides, as stubs. Installs to ${qt_dir}.
+                    It does provide the same subports port:qt5 provides, as stubs. Installs to ${qt_dir}.\n\
+                    For license info, see http://doc-snapshots.qt.io/qt5-${branch}/licenses-used-in-qt.html
 
 platform darwin {
     notes-append    "Install port:kf5-osx-integration and set KDE_SESSION_VERSION to 4 or 5 in order to \
@@ -556,6 +557,8 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
                 patchfiles-append \
                             ${PF58x}patch-no-pulseaudio+gstreamer.diff
             }
+            # https://trac.macports.org/ticket/53369
+            patchfiles-append   patch-use-openssl-mp.diff
         }
         # https://codereview.qt-project.org/#/c/182877/
         patchfiles-append   ${PF58x}patch-no-native-crossbuilds.diff
@@ -651,6 +654,9 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         -opensource       \
         -confirm-license  \
         -shared
+    if {[variant_exists LTO] && [variant_isset LTO]} {
+        configure.args-append -ltcg
+    }
 
     if {${os.platform} eq "darwin"} {
         configure.args-append   \
@@ -734,9 +740,9 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
                 ${PF58x}/patch-configurejsons.diff \
                 ${PF58x}/patch-reintroduce-configsummary.diff
         post-patch {
-            reinplace "s|@PREFIX@|${prefix}|g" \
-                ${worksrcpath}/qtbase/mkspecs/features/toolchain.prf \
-                ${worksrcpath}/qtbase/src/platformsupport/themes/genericunix/qgenericunixthemes.cpp
+            reinplace -W ${worksrcpath}/qtbase "s|@PREFIX@|${prefix}|g" \
+                mkspecs/features/toolchain.prf \
+                src/platformsupport/themes/genericunix/qgenericunixthemes.cpp
         }
     }
 
@@ -1011,7 +1017,9 @@ if { (${subport} eq ${name}) \
             reinplace "s|\"\$MAKE\")|\"\$MAKE\" -j${build.jobs})|g" ${worksrcpath}/qtbase/configure
         }
         if {${subport} ne "${name}-qtwebengine"} {
-            reinplace "s|@PREFIX@|${prefix}|g" ${worksrcpath}/qtbase/src/corelib/io/qstandardpaths_unix.cpp
+            reinplace -W ${worksrcpath}/qtbase "s|@PREFIX@|${prefix}|g" \
+                    src/corelib/io/qstandardpaths_unix.cpp \
+                    src/network/ssl/qsslsocket_openssl_symbols.cpp
             if {[variant_isset LTO] && ${os.platform} eq "darwin"} {
                 if {${CXX_mp}} {
                     reinplace "s|@LLVM_AR@|${CXX_dir}/llvm-ar-${CXX_vsuffix}|g" ${worksrcpath}/qtbase/mkspecs/common/clang.conf
@@ -1071,19 +1079,15 @@ if { (${subport} eq ${name}) \
 
     if {${subport} ne "${name}-qtwebengine"} {
         variant harfbuzz description {Use HarfBuzz-NG to do text shaping} {
-            if {${QT58}} {
-                # use the contrib Harfbuzz to support AAT
-                configure.args-replace \
-                    -no-harfbuzz       \
-                    -qt-harfbuzz
-            } else {
-                if {${os.platform} eq "darwin"} {
-                    depends_lib-append port:harfbuzz
-                }
-                configure.args-replace \
-                    -no-harfbuzz       \
-                    -system-harfbuzz
+            # Qt 5.8 prints a warning about AAT support but that appears to be a red herring
+            # given that the harfbuzz version in MacPorts is much newer than the version
+            # shipped with Qt.
+            if {${os.platform} eq "darwin"} {
+                depends_lib-append port:harfbuzz
             }
+            configure.args-replace \
+                -no-harfbuzz       \
+                -system-harfbuzz
         }
         default_variants    +harfbuzz
 
@@ -1465,26 +1469,10 @@ post-configure {
         }
     }
     if {[variant_exists LTO] && [variant_isset LTO]} {
-        if {${subport} eq "${name}-x11"} {
-            #system -W ${build.dir} "bin/qmake -config ltcg ../${worksrcdir}/qtbase"
-            system -W ${build.dir} "qtbase/bin/qmake -config ltcg ../${worksrcdir}"
-            if {[info exists fd]} {
-                puts ${fd} "cd ${build.dir} ; qtbase/bin/qmake -config ltcg ../${worksrcdir}"
-            }
-        } elseif {${subport} eq "${name}-qtwebengine"} {
+        if {${subport} eq "${name}-qtwebengine"} {
             system -W ${build.dir} "${qt_qmake_cmd} -config ltcg ../${worksrcdir}/qtwebengine"
             if {[info exists fd]} {
                 puts ${fd} "cd ${build.dir} ; ${qt_qmake_cmd} -config ltcg ../${worksrcdir}/qtwebengine"
-            }
-        } else {
-            foreach qdir {qtbase qtconnectivity qtdeclarative qtenginio qtlocation qtmacextras \
-                        qtmultimedia qtquick1 qtsensors qtserialport qtsvg qttools qtwebchannel \
-                        qtwebsockets qtxmlpatterns} {
-                xinstall -d -m 755 ${build.dir}/${qdir}
-                system -W ${build.dir}/${qdir} "${build.dir}/qtbase/bin/qmake -config ltcg ../../${worksrcdir}/${qdir}"
-                if {[info exists fd]} {
-                    puts ${fd} "cd ${build.dir} ; ${build.dir}/qtbase/bin/qmake -config ltcg ../../${worksrcdir}/${qdir}"
-                }
             }
         }
         # it's crucial that the same command is used for linking as for compiling!
