@@ -174,6 +174,8 @@ if {[info exists qt5::rootname]} {
 # standard lrelease command location
     global qt_lrelease_cmd
     global qt_lupdate_cmd
+# location of a simple, dedicated install registry:
+    global qt_install_registry
 
 global qt5_is_concurrent
 # check if we're building qt5 itself. We're aiming to phase out exclusive installs, but we
@@ -225,6 +227,8 @@ if {${os.platform} eq "darwin"} {
 }
 set qt_examples_dir         ${qt_apps_dir}/examples
 set qt_demos_dir            ${qt_apps_dir}/demos
+
+set qt_install_registry     ${qt_dir}/registry
 
 PortGroup                   compiler_blacklist_versions 1.0
 if {${os.platform} eq "darwin"} {
