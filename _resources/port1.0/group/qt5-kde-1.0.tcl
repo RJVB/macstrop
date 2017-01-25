@@ -706,8 +706,13 @@ proc qt5.depends_build_component {args} {
 
 proc qt5.active_version {} {
     global prefix
+    namespace upvar ::qt5 active_version av
+    if {[info exists av]} {
+        return ${av}
+    }
     if {[file exists ${prefix}/bin/pkg-config]} {
-        return [exec ${prefix}/bin/pkg-config --modversion Qt5Core]
+        set av [exec ${prefix}/bin/pkg-config --modversion Qt5Core]
+        return ${av}
     } else {
         return 0.0.0
     }
