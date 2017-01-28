@@ -67,7 +67,9 @@ proc preserve_libraries {srcdir patternlist} {
                         ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
                         set perms [file attributes ${l} -permissions]
                         copy ${l} ${prevlib}
-                        file attributes ${prevlib} -permissions ${perms}
+                        if {[file type ${prevlib}] ne "link"} {
+                            file attributes ${prevlib} -permissions ${perms}
+                        }
                         ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
                     }
                 }
@@ -81,7 +83,9 @@ proc preserve_libraries {srcdir patternlist} {
                         ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
                         set perms [file attributes ${l} -permissions]
                         copy ${l} ${prevlib}
-                        file attributes ${prevlib} -permissions ${perms}
+                        if {[file type ${prevlib}] ne "link"} {
+                            file attributes ${prevlib} -permissions ${perms}
+                        }
                         ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
                     }
                 }
