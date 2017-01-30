@@ -1,13 +1,14 @@
-diff --git languages/clang/duchain/unknowndeclarationproblem.cpp languages/clang/duchain/unknowndeclarationproblem.cpp
-index 5da0350..eb320f2 100644
---- languages/clang/duchain/unknowndeclarationproblem.cpp
-+++ languages/clang/duchain/unknowndeclarationproblem.cpp
-@@ -47,9 +47,13 @@
+diff --git a/languages/clang/duchain/unknowndeclarationproblem.cpp b/languages/clang/duchain/unknowndeclarationproblem.cpp
+index c5718cbbe1..c5bbdabcde 100644
+--- a/languages/clang/duchain/unknowndeclarationproblem.cpp
++++ b/languages/clang/duchain/unknowndeclarationproblem.cpp
+@@ -47,9 +47,14 @@
  
  #include <QDir>
  #include <QProcess>
 +#include <QCoreApplication>
 +#include <QAbstractEventDispatcher>
++#include <QThread>
  
  #include <algorithm>
  
@@ -16,7 +17,16 @@ index 5da0350..eb320f2 100644
  using namespace KDevelop;
  
  namespace {
-@@ -85,6 +89,18 @@ QStringList scanIncludePaths( const QString& identifier, const QDir& dir, int ma
+@@ -62,6 +67,8 @@ namespace {
+  */
+ const int maxSuggestions = 5;
+ 
++static bool interrupted = false;
++
+ /**
+  * We don't want anything from the bits directory -
+  * we'd rather prefer forwarding includes, such as <vector>
+@@ -85,6 +92,21 @@ QStringList scanIncludePaths( const QString& identifier, const QDir& dir, int ma
          return {};
      }
  
@@ -26,12 +36,54 @@ index 5da0350..eb320f2 100644
 +    if (eD) {
 +        if (eD->processEvents(QEventLoop::AllEvents)) {
 +            qWarning() << Q_FUNC_INFO << "processed events, this run aborted";
++            interrupted = true;
 +            return {};
 +        }
 +    } else {
 +        QCoreApplication::processEvents();
++        qWarning() << "We may have processed events; app.eD=" << qApp->eventDispatcher()
++            << "thread.eD=" << QThread::currentThread()->eventDispatcher();
 +    }
 +
      QStringList candidates;
      const auto path = dir.absolutePath();
  
+@@ -102,8 +124,12 @@ QStringList scanIncludePaths( const QString& identifier, const QDir& dir, int ma
+     }
+ 
+     maxDepth--;
+-    for( const auto& subdir : dir.entryList( QDir::Dirs | QDir::NoDotAndDotDot ) )
++    for( const auto& subdir : dir.entryList( QDir::Dirs | QDir::NoDotAndDotDot ) ) {
+         candidates += scanIncludePaths( identifier, QDir{ path + QLatin1Char('/') + subdir }, maxDepth );
++        if (interrupted) {
++            return {};
++        }
++    }
+ 
+     return candidates;
+ }
+@@ -117,6 +143,9 @@ QStringList scanIncludePaths( const QualifiedIdentifier& identifier, const KDeve
+     QStringList candidates;
+     for( const auto& include : includes ) {
+         candidates += scanIncludePaths( stripped_identifier, QDir{ include.toLocalFile() } );
++        if (interrupted) {
++            return {};
++        }
+     }
+ 
+     std::sort( candidates.begin(), candidates.end() );
+@@ -534,6 +563,12 @@ void UnknownDeclarationProblem::setSymbol(const QualifiedIdentifier& identifier)
+ IAssistant::Ptr UnknownDeclarationProblem::solutionAssistant() const
+ {
+     const Path path(finalLocation().document.str());
+-    const auto fixits = allFixits() + fixUnknownDeclaration(m_identifier, path, finalLocation());
+-    return IAssistant::Ptr(new ClangFixitAssistant(fixits));
++    interrupted = false;
++    const auto unknownDeclFixits = fixUnknownDeclaration(m_identifier, path, finalLocation());
++    if (!interrupted) {
++        const auto fixits = allFixits() + unknownDeclFixits;
++        return IAssistant::Ptr(new ClangFixitAssistant(fixits));
++    } else {
++        return IAssistant::Ptr(new ClangFixitAssistant(allFixits()));
++    }
+ }
