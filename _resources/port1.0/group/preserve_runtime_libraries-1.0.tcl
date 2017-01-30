@@ -51,12 +51,14 @@
 # Note that ports that depend on poppler via poppler-qt4-mac or
 # poppler-qt5-mac do not need this trick to avoid rebuilding.
 
-# set libraries_to_preserve ""
+
+set preserve_runtime_library_dir "previous/${subport}"
+
 proc preserve_libraries {srcdir patternlist} {
-    global prefix subport destroot
+    global prefix subport destroot preserve_runtime_library_dir
     if {[variant_isset preserve_runtime_libraries]} {
         if {[file type ${srcdir}] eq "directory"} {
-            set prevdir "previous/${subport}"
+            set prevdir "${preserve_runtime_library_dir}"
             xinstall -m 755 -d ${destroot}${srcdir}/${prevdir}
             foreach pattern ${patternlist} {
                 # first handle the preserved backups that already exist
@@ -77,16 +79,21 @@ proc preserve_libraries {srcdir patternlist} {
                 # any of those that are symlinks into ${prevdir} will be pruned because they
                 # have already been handled.
                 foreach l [glob -nocomplain ${srcdir}/${pattern}] {
-                    set lib [file tail ${l}]
-                    set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
-                    if {![file exists ${prevlib}] && ![file exists ${destroot}${l}]} {
-                        ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
-                        set perms [file attributes ${l} -permissions]
-                        copy ${l} ${prevlib}
-                        if {[file type ${prevlib}] ne "link"} {
-                            file attributes ${prevlib} -permissions ${perms}
+                    set fport [registry_file_registered ${l}]
+                    if {${fport} eq "${subport}"} {
+                        set lib [file tail ${l}]
+                        set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
+                        if {![file exists ${prevlib}] && ![file exists ${destroot}${l}]} {
+                            ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
+                            set perms [file attributes ${l} -permissions]
+                            copy ${l} ${prevlib}
+                            if {[file type ${prevlib}] ne "link"} {
+                                file attributes ${prevlib} -permissions ${perms}
+                            }
+                            ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
                         }
-                        ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
+                    } else {
+                        ui_info "not preserving runtime library ${l} that belongs to port:${fport}"
                     }
                 }
             }
