@@ -1,0 +1,105 @@
+#!/bin/bash
+
+print_usage () {
+    cat <<- ENDUSAGE
+    #> make2port [-jN] [--] [port options] [++]
+    make2-port options (NB no '=' between option and argument!):
+        --port portName
+        --variants variant(s)
+        --configure.optflags "compiler options"
+        --rewind : force a repeat of the port build phase
+    A wrapper that takes a (GNU) make commandline and tries to convert it to a MacPorts port call.
+    Note that this ignores any make targets given explicitly; 'make foo' and 'make all' both become
+    'port build $portname'.
+    The only supported make option is -jN to control parallel builds; port command options are
+    taken after a lone '--' option is encountered, upto a matching '++'. The clean and distclean
+    targets are converted to '--rewind' and only force a repeat of the port build phase.
+    The port name has to be specified with "--port foo"
+    Variant(s) can be specified with the --variants option.
+ENDUSAGE
+}
+
+PORTOPTIONS=""
+PORTOTHEROPTIONS=""
+PORT=""
+VARIANTS=""
+REWIND=0
+ONLYPORTOPTIONS=0
+ECHO=""
+OPTFLAGS=""
+
+OPTSHIFT=0
+parse_portOptions () {
+    OPTSHIFT=0
+    case $1 in
+        --rewind)
+            REWIND=1
+            ;;
+        --port)
+            PORT="$2"
+            OPTSHIFT=1
+            ;;
+        --variants)
+            VARIANTS="${VARIANTS}$2"
+            OPTSHIFT=1
+            ;;
+        --configure.optflags)
+            if [ "${OPTFLAGS}" != "" ] ;then
+                OPTFLAGS="${OPTFLAGS} ${2}"
+            else
+                OPTFLAGS="${2}"
+            fi
+            OPTSHIFT=1
+            ;;
+        -*)
+            PORTOPTIONS="${PORTOPTIONS} $1"
+            ;;
+        configure.*|build.*)
+            PORTOTHEROPTIONS="${PORTOTHEROPTIONS} $1"
+            ;;
+        ++)
+            ONLYPORTOPTIONS=0
+            ;;
+        *)
+            PORTOTHEROPTIONS="${PORTOTHEROPTIONS} \"$1\""
+            ;;
+    esac
+}
+
+while [ $# != 0 ] ;do
+    if [ ${ONLYPORTOPTIONS} = 0 ] ;then
+        # we discard most make options because too delicate to parse
+        case $1 in
+            --dryrun)
+                ECHO="echo"
+                ;;
+            clean|distclean)
+                REWIND=1
+                ;;
+            -j*)
+                PORTOTHEROPTIONS="${PORTOTHEROPTIONS} build.jobs=${1#-j}"
+                ;;
+            --)
+                ONLYPORTOPTIONS=1
+                ;;
+        esac
+    else
+        parse_portOptions "$@"
+        shift ${OPTSHIFT}
+    fi
+    shift
+done
+
+if [ "${PORT}" != "" ] ;then
+    if [ ${REWIND} = 1 ] ;then
+        ${ECHO} port-redo-install-phase -build ${PORT}
+    fi
+    set -x
+    if [ "${OPTFLAGS}" != "" ] ;then
+        ${ECHO} port ${PORTOPTIONS} build ${PORT} ${VARIANTS} ${PORTOTHEROPTIONS} configure.optflags="${OPTFLAGS}"
+    else
+        ${ECHO} port ${PORTOPTIONS} build ${PORT} ${VARIANTS} ${PORTOTHEROPTIONS}
+    fi
+else
+    print_usage
+fi
