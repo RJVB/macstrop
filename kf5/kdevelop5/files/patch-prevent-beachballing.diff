@@ -48,7 +48,7 @@ index c5718cbbe1..c5bbdabcde 100644
  using namespace KDevelop;
  
  namespace {
-@@ -62,11 +68,122 @@ namespace {
+@@ -62,11 +68,187 @@ namespace {
   */
  const int maxSuggestions = 5;
  
@@ -58,11 +58,37 @@ index c5718cbbe1..c5bbdabcde 100644
 +{
 +    Q_OBJECT
 +public:
++    UDPScanEventLoop(QObject *p=Q_NULLPTR)
++        : QEventLoop(p)
++    {
++        // empty the event queue so no events are pending anymore before we start
++        // this event loop:
++        QCoreApplication::sendPostedEvents();
++        QCoreApplication::flush();
++        QAbstractEventDispatcher *eD = QCoreApplication::eventDispatcher();
++        if (eD) {
++            eD->processEvents(QEventLoop::AllEvents);
++        } else {
++            QCoreApplication::processEvents();
++        }
++        mouseBtnPresses = 0;
++        keyReleases = 0;
++    }
++    ~UDPScanEventLoop()
++    {
++        qApp->removeEventFilter(this);
++    }
 +    bool event(QEvent *e) override;
++    bool eventFilter(QObject *obj, QEvent *e) override;
++    bool isInterrupt(QEvent *e);
++
++    int mouseBtnPresses;
++    int keyReleases;
 +};
 +
-+bool UDPScanEventLoop::event(QEvent *e)
++bool UDPScanEventLoop::isInterrupt(QEvent *e)
 +{
++    bool ret;
 +    switch (e->type()) {
 +    // events that probably justify interrupting and bailing out from an ongoing scan:
 +    case QEvent::ApplicationStateChange:
@@ -71,19 +97,49 @@ index c5718cbbe1..c5bbdabcde 100644
 +    case QEvent::FocusAboutToChange:
 +    case QEvent::KeyPress:
 +    case QEvent::MouseButtonDblClick:
-+    case QEvent::MouseButtonPress:
 +    case QEvent::TouchBegin:
 +    case QEvent::Wheel:
-+        interrupted = true;
-+        qWarning() << Q_FUNC_INFO << "interrupting because caught event" << e;
++        ret = true;
++        break;
++    case QEvent::MouseButtonPress:
++        // the 1st two events are related to the user action that triggered the solutionAssistant
++        // so we do not bail out for those events.
++        mouseBtnPresses += 1;
++        ret = (mouseBtnPresses > 2);
++        break;
++    case QEvent::KeyRelease:
++        // the 1st KeyRelease event might be the Alt key, if the user triggered the solutionAssistant
++        // by pressing Alt. Just accept the 1st KeyRelease.
++        keyReleases += 1;
++        ret = (keyReleases > 1);
 +        break;
 +    default:
-+        // noop
++        ret = false;
 +        break;
++    }
++    return ret;
++}
++
++bool UDPScanEventLoop::event(QEvent *e)
++{
++    if (!interrupted && isInterrupt(e)) {
++        interrupted = true;
++//         qWarning() << Q_FUNC_INFO << "interrupting because caught event" << e;
 +    }
 +
 +    // hand off the event for the actual processing
 +    return QEventLoop::event(e);
++}
++
++bool UDPScanEventLoop::eventFilter(QObject *obj, QEvent *e)
++{
++    if (!interrupted && isInterrupt(e)) {
++        interrupted = true;
++//         qWarning() << Q_FUNC_INFO << "interrupting because caught event" << e;
++    }
++
++    // hand off the event for the actual processing
++    return QEventLoop::eventFilter(obj, e);
 +}
 +
 +class UDPWorkerThread : public QThread
@@ -104,21 +160,27 @@ index c5718cbbe1..c5bbdabcde 100644
 +
 +    void requestInterruption()
 +    {
++        m_results = Q_NULLPTR;
 +        interrupted = true;
-+        qWarning() << Q_FUNC_INFO;
++        if (m_eventLoop) {
++            m_eventLoop->exit(-1);
++        }
++        m_eventLoop = Q_NULLPTR;
++//         qWarning() << Q_FUNC_INFO;
 +        QThread::requestInterruption();
 +    }
 +
 +    ClangFixits fixUnknownDeclaration();
 +    ClangFixits scanResults()
 +    {
-+        return *m_results;
++        if (m_results) {
++            return *m_results;
++        } else {
++            return {};
++        }
 +    }
 +
 +    void run() override;
-+
-+signals:
-+    void scanReady(const ClangFixits& result);
 +
 +protected:
 +    bool isBlacklisted(const QString& path);
@@ -150,17 +212,20 @@ index c5718cbbe1..c5bbdabcde 100644
 +    interrupted = false;
 +    if (m_results) {
 +        ClangFixits result = fixUnknownDeclaration();
-+        if (!interrupted) {
++        if (!interrupted && m_results) {
 +            *m_results = result;
-+        } else {
-+            qWarning() << Q_FUNC_INFO << "discarding result" << result;
 +        }
 +        // wipe out the public reference to ourselves;
 +        if (scanThread == this) {
 +            scanThread = NULL;
 +        }
 +    }
-+    m_eventLoop->exit(interrupted || !m_results);
++    if (m_eventLoop) {
++        m_eventLoop->exit(interrupted || !m_results);
++    }
++    // m_results may point to a local variable which will go out of scope when we're done
++    m_results = Q_NULLPTR;
++    m_eventLoop = Q_NULLPTR;
 +}
 +
  /**
@@ -172,7 +237,7 @@ index c5718cbbe1..c5bbdabcde 100644
  {
      if (ClangHelpers::isSource(path))
          return true;
-@@ -79,12 +196,29 @@ bool isBlacklisted(const QString& path)
+@@ -79,12 +261,29 @@ bool isBlacklisted(const QString& path)
      return false;
  }
  
@@ -203,7 +268,13 @@ index c5718cbbe1..c5bbdabcde 100644
      QStringList candidates;
      const auto path = dir.absolutePath();
  
-@@ -102,8 +236,12 @@ QStringList scanIncludePaths( const QString& identifier, const QDir& dir, int ma
+@@ -99,11 +298,18 @@ QStringList scanIncludePaths( const QString& identifier, const QDir& dir, int ma
+             clangDebug() << "Found candidate file" << filePath;
+             candidates.append( filePath );
+         }
++        if (interrupted) {
++            return {};
++        }
      }
  
      maxDepth--;
@@ -217,7 +288,7 @@ index c5718cbbe1..c5bbdabcde 100644
  
      return candidates;
  }
-@@ -111,12 +249,15 @@ QStringList scanIncludePaths( const QString& identifier, const QDir& dir, int ma
+@@ -111,12 +317,15 @@ QStringList scanIncludePaths( const QString& identifier, const QDir& dir, int ma
  /**
   * Find files in dir that match the given identifier. Matches common C++ header file extensions only.
   */
@@ -234,7 +305,7 @@ index c5718cbbe1..c5bbdabcde 100644
      }
  
      std::sort( candidates.begin(), candidates.end() );
-@@ -133,7 +274,7 @@ QStringList scanIncludePaths( const QualifiedIdentifier& identifier, const KDeve
+@@ -133,7 +342,7 @@ QStringList scanIncludePaths( const QualifiedIdentifier& identifier, const KDeve
   *  boost/vector
   * have a shared path of 1
   */
@@ -243,7 +314,7 @@ index c5718cbbe1..c5bbdabcde 100644
  {
      int shared = -1;
      for(auto x = a.begin(), y = b.begin(); *x == *y && x != a.end() && y != b.end() ; ++x, ++y ) {
-@@ -153,7 +294,7 @@ int sharedPathLevel(const QString& a, const QString& b)
+@@ -153,7 +362,7 @@ int sharedPathLevel(const QString& a, const QString& b)
   *
   * TODO: Implement a fallback scheme
   */
@@ -252,7 +323,7 @@ index c5718cbbe1..c5bbdabcde 100644
  {
      DUChainReadLocker lock;
      const TopDUContext* top = DUChainUtils::standardContextForUrl( source.toUrl() );
-@@ -185,7 +326,7 @@ KDevelop::DocumentRange includeDirectivePosition(const KDevelop::Path& source, c
+@@ -185,7 +394,7 @@ KDevelop::DocumentRange includeDirectivePosition(const KDevelop::Path& source, c
      return {IndexedString(source.pathOrUrl()), {line, 0, line, 0}};
  }
  
@@ -261,7 +332,7 @@ index c5718cbbe1..c5bbdabcde 100644
  {
      DUChainReadLocker lock;
      const TopDUContext* top = DUChainUtils::standardContextForUrl( source.toUrl() );
-@@ -235,7 +376,7 @@ KDevelop::DocumentRange forwardDeclarationPosition(const QualifiedIdentifier& id
+@@ -235,7 +444,7 @@ KDevelop::DocumentRange forwardDeclarationPosition(const QualifiedIdentifier& id
   * foo::type
   * type
   */
@@ -270,7 +341,7 @@ index c5718cbbe1..c5bbdabcde 100644
  {
      DUChainReadLocker lock;
      const TopDUContext* top = DUChainUtils::standardContextForUrl( file.toUrl() );
-@@ -260,7 +401,7 @@ QVector<KDevelop::QualifiedIdentifier> findPossibleQualifiedIdentifiers( const Q
+@@ -260,7 +469,7 @@ QVector<KDevelop::QualifiedIdentifier> findPossibleQualifiedIdentifiers( const Q
      return declarations;
  }
  
@@ -279,7 +350,7 @@ index c5718cbbe1..c5bbdabcde 100644
  {
      DUChainReadLocker lock;
  
-@@ -318,7 +459,7 @@ QStringList findMatchingIncludeFiles(const QVector<Declaration*> declarations)
+@@ -318,7 +527,7 @@ QStringList findMatchingIncludeFiles(const QVector<Declaration*> declarations)
  /**
   * Takes a filepath and the include paths and determines what directive to use.
   */
@@ -288,7 +359,7 @@ index c5718cbbe1..c5bbdabcde 100644
  {
      const auto sourceFolder = source.parent();
      const Path canonicalFile( QFileInfo( includefile ).canonicalFilePath() );
-@@ -364,7 +505,7 @@ ClangFixit directiveForFile( const QString& includefile, const KDevelop::Path::L
+@@ -364,7 +573,7 @@ ClangFixit directiveForFile( const QString& includefile, const KDevelop::Path::L
      return ClangFixit{directive + QLatin1Char('\n'), range, QObject::tr("Insert \'%1\'").arg(directive)};
  }
  
@@ -297,7 +368,7 @@ index c5718cbbe1..c5bbdabcde 100644
  {
      // Find project's custom include paths
      const auto source = file.toLocalFile();
-@@ -376,7 +517,7 @@ KDevelop::Path::List includePaths( const KDevelop::Path& file )
+@@ -376,7 +585,7 @@ KDevelop::Path::List includePaths( const KDevelop::Path& file )
  /**
   * Return a list of header files viable for inclusions. All elements will be unique
   */
@@ -306,7 +377,7 @@ index c5718cbbe1..c5bbdabcde 100644
  {
      const auto includes = includePaths( file );
      if( includes.isEmpty() ) {
-@@ -396,7 +537,7 @@ QStringList includeFiles(const QualifiedIdentifier& identifier, const QVector<De
+@@ -396,7 +605,7 @@ QStringList includeFiles(const QualifiedIdentifier& identifier, const QVector<De
  /**
   * Construct viable forward declarations for the type name.
   */
@@ -315,7 +386,7 @@ index c5718cbbe1..c5bbdabcde 100644
  {
      DUChainReadLocker lock;
      ClangFixits fixits;
-@@ -441,7 +582,7 @@ ClangFixits forwardDeclarations(const QVector<Declaration*>& matchingDeclaration
+@@ -441,7 +650,7 @@ ClangFixits forwardDeclarations(const QVector<Declaration*>& matchingDeclaration
  /**
   * Search the persistent symbol table for matching declarations for identifiers @p identifiers
   */
@@ -324,7 +395,7 @@ index c5718cbbe1..c5bbdabcde 100644
  {
      DUChainReadLocker lock;
  
-@@ -464,17 +605,17 @@ QVector<Declaration*> findMatchingDeclarations(const QVector<QualifiedIdentifier
+@@ -464,17 +673,17 @@ QVector<Declaration*> findMatchingDeclarations(const QVector<QualifiedIdentifier
      return matchingDeclarations;
  }
  
@@ -346,7 +417,7 @@ index c5718cbbe1..c5bbdabcde 100644
              fixits << fixit;
              if (fixits.size() == maxSuggestions) {
                  return fixits;
-@@ -482,19 +623,19 @@ ClangFixits fixUnknownDeclaration( const QualifiedIdentifier& identifier, const
+@@ -482,19 +691,19 @@ ClangFixits fixUnknownDeclaration( const QualifiedIdentifier& identifier, const
          }
      }
  
@@ -370,7 +441,7 @@ index c5718cbbe1..c5bbdabcde 100644
              continue;
          }
  
-@@ -536,6 +677,32 @@ void UnknownDeclarationProblem::setSymbol(const QualifiedIdentifier& identifier)
+@@ -536,6 +745,38 @@ void UnknownDeclarationProblem::setSymbol(const QualifiedIdentifier& identifier)
  IAssistant::Ptr UnknownDeclarationProblem::solutionAssistant() const
  {
      const Path path(finalLocation().document.str());
@@ -380,7 +451,6 @@ index c5718cbbe1..c5bbdabcde 100644
 +        if (scanThread->isRunning()) {
 +            scanThread->requestInterruption();
 +        }
-+        scanThread->deleteLater();
 +    }
 +    interrupted = false;
 +    UDPScanEventLoop eventLoop;
@@ -394,14 +464,21 @@ index c5718cbbe1..c5bbdabcde 100644
 +        return IAssistant::Ptr(new ClangFixitAssistant(fixits));
 +    }
 +#else
++    // eventLoop's ctor will have processed all pending events so they won't interrupt the coming scan
++    qApp->installEventFilter(&eventLoop);
 +    // launch the scan of all known headerfiles for unknown declaration fixes
 +    scanThread->start(QThread::IdlePriority);
 +    // enter our dedicated event loop. We will exit when the worker thread calls eventLoop.exit().
-+    if (eventLoop.exec() == 0) {
++    if (eventLoop.exec(QEventLoop::AllEvents|QEventLoop::WaitForMoreEvents) == 0) {
 +        return IAssistant::Ptr(new ClangFixitAssistant(allFixits() + unknownDeclFixits));
 +    }
++    if (scanThread) {
++        qWarning() << Q_FUNC_INFO << "scanThread seems to have outlived its usefulness";
++        // this shouldn't happen but better safe than sorry:
++        scanThread->requestInterruption();
++    }
 +#endif
-+    return IAssistant::Ptr(new ClangFixitAssistant(allFixits()));
++    return static_cast<IAssistant::Ptr>(NULL);
  }
 +
 +#include "unknowndeclarationproblem.moc"
