@@ -624,28 +624,29 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
 }
 
 ###############################################################################
-# define the qt5_component_lib array element-by-element instead of in a table;
+# define the qt5::component2pathspec array element-by-element instead of in a table;
 # using a table wouldn't allow the use of variables (they wouldn't be expanded)
 platform darwin {
-    array set qt5_component_lib [list \
+    array set qt5::component2pathspec [list \
         qtwebkit        path:libexec/${qt_name}/Library/Frameworks/QtWebKit.framework/QtWebKit \
         qtwebengine     path:libexec/${qt_name}/Library/Frameworks/QtWebEngine.framework/QtWebEngine \
         qtwebview       path:libexec/${qt_name}/Library/Frameworks/QtWebView.framework/QtWebView \
     ]
 }
 platform linux {
-    array set qt5_component_lib [list \
+    array set qt5::component2pathspec [list \
         qtwebkit        path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext} \
         qtwebengine     path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext} \
         qtwebview       path:libexec/${qt_name}/lib/libQt5WebView.${qt_libs_ext} \
     ]
 }
+set qt5::component2pathspec(assistant) path:${qt_bins_dir}/assistant
 
 # a procedure for declaring dependencies on Qt5 components, which will expand them
 # into the appropriate subports for the Qt5 flavour installed
 # e.g. qt5.depends_component qtbase qtsvg qtdeclarative
 proc qt5::depends_component_p {deptype args} {
-    global qt5_component_lib qt5.using_kde os.major qt5.kde_stubports version
+    global qt5::component2pathspec qt5.using_kde os.major qt5.kde_stubports version
     # select the Qt5 port prefix, depending on which Qt5 port is installed
     set is_qt5kde [expr [info exists qt5.using_kde] && ${qt5.using_kde}]
     if {${is_qt5kde} == 1 || ${os.major} == 10} {
@@ -686,9 +687,9 @@ proc qt5::depends_component_p {deptype args} {
         }
         if {!${done}} {
             set portname "${qt5pprefix}-${comp}"
-            if {[info exists qt5_component_lib] && [info exists qt5_component_lib(${comp})]} {
+            if {[info exists qt5::component2pathspec] && [info exists qt5::component2pathspec(${comp})]} {
                 # an explicit dependency pattern was given, e.g. path:foo
-                ${deptype}-append "$qt5_component_lib(${comp}):${portname}"
+                ${deptype}-append "$qt5::component2pathspec(${comp}):${portname}"
             } else {
                 ${deptype}-append port:${portname}
             }
@@ -702,6 +703,10 @@ proc qt5.depends_component {args} {
 
 proc qt5.depends_build_component {args} {
     return [qt5::depends_component_p depends_build {*}${args}]
+}
+
+proc qt5.depends_run_component {args} {
+    return [qt5::depends_component_p depends_run {*}${args}]
 }
 
 proc qt5.active_version {} {
