@@ -1,0 +1,158 @@
+diff --git documentation/qthelp/qthelpproviderabstract.cpp documentation/qthelp/qthelpproviderabstract.cpp
+index 2d42cb99d3..bf0dcf5889 100644
+--- documentation/qthelp/qthelpproviderabstract.cpp
++++ documentation/qthelp/qthelpproviderabstract.cpp
+@@ -27,6 +27,11 @@
+ 
+ #include <QStandardPaths>
+ 
++#include <QString>
++#include <QProcess>
++#include <QApplication>
++#include <QDebug>
++
+ #include <language/duchain/duchain.h>
+ #include <language/duchain/declaration.h>
+ #include <language/duchain/duchainlock.h>
+@@ -37,6 +42,39 @@
+ 
+ using namespace KDevelop;
+ 
++class ExternalViewerProcess : public QProcess
++{
++    Q_OBJECT
++public:
++    ExternalViewerProcess(QObject* parent);
++    ~ExternalViewerProcess()
++    {
++        QProcess::close();
++        QProcess::waitForFinished(500);
++    }
++public slots:
++    void externalViewerExit(int exitCode, QProcess::ExitStatus exitStatus);
++};
++
++static ExternalViewerProcess* externalViewerProcess = Q_NULLPTR;
++
++ExternalViewerProcess::ExternalViewerProcess(QObject *parent)
++    : QProcess(parent)
++{
++    connect(this, static_cast<void(ExternalViewerProcess::*)(int, QProcess::ExitStatus)>(&ExternalViewerProcess::finished),
++            &ExternalViewerProcess::externalViewerExit);
++}
++
++void ExternalViewerProcess::externalViewerExit(int exitCode, QProcess::ExitStatus exitStatus)
++{
++    if (this == externalViewerProcess) {
++        qWarning() << Q_FUNC_INFO << "externalViewer" << this << "has exited with code"
++            << exitCode << "and status" << exitStatus;
++        deleteLater();
++        externalViewerProcess = Q_NULLPTR;
++    }
++}
++
+ QtHelpProviderAbstract::QtHelpProviderAbstract(QObject *parent, const QString &collectionFileName, const QVariantList &args)
+     : QObject(parent)
+     , m_engine(QStandardPaths::writableLocation(QStandardPaths::DataLocation)+'/'+collectionFileName)
+@@ -47,11 +85,25 @@ QtHelpProviderAbstract::QtHelpProviderAbstract(QObject *parent, const QString &c
+     }
+ }
+ 
+-
+ QtHelpProviderAbstract::~QtHelpProviderAbstract()
+ {
+ }
+ 
++ExternalViewerProcess* QtHelpProviderAbstract::externalViewer() const
++{
++    if (!externalViewerProcess) {
++        externalViewerProcess = new ExternalViewerProcess(qApp);
++        QStringList args = {"-enableRemoteControl"};
++        externalViewerProcess->start(QStandardPaths::findExecutable(QLatin1String("assistant-qt5")),
++            args, QIODevice::WriteOnly|QIODevice::Append);
++        if (!externalViewerProcess->waitForStarted()) {
++            externalViewerProcess->deleteLater();
++            externalViewerProcess = NULL;
++        }
++    }
++    return externalViewerProcess;
++}
++
+ IDocumentation::Ptr QtHelpProviderAbstract::documentationForDeclaration(Declaration* dec) const
+ {
+     QtHelpDocumentation::s_provider = const_cast<QtHelpProviderAbstract*>(this);
+@@ -69,8 +121,23 @@ IDocumentation::Ptr QtHelpProviderAbstract::documentationForDeclaration(Declarat
+         if (!id.isEmpty()) {
+             QMap<QString, QUrl> links = m_engine.linksForIdentifier(id);
+ 
+-            if(!links.isEmpty())
++            if(!links.isEmpty()) {
++                if (externalViewer()) {
++                    QByteArray ba;
++                    QList<QUrl> urls = links.values();
++                    foreach (const auto url, urls) {
++                        if (!url.isEmpty()) {
++                            ba.append(QString::fromLatin1("setSource ") + url.toString() + QLatin1String("\n"));
++//                             QString keyword = id.split(QLatin1String("::")).at(0);
++//                             ba.append(QString::fromLatin1("activateKeyword ") + keyword + QLatin1String("\n"));
++//                             ba.append(QString::fromLatin1("activateIdentifier ") + id + QLatin1String("\n"));
++                        }
++                    }
++                    qWarning() << Q_FUNC_INFO << "Id=" << id << "links=" << links << "->" << ba;
++                    externalViewer()->write(ba);
++                }
+                 return IDocumentation::Ptr(new QtHelpDocumentation(id, links));
++            }
+         }
+     }
+ 
+@@ -87,7 +154,19 @@ IDocumentation::Ptr QtHelpProviderAbstract::documentationForIndex(const QModelIn
+ {
+     QtHelpDocumentation::s_provider = const_cast<QtHelpProviderAbstract*>(this);
+     QString name=idx.data(Qt::DisplayRole).toString();
+-    return IDocumentation::Ptr(new QtHelpDocumentation(name, m_engine.indexModel()->linksForKeyword(name)));
++    QMap<QString, QUrl> links = m_engine.indexModel()->linksForKeyword(name);
++    if(!links.isEmpty() && externalViewer()) {
++        QByteArray ba;
++        QList<QUrl> urls = links.values();
++        foreach (const auto url, urls) {
++            if (!url.isEmpty()) {
++                ba.append(QString::fromLatin1("setSource ") + url.toString() + QLatin1String("\n"));
++            }
++        }
++        qWarning() << Q_FUNC_INFO << "name=" << name << "->" << ba;
++        externalViewer()->write(ba);
++    }
++    return IDocumentation::Ptr(new QtHelpDocumentation(name, links));
+ }
+ 
+ void QtHelpProviderAbstract::jumpedTo(const QUrl& newUrl) const
+@@ -109,3 +188,5 @@ bool QtHelpProviderAbstract::isValid() const
+ {
+     return !m_engine.registeredDocumentations().isEmpty();
+ }
++
++#include "qthelpproviderabstract.moc"
+diff --git documentation/qthelp/qthelpproviderabstract.h documentation/qthelp/qthelpproviderabstract.h
+index 1f5f1b28fb..04bb142e8c 100644
+--- documentation/qthelp/qthelpproviderabstract.h
++++ documentation/qthelp/qthelpproviderabstract.h
+@@ -29,6 +29,8 @@
+ #include <QVariantList>
+ #include <QHelpEngine>
+ 
++class ExternalViewerProcess;
++
+ class QtHelpProviderAbstract : public QObject, public KDevelop::IDocumentationProvider
+ {
+     Q_OBJECT
+@@ -46,6 +48,8 @@ public:
+     /// @return False in case we failed to load any documentation files, else true
+     bool isValid() const;
+ 
++    ExternalViewerProcess *externalViewer() const;
++
+     QHelpEngine* engine() { return &m_engine; }
+ public slots:
+     void jumpedTo(const QUrl& newUrl) const;
+
