@@ -739,28 +739,34 @@ proc qt5.register_qch_files {qchfiles} {
     }
 }
 
-post-activate {
+# post-activate {
     set qchdir ${prefix}/share/doc/qch
     if {[file exists ${qchdir}] && [file isdirectory ${qchdir}]} {
-        if {![catch {set fp [open "${qchdir}/MP-qthelp-collection.qhcp" "w"]} err]} {
-            ui_msg "--->  Generating Qt help collection file in ${qchdir}"
-            puts ${fp} "<?xml version=\"1.0\" encoding=\"utf-8\" ?>"
-            puts ${fp} "<QHelpCollectionProject version=\"1.0\">"
-            puts ${fp} "  <docFiles>"
-            puts ${fp} "    <register>"
-            foreach q [glob -nocomplain ${qchdir}/*.qch] {
-                puts ${fp} "      <file>[file tail ${q}]</file>"
+        set qhcpfile MP-qthelp-collection.qhcp
+        set qhcfile MP-qthelp-collection.qhc
+        set tDir [file mtime "${qchdir}"]
+        set tFile [file mtime "${qchdir}/${qhcfile}"]
+        if {[expr ${tDir} > ${tFile}]} {
+            if {![catch {set fp [open "${qchdir}/${qhcpfile}" "w"]} err]} {
+                ui_msg "--->  Generating Qt help collection file in ${qchdir}"
+                puts ${fp} "<?xml version=\"1.0\" encoding=\"utf-8\" ?>"
+                puts ${fp} "<QHelpCollectionProject version=\"1.0\">"
+                puts ${fp} "  <docFiles>"
+                puts ${fp} "    <register>"
+                foreach q [glob -nocomplain ${qchdir}/*.qch] {
+                    puts ${fp} "      <file>[file tail ${q}]</file>"
+                }
+                puts ${fp} "    </register>"
+                puts ${fp} "  </docFiles>"
+                puts ${fp} "</QHelpCollectionProject>"
+                close ${fp}
+                catch {system -W ${qchdir} "time ${qt_bins_dir}/qcollectiongenerator ${qhcpfile} -o ${qhcfile}"}
+                file delete -force ${qchdir}/${qhcpfile}
+            } else {
+                ui_debug "cannot create ${qchdir}/${qhcpfile}: ${err}"
             }
-            puts ${fp} "    </register>"
-            puts ${fp} "  </docFiles>"
-            puts ${fp} "</QHelpCollectionProject>"
-            close ${fp}
-            catch {system -W ${qchdir} "time ${qt_bins_dir}/qcollectiongenerator MP-qthelp-collection.qhcp -o MP-qthelp-collection.qhc"}
-            file delete -force ${qchdir}/MP-qthelp-collection.qhcp
-        } else {
-            ui_debug "cannot create ${qchdir}/MP-qthelp-collection.qhcp: ${err}"
         }
     }
-}
+# }
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
