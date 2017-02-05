@@ -739,7 +739,7 @@ proc qt5.register_qch_files {qchfiles} {
     }
 }
 
-# post-activate {
+post-activate {
     set qchdir ${prefix}/share/doc/qch
     if {[file exists ${qchdir}] && [file isdirectory ${qchdir}]} {
         set qhcpfile MP-qthelp-collection.qhcp
@@ -767,6 +767,6 @@ proc qt5.register_qch_files {qchfiles} {
             }
         }
     }
-# }
+}
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
