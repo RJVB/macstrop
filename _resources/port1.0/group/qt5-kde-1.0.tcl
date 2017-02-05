@@ -739,7 +739,7 @@ post-activate {
             puts ${fp} "  </docFiles>"
             puts ${fp} "</QHelpCollectionProject>"
             close ${fp}
-            catch {system -W ${qchdir} "${qt_bins_dir}/qcollectiongenerator MP-qthelp-collection.qhcp -o MP-qthelp-collection.qhc"}
+            catch {system -W ${qchdir} "time ${qt_bins_dir}/qcollectiongenerator MP-qthelp-collection.qhcp -o MP-qthelp-collection.qhc"}
             file delete -force ${qchdir}/MP-qthelp-collection.qhcp
         } else {
             ui_debug "cannot create ${qchdir}/MP-qthelp-collection.qhcp: ${err}"
