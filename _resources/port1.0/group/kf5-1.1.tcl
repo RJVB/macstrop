@@ -300,12 +300,13 @@ if {${kf5::includecounter} == 0} {
                 }
                 post-destroot {
                     xinstall -m 755 -d ${destroot}${kf5.docs_dir}
-                    xinstall -m 755 -d ${destroot}${prefix}/share/doc/qch
                     # this appears to be necessary, sometimes:
-                    system "chmod 755 ${destroot}${kf5.docs_dir} ${destroot}${prefix}/share/doc/qch"
+                    system "chmod 755 ${destroot}${kf5.docs_dir}"
                     foreach doc [glob -nocomplain ${workpath}/apidocs/*.qch] {
                         xinstall -m 644 ${doc} ${destroot}${kf5.docs_dir}
-                        ln -s ${kf5.docs_dir}/[file tail ${doc}] ${destroot}${prefix}/share/doc/qch
+                        if {[info procs qt5.register_qch_files] ne ""} {
+                            qt5.register_qch_files ${kf5.docs_dir}/[file tail ${doc}]
+                        }
                     }
                     if {[variant_exists chm] && [variant_isset chm]} {
                         foreach doc [glob -nocomplain ${workpath}/apidocs/*.chm] {

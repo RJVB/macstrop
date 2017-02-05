@@ -723,6 +723,22 @@ proc qt5.active_version {} {
     }
 }
 
+# this function registers the specified qch file(s) by installing
+# symlinks to them into ${destroot}${prefix}/share/doc/qch . This is done only
+# when the target directory exists in the install prefix, which in turn means
+# that port:qt5-kde*-assistant is installed.
+proc qt5.register_qch_files {qchfiles} {
+    global prefix destroot
+    set qchdir ${prefix}/share/doc/qch
+    if {[file exists ${qchdir}] && [file isdirectory ${qchdir}]} {
+        xinstall -m 755 -d ${destroot}${qchdir}
+        foreach d ${qchfiles} {
+            set target [string map [list ${destroot} ""] ${d}]
+            ln -s ${target} ${destroot}${qchdir}
+        }
+    }
+}
+
 post-activate {
     set qchdir ${prefix}/share/doc/qch
     if {[file exists ${qchdir}] && [file isdirectory ${qchdir}]} {
