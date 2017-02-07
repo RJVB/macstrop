@@ -358,8 +358,6 @@ if {![info exists building_qt5] || [vercmp ${version} 5.7.0] >= 0} {
     # these stubports are added to the list for dependents, but not for port:qt5*-kde itself
     # this allows to define them only in port:qt5-kde, not qt56-kde .
     lappend qt5.kde_stubports qtcharts qtdatavis3d qtgamepad qtpurchasing qtscxml
-}
-if {![info exists building_qt5] || [vercmp ${version} 5.8.0] >= 0} {
     # qttranslations is moved to its own subport; remove it from the stubports list:
     set qt5.kde_stubports [lsearch -all -inline -not -exact ${qt5.kde_stubports} qttranslations]
 }
