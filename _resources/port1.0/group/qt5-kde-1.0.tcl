@@ -737,14 +737,27 @@ proc qt5.register_qch_files {qchfiles} {
     }
 }
 
+set qt5::qch_collection_file "${prefix}/share/doc/qch/MP-qthelp-collection.qhc"
+
 post-activate {
-    set qchdir ${prefix}/share/doc/qch
+    set qchdir [file dirname ${qt5::qch_collection_file}]
     if {[file exists ${qchdir}] && [file isdirectory ${qchdir}]} {
         set qhcpfile MP-qthelp-collection.qhcp
-        set qhcfile MP-qthelp-collection.qhc
-        set tDir [file mtime "${qchdir}"]
-        set tFile [file mtime "${qchdir}/${qhcfile}"]
-        if {[expr ${tDir} > ${tFile}]} {
+        set qhcfile [file tail MP-qthelp-collection.qhc]
+        if {(${subport} eq "qt5-kde-assistant") || (${subport} eq "qt5-kde-devel-assistant")} {
+            set needs_generate yes
+        } elseif {[file exists "${qchdir}/${qhcfile}"]} {
+            set tDir [file mtime "${qchdir}"]
+            set tFile [file mtime "${qchdir}/${qhcfile}"]
+            set needs_generate [expr ${tDir} > ${tFile}]
+        } else {
+            set needs_generate yes
+        }
+        if {${needs_generate}} {
+            # alternative:
+            # assistant-qt5 -collectionFile ${qt5::qch_collection_file} -unregister *.qch
+            # assistant-qt5 -collectionFile ${qt5::qch_collection_file} -register *.qch
+            # collectionFile must exist though (and may have to live in a different directory)
             if {![catch {set fp [open "${qchdir}/${qhcpfile}" "w"]} err]} {
                 ui_msg "--->  Generating Qt help collection file in ${qchdir}"
                 puts ${fp} "<?xml version=\"1.0\" encoding=\"utf-8\" ?>"
