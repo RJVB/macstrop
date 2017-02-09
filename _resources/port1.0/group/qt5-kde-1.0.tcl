@@ -737,44 +737,64 @@ proc qt5.register_qch_files {qchfiles} {
     }
 }
 
-set qt5::qch_collection_file "${prefix}/share/doc/qch/MP-qthelp-collection.qhc"
+# store the collection file in the Qt docs dir, not the "assorted misc. collection dir (share/doc/qch)"
+set qt5::qch_collection_file "${qt_docs_dir}/MP-qthelp-collection.qhc"
 
 post-activate {
-    set qchdir [file dirname ${qt5::qch_collection_file}]
-    if {[file exists ${qchdir}] && [file isdirectory ${qchdir}]} {
+    # we'll register entries from share/doc/qch
+    set qchdir ${prefix}/share/doc/qch
+    set qhcdir [file dirname ${qt5::qch_collection_file}]
+    if {[file exists ${qchdir}] && [file isdirectory ${qchdir}] && [file exists ${qhcdir}] && [file isdirectory ${qhcdir}]} {
         set qhcpfile MP-qthelp-collection.qhcp
-        set qhcfile [file tail MP-qthelp-collection.qhc]
+        set qhcfile [file tail ${qt5::qch_collection_file}]
         if {(${subport} eq "qt5-kde-assistant") || (${subport} eq "qt5-kde-devel-assistant")} {
+            # always regenerate when (re)installing the Qt Assistant
             set needs_generate yes
-        } elseif {[file exists "${qchdir}/${qhcfile}"]} {
-            set tDir [file mtime "${qchdir}"]
-            set tFile [file mtime "${qchdir}/${qhcfile}"]
+        } elseif {[file exists "${qhcdir}/${qhcfile}"]} {
+            # only regenerate otherwise when the collection file is out-of-date
+            set tDir [file mtime "${qhcdir}"]
+            set tFile [file mtime "${qhcdir}/${qhcfile}"]
             set needs_generate [expr ${tDir} > ${tFile}]
         } else {
             set needs_generate yes
         }
         if {${needs_generate}} {
-            # alternative:
-            # assistant-qt5 -collectionFile ${qt5::qch_collection_file} -unregister *.qch
-            # assistant-qt5 -collectionFile ${qt5::qch_collection_file} -register *.qch
-            # collectionFile must exist though (and may have to live in a different directory)
-            if {![catch {set fp [open "${qchdir}/${qhcpfile}" "w"]} err]} {
-                ui_msg "--->  Generating Qt help collection file in ${qchdir}"
+            # we only store documentation that's not from Qt in the generated collection file;
+            # this appears to be necessary with Qt >= 5.8 to prevent indexing and too-many-open-files errors
+            set candidates {}
+            foreach q [glob -nocomplain ${qchdir}/*.qch] {
+                if {![file exists ${qt_docs_dir}/[file tail ${q}]]} {
+                    lappend candidates [file normalize ${q}]
+                }
+            }
+            if {[file exists "${qhcdir}/${qhcfile}"]} {
+                ui_msg "--->  Regenerating Qt help collection file in ${qhcdir}"
+                # unregister all entries if the collectionfile already exists
+                foreach q ${candidates} {
+                    catch {system -W ${qhcdir} "${prefix}/bin/assistant-qt5 -collectionFile ${qhcfile} -unregister [file normalize ${q}]"}
+                }
+            } elseif {![catch {set fp [open "${qhcdir}/${qhcpfile}" "w"]} err]} {
+                # create an empty collection file
+                ui_msg "--->  Generating Qt help collection file in ${qhcdir}"
                 puts ${fp} "<?xml version=\"1.0\" encoding=\"utf-8\" ?>"
                 puts ${fp} "<QHelpCollectionProject version=\"1.0\">"
-                puts ${fp} "  <docFiles>"
-                puts ${fp} "    <register>"
-                foreach q [glob -nocomplain ${qchdir}/*.qch] {
-                    puts ${fp} "      <file>[file tail ${q}]</file>"
-                }
-                puts ${fp} "    </register>"
-                puts ${fp} "  </docFiles>"
+                puts ${fp} "  <assistant>"
+                puts ${fp} "    <title>MacPorts Qt Help Files Collection</title>"
+                puts ${fp} "    <cacheDirectory>QtProject/Assistant-MP</cacheDirectory>"
+                puts ${fp} "    <enableFullTextSearchFallback>true</enableFullTextSearchFallback>"
+                puts ${fp} "  </assistant>"
                 puts ${fp} "</QHelpCollectionProject>"
                 close ${fp}
-                catch {system -W ${qchdir} "time ${qt_bins_dir}/qcollectiongenerator ${qhcpfile} -o ${qhcfile}"}
-                file delete -force ${qchdir}/${qhcpfile}
+                catch {system -W ${qhcdir} "time ${qt_bins_dir}/qcollectiongenerator ${qhcpfile} -o ${qhcfile}"}
+                file delete -force ${qhcdir}/${qhcpfile}
             } else {
-                ui_debug "cannot create ${qchdir}/${qhcpfile}: ${err}"
+                ui_debug "cannot create ${qhcdir}/${qhcpfile}: ${err}"
+            }
+            if {[file exists "${qhcdir}/${qhcfile}"]} {
+                # (re)register all candidates
+                foreach q ${candidates} {
+                    catch {system -W ${qhcdir} "${prefix}/bin/assistant-qt5 -collectionFile ${qhcfile} -register [file normalize ${q}]"}
+                }
             }
         }
     }
