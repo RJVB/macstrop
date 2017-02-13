@@ -27,3 +27,4 @@ SUBDIRS = qt3d/examples \
     qtwebview/examples \
     qtxmlpatterns/examples
 
+#linux
