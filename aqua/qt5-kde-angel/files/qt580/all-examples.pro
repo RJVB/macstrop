@@ -23,7 +23,8 @@ SUBDIRS = qt3d/examples \
     qtsvg/examples \
     qttools/examples \
     qtvirtualkeyboard/examples \
-    qtwebengine/exampels \
-    qtwebview/exampels \
+    qtwebengine/examples \
+    qtwebview/examples \
     qtxmlpatterns/examples
 
+#linux
