@@ -34,21 +34,13 @@ if {${os.platform} eq "darwin" && ${os.major} <= 10} {
 #     revision        [expr ${revision} + 1]
 # }
 # }
+platform linux {
+    # for building against port:glib2 instead of the host's glib2
+    if {${subport} eq "${name}"} {
+        revision    [expr ${revision} + 1]
+    }
+}
 ####
-
-#====================================================================
-# If Qt 5.7 will drop support for 10.7 and earlier, and by then we may wish
-# to split up the portfile with includes, like e.g.
-# if {[catch {source "${portpath}/Portfile.qt5"} err]} {
-#     puts stderr "Error reading Portfile.qt5: $err"
-#     return 1;
-# }
-# or else create qt53, qt54 (etc) ports that will be pulled in
-# automatically by port:qt5 on OS versions where the latest release
-# version doesn't build.
-# It seems a bad idea to try to support multiple Qt versions in a
-# single Portfile despite the advantages of shared code, patches etc.
-#====================================================================
 
 # set building_qt5 immediately, before including the Qt5 PortGroup!
 set building_qt5    1
@@ -989,7 +981,10 @@ if { (${subport} eq ${name}) \
         configure.ldflags-delete    -Wl,-headerpad_max_install_names
     }
 
-    do_not_extract-append           ${distname}/qtwayland ${distname}/qttranslations
+    do_not_extract-append           ${distname}/qttranslations
+    platform darwin {
+        do_not_extract-append       ${distname}/qtwayland
+    }
     if {${subport} ne "${name}-qtwebengine"} {
         do_not_extract-append       ${distname}/qtwebengine
     }
@@ -999,19 +994,21 @@ if { (${subport} eq ${name}) \
 
     post-extract {
         file mkdir ${workpath}/build
-        if {${subport} eq "${name}-qtwebengine"} {
-            file delete -force ${worksrcpath}/qtwebengine/examples
-        } else {
-            if {[file exists ${worksrcpath}/qtwebengine] && (${subport} ne "${name}-zz-docs")} {
-                file delete -force ${worksrcpath}/qtwebengine
-                patchfiles-append   patch-disable-qtwebengine.diff
+        if {[file exists ${worksrcpath}/qtwebengine] && (${subport} ne "${name}-zz-docs")} {
+            file delete -force ${worksrcpath}/qtwebengine
+            patchfiles-append   patch-disable-qtwebengine.diff
+        }
+        if {[variant_isset universal]} {
+            ui_msg "Setting up symlinks for architectures ${universal_archs_to_use}"
+            foreach arch ${universal_archs_to_use} {
+                ui_msg "ln -s ${distname} ${worksrcpath}-${arch}"
+                ln -s ${distname} ${worksrcpath}-${arch}
             }
-            if {[variant_isset universal]} {
-                ui_msg "Setting up symlinks for architectures ${universal_archs_to_use}"
-                foreach arch ${universal_archs_to_use} {
-                    ui_msg "ln -s ${distname} ${worksrcpath}-${arch}"
-                    ln -s ${distname} ${worksrcpath}-${arch}
-                }
+        }
+        # clean out the examples directories
+        if {![variant_isset examples] || (${subport} eq "${name}-qtwebengine")} {
+            foreach ex [glob -nocomplain ${worksrcpath}/*/examples] {
+                file delete -force ${ex}
             }
         }
     }
@@ -1119,6 +1116,7 @@ if { (${subport} eq ${name}) \
         }
 
         variant examples description "Build examples. This will conflict with port:${name}-examples!" {
+            conflicts-append ${name}-examples
             configure.args-replace  {-nomake examples} {-make examples}
         }
 
@@ -2191,20 +2189,27 @@ subport ${name}-examples {
             extract_components-append   ${distname}/qtwebengine/examples/ \
                                         ${distname}/qtwebview/examples/
         }
+        platform linux {
+            extract_components-append   ${distname}/qtwayland/examples
+        }
     }
     depends_lib-append          ${qt5_dependency}
 
     post-extract {
         if {${QT53}} {
-            copy ${filespath}/${PF532}/all-examples.pro ${workpath}/${worksrcdir}/all-examples.pro
+            copy -force ${filespath}/${PF532}/all-examples.pro ${workpath}/${worksrcdir}/all-examples.pro
         } else {
-            copy ${filespath}/${PF58x}/all-examples.pro ${workpath}/${worksrcdir}/all-examples.pro
+            copy -force ${filespath}/${PF58x}/all-examples.pro ${workpath}/${worksrcdir}/all-examples.pro
         }
         if {![variant_isset qtwebengine]} {
             reinplace "/qtwebengine/d" ${workpath}/${worksrcdir}/all-examples.pro
             reinplace "/qtwebview/d" ${workpath}/${worksrcdir}/all-examples.pro
         }
-        file mkdir ${workpath}/build
+        platform linux {
+            reinplace "s|#linux|SUBDIRS += qtwayland/examples|g" \
+                                ${workpath}/${worksrcdir}/all-examples.pro
+        }
+        xinstall -m 755 -d ${workpath}/build
     }
 
     patchfiles-append           ${PF532}remove_icon_from_example.patch \
@@ -2232,13 +2237,6 @@ subport ${name}-examples {
                 ${destroot}${qt_examples_dir}/sensors/grue/Grue/libdeclarative_grue.dylib"
             system "install_name_tool -change libgruesensor.1.dylib ${qt_examples_dir}/sensors/grue/libgruesensor.1.dylib \
                 ${destroot}${qt_examples_dir}/sensors/grue/sensors/libqtsensors_grue.dylib"
-        }
-        # correct an installation glitch in Qt 5.6.0:
-        if {[file exists ${destroot}${worksrcpath}/qtsvg/examples/svg/richtext/textobject/files/heart.svg]} {
-            ui_info "NB: Moving heart.svg to its designated location"
-            xinstall -m 755 -d ${destroot}${qt_examples_dir}/svg/richtext/textobject/files
-            file rename ${destroot}${worksrcpath}/qtsvg/examples/svg/richtext/textobject/files/heart.svg \
-                ${destroot}${qt_examples_dir}/svg/richtext/textobject/files/heart.svg
         }
     }
 }
