@@ -360,6 +360,8 @@ if {${kf5::includecounter} == 0} {
     if {![info exists kf5.framework] && ![info exists kf5.portingAid]} {
         # explicitly define certain headers and libraries, to avoid
         # conflicts with those installed into system paths by the user.
+        # These are mostly remnants from the KDE4 PortGroup and are being
+        # pruned little by little when it becomes clear they're no longer needed.
         configure.args-append \
                             -DDOCBOOKXSL_DIR=${prefix}/share/xsl/docbook-xsl \
                             -DGETTEXT_INCLUDE_DIR=${prefix}/include \
@@ -385,13 +387,6 @@ if {${kf5::includecounter} == 0} {
                             -DLIBXML2_XMLLINT_EXECUTABLE=${prefix}/bin/xmllint \
                             -DLIBXSLT_INCLUDE_DIR=${prefix}/include \
                             -DLIBXSLT_LIBRARIES=${prefix}/lib/libxslt.${kf5::libs_ext}
-#                             -DOPENAL_INCLUDE_DIR=/System/Library/Frameworks/OpenAL.framework/Headers \
-#                             -DOPENAL_LIBRARY=/System/Library/Frameworks/OpenAL.framework
-#                             -DPNG_INCLUDE_DIR=${prefix}/include \
-#                             -DPNG_PNG_INCLUDE_DIR=${prefix}/include \
-#                             -DPNG_LIBRARY=${prefix}/lib/libpng.${kf5::libs_ext} \
-#                             -DTIFF_INCLUDE_DIR=${prefix}/include \
-#                             -DTIFF_LIBRARY=${prefix}/lib/libtiff.${kf5::libs_ext}
     }
 
     post-fetch {
