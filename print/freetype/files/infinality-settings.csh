@@ -77,4 +77,8 @@ Xft.rgba:       rgb" | xrdb -merge >& /dev/null
 
 setenv PANGOCAIRO_BACKEND "fontconfig"
 
+### 5. For Freetype 2.7+, select 38 for (old!) Infinality mode
+### or leave the default (40):
+# setenv FREETYPE_PROPERTIES "truetype:interpreter-version=38"
+
 # vim:ft=sh:

@@ -63,6 +63,10 @@
 
 export PANGOCAIRO_BACKEND="fontconfig"
 
+### 5. For Freetype 2.7+, select 38 for (old!) Infinality mode
+### or leave the default (40):
+# export FREETYPE_PROPERTIES="truetype:interpreter-version=38"
+
 
 ### Please refer to "infinality-settings-explained.sh" file for detailed explanation
 ### of customization options and provided examples.

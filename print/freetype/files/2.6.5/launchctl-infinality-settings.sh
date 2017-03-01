@@ -129,12 +129,6 @@ else
 	launchctl unsetenv INFINALITY_FT_WINDOWS_STYLE_SHARPENING_STRENGTH
 fi
 
-if [ -n "FREETYPE_PROPERTIES" ] ;then
-	launchctl setenv FREETYPE_PROPERTIES "${FREETYPE_PROPERTIES}"
-else
-	launchctl unsetenv FREETYPE_PROPERTIES
-fi
-
 if [ -n "${PANGOCAIRO_BACKEND}" ] ;then
 	launchctl setenv PANGOCAIRO_BACKEND "${PANGOCAIRO_BACKEND}"
 else
