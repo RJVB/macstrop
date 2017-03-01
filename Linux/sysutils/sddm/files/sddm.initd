@@ -1,0 +1,147 @@
+#!/bin/sh -e
+### BEGIN INIT INFO
+# Provides:          sddm
+# Required-Start:    $local_fs $remote_fs
+# Required-Stop:     $local_fs $remote_fs
+# Should-Start:      console-screen kbd acpid dbus hal krb5-kdc
+# Should-Stop:       console-screen kbd
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: new simple X display manager for KDE/KF5
+# Description:       SDDM manages a collection of X servers, which may be on the local host or remote machines.
+### END INIT INFO
+# /etc/init.d/sddm: start or stop the X display manager
+# Script stolen from kdm
+#
+# description: Simple Desktop Display Manager
+#
+
+# import the LSB init functions
+. /lib/lsb/init-functions
+
+# set the locale
+if [ -r /etc/default/locale ]; then
+  . /etc/default/locale
+  export LANG LANGUAGE
+fi
+
+# To start sddm even if it is not the default display manager, change
+# HEED_DEFAULT_DISPLAY_MANAGER to "false."
+# Also overridable from command line like:
+# HEED_DEFAULT_DISPLAY_MANAGER=false /etc/init.d/lightdm start
+if [ "$HEED_DEFAULT_DISPLAY_MANAGER" = "" ] ;then
+	HEED_DEFAULT_DISPLAY_MANAGER=true
+fi
+
+DEFAULT_DISPLAY_MANAGER_FILE=/etc/X11/default-display-manager
+
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+DAEMON=/usr/bin/sddm
+PIDFILE=/var/run/sddm.pid
+UPGRADEFILE=/var/run/sddm.upgrade
+
+# If we upgraded the daemon, we can't use the --exec argument to
+# start-stop-daemon since the inode will have changed.  The risk here is that
+# in a situation where the daemon died, its pidfile was not cleaned up, and
+# some other process is now running under that pid, start-stop-daemon will send
+# signals to an innocent process.  However, this seems like a corner case.
+# C'est la vie!
+if [ -e $UPGRADEFILE ]; then
+  SSD_ARGS="--pidfile $PIDFILE --startas $DAEMON"
+else
+  SSD_ARGS="--pidfile $PIDFILE --exec $DAEMON"
+fi
+
+still_running () {
+  if expr "$(cat /proc/$DAEMONPID/cmdline 2> /dev/null)" : "$DAEMON" > /dev/null 2>&1; then
+    true
+  else
+    # if the daemon does not remove its own pidfile, we will
+    rm -f $PIDFILE $UPGRADEFILE
+    false
+  fi;
+}
+
+case "$1" in
+  start)
+    if [ "$HEED_DEFAULT_DISPLAY_MANAGER" = "true" ] &&
+       [ -e $DEFAULT_DISPLAY_MANAGER_FILE ] &&
+       [ "$(cat $DEFAULT_DISPLAY_MANAGER_FILE)" != "$DAEMON" -a "$(cat $DEFAULT_DISPLAY_MANAGER_FILE)" != "$DAEMON" ]; then
+      log_action_msg "Not starting the Simple Desktop Display Manager (sddm); it is not the default display manager."
+    else
+      log_daemon_msg "Starting the Simple Desktop Display Manager" "sddm"
+      if start-stop-daemon --start --quiet $SSD_ARGS -- $ARG ; then
+        log_end_msg 0
+      else
+        log_action_end_msg 1 "already running"
+      fi
+    fi
+  ;;
+
+  restart)
+    /etc/init.d/sddm stop
+    if [ -f $PIDFILE ]; then
+      if still_running; then
+        exit 1
+      fi
+    fi
+    /etc/init.d/sddm start
+  ;;
+
+  reload)
+    log_action_begin_msg "Reloading the Simple Desktop Display Manager configuration..."
+    if start-stop-daemon --stop --signal 1 --quiet $SSD_ARGS; then
+      log_action_end_msg 0
+    else
+      log_action_end_msg 1 "sddm not running"
+    fi
+  ;;
+
+  force-reload)
+    /etc/init.d/sddm reload
+  ;;
+
+  stop)
+    log_action_begin_msg "Stopping the Simple Desktop Display Manager: sddm"
+    if [ ! -f $PIDFILE ]; then
+      log_action_end_msg 0 " not running ($PIDFILE not found)"
+      exit 0
+    else
+      DAEMONPID=$(cat $PIDFILE | tr -d '[:blank:]')
+      KILLCOUNT=1
+      if [ ! -e $UPGRADEFILE ]; then
+        if start-stop-daemon --stop --quiet $SSD_ARGS; then
+          # give sddm's signal handler a second to catch its breath
+          sleep 1
+        else
+          log_action_cont_msg " not running"
+        fi
+      fi
+      while [ $KILLCOUNT -le 5 ]; do
+        if still_running; then
+          kill $DAEMONPID
+        else
+          break
+        fi
+        sleep 1
+        KILLCOUNT=$(( $KILLCOUNT + 1 ))
+      done
+      if still_running; then
+        log_action_cont_msg " not responding to TERM signal (pid $DAEMONPID)"
+      else
+        rm -f $UPGRADEFILE
+      fi
+    fi
+    log_action_end_msg 0
+  ;;
+  status)
+    status_of_proc -p "$PIDFILE" "$DAEMON" sddm && exit 0 || exit $?
+  ;;
+
+  *)
+    echo "Usage: /etc/init.d/sddm {start|stop|restart|reload|force-reload|status}"
+    exit 1
+    ;;
+esac
+
+exit 0
