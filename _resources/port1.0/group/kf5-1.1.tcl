@@ -205,6 +205,8 @@ if {${kf5::includecounter} == 0} {
         set kf5.applications_dir \
                             ${applications_dir}/KF5
         set kf5.libexec_dir ${prefix}/libexec/kde5
+        set kf5.pkgconfig_dir \
+                            ${prefix}/lib/pkgconfig
         configure.args-append \
                             -DBUNDLE_INSTALL_DIR=${kf5.applications_dir} \
                             -DCMAKE_DISABLE_FIND_PACKAGE_X11=ON \
@@ -217,6 +219,8 @@ if {${kf5::includecounter} == 0} {
         set kf5.applications_dir \
                             ${prefix}/bin
         set kf5.libexec_dir ${prefix}/lib/${build_arch}-linux-gnu/libexec
+        set kf5.pkgconfig_dir \
+                            ${prefix}/lib/${build_arch}-linux-gnu/pkgconfig
         cmake.install_rpath-prepend \
                             ${prefix}/lib/${build_arch}-linux-gnu
         configure.args-append \
