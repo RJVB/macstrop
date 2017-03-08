@@ -1,0 +1,356 @@
+diff --git a/plugins/patchreview/patchreview.ui b/plugins/patchreview/patchreview.ui
+index c706c0c..37c1aa3 100644
+--- a/plugins/patchreview/patchreview.ui
++++ b/plugins/patchreview/patchreview.ui
+@@ -72,6 +72,28 @@
+         </spacer>
+        </item>
+        <item>
++        <widget class="QSpinBox" name="diffContext">
++         <property name="toolTip">
++          <string>lines of context for the unified diff</string>
++         </property>
++         <property name="specialValueText">
++          <string>max</string>
++         </property>
++         <property name="suffix">
++          <string extracomment="lines of context text"/>
++         </property>
++         <property name="minimum">
++          <number>0</number>
++         </property>
++         <property name="maximum">
++          <number>999</number>
++         </property>
++         <property name="value">
++          <number>3</number>
++         </property>
++        </widget>
++       </item>
++       <item>
+         <widget class="QPushButton" name="updateButton">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+diff --git a/vcs/interfaces/ipatchsource.h b/vcs/interfaces/ipatchsource.h
+index 6e2939d..0e5324d 100644
+--- a/vcs/interfaces/ipatchsource.h
++++ b/vcs/interfaces/ipatchsource.h
+@@ -48,6 +48,11 @@ class KDEVPLATFORMVCS_EXPORT IPatchSource : public QObject
+         ///should re-compare the files or whatever needs to be done
+         ///If the patch has changed, patchChanged needs to be emitted
+         virtual void update() = 0;
++        ///Explicit updating of the patch with a specific number of context lines.
++        ///The default implementation ignores the argument and calls update()
++        virtual void update(int) {
++            update();
++        }
+ 
+         ///Name of the patch file
+         virtual QUrl file() const = 0;
+diff --git a/plugins/patchreview/patchreviewtoolview.cpp b/plugins/patchreview/patchreviewtoolview.cpp
+index c088414..8a4da05 100644
+--- a/plugins/patchreview/patchreviewtoolview.cpp
++++ b/plugins/patchreview/patchreviewtoolview.cpp
+@@ -126,6 +126,11 @@ void PatchReviewToolView::startingNewReview()
+ }
+ 
+ void PatchReviewToolView::patchChanged() {
++    if(m_resetCheckedUrls) {
++        // set the default number of context lines
++        m_editPatch.diffContext->setValue(3);
++    }
++
+     fillEditFromPatch();
+     kompareModelChanged();
+ 
+@@ -251,6 +253,8 @@ void PatchReviewToolView::showEditDialog() {
+     //connect( this, SIGNAL(finished(int)), this, SLOT(slotEditDialogFinished(int)) );
+ 
+     connect( m_editPatch.updateButton, &QPushButton::clicked, m_plugin, &PatchReviewPlugin::forceUpdate );
++    connect( m_editPatch.diffContext, static_cast<void(QSpinBox::*)(int)>(&QSpinBox::valueChanged),
++             m_plugin, &PatchReviewPlugin::forceUpdateWithContext );
+ 
+     connect( m_editPatch.testsButton, &QPushButton::clicked, this, &PatchReviewToolView::runTests );
+ 
+diff --git a/plugins/patchreview/patchreview.h b/plugins/patchreview/patchreview.h
+index 92090e1..07ade9e 100644
+--- a/plugins/patchreview/patchreview.h
++++ b/plugins/patchreview/patchreview.h
+@@ -100,6 +100,7 @@ public Q_SLOTS :
+     void highlightPatch();
+     void updateKompareModel();
+     void forceUpdate();
++    void forceUpdateWithContext(int n);
+     void areaChanged(Sublime::Area* area);
+     void executeFileReviewAction();
+ 
+diff --git a/plugins/patchreview/patchreview.cpp b/plugins/patchreview/patchreview.cpp
+index 47b6fa2..f479b89 100644
+--- a/plugins/patchreview/patchreview.cpp
++++ b/plugins/patchreview/patchreview.cpp
+@@ -223,6 +223,14 @@ void PatchReviewPlugin::forceUpdate() {
+     }
+ }
+ 
++void PatchReviewPlugin::forceUpdateWithContext(int n) {
++    if( m_patch ) {
++        m_patch->update(n);
++
++        notifyPatchChanged();
++    }
++}
++
+ void PatchReviewPlugin::updateKompareModel() {
+     if ( !m_patch ) {
+         ///TODO: this method should be cleaned up, it can be called by the timer and
+diff --git a/vcs/widgets/vcsdiffpatchsources.h b/vcs/widgets/vcsdiffpatchsources.h
+index 796eb9e..d19e98e 100644
+--- a/vcs/widgets/vcsdiffpatchsources.h
++++ b/vcs/widgets/vcsdiffpatchsources.h
+@@ -42,7 +42,7 @@ class QWidget;
+ class VCSDiffUpdater {
+ public:
+     virtual ~VCSDiffUpdater();
+-    virtual KDevelop::VcsDiff update() const = 0;
++    virtual KDevelop::VcsDiff update(int lines=-1) const = 0;
+     virtual KDevelop::IBasicVersionControl* vcs() const = 0;
+     virtual QUrl url() const = 0;
+ };
+@@ -51,7 +51,7 @@ class KDEVPLATFORMVCS_EXPORT VCSStandardDiffUpdater : public VCSDiffUpdater {
+ public:
+     VCSStandardDiffUpdater(KDevelop::IBasicVersionControl* vcs, QUrl url);
+     ~VCSStandardDiffUpdater() override;
+-    KDevelop::VcsDiff update() const override;
++    KDevelop::VcsDiff update(int lines=-1) const override;
+     KDevelop::IBasicVersionControl* vcs() const override { return m_vcs; }
+     QUrl url() const override { return m_url; }
+ private:
+@@ -77,6 +77,11 @@ class KDEVPLATFORMVCS_EXPORT VCSDiffPatchSource : public KDevelop::IPatchSource
+     uint depth() const override ;
+ 
+     void update() override ;
++    void update(int lines) override
++    {
++        m_contextLines = lines > 0? lines : INT_MAX;
++        update();
++    }
+ 
+     bool isAlreadyApplied() const override { return true; }
+ 
+@@ -90,6 +95,7 @@ class KDEVPLATFORMVCS_EXPORT VCSDiffPatchSource : public KDevelop::IPatchSource
+     private:
+     void updateFromDiff(KDevelop::VcsDiff diff);
+     uint m_depth = 0;
++    uint m_contextLines = 3;
+ };
+ 
+ class KDEVPLATFORMVCS_EXPORT VCSCommitDiffPatchSource : public VCSDiffPatchSource {
+
+
+diff --git a/vcs/interfaces/ibasicversioncontrol.h b/vcs/interfaces/ibasicversioncontrol.h
+index f438c54..51d8069 100644
+--- a/vcs/interfaces/ibasicversioncontrol.h
++++ b/vcs/interfaces/ibasicversioncontrol.h
+@@ -194,6 +194,7 @@ public:
+     virtual VcsJob* diff( const QUrl& fileOrDirectory,
+                           const VcsRevision& srcRevision,
+                           const VcsRevision& dstRevision,
++                          const int contextLines=-1,
+                           VcsDiff::Type = VcsDiff::DiffUnified,
+                           IBasicVersionControl::RecursionMode recursion
+                                        = IBasicVersionControl::Recursive ) = 0;
+diff --git a/plugins/subversion/kdevsvnplugin.h b/plugins/subversion/kdevsvnplugin.h
+index 87ed0e8..1a00179 100644
+--- a/plugins/subversion/kdevsvnplugin.h
++++ b/plugins/subversion/kdevsvnplugin.h
+@@ -84,6 +84,7 @@ public:
+     KDevelop::VcsJob* diff(const QUrl &fileOrDirectory,
+                            const KDevelop::VcsRevision& srcRevision,
+                            const KDevelop::VcsRevision& dstRevision,
++                           const int contextLines=-1,
+                            KDevelop::VcsDiff::Type = KDevelop::VcsDiff::DiffUnified,
+                            KDevelop::IBasicVersionControl::RecursionMode recursion
+                            = KDevelop::IBasicVersionControl::Recursive) override;
+@@ -154,6 +155,7 @@ private:
+     QAction* copy_action;
+     QAction* move_action;
+     ThreadWeaver::Queue* m_jobQueue;
++    int m_contextLines=3;
+ };
+ #endif
+ 
+diff --git a/plugins/subversion/kdevsvnplugin.cpp b/plugins/subversion/kdevsvnplugin.cpp
+index cb70196..af0c271 100644
+--- a/plugins/subversion/kdevsvnplugin.cpp
++++ b/plugins/subversion/kdevsvnplugin.cpp
+@@ -231,10 +231,14 @@ KDevelop::VcsJob* KDevSvnPlugin::commit(const QString& message, const QList<QUrl
+ KDevelop::VcsJob* KDevSvnPlugin::diff(const QUrl &fileOrDirectory,
+                                       const KDevelop::VcsRevision& srcRevision,
+                                       const KDevelop::VcsRevision& dstRevision,
++                                      const int contextLines,
+                                       KDevelop::VcsDiff::Type diffType,
+                                       KDevelop::IBasicVersionControl::RecursionMode recurse)
+ {
+     KDevelop::VcsLocation loc(fileOrDirectory);
++    if (contextLines > 0) {
++        m_contextLines = contextLines;
++    }
+     return diff2(loc, loc, srcRevision, dstRevision, diffType, recurse);
+ }
+ 
+@@ -246,6 +250,7 @@ KDevelop::VcsJob* KDevSvnPlugin::diff2(const KDevelop::VcsLocation& src,
+                                        KDevelop::IBasicVersionControl::RecursionMode recurse)
+ {
+     SvnDiffJob* job = new SvnDiffJob(this);
++    // TODO: support custom context lines
+     job->setSource(src);
+     job->setDestination(dst);
+     job->setSrcRevision(srcRevision);
+diff --git a/plugins/perforce/perforceplugin.cpp b/plugins/perforce/perforceplugin.cpp
+index fb16f9d..be40efb 100644
+--- a/plugins/perforce/perforceplugin.cpp
++++ b/plugins/perforce/perforceplugin.cpp
+@@ -309,7 +309,7 @@ KDevelop::VcsJob* PerforcePlugin::commit(const QString& message, const QList<QUr
+     return job;
+ }
+ 
+-KDevelop::VcsJob* PerforcePlugin::diff(const QUrl& fileOrDirectory, const KDevelop::VcsRevision& srcRevision, const KDevelop::VcsRevision& dstRevision, KDevelop::VcsDiff::Type , KDevelop::IBasicVersionControl::RecursionMode /*recursion*/)
++KDevelop::VcsJob* PerforcePlugin::diff(const QUrl& fileOrDirectory, const KDevelop::VcsRevision& srcRevision, const KDevelop::VcsRevision& dstRevision, const int contextLines, KDevelop::VcsDiff::Type , KDevelop::IBasicVersionControl::RecursionMode /*recursion*/)
+ {
+     QFileInfo curFile(fileOrDirectory.toLocalFile());
+     QString depotSrcFileName = getRepositoryName(curFile);
+@@ -328,7 +328,11 @@ KDevelop::VcsJob* PerforcePlugin::diff(const QUrl& fileOrDirectory, const KDevel
+     case VcsRevision::Special:
+         switch (dstRevision.revisionValue().value<VcsRevision::RevisionSpecialType>()) {
+         case VcsRevision::Working:
+-            *job << m_perforceExecutable << "diff" << "-du" << depotSrcFileName;
++            if (contextLines > 0) {
++                *job << m_perforceExecutable << "diff" << "-dU" << QString::number(contextLines) << depotSrcFileName;
++            } else {
++                *job << m_perforceExecutable << "diff" << "-du" << depotSrcFileName;
++            }
+             break;
+         case VcsRevision::Start:
+         case VcsRevision::UserSpecialType:
+diff --git a/plugins/perforce/perforceplugin.h b/plugins/perforce/perforceplugin.h
+index dcb2560..5aed45c 100644
+--- a/plugins/perforce/perforceplugin.h
++++ b/plugins/perforce/perforceplugin.h
+@@ -88,6 +88,7 @@ public:
+     KDevelop::VcsJob* diff(const QUrl& fileOrDirectory,
+                            const KDevelop::VcsRevision& srcRevision,
+                            const KDevelop::VcsRevision& dstRevision,
++                           const int contextLines=-1,
+                            KDevelop::VcsDiff::Type = KDevelop::VcsDiff::DiffUnified,
+                            KDevelop::IBasicVersionControl::RecursionMode recursion = KDevelop::IBasicVersionControl::Recursive) override;
+ 
+diff --git a/plugins/bazaar/bazaarplugin.cpp b/plugins/bazaar/bazaarplugin.cpp
+index e4463a5..bbebf11 100644
+--- a/plugins/bazaar/bazaarplugin.cpp
++++ b/plugins/bazaar/bazaarplugin.cpp
+@@ -122,9 +122,11 @@ VcsJob* BazaarPlugin::createWorkingCopy(const VcsLocation& sourceRepository, con
+     return job;
+ }
+ 
+-VcsJob* BazaarPlugin::diff(const QUrl& fileOrDirectory, const VcsRevision& srcRevision, const VcsRevision& dstRevision, VcsDiff::Type, IBasicVersionControl::RecursionMode recursion)
++VcsJob* BazaarPlugin::diff(const QUrl& fileOrDirectory, const VcsRevision& srcRevision, const VcsRevision& dstRevision, const int contextLines, VcsDiff::Type, IBasicVersionControl::RecursionMode recursion)
+ {
+     Q_UNUSED(recursion);
++    // TODO support contextLines (less urgent because Phabricator doesn't support Bazaar)
++    Q_UNUSED(contextLines);
+     VcsJob* job = new DiffJob(BazaarUtils::workingCopy(fileOrDirectory), BazaarUtils::getRevisionSpecRange(srcRevision, dstRevision), fileOrDirectory, this);
+     return job;
+ }
+diff --git a/plugins/bazaar/bazaarplugin.h b/plugins/bazaar/bazaarplugin.h
+index c5fee46..3f1b497 100644
+--- a/plugins/bazaar/bazaarplugin.h
++++ b/plugins/bazaar/bazaarplugin.h
+@@ -50,7 +50,7 @@ public:
+     KDevelop::VcsJob* copy(const QUrl& localLocationSrc, const QUrl& localLocationDstn) override;
+     KDevelop::VcsImportMetadataWidget* createImportMetadataWidget(QWidget* parent) override;
+     KDevelop::VcsJob* createWorkingCopy(const KDevelop::VcsLocation& sourceRepository, const QUrl& destinationDirectory, RecursionMode recursion=Recursive) override;
+-    KDevelop::VcsJob* diff(const QUrl& fileOrDirectory, const KDevelop::VcsRevision& srcRevision, const KDevelop::VcsRevision& dstRevision, KDevelop::VcsDiff::Type, RecursionMode recursion=Recursive) override;
++    KDevelop::VcsJob* diff(const QUrl& fileOrDirectory, const KDevelop::VcsRevision& srcRevision, const KDevelop::VcsRevision& dstRevision, const int contextLines=-1, KDevelop::VcsDiff::Type=KDevelop::VcsDiff::DiffUnified, RecursionMode recursion=Recursive) override;
+     KDevelop::VcsJob* init(const QUrl& localRepositoryRoot) override;
+     bool isVersionControlled(const QUrl& localLocation) override;
+     KDevelop::VcsJob* log(const QUrl& localLocation, const KDevelop::VcsRevision& rev, long unsigned int limit) override;
+diff --git a/plugins/git/gitplugin.cpp b/plugins/git/gitplugin.cpp
+index b56d53d..a5698e8 100644
+--- a/plugins/git/gitplugin.cpp
++++ b/plugins/git/gitplugin.cpp
+@@ -371,7 +371,7 @@ KDevelop::VcsJob* GitPlugin::status(const QList<QUrl>& localLocations, KDevelop:
+ }
+ 
+ VcsJob* GitPlugin::diff(const QUrl& fileOrDirectory, const KDevelop::VcsRevision& srcRevision, const KDevelop::VcsRevision& dstRevision,
+-                        VcsDiff::Type /*type*/, IBasicVersionControl::RecursionMode recursion)
++                        const int contextLines, VcsDiff::Type /*type*/, IBasicVersionControl::RecursionMode recursion)
+ {
+     //TODO: control different types
+ 
+@@ -383,6 +383,9 @@ VcsJob* GitPlugin::diff(const QUrl& fileOrDirectory, const KDevelop::VcsRevision
+         // has become optional.
+         *job << "--no-prefix";
+     }
++    if (contextLines > 0) {
++        *job << QStringLiteral("-U%1").arg(contextLines);
++    }
+     if (dstRevision.revisionType() == VcsRevision::Special &&
+          dstRevision.specialType() == VcsRevision::Working) {
+         if (srcRevision.revisionType() == VcsRevision::Special &&
+diff --git a/plugins/git/gitplugin.h b/plugins/git/gitplugin.h
+index e8b3191..573cda9 100644
+--- a/plugins/git/gitplugin.h
++++ b/plugins/git/gitplugin.h
+@@ -106,7 +106,7 @@ public:
+                              KDevelop::IBasicVersionControl::RecursionMode recursion = KDevelop::IBasicVersionControl::Recursive) override;
+ 
+     KDevelop::VcsJob* diff(const QUrl& fileOrDirectory, const KDevelop::VcsRevision& srcRevision, const KDevelop::VcsRevision& dstRevision,
+-                                   KDevelop::VcsDiff::Type, RecursionMode recursion) override;
++                                   const int contextLines=-1, KDevelop::VcsDiff::Type=KDevelop::VcsDiff::DiffUnified, RecursionMode recursion=IBasicVersionControl::Recursive) override;
+ 
+     KDevelop::VcsJob* log( const QUrl& localLocation, const KDevelop::VcsRevision& rev, unsigned long limit) override;
+     KDevelop::VcsJob* log(const QUrl& localLocation, const KDevelop::VcsRevision& rev, const KDevelop::VcsRevision& limit) override;
+diff --git a/plugins/git/tests/test_git.cpp b/plugins/git/tests/test_git.cpp
+index 01202ae..799ac49 100644
+--- a/plugins/git/tests/test_git.cpp
++++ b/plugins/git/tests/test_git.cpp
+@@ -574,7 +574,7 @@ void GitInitTest::testDiff()
+ 
+     VcsRevision srcrev = VcsRevision::createSpecialRevision(VcsRevision::Base);
+     VcsRevision dstrev = VcsRevision::createSpecialRevision(VcsRevision::Working);
+-    VcsJob* j = m_plugin->diff(QUrl::fromLocalFile(gitTest_BaseDir()), srcrev, dstrev, VcsDiff::DiffUnified, IBasicVersionControl::Recursive);
++    VcsJob* j = m_plugin->diff(QUrl::fromLocalFile(gitTest_BaseDir()), srcrev, dstrev, -1, VcsDiff::DiffUnified, IBasicVersionControl::Recursive);
+     VERIFYJOB(j);
+ 
+     KDevelop::VcsDiff d = j->fetchResults().value<KDevelop::VcsDiff>();
+diff --git a/plugins/cvs/cvsplugin.cpp b/plugins/cvs/cvsplugin.cpp
+index b37980b..79173e3 100644
+--- a/plugins/cvs/cvsplugin.cpp
++++ b/plugins/cvs/cvsplugin.cpp
+@@ -393,9 +393,10 @@ KDevelop::VcsJob * CvsPlugin::commit(const QString & message, const QList<QUrl>
+     return job;
+ }
+ 
+-KDevelop::VcsJob * CvsPlugin::diff(const QUrl & fileOrDirectory, const KDevelop::VcsRevision & srcRevision, const KDevelop::VcsRevision & dstRevision, KDevelop::VcsDiff::Type, KDevelop::IBasicVersionControl::RecursionMode)
++KDevelop::VcsJob * CvsPlugin::diff(const QUrl & fileOrDirectory, const KDevelop::VcsRevision & srcRevision, const KDevelop::VcsRevision & dstRevision, const int contextLines, KDevelop::VcsDiff::Type, KDevelop::IBasicVersionControl::RecursionMode)
+ {
+-    CvsJob* job = d->m_proxy->diff(fileOrDirectory, srcRevision, dstRevision, QStringLiteral("-uN")/*always unified*/);
++    QString options = contextLines > 0? QStringLiteral("-uN -context=%1").arg(contextLines) : QStringLiteral("-uN")/*always unified*/;
++    CvsJob* job = d->m_proxy->diff(fileOrDirectory, srcRevision, dstRevision, options);
+     return job;
+ }
+ 
+diff --git a/plugins/cvs/cvsplugin.h b/plugins/cvs/cvsplugin.h
+index fa5efe6..f619175 100644
+--- a/plugins/cvs/cvsplugin.h
++++ b/plugins/cvs/cvsplugin.h
+@@ -75,7 +75,8 @@ public:
+     KDevelop::VcsJob* diff(const QUrl& fileOrDirectory,
+                                    const KDevelop::VcsRevision& srcRevision,
+                                    const KDevelop::VcsRevision& dstRevision,
+-                                   KDevelop::VcsDiff::Type,
++                                   const int contextLines=-1,
++                                   KDevelop::VcsDiff::Type=KDevelop::VcsDiff::DiffUnified,
+                                    KDevelop::IBasicVersionControl::RecursionMode = KDevelop::IBasicVersionControl::Recursive) override;
+     KDevelop::VcsJob* log(const QUrl& localLocation,
+                                   const KDevelop::VcsRevision& rev,
