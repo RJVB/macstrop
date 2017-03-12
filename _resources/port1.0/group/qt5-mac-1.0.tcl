@@ -34,7 +34,7 @@
 # Usage:
 # PortGroup     qt5 1.0
 
-options qt5.using_kde qt5.base_version
+options qt5.base_version
 
 global available_qt_versions
 set available_qt_versions {
@@ -127,11 +127,9 @@ proc qt5.get_default_name {} {
 global qt_name
 
 if { [info exists qt_name] } {
-    default qt5.using_kde no
     default qt5.base_version ${qt_name}
 } else {
     set qt_name [qt5.get_default_name]
-    default qt5.using_kde no
     default qt5.base_version {[qt5.get_default_name]}
 }
 
@@ -143,6 +141,60 @@ if { [info exists qt_name] } {
 if {[tbool just_want_qt5_version_info]} {
     return
 }
+
+###########################################################################################
+# Check what Qt5 port and PortGroup we should be using, based on indicated port preference,
+# what is already installed and OS version.
+# Given that ports exist for multiple Qt5 versions it is easier to distinguish port:qt5 and
+# port:qt5-kde from differences in install layout than from active installed portnames.
+
+# first, check if port:qt5-kde or a port:qt5-kde-devel is installed, or if we're on Mac OS X 10.6
+# NB: the qt5-kde-devel ports may never exist officially in MacPorts but is used locally by KF5 port maintainers!
+if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10} {
+    # Qt5 has been installed through port:qt5-kde or port:qt5-kde-devel or we're on 10.6
+    # transfer control to qt5-kde-1.0.tcl
+    ui_debug "Qt5 is provided by port:qt5-kde"
+    PortGroup           qt5-kde 1.0
+    return
+} elseif {[file exists ${prefix}/libexec/qt5/plugins]
+        && [file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
+    # qt5-qtbase is installed: Qt5 has been installed through a standard port:qt5 port
+    # (checking if "plugins" is a directory is probably redundant)
+    # We're already in the correct PortGroup
+    if {[info exists qt5.prefer_kde] && [info exists building_qt5]} {
+        # user tries to install say qt5-kde-qtwebkit against qt5-qtbase etc.
+        ui_error "You cannot install a Qt5-KDE port with port:qt5 or one of its subports installed!"
+        # print the error but only raise it when attempting to fetch or configure the port.
+        pre-fetch {
+            return -code error "Deactivate the conflicting port:qt5 port(s) first!"
+        }
+        pre-configure {
+            return -code error "Deactivate the conflicting port:qt5 port(s) first!"
+        }
+    }
+} elseif {[info exists qt5.prefer_kde]} {
+    # The calling port has indicated a preference and no Qt5 port is installed already
+    # transfer control to qt5-kde-1.0.tcl
+    ui_debug "Qt5 will be provided by port:qt5-kde, by request"
+    PortGroup           qt5-kde 1.0
+    return
+} else {
+    # default situation: we're already in the correct PortGroup
+}
+
+if {[info exists qt5.prefer_kde]} {
+    # this is a port that prefers port:qt5-kde and thus expects most of Qt5 to be installed
+    # through that single port rather than enumerate all components it depends on.
+    depends_lib-append  port:qt5
+    # the port may also use a variable that is still provided by qt5-kde-1.0.tcl;
+    # set it to an empty value so that it can be referenced without side-effects.
+    global qt_cmake_defines
+    set qt_cmake_defines ""
+}
+###########################################################################################
+
+options qt5.using_kde
+default qt5.using_kde no
 
 # standard install directory
 global qt_dir

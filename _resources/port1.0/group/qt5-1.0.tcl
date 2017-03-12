@@ -40,6 +40,11 @@
 # set qt5.prefer_kde    1
 # PortGroup             qt5 1.0
 
+### testing testing testing ###
+PortGroup           qt5-mac 1.0
+return
+###############################
+
 # Check what Qt5 installation flavour already exists, or if not if the port calling us
 # indicated a preference. If not, use the default/mainstream port:qt5 .
 # Also use qt5-kde if we're on 10.6 because qt5-kde provides a fallback to Qt 5.3.2 on that OS version
@@ -102,7 +107,9 @@ global available_qt_versions
 set available_qt_versions {
     qt5
     qt55
+    qt56
     qt5-kde
+    qt56-kde
 }
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
