@@ -356,11 +356,8 @@ pre-configure {
     ui_debug "qt5 PortGroup: Qt is provided by ${qt_installed_name}"
 
     if { [variant_exists qt5kde] && [variant_isset qt5kde] } {
-        if { [string range ${qt_installed_name} end-3 end] ne "-kde" } {
-            ui_error "qt5 PortGroup: Qt is installed but not qt5-kde, as is required by this variant"
-            ui_error "qt5 PortGroup: please run `sudo port uninstall --follow-dependents ${qt_installed_name}-qtbase and try again"
-            return -code error "improper Qt installed"
-        }
+        ui_error "Internal Qt5 port error: inappropriate use of the Qt5 1.0 PortGroup"
+        return -code error "internal Qt5 port error"
     } else {
         if { ${qt_installed_name} ne [qt5.get_default_name] } {
             # see https://wiki.qt.io/Qt-Version-Compatibility
@@ -374,17 +371,6 @@ pre-configure {
         }
     }
 }
-}
-
-# add qt5kde variant if one does not exist and one is requested via qt5.using_kde
-# variant is added in eval_variants so that qt5.using_kde can be set anywhere in the Portfile
-rename ::eval_variants ::real_qt5_eval_variants
-proc eval_variants {variations} {
-    global qt5.using_kde
-    if { ![variant_exists qt5kde] && [tbool qt5.using_kde] } {
-        variant qt5kde description {use Qt patched for KDE compatibility} {}
-    }
-    uplevel ::real_qt5_eval_variants $variations
 }
 
 namespace eval qt5pg {
