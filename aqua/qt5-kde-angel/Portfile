@@ -6,7 +6,8 @@
 PortSystem          1.0
 
 set basename        qt5-kde
-name                ${basename}-angel
+set namesuffix      -angel
+name                ${basename}${namesuffix}
 
 ui_debug "Port ${subport}, configure.optflags=${configure.optflags} configure.compiler=${configure.compiler}"
 
@@ -43,6 +44,12 @@ platform linux {
         revision    [expr ${revision} + 1]
     }
 }
+platform darwin {
+    # for building UsingTheRightCompiler (for now tested only with the x11 subport)
+    if {${subport} eq "${name}-x11"} {
+        revision    [expr ${revision} + 1]
+    }
+}
 ####
 
 # set building_qt5 immediately, before including the Qt5 PortGroup!
@@ -58,6 +65,32 @@ if {![info exists qt5.using_kde] || !${qt5.using_kde}} {
     ui_error "Using port ${subport} without the corresponding Qt5 PortGroup"
     return -code error "Qt5 PortGroup mismatch"
 }
+
+# a convenience procedure to register conflicts among the different Qt5 ports:
+# for instance: [qt5_port_conflicts {qtbase x11}]
+proc qt5_port_conflicts {components} {
+    global namesuffix
+    set cnfls {}
+    if {${namesuffix} eq ""} {
+        set suffix "-devel"
+    } else {
+        set suffix ""
+    }
+    foreach comp ${components} {
+        foreach v {5 55 56} {
+            if {${comp} ne "" && ${comp} ne "qtbase"} {
+                set cnfls [lappend cnfls qt${v}-${comp}]
+                set cnfls [lappend cnfls qt${v}-kde${suffix}-${comp}]
+            } else {
+                set cnfls [lappend cnfls qt${v}-qtbase]
+                set cnfls [lappend cnfls qt${v}-kde${suffix}]
+            }
+        }
+    }
+    return ${cnfls}
+}
+
+### nothing to be seen from here on, move along :)
 
 # optional support for HFS-compression of the source and build dirs
 if {[file exists ${qt5::currentportgroupdir}/compress_workdir-1.0.tcl]} {
@@ -111,7 +144,6 @@ platform darwin {
 distname            qt-everywhere-opensource-src-${version}
 
 master_sites        http://download.qt.io/official_releases/qt/${branch}/${version}/single/
-# master_sites        http://download.qt.io/development_releases/qt/${branch}/${version}/single/
 
 use_xz              yes
 if {${QT53}} {
@@ -339,10 +371,18 @@ if {${subport} eq ${name}} {
 #     }
 }
 
+set CXX                     [file tail ${configure.cxx}]
+set CXX_dir                 [file dirname ${configure.cxx}]
+set CXX_parts               [split ${CXX} -]
+set CXX_family              [lindex ${CXX_parts} 0]
+set CXX_mp                  [expr {[lindex ${CXX_parts} 1] eq "mp"}]
+set CXX_vsuffix             [join [lrange ${CXX_parts} 1 end] -]
+unset CXX_parts
+
 if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "${name}-x11"} {
     # use the qt5 group; set 'building_qt5' so that the portgroup
     # does not include certain parts
-    conflicts-append    qt3 qt3-mac qt5 qt5-kde qt5-kde-x11 qt55
+    conflicts-append    qt3 qt3-mac [qt5_port_conflicts {qtbase x11}]
     PortGroup           xcodeversion 1.0
 
     minimum_xcodeversions   {10 3.2}
@@ -869,7 +909,6 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
                     ln -s [qt_cxx] ${workpath}/build/qtbase/bin/clang++
                 }
                 # instruct the build system to use these for building:
-                reinplace -W ${worksrcpath}/qtbase/mkspecs/common "s|macportsclang|${workpath}/build/qtbase/bin/clang|g" clang.conf
                 reinplace -W ${worksrcpath}/qtbase "s|PREFIX|${prefix}|g" config.tests/unix/icu/icu.pro
                 # the configure script will build a bootstrap qmake executable respecting our mkspec (macx-clang referring to a MacPorts clang version)
                 # because we patched it to do just that (patch-configure-allow-macports-binutils.diff).
@@ -899,6 +938,8 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
             # replace it with an Xcode compiler determined by xcrun.
             # 20150723: also exclude the QMAKE_LINK commands from being determined by xcrun
             patchfiles-append       ${PF58x}patch-sdk.prf-xcrun-not-for-compilers.diff
+            # UsingTheRightCompiler:
+            patchfiles-append       patch-clangconf.diff
         }
     }
 
@@ -937,17 +978,7 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
     configure.args-append   -force-debug-info -no-strip -no-separate-debug-info
 }
 
-set CXX                     [file tail ${configure.cxx}]
-set CXX_dir                 [file dirname ${configure.cxx}]
-set CXX_parts               [split ${CXX} -]
-set CXX_family              [lindex ${CXX_parts} 0]
-set CXX_mp                  [expr {[lindex ${CXX_parts} 1] eq "mp"}]
-set CXX_vsuffix             [join [lrange ${CXX_parts} 1 end] -]
-#                 if {${CXX_mp}} {
-#                     ui_msg "${CXX_dir} ${CXX} ${CXX_family} ${CXX_mp} ${CXX_vsuffix}"
-#                     ui_msg "${CXX_dir}/llvm-ar-${CXX_vsuffix}"
-#                 }
-
+# finish up building preparations
 if { (${subport} eq ${name}) \
     || (${subport} eq "${name}-x11") || (${subport} eq "${name}-qtwebengine") } {
 
@@ -1055,6 +1086,9 @@ if { (${subport} eq ${name}) \
                 }
                 # else not yet needed.
             }
+            # UsingTheRightCompiler:
+            reinplace -W ${worksrcpath}/qtbase/mkspecs/common "s|macportsclang++|${configure.cxx}|g" clang.conf
+            reinplace -W ${worksrcpath}/qtbase/mkspecs/common "s|macportsclang|${configure.cc}|g" clang.conf
         }
     }
 
@@ -1125,7 +1159,7 @@ if { (${subport} eq ${name}) \
         }
 
         variant examples description "Build examples. This will conflict with port:${name}-examples!" {
-            conflicts-append ${name}-examples
+            conflicts-append        ${name}-examples
             configure.args-replace  {-nomake examples} {-make examples}
         }
 
@@ -1170,6 +1204,9 @@ if { (${subport} eq ${name}) \
         configure.objcxxflags-append  -O3 -march=native
         configure.ldflags-append    -O3 -march=native
     }
+
+    configure.post_args-append      QMAKE_CXX=${configure.cxx} QMAKE_CC=${configure.cc}
+    build.env-append                CXX=${configure.cxx} CC=${configure.cc}
 }
 
 # link includes and libraries for each actual installed framework
@@ -1324,8 +1361,11 @@ if { (${subport} eq ${name}) \
                 if {[file exists ${destroot}${qt_mkspecs_dir}/qmodule.pri]} {
                     # clean up the generated mkspecs/qmodule.pri:
                     # undo any symlink normalisation that introduced the clang version number into QMAKE_CC/CXX (e.g. clang++-mp-3.5)
-                    reinplace "s|bin/clang-mp-.*|bin/clang|g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
-                    reinplace "s|bin/clang\+\+-mp-.*|bin/clang\+\+|g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
+                    reinplace "s|${prefix}/bin/clang-mp-.*|clang|g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
+                    reinplace "s|${prefix}/bin/clang\+\+-mp-.*|clang\+\+|g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
+                    # UsingTheRightCompiler:
+                    reinplace -W ${destroot}${qt_mkspecs_dir}/common "s|${configure.cxx}|clang++|g" clang.conf
+                    reinplace -W ${destroot}${qt_mkspecs_dir}/common "s|${configure.cc}|clang|g" clang.conf
                 }
             }
             if {[file exists ${destroot}${qt_mkspecs_dir}/qmodule.pri]} {
@@ -1416,9 +1456,19 @@ if { (${subport} eq ${name}) \
             file rename ${destroot}-tmp/${qt_frameworks_dir}/QtX11Extras.framework ${destroot}${qt_frameworks_dir}
             file rename ${destroot}-tmp/${qt_frameworks_dir}/QtXcbQpa.framework ${destroot}${qt_frameworks_dir}
             xinstall -d -m 755 ${destroot}${qt_libs_dir}
-            if {!${QT57}} {
+            if {!${QT58}} {
                 file rename ${destroot}-tmp/${qt_libs_dir}/libQtX11Extras.prl ${destroot}${qt_libs_dir}
                 file rename ${destroot}-tmp/${qt_libs_dir}/libQtXcbQpa.prl ${destroot}${qt_libs_dir}
+            }
+            foreach lib {GlxSupport LinuxAccessibilitySupport} {
+                foreach f [glob -nocomplain ${destroot}-tmp/${qt_libs_dir}/libQt5${lib}*] {
+                    file rename ${f} ${destroot}${qt_libs_dir}
+                    ln -s ${qt_libs_dir}/[file tail ${f}] ${destroot}${qt_frameworks_dir}
+                }
+                xinstall -m 755 -d ${destroot}${qt_includes_dir}
+                foreach f [glob -nocomplain ${destroot}-tmp/${qt_includes_dir}/Qt${lib}*] {
+                    file rename ${f} ${destroot}${qt_includes_dir}
+                }
             }
             xinstall -d -m 755 ${destroot}${qt_mkspecs_dir}/modules
             file rename ${destroot}-tmp/${qt_mkspecs_dir}/modules/qt_lib_x11extras.pri ${destroot}/${qt_mkspecs_dir}/modules
@@ -1694,7 +1744,7 @@ if {!${QT53}} {
         long_description \
                     ${description}, QtWebEngine's deprecated predecessor.
         conflicts-append \
-                    qt5-kde-qtwebkit qt5-qtwebkit
+                    [qt5_port_conflicts qtwebkit]
 
         master_sites \
                 http://download.qt.io/community_releases/${branch}/${version}-final/
@@ -1804,7 +1854,7 @@ if {!${QT53}} {
             return -code error "unsupported OS X version"
         }
 
-        conflicts-append    qt5-qtwebengine qt5-kde-qtwebengine
+        conflicts-append    [qt5_port_conflicts qtwebengine]
         description         ${description} - the QtWebEngine component
         long_description    ${long_description} This port installs the  \
                             QtWebEngine component.
@@ -1942,7 +1992,7 @@ if {!${QT53}} {
 
         description             ${description} - the Qt WebView component
         long_description        ${long_description} - the Qt WebView component.
-        conflicts-append        qt5-qtwebview qt5-kde-qtwebview
+        conflicts-append        [qt5_port_conflicts qtwebview]
 
 
         extract_components-append \
@@ -1966,7 +2016,7 @@ subport ${name}-qttranslations {
 
     description             Qt5 translations
     long_description        Qt5 translations.
-    conflicts-append        qt5-qttranslations qt5-kde-qttranslations
+    conflicts-append        [qt5_port_conflicts qttranslations]
 
 
     extract_components-append \
