@@ -89,6 +89,8 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10} {
             return -code error "Deactivate the conflicting port:qt5 port(s) first!"
         }
     }
+    # we're done
+    return
 } elseif {[info exists qt5.prefer_kde]} {
     # The calling port has indicated a preference and no Qt5 port is installed already
     ui_debug "Qt5 will be provided by port:qt5-kde, by request"
@@ -99,25 +101,27 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10} {
     # default fall-back to mainstream port:qt5
     ui_debug "Qt5 will be provided by port:qt5 (default)"
     PortGroup           qt5 1.0
-    # qt5-1.0.tcl defines qt5.using_kde as an options var
-}
-
-if {![tbool qt5.using_kde]} {
-    # we're back from `PortGroup qt5 1.0`, add some finishing touches and then return
-    if {[info exists qt5.prefer_kde]} {
-        # this is a port that prefers port:qt5-kde and thus expects most of Qt5 to be installed
-        # through that single port rather than enumerate all components it depends on.
-        depends_lib-append  port:qt5
-    }
-    if {![info exists qt_cmake_defines]} {
-        # the Qt5 PortGroups used to define a variable that is no longer provided by qt5-mac-1.0.tcl;
-        # set it to an empty value so that it can be referenced without side-effects.
-        global qt_cmake_defines
-        set qt_cmake_defines ""
-    }
-    # we're done now.
+    # we're done
     return
 }
+
+# # this shouldn't be necessary (already done by qt5-1.0.tcl and impossible here if we return immediately after loading that file):
+# if {![tbool qt5.using_kde]} {
+#     # we're back from `PortGroup qt5 1.0`, add some finishing touches and then return
+#     if {[info exists qt5.prefer_kde]} {
+#         # this is a port that prefers port:qt5-kde and thus expects most of Qt5 to be installed
+#         # through that single port rather than enumerate all components it depends on.
+#         depends_lib-append  port:qt5
+#     }
+#     if {![info exists qt_cmake_defines]} {
+#         # the Qt5 PortGroups used to define a variable that is no longer provided by qt5-mac-1.0.tcl;
+#         # set it to an empty value so that it can be referenced without side-effects.
+#         global qt_cmake_defines
+#         set qt_cmake_defines ""
+#     }
+#     # we're done now.
+#     return
+# }
 
 ######### checks that should never trigger #########
 if {[file exists ${prefix}/libexec/qt5/plugins]
