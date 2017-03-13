@@ -1,0 +1,70 @@
+diff --git src/view/kateviewinternal.cpp src/view/kateviewinternal.cpp
+index 377bf9a2..e5e0c9b2 100644
+--- src/view/kateviewinternal.cpp
++++ src/view/kateviewinternal.cpp
+@@ -100,6 +100,8 @@ KateViewInternal::KateViewInternal(KTextEditor::ViewPrivate *view)
+     , m_textHintDelay(500)
+     , m_textHintPos(-1, -1)
+     , m_imPreeditRange(nullptr)
++    , m_accidentalModifier(false)
++    , m_lastWheelEventUnmodified(false)
+ {
+     QList<KateAbstractInputModeFactory *> factories = KTextEditor::EditorPrivate::self()->inputModeFactories();
+     Q_FOREACH(KateAbstractInputModeFactory *factory, factories) {
+@@ -3295,8 +3297,39 @@ void KateViewInternal::clear()
+ 
+ void KateViewInternal::wheelEvent(QWheelEvent *e)
+ {
+-    // ctrl pressed -> change font size (only if angle is reported)
+-    if (e->modifiers() == Qt::ControlModifier) {
++    bool skip = false;
++    qint64 deltaT = m_lastWheelEvent.elapsed();
++    Qt::KeyboardModifiers modState = e->modifiers();
++    if (modState == Qt::ControlModifier) {
++        // Pressing the Control/Command key within 200ms of the previous "unmodified" wheelevent
++        // is not allowed to toggle on text zooming
++        if (m_lastWheelEventUnmodified && deltaT < 200) {
++                m_accidentalModifier = true;
++        }
++        else {
++            // hold the Control/Command key for 1s without scrolling to re-allow text zooming
++            if (deltaT > 1000) {
++                m_accidentalModifier = false;
++            }
++        }
++        m_lastWheelEventUnmodified = false;
++        if (m_accidentalModifier) {
++            //qCWarning(LOG_KTE) << "skipping because of accidental keypress; dT=" << deltaT;
++            skip = true;
++            // unset the ControlModifier so we can let the scrollbars handle the scroll event
++            // and produce normal, not accelerated scrolling
++            modState &= ~Qt::ControlModifier;
++            e->setModifiers(modState);
++        }
++    } else {
++        m_lastWheelEventUnmodified = true;
++        m_accidentalModifier = false;
++    }
++    m_lastWheelEvent.start();
++
++    // ctrl pressed -> change font size (only if angle is reported and not accidentally so)
++    // NB: if the ControlModifier is not unset at this point we'd get accelerated scrolling.
++    if (!skip && modState == Qt::ControlModifier) {
+         if (e->angleDelta().y() > 0) {
+             slotIncFontSizes();
+         } else if (e->angleDelta().y() < 0) {
+diff --git src/view/kateviewinternal.h src/view/kateviewinternal.h
+index 94a21177..7bfc6c34 100644
+--- src/view/kateviewinternal.h
++++ src/view/kateviewinternal.h
+@@ -461,6 +461,10 @@ private:
+ private:
+     QMap<KTextEditor::View::InputMode, KateAbstractInputMode *> m_inputModes;
+     KateAbstractInputMode *m_currentInputMode;
++
++    QElapsedTimer m_lastWheelEvent;
++    bool m_accidentalModifier;
++    bool m_lastWheelEventUnmodified;
+ };
+ 
+ #endif
