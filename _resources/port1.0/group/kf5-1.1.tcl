@@ -110,7 +110,7 @@ if {![info exists kf5.version]} {
     # when updating it to the new version (=kf5.latest_version). This feature is
     # activated only when a file `port dir KF5-Frameworks`/files/enable_latest exists.
     set kf5.latest_version \
-                        5.29.0
+                        5.32.0
 }
 
 # KF5 Applications version
