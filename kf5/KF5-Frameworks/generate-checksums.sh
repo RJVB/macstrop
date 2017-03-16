@@ -26,14 +26,17 @@ for F in ${FRAMEWORKS} ;do
         FW="syntax-highlighting"
     fi
     DISTFILE="${DISTDIR}/${FW}-${version}.tar.xz"
+    DISTNAME="${MASTERSITE}/${FW}-${version}.tar.xz"
     if [ ! -e "${DISTFILE}" ] ;then
-        wget -P "${DISTDIR}" "${MASTERSITE}/${FW}-${version}.tar.xz"
+        wget -P "${DISTDIR}" "${DISTNAME}"
         if [ $? != 0 ] ;then
             # could have been a portingAid framework; try here:
-            wget -P "${DISTDIR}" "${MASTERSITEPA}/${FW}-${version}.tar.xz"
+            DISTNAME="${MASTERSITEPA}/${FW}-${version}.tar.xz"
+            wget -P "${DISTDIR}" "${DISTNAME}"
         fi
     fi
     if [ -r "${DISTFILE}" ] ;then
+        echo "\t# ${DISTNAME}"
         echo "\t${F} {"
         echo "\t\t`openssl rmd160 ${DISTFILE} | sed -e 's|.*= ||g'`"
         echo "\t\t`openssl sha256 ${DISTFILE} | sed -e 's|.*= ||g'`"
