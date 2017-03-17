@@ -308,9 +308,10 @@ if {${kf5::includecounter} == 0} {
                     system "chmod 755 ${destroot}${kf5.docs_dir}"
                     foreach doc [glob -nocomplain ${workpath}/apidocs/*.qch] {
                         xinstall -m 644 ${doc} ${destroot}${kf5.docs_dir}
-                        if {[info procs qt5.register_qch_files] ne ""} {
-                            qt5.register_qch_files ${kf5.docs_dir}/[file tail ${doc}]
-                        }
+                        # maybe not such a useful idea:
+#                         if {[info procs qt5.register_qch_files] ne ""} {
+#                             qt5.register_qch_files ${kf5.docs_dir}/[file tail ${doc}]
+#                         }
                     }
                     if {[variant_exists chm] && [variant_isset chm]} {
                         foreach doc [glob -nocomplain ${workpath}/apidocs/*.chm] {
