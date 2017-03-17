@@ -819,8 +819,10 @@ post-activate {
         } elseif {[file exists "${qhcdir}/${qhcfile}"]} {
             # only regenerate otherwise when the collection file is out-of-date
             set tDir [file mtime "${qhcdir}"]
+            set tchDir [file mtime "${qchdir}"]
             set tFile [file mtime "${qhcdir}/${qhcfile}"]
-            set needs_generate [expr ${tDir} > ${tFile}]
+            set needs_generate [expr ${tDir} > ${tFile} || ${tchDir} > ${tFile}]
+            ui_debug "Qt help collection: tDir \"${qhcdir}\"=${tDir} , tchDir \"${qchdir}\"=${tchDir} , File \"${qhcdir}/${qhcfile}\" ${tFile}"
         } else {
             set needs_generate yes
         }
@@ -863,6 +865,8 @@ post-activate {
                 }
             }
         }
+    } else {
+        ui_debug "qchdir=\"${qchdir}\" and/or qhcdir=\"${qhcdir}\" don't exist as directories, ignoring Qt help collection"
     }
 }
 
