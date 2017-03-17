@@ -795,10 +795,12 @@ proc qt5.register_qch_files {qchfiles} {
     global prefix destroot
     set qchdir ${prefix}/share/doc/qch
     if {[file exists ${qchdir}] && [file isdirectory ${qchdir}]} {
-        xinstall -m 755 -d ${destroot}${qchdir}
         foreach d ${qchfiles} {
-            set target [string map [list ${destroot} ""] ${d}]
-            ln -s ${target} ${destroot}${qchdir}
+            if {[file exists ${d}]} {
+                xinstall -m 755 -d ${destroot}${qchdir}
+                set target [string map [list ${destroot} ""] ${d}]
+                ln -s ${target} ${destroot}${qchdir}
+            }
         }
     }
 }
@@ -863,6 +865,8 @@ post-activate {
                 foreach q ${candidates} {
                     catch {system -W ${qhcdir} "${prefix}/bin/assistant-qt5 -collectionFile ${qhcfile} -register [file normalize ${q}]"}
                 }
+                # be sure the file mdate is updated"
+                system "touch \"${qhcdir}/${qhcfile}\""
             }
         }
     } else {
