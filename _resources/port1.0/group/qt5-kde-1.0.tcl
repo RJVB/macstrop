@@ -838,12 +838,11 @@ post-activate {
                 }
             }
             if {[file exists "${qhcdir}/${qhcfile}"]} {
-                ui_msg "--->  Regenerating Qt help collection file in ${qhcdir}"
                 file delete -force "${qhcdir}/${qhcfile}"
             }
             if {![catch {set fp [open "${qhcdir}/${qhcpfile}" "w"]} err]} {
                 # create a collection file corresponding to Qt's own documentation
-                ui_msg "--->  Generating Qt help collection file in ${qhcdir}"
+                ui_msg "--->  (Re)Generating Qt help collection file in ${qhcdir}"
                 puts ${fp} "<?xml version=\"1.0\" encoding=\"utf-8\" ?>"
                 puts ${fp} "<QHelpCollectionProject version=\"1.0\">"
                 puts ${fp} "  <assistant>"
