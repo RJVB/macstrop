@@ -598,19 +598,37 @@ if {${kf5::includecounter} == 0} {
 
     proc kf5.use_latest {lversion} {
         global kf5.latest_release kf5.latest_version kf5.latest_plasma kf5.project kf5.set_project kf5.branch
-        global version
+        global version subport
         upvar #0 kf5.version v
         upvar #0 kf5.release r
         upvar #0 kf5.plasma p
         upvar #0 kf5.branch b
         switch -nocase ${lversion} {
-            kf5.version     {set v ${kf5.latest_version}}
-            kf5.release     {set r ${kf5.latest_release}}
-            kf5.plasma      {set p ${kf5.latest_plasma}}
-            frameworks      {set v ${kf5.latest_version}}
-            applications    {set r ${kf5.latest_release}}
-            plasma          {set p ${kf5.latest_plasma}}
-            default {
+            kf5.version     {
+                ui_debug "Using kf5.version=${kf5.latest_version} instead of ${v} for ${subport}"
+                set v ${kf5.latest_version}
+            }
+            kf5.release     {
+                ui_debug "Using kf5.release=${kf5.latest_release} instead of ${r} for ${subport}"
+                set r ${kf5.latest_release}
+            }
+            kf5.plasma      {
+                ui_debug "Using kf5.plasma=${kf5.latest_plasma} instead of ${p} for ${subport}"
+                set p ${kf5.latest_plasma}
+            }
+            frameworks      {
+                ui_debug "Using kf5.version=${kf5.latest_version} instead of ${v} for ${subport}"
+                set v ${kf5.latest_version}
+            }
+            applications    {
+                ui_debug "Using kf5.release=${kf5.latest_release} instead of ${r} for ${subport}"
+                set r ${kf5.latest_release}
+            }
+            plasma          {
+                ui_debug "Using kf5.plasma=${kf5.latest_plasma} instead of ${p} for ${subport}"
+                set p ${kf5.latest_plasma}
+            }
+            default         {
                 ui_error "Illegal argument ${lversion} to kf5.use_latest"
                 return -code error "Illegal argument to kf5.use_latest"
             }
