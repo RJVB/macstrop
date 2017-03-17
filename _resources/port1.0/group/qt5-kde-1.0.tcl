@@ -839,12 +839,10 @@ post-activate {
             }
             if {[file exists "${qhcdir}/${qhcfile}"]} {
                 ui_msg "--->  Regenerating Qt help collection file in ${qhcdir}"
-                # unregister all entries if the collectionfile already exists
-                foreach q ${candidates} {
-                    catch {system -W ${qhcdir} "${prefix}/bin/assistant-qt5 -collectionFile ${qhcfile} -unregister [file normalize ${q}]"}
-                }
-            } elseif {![catch {set fp [open "${qhcdir}/${qhcpfile}" "w"]} err]} {
-                # create an empty collection file
+                file delete -force "${qhcdir}/${qhcfile}"
+            }
+            if {![catch {set fp [open "${qhcdir}/${qhcpfile}" "w"]} err]} {
+                # create a collection file corresponding to Qt's own documentation
                 ui_msg "--->  Generating Qt help collection file in ${qhcdir}"
                 puts ${fp} "<?xml version=\"1.0\" encoding=\"utf-8\" ?>"
                 puts ${fp} "<QHelpCollectionProject version=\"1.0\">"
@@ -853,6 +851,13 @@ post-activate {
                 puts ${fp} "    <cacheDirectory>QtProject/Assistant-MP</cacheDirectory>"
                 puts ${fp} "    <enableFullTextSearchFallback>true</enableFullTextSearchFallback>"
                 puts ${fp} "  </assistant>"
+                puts ${fp} "  <docFiles>"
+                puts ${fp} "    <register>"
+                foreach q [glob -nocomplain ${qhcdir}/*.qch] {
+                    puts ${fp} "      <file>[file normalize ${q}]</file>"
+                }
+                puts ${fp} "    </register>"
+                puts ${fp} "  </docFiles>"
                 puts ${fp} "</QHelpCollectionProject>"
                 close ${fp}
                 catch {system -W ${qhcdir} "time ${qt_bins_dir}/qcollectiongenerator ${qhcpfile} -o ${qhcfile}"}
