@@ -32,10 +32,10 @@ diff --git languages/clang/duchain/unknowndeclarationproblem.cpp languages/clang
 index c5718cbbe1..c5bbdabcde 100644
 --- languages/clang/duchain/unknowndeclarationproblem.cpp
 +++ languages/clang/duchain/unknowndeclarationproblem.cpp
-@@ -47,9 +47,15 @@
- 
+@@ -50,9 +50,15 @@
  #include <QDir>
  #include <QProcess>
+ #include <QRegularExpression>
 +#include <QCoreApplication>
 +#include <QAbstractEventDispatcher>
 +#include <QThread>
@@ -48,17 +48,17 @@ index c5718cbbe1..c5bbdabcde 100644
  using namespace KDevelop;
  
  namespace {
-@@ -62,11 +68,190 @@ namespace {
+@@ -65,11 +71,190 @@ namespace {
   */
  const int maxSuggestions = 5;
  
 +// #define FOREGROUND_SCANNING
 +
-+class UDPWorkerThread : public QThread
++class UDeclWorkerThread : public QThread
 +{
 +    Q_OBJECT
 +public:
-+    UDPWorkerThread(const QualifiedIdentifier& identifier, const KDevelop::Path& file,
++    UDeclWorkerThread(const QualifiedIdentifier& identifier, const KDevelop::Path& file,
 +                    const KDevelop::DocumentRange& docrange, ClangFixits* resultPtr, QEventLoop* eventLoop)
 +        : QThread(Q_NULLPTR)
 +        , m_identifier(identifier)
@@ -93,9 +93,9 @@ index c5718cbbe1..c5bbdabcde 100644
 +    }
 +
 +    void run() override;
++    static bool isBlacklisted(const QString& path);
 +
 +protected:
-+    bool isBlacklisted(const QString& path);
 +    QStringList scanIncludePaths( const QString& identifier, const QDir& dir, int maxDepth = 3 );
 +    QStringList scanIncludePaths( const QualifiedIdentifier& identifier, const KDevelop::Path::List& includes );
 +    int sharedPathLevel(const QString& a, const QString& b);
@@ -118,7 +118,7 @@ index c5718cbbe1..c5bbdabcde 100644
 +public:
 +    static bool interrupted;
 +};
-+bool UDPWorkerThread::interrupted = false;
++bool UDeclWorkerThread::interrupted = false;
 +
 +class UDPScanEventLoop : public QEventLoop
 +{
@@ -188,8 +188,8 @@ index c5718cbbe1..c5bbdabcde 100644
 +
 +bool UDPScanEventLoop::event(QEvent *e)
 +{
-+    if (!UDPWorkerThread::interrupted && causesInterrupt(e)) {
-+        UDPWorkerThread::interrupted = true;
++    if (!UDeclWorkerThread::interrupted && causesInterrupt(e)) {
++        UDeclWorkerThread::interrupted = true;
 +        qCDebug(KDEV_CLANG) << "interrupting because caught event" << e;
 +    }
 +
@@ -199,8 +199,8 @@ index c5718cbbe1..c5bbdabcde 100644
 +
 +bool UDPScanEventLoop::eventFilter(QObject *obj, QEvent *e)
 +{
-+    if (!UDPWorkerThread::interrupted && causesInterrupt(e)) {
-+        UDPWorkerThread::interrupted = true;
++    if (!UDeclWorkerThread::interrupted && causesInterrupt(e)) {
++        UDeclWorkerThread::interrupted = true;
 +        qCDebug(KDEV_CLANG) << "interrupting because caught event" << e;
 +    }
 +
@@ -208,9 +208,9 @@ index c5718cbbe1..c5bbdabcde 100644
 +    return QEventLoop::eventFilter(obj, e);
 +}
 +
-+UDPWorkerThread *scanThread = Q_NULLPTR;
++UDeclWorkerThread *scanThread = Q_NULLPTR;
 +
-+void UDPWorkerThread::run()
++void UDeclWorkerThread::run()
 +{
 +    interrupted = false;
 +    if (m_results) {
@@ -236,16 +236,16 @@ index c5718cbbe1..c5bbdabcde 100644
   * we'd rather prefer forwarding includes, such as <vector>
   */
 -bool isBlacklisted(const QString& path)
-+bool UDPWorkerThread::isBlacklisted(const QString& path)
++bool UDeclWorkerThread::isBlacklisted(const QString& path)
  {
      if (ClangHelpers::isSource(path))
          return true;
-@@ -79,12 +264,29 @@ bool isBlacklisted(const QString& path)
+@@ -82,12 +267,29 @@ bool isBlacklisted(const QString& path)
      return false;
  }
  
 -QStringList scanIncludePaths( const QString& identifier, const QDir& dir, int maxDepth = 3 )
-+QStringList UDPWorkerThread::scanIncludePaths( const QString& identifier, const QDir& dir, int maxDepth )
++QStringList UDeclWorkerThread::scanIncludePaths( const QString& identifier, const QDir& dir, int maxDepth )
  {
      if (!maxDepth) {
          return {};
@@ -271,7 +271,7 @@ index c5718cbbe1..c5bbdabcde 100644
      QStringList candidates;
      const auto path = dir.absolutePath();
  
-@@ -99,11 +301,18 @@ QStringList scanIncludePaths( const QString& identifier, const QDir& dir, int ma
+@@ -102,11 +304,18 @@ QStringList scanIncludePaths( const QString& identifier, const QDir& dir, int ma
              clangDebug() << "Found candidate file" << filePath;
              candidates.append( filePath );
          }
@@ -291,12 +291,12 @@ index c5718cbbe1..c5bbdabcde 100644
  
      return candidates;
  }
-@@ -111,12 +320,15 @@ QStringList scanIncludePaths( const QString& identifier, const QDir& dir, int ma
+@@ -114,12 +323,15 @@ QStringList scanIncludePaths( const QString& identifier, const QDir& dir, int ma
  /**
   * Find files in dir that match the given identifier. Matches common C++ header file extensions only.
   */
 -QStringList scanIncludePaths( const QualifiedIdentifier& identifier, const KDevelop::Path::List& includes )
-+QStringList UDPWorkerThread::scanIncludePaths( const QualifiedIdentifier& identifier, const KDevelop::Path::List& includes )
++QStringList UDeclWorkerThread::scanIncludePaths( const QualifiedIdentifier& identifier, const KDevelop::Path::List& includes )
  {
      const auto stripped_identifier = identifier.last().toString();
      QStringList candidates;
@@ -308,102 +308,135 @@ index c5718cbbe1..c5bbdabcde 100644
      }
  
      std::sort( candidates.begin(), candidates.end() );
-@@ -133,7 +345,7 @@ QStringList scanIncludePaths( const QualifiedIdentifier& identifier, const KDeve
+@@ -136,7 +348,7 @@ QStringList scanIncludePaths( const QualifiedIdentifier& identifier, const KDeve
   *  boost/vector
   * have a shared path of 1
   */
 -int sharedPathLevel(const QString& a, const QString& b)
-+int UDPWorkerThread::sharedPathLevel(const QString& a, const QString& b)
++int UDeclWorkerThread::sharedPathLevel(const QString& a, const QString& b)
  {
      int shared = -1;
      for(auto x = a.begin(), y = b.begin(); *x == *y && x != a.end() && y != b.end() ; ++x, ++y ) {
-@@ -153,7 +365,7 @@ int sharedPathLevel(const QString& a, const QString& b)
+@@ -156,7 +368,7 @@ int sharedPathLevel(const QString& a, const QString& b)
   *
   * TODO: Implement a fallback scheme
   */
 -KDevelop::DocumentRange includeDirectivePosition(const KDevelop::Path& source, const QString& includeFile)
-+KDevelop::DocumentRange UDPWorkerThread::includeDirectivePosition(const KDevelop::Path& source, const QString& includeFile)
++KDevelop::DocumentRange UDeclWorkerThread::includeDirectivePosition(const KDevelop::Path& source, const QString& includeFile)
  {
-     DUChainReadLocker lock;
-     const TopDUContext* top = DUChainUtils::standardContextForUrl( source.toUrl() );
-@@ -185,7 +397,7 @@ KDevelop::DocumentRange includeDirectivePosition(const KDevelop::Path& source, c
+     static const QRegularExpression mocFilenameExpression(QStringLiteral("(moc_[^\\/\\\\]+\\.cpp$|\\.moc$)") );
+ 
+@@ -197,7 +409,7 @@ KDevelop::DocumentRange includeDirectivePosition(const KDevelop::Path& source, c
      return {IndexedString(source.pathOrUrl()), {line, 0, line, 0}};
  }
  
 -KDevelop::DocumentRange forwardDeclarationPosition(const QualifiedIdentifier& identifier, const KDevelop::Path& source)
-+KDevelop::DocumentRange UDPWorkerThread::forwardDeclarationPosition(const QualifiedIdentifier& identifier, const KDevelop::Path& source)
++KDevelop::DocumentRange UDeclWorkerThread::forwardDeclarationPosition(const QualifiedIdentifier& identifier, const KDevelop::Path& source)
  {
      DUChainReadLocker lock;
      const TopDUContext* top = DUChainUtils::standardContextForUrl( source.toUrl() );
-@@ -235,7 +447,7 @@ KDevelop::DocumentRange forwardDeclarationPosition(const QualifiedIdentifier& id
+@@ -247,7 +459,7 @@ KDevelop::DocumentRange forwardDeclarationPosition(const QualifiedIdentifier& id
   * foo::type
   * type
   */
 -QVector<KDevelop::QualifiedIdentifier> findPossibleQualifiedIdentifiers( const QualifiedIdentifier& identifier, const KDevelop::Path& file, const KDevelop::CursorInRevision& cursor )
-+QVector<KDevelop::QualifiedIdentifier> UDPWorkerThread::findPossibleQualifiedIdentifiers( const QualifiedIdentifier& identifier, const KDevelop::Path& file, const KDevelop::CursorInRevision& cursor )
++QVector<KDevelop::QualifiedIdentifier> UDeclWorkerThread::findPossibleQualifiedIdentifiers( const QualifiedIdentifier& identifier, const KDevelop::Path& file, const KDevelop::CursorInRevision& cursor )
  {
      DUChainReadLocker lock;
      const TopDUContext* top = DUChainUtils::standardContextForUrl( file.toUrl() );
-@@ -260,7 +472,7 @@ QVector<KDevelop::QualifiedIdentifier> findPossibleQualifiedIdentifiers( const Q
-     return declarations;
- }
+@@ -296,13 +508,13 @@ QStringList UnknownDeclarationProblem::findMatchingIncludeFiles(const QVector<De
  
--QStringList findMatchingIncludeFiles(const QVector<Declaration*> declarations)
-+QStringList UDPWorkerThread::findMatchingIncludeFiles(const QVector<Declaration*> declarations)
- {
-     DUChainReadLocker lock;
+         const auto filepath = decl->url().toUrl().toLocalFile();
  
-@@ -318,7 +530,7 @@ QStringList findMatchingIncludeFiles(const QVector<Declaration*> declarations)
+-        if( !isBlacklisted( filepath ) ) {
++        if( !UDeclWorkerThread::isBlacklisted( filepath ) ) {
+             candidates << filepath;
+             clangDebug() << "Adding" << filepath << "determined from candidate" << decl->toString();
+         }
+ 
+         for( const auto importer : file->importers() ) {
+-            if( importer->imports().count() != 1 && !isBlacklisted( filepath ) ) {
++            if( importer->imports().count() != 1 && !UDeclWorkerThread::isBlacklisted( filepath ) ) {
+                 continue;
+             }
+             if( importer->topContext()->localDeclarations().count() ) {
+@@ -310,7 +522,7 @@ QStringList UnknownDeclarationProblem::findMatchingIncludeFiles(const QVector<De
+             }
+ 
+             const auto filePath = importer->url().toUrl().toLocalFile();
+-            if( isBlacklisted( filePath ) ) {
++            if( UDeclWorkerThread::isBlacklisted( filePath ) ) {
+                 continue;
+             }
+ 
+@@ -331,10 +543,15 @@ QStringList UnknownDeclarationProblem::findMatchingIncludeFiles(const QVector<De
+ 
+ namespace {
+ 
++QStringList UDeclWorkerThread::findMatchingIncludeFiles(const QVector<Declaration*> declarations)
++{
++    return UnknownDeclarationProblem::findMatchingIncludeFiles(declarations);
++}
++
  /**
   * Takes a filepath and the include paths and determines what directive to use.
   */
 -ClangFixit directiveForFile( const QString& includefile, const KDevelop::Path::List& includepaths, const KDevelop::Path& source )
-+ClangFixit UDPWorkerThread::directiveForFile( const QString& includefile, const KDevelop::Path::List& includepaths, const KDevelop::Path& source )
++ClangFixit UDeclWorkerThread::directiveForFile( const QString& includefile, const KDevelop::Path::List& includepaths, const KDevelop::Path& source )
  {
      const auto sourceFolder = source.parent();
      const Path canonicalFile( QFileInfo( includefile ).canonicalFilePath() );
-@@ -364,7 +576,7 @@ ClangFixit directiveForFile( const QString& includefile, const KDevelop::Path::L
-     return ClangFixit{directive + QLatin1Char('\n'), range, QObject::tr("Insert \'%1\'").arg(directive)};
+@@ -380,7 +597,7 @@ ClangFixit directiveForFile( const QString& includefile, const KDevelop::Path::L
+     return ClangFixit{directive + QLatin1Char('\n'), range, i18n("Insert \'%1\'", directive)};
  }
  
 -KDevelop::Path::List includePaths( const KDevelop::Path& file )
-+KDevelop::Path::List UDPWorkerThread::includePaths( const KDevelop::Path& file )
++KDevelop::Path::List UDeclWorkerThread::includePaths( const KDevelop::Path& file )
  {
      // Find project's custom include paths
      const auto source = file.toLocalFile();
-@@ -376,7 +588,7 @@ KDevelop::Path::List includePaths( const KDevelop::Path& file )
+@@ -392,7 +609,7 @@ KDevelop::Path::List includePaths( const KDevelop::Path& file )
  /**
   * Return a list of header files viable for inclusions. All elements will be unique
   */
 -QStringList includeFiles(const QualifiedIdentifier& identifier, const QVector<Declaration*> declarations, const KDevelop::Path& file)
-+QStringList UDPWorkerThread::includeFiles(const QualifiedIdentifier& identifier, const QVector<Declaration*> declarations, const KDevelop::Path& file)
++QStringList UDeclWorkerThread::includeFiles(const QualifiedIdentifier& identifier, const QVector<Declaration*> declarations, const KDevelop::Path& file)
  {
      const auto includes = includePaths( file );
      if( includes.isEmpty() ) {
-@@ -396,7 +608,7 @@ QStringList includeFiles(const QualifiedIdentifier& identifier, const QVector<De
+@@ -400,7 +617,7 @@ QStringList includeFiles(const QualifiedIdentifier& identifier, const QVector<De
+         return {};
+     }
+ 
+-    const auto candidates = UnknownDeclarationProblem::findMatchingIncludeFiles(declarations);
++    const auto candidates = findMatchingIncludeFiles(declarations);
+     if( !candidates.isEmpty() ) {
+         // If we find a candidate from the duchain we don't bother scanning the include paths
+         return candidates;
+@@ -412,7 +629,7 @@ QStringList includeFiles(const QualifiedIdentifier& identifier, const QVector<De
  /**
   * Construct viable forward declarations for the type name.
   */
 -ClangFixits forwardDeclarations(const QVector<Declaration*>& matchingDeclarations, const Path& source)
-+ClangFixits UDPWorkerThread::forwardDeclarations(const QVector<Declaration*>& matchingDeclarations, const Path& source)
++ClangFixits UDeclWorkerThread::forwardDeclarations(const QVector<Declaration*>& matchingDeclarations, const Path& source)
  {
      DUChainReadLocker lock;
      ClangFixits fixits;
-@@ -441,7 +653,7 @@ ClangFixits forwardDeclarations(const QVector<Declaration*>& matchingDeclaration
+@@ -457,7 +674,7 @@ ClangFixits forwardDeclarations(const QVector<Declaration*>& matchingDeclaration
  /**
   * Search the persistent symbol table for matching declarations for identifiers @p identifiers
   */
 -QVector<Declaration*> findMatchingDeclarations(const QVector<QualifiedIdentifier>& identifiers)
-+QVector<Declaration*> UDPWorkerThread::findMatchingDeclarations(const QVector<QualifiedIdentifier>& identifiers)
++QVector<Declaration*> UDeclWorkerThread::findMatchingDeclarations(const QVector<QualifiedIdentifier>& identifiers)
  {
      DUChainReadLocker lock;
  
-@@ -464,17 +676,17 @@ QVector<Declaration*> findMatchingDeclarations(const QVector<QualifiedIdentifier
+@@ -480,17 +697,17 @@ QVector<Declaration*> findMatchingDeclarations(const QVector<QualifiedIdentifier
      return matchingDeclarations;
  }
  
 -ClangFixits fixUnknownDeclaration( const QualifiedIdentifier& identifier, const KDevelop::Path& file, const KDevelop::DocumentRange& docrange )
-+ClangFixits UDPWorkerThread::fixUnknownDeclaration()
++ClangFixits UDeclWorkerThread::fixUnknownDeclaration()
  {
      ClangFixits fixits;
  
@@ -420,7 +453,7 @@ index c5718cbbe1..c5bbdabcde 100644
              fixits << fixit;
              if (fixits.size() == maxSuggestions) {
                  return fixits;
-@@ -482,19 +694,19 @@ ClangFixits fixUnknownDeclaration( const QualifiedIdentifier& identifier, const
+@@ -498,20 +715,20 @@ ClangFixits fixUnknownDeclaration( const QualifiedIdentifier& identifier, const
          }
      }
  
@@ -432,7 +465,9 @@ index c5718cbbe1..c5bbdabcde 100644
      }
  
 -    const auto includepaths = includePaths( file );
+-    clangDebug() << "found include paths for" << file << ":" << includepaths;
 +    const auto includepaths = includePaths( m_file );
++    clangDebug() << "found include paths for" << m_file << ":" << includepaths;
  
      /* create fixits for candidates */
      for( const auto& includeFile : includefiles ) {
@@ -444,7 +479,7 @@ index c5718cbbe1..c5bbdabcde 100644
              continue;
          }
  
-@@ -536,6 +748,37 @@ void UnknownDeclarationProblem::setSymbol(const QualifiedIdentifier& identifier)
+@@ -553,6 +770,37 @@ void UnknownDeclarationProblem::setSymbol(const QualifiedIdentifier& identifier)
  IAssistant::Ptr UnknownDeclarationProblem::solutionAssistant() const
  {
      const Path path(finalLocation().document.str());
@@ -457,8 +492,8 @@ index c5718cbbe1..c5bbdabcde 100644
 +    }
 +    UDPScanEventLoop eventLoop;
 +    ClangFixits unknownDeclFixits;
-+    scanThread = new UDPWorkerThread(m_identifier, path, finalLocation(), &unknownDeclFixits, &eventLoop);
-+    UDPWorkerThread::connect(scanThread, &UDPWorkerThread::finished, scanThread, &QObject::deleteLater);
++    scanThread = new UDeclWorkerThread(m_identifier, path, finalLocation(), &unknownDeclFixits, &eventLoop);
++    UDeclWorkerThread::connect(scanThread, &UDeclWorkerThread::finished, scanThread, &QObject::deleteLater);
 +#ifdef FOREGROUND_SCANNING
 +    unknownDeclFixits = scanThread->fixUnknownDeclaration();
 +    if (!interrupted) {

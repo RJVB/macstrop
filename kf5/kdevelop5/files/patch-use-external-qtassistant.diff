@@ -1,0 +1,533 @@
+diff --git documentation/qthelp/qthelp_config_shared.cpp documentation/qthelp/qthelp_config_shared.cpp
+index 16fa12105e..4e4af92a37 100644
+--- documentation/qthelp/qthelp_config_shared.cpp
++++ documentation/qthelp/qthelp_config_shared.cpp
+@@ -25,7 +25,7 @@
+ 
+ void qtHelpReadConfig(QStringList& iconList, QStringList& nameList,
+                       QStringList& pathList, QStringList& ghnsList,
+-                      QString& searchDir, bool& loadQtDoc)
++                      QString& searchDir, bool& loadQtDoc, bool& extViewer)
+ {
+     KConfigGroup cg(KSharedConfig::openConfig(), "QtHelp Documentation");
+     iconList = cg.readEntry("iconList", QStringList());
+@@ -34,11 +34,12 @@ void qtHelpReadConfig(QStringList& iconList, QStringList& nameList,
+     ghnsList = cg.readEntry("ghnsList", QStringList());
+     searchDir = cg.readEntry("searchDir", QString());
+     loadQtDoc = cg.readEntry("loadQtDocs", true);
++    extViewer = cg.readEntry("useExternalViewer", false);
+ }
+ 
+ void qtHelpWriteConfig(const QStringList& iconList, const QStringList& nameList,
+                        const QStringList& pathList, const QStringList& ghnsList,
+-                       const QString& searchDir, const bool loadQtDoc)
++                       const QString& searchDir, const bool loadQtDoc, const bool extViewer)
+ {
+     KConfigGroup cg(KSharedConfig::openConfig(), "QtHelp Documentation");
+     cg.writeEntry("iconList", iconList);
+@@ -47,4 +48,5 @@ void qtHelpWriteConfig(const QStringList& iconList, const QStringList& nameList,
+     cg.writeEntry("ghnsList", ghnsList);
+     cg.writeEntry("searchDir", searchDir);
+     cg.writeEntry("loadQtDocs", loadQtDoc);
++    cg.writeEntry("useExternalViewer", extViewer);
+ }
+diff --git documentation/qthelp/qthelp_config_shared.h documentation/qthelp/qthelp_config_shared.h
+index e92ba17290..ff13b34fca 100644
+--- documentation/qthelp/qthelp_config_shared.h
++++ documentation/qthelp/qthelp_config_shared.h
+@@ -28,13 +28,17 @@ void qtHelpReadConfig(QStringList& iconList,
+                       QStringList& pathList,
+                       QStringList& ghnsList,
+                       QString& searchDir,
+-                      bool& loadQtDoc);
++                      bool& loadQtDoc,
++                      bool& extViewer
++                     );
+ 
+ void qtHelpWriteConfig(const QStringList& iconList,
+                        const QStringList& nameList,
+                        const QStringList& pathList,
+                        const QStringList& ghnsList,
+                        const QString& searchDir,
+-                       const bool loadQtDoc);
++                       const bool loadQtDoc,
++                       const bool extViewer
++                      );
+ 
+ #endif // QTHELP_CONFIG_SHARED_H
+diff --git documentation/qthelp/qthelpconfig.cpp documentation/qthelp/qthelpconfig.cpp
+index c34b6d334e..a3d91ee37f 100644
+--- documentation/qthelp/qthelpconfig.cpp
++++ documentation/qthelp/qthelpconfig.cpp
+@@ -121,6 +121,10 @@ QtHelpConfig::QtHelpConfig(QtHelpPlugin* plugin, QWidget *parent)
+     m_configWidget->qchSearchDir->setMode(KFile::Directory);
+     connect(m_configWidget->qchSearchDir, &KUrlRequester::textChanged,
+             this, &QtHelpConfig::changed);
++    connect(m_configWidget->externalViewerCheckBox, &QCheckBox::toggled,
++            this, static_cast<void(QtHelpConfig::*)()>(&QtHelpConfig::changed));
++    m_configWidget->externalViewerCheckBox->setToolTip(i18n("Use Qt's Assistant as an external viewer,\n"
++        "called through a script or symlink \"kdevelop-qthelp-viewer\""));
+ 
+     // Set availability information for QtHelp
+     m_configWidget->messageAvailabilityQtDocs->setCloseButtonVisible(false);
+@@ -130,6 +134,7 @@ QtHelpConfig::QtHelpConfig(QtHelpPlugin* plugin, QWidget *parent)
+         m_configWidget->messageAvailabilityQtDocs->setText(
+             i18n("The command \"qmake -query\" could not provide a path to a QtHelp file (QCH)."));
+         m_configWidget->loadQtDocsCheckBox->setVisible(false);
++        m_configWidget->externalViewerCheckBox->setVisible(false);
+     }
+     reset();
+ }
+@@ -156,8 +161,9 @@ void QtHelpConfig::apply()
+     }
+     QString searchDir = m_configWidget->qchSearchDir->text();
+     bool loadQtDoc = m_configWidget->loadQtDocsCheckBox->isChecked();
++    bool extViewer = m_configWidget->externalViewerCheckBox->isChecked();
+ 
+-    qtHelpWriteConfig(iconList, nameList, pathList, ghnsList, searchDir, loadQtDoc);
++    qtHelpWriteConfig(iconList, nameList, pathList, ghnsList, searchDir, loadQtDoc, extViewer);
+     static_cast<QtHelpPlugin*>(plugin())->readConfig();
+ }
+ 
+@@ -167,8 +173,8 @@ void QtHelpConfig::reset()
+ 
+     QStringList iconList, nameList, pathList, ghnsList;
+     QString searchDir;
+-    bool loadQtDoc;
+-    qtHelpReadConfig(iconList, nameList, pathList, ghnsList, searchDir, loadQtDoc);
++    bool loadQtDoc, extViewer;
++    qtHelpReadConfig(iconList, nameList, pathList, ghnsList, searchDir, loadQtDoc, extViewer);
+ 
+     const int size = qMin(qMin(iconList.size(), nameList.size()), pathList.size());
+     for(int i = 0; i < size; ++i) {
+@@ -177,6 +183,7 @@ void QtHelpConfig::reset()
+     }
+     m_configWidget->qchSearchDir->setText(searchDir);
+     m_configWidget->loadQtDocsCheckBox->setChecked(loadQtDoc);
++    m_configWidget->externalViewerCheckBox->setChecked(extViewer);
+ 
+     emit changed();
+ }
+diff --git documentation/qthelp/qthelpconfig.ui documentation/qthelp/qthelpconfig.ui
+index 9c1a7bbbcd..947e719d6e 100644
+--- documentation/qthelp/qthelpconfig.ui
++++ documentation/qthelp/qthelpconfig.ui
+@@ -48,10 +57,10 @@
+        </widget>
+       </item>
+       <item row="1" column="1">
+-       <widget class="KUrlRequester" name="qchSearchDir" native="true"/>
++       <widget class="KUrlRequester" name="qchSearchDir"/>
+       </item>
+       <item row="2" column="0" colspan="2">
+-       <widget class="KMessageWidget" name="messageAvailabilityQtDocs" native="true">
++       <widget class="KMessageWidget" name="messageAvailabilityQtDocs">
+         <property name="enabled">
+          <bool>true</bool>
+         </property>
+@@ -61,7 +70,7 @@
+           <height>0</height>
+          </size>
+         </property>
+-        <property name="text" stdset="0">
++        <property name="text">
+          <string/>
+         </property>
+        </widget>
+@@ -171,6 +180,29 @@
+     </widget>
+    </item>
+    <item>
++    <widget class="QGroupBox" name="boxAutoLoad2">
++     <layout class="QFormLayout" name="formLayout2">
++      <item row="0" column="0">
++       <widget class="QLabel" name="labelExternalViewer">
++        <property name="text">
++         <string>&amp;Use external viewer:</string>
++        </property>
++        <property name="buddy">
++         <cstring>externalViewerCheckBox</cstring>
++        </property>
++       </widget>
++      </item>
++      <item row="0" column="1">
++       <widget class="QCheckBox" name="externalViewerCheckBox">
++        <property name="text">
++         <string/>
++        </property>
++       </widget>
++      </item>
++     </layout>
++    </widget>
++   </item>
++   <item>
+     <spacer name="verticalSpacer">
+      <property name="orientation">
+       <enum>Qt::Vertical</enum>
+@@ -187,16 +219,16 @@
+  </widget>
+  <customwidgets>
+   <customwidget>
+-   <class>KMessageWidget</class>
+-   <extends>QFrame</extends>
+-   <header location="global">kmessagewidget.h</header>
+-  </customwidget>
+-  <customwidget>
+    <class>KUrlRequester</class>
+    <extends>QWidget</extends>
+-   <header location="global">kurlrequester.h</header>
++   <header>kurlrequester.h</header>
+    <container>1</container>
+   </customwidget>
++  <customwidget>
++   <class>KMessageWidget</class>
++   <extends>QFrame</extends>
++   <header>kmessagewidget.h</header>
++  </customwidget>
+  </customwidgets>
+  <resources/>
+  <connections/>
+diff --git documentation/qthelp/qthelpplugin.cpp documentation/qthelp/qthelpplugin.cpp
+index 60860e9e67..b0bc053964 100644
+--- documentation/qthelp/qthelpplugin.cpp
++++ documentation/qthelp/qthelpplugin.cpp
+@@ -40,6 +40,7 @@ QtHelpPlugin::QtHelpPlugin(QObject* parent, const QVariantList& args)
+     , m_qtHelpProviders()
+     , m_qtDoc(new QtHelpQtDoc(this, QVariantList()))
+     , m_loadSystemQtDoc(false)
++    , m_useExternalViewer(false)
+ {
+     Q_UNUSED(args);
+     s_plugin = this;
+@@ -56,11 +57,12 @@ void QtHelpPlugin::readConfig()
+ {
+     QStringList iconList, nameList, pathList, ghnsList;
+     QString searchDir;
+-    qtHelpReadConfig(iconList, nameList, pathList, ghnsList, searchDir, m_loadSystemQtDoc);
++    qtHelpReadConfig(iconList, nameList, pathList, ghnsList, searchDir, m_loadSystemQtDoc, m_useExternalViewer);
+ 
+     searchHelpDirectory(pathList, nameList, iconList, searchDir);
+     loadQtHelpProvider(pathList, nameList, iconList);
+     loadQtDocumentation(m_loadSystemQtDoc);
++    m_qtDoc->setUseExternalViewer(m_useExternalViewer);
+ 
+     emit changedProvidersList();
+ }
+@@ -160,6 +162,11 @@ bool QtHelpPlugin::isQtHelpQtDocLoaded() const
+     return m_loadSystemQtDoc;
+ }
+ 
++bool QtHelpPlugin::useExternalViewer() const
++{
++    return m_useExternalViewer;
++}
++
+ bool QtHelpPlugin::isQtHelpAvailable() const
+ {
+     return !m_qtDoc->qchFiles().isEmpty();
+diff --git documentation/qthelp/qthelpplugin.h documentation/qthelp/qthelpplugin.h
+index c1a240b8f7..6c71addf73 100644
+--- documentation/qthelp/qthelpplugin.h
++++ documentation/qthelp/qthelpplugin.h
+@@ -42,6 +42,7 @@ class QtHelpPlugin : public KDevelop::IPlugin, public KDevelop::IDocumentationPr
+         QList<QtHelpProvider*> qtHelpProviderLoaded();
+         bool isQtHelpQtDocLoaded() const;
+         bool isQtHelpAvailable() const;
++        bool useExternalViewer() const;
+ 
+         int configPages() const override;
+         KDevelop::ConfigPage* configPage(int number, QWidget* parent) override;
+@@ -59,6 +60,7 @@ class QtHelpPlugin : public KDevelop::IPlugin, public KDevelop::IDocumentationPr
+         QList<QtHelpProvider*> m_qtHelpProviders;
+         QtHelpQtDoc* m_qtDoc;
+         bool m_loadSystemQtDoc;
++        bool m_useExternalViewer;
+ };
+ 
+ #endif // QTHELPPLUGIN_H
+diff --git documentation/qthelp/qthelpproviderabstract.cpp documentation/qthelp/qthelpproviderabstract.cpp
+index 2d42cb99d3..48f4bc4d3a 100644
+--- documentation/qthelp/qthelpproviderabstract.cpp
++++ documentation/qthelp/qthelpproviderabstract.cpp
+@@ -27,6 +27,10 @@
+ 
+ #include <QStandardPaths>
+ 
++#include <QString>
++#include <QProcess>
++#include <QApplication>
++
+ #include <language/duchain/duchain.h>
+ #include <language/duchain/declaration.h>
+ #include <language/duchain/duchainlock.h>
+@@ -37,6 +41,48 @@
+ 
+ using namespace KDevelop;
+ 
++// subclass QProcess so we can be our own exit watchdog
++class ExternalViewerProcess : public QProcess
++{
++    Q_OBJECT
++public:
++    ExternalViewerProcess(QObject* parent);
++    ~ExternalViewerProcess()
++    {
++#ifdef Q_OS_UNIX
++        qint64 pid = processId();
++        if (pid > 0) {
++            QProcess *hup = new QProcess(this);
++            hup->startDetached(QString::fromLatin1("kill -1 %1").arg(pid));
++            hup->waitForFinished(500);
++        }
++        QProcess::waitForFinished(500);
++#endif
++    }
++public slots:
++    void externalViewerExit(int exitCode, QProcess::ExitStatus exitStatus);
++};
++
++ExternalViewerProcess* QtHelpProviderAbstract::m_externalViewerProcess = Q_NULLPTR;
++bool QtHelpProviderAbstract::s_useExternalViewer = false;
++
++ExternalViewerProcess::ExternalViewerProcess(QObject *parent)
++    : QProcess(parent)
++{
++    connect(this, static_cast<void(ExternalViewerProcess::*)(int, QProcess::ExitStatus)>(&ExternalViewerProcess::finished),
++            &ExternalViewerProcess::externalViewerExit);
++}
++
++void ExternalViewerProcess::externalViewerExit(int exitCode, QProcess::ExitStatus exitStatus)
++{
++    if (this == QtHelpProviderAbstract::m_externalViewerProcess) {
++        qCDebug(QTHELP) << Q_FUNC_INFO << "externalViewer" << this << "has exited with code"
++            << exitCode << "and status" << exitStatus;
++        deleteLater();
++        QtHelpProviderAbstract::m_externalViewerProcess = Q_NULLPTR;
++    }
++}
++
+ QtHelpProviderAbstract::QtHelpProviderAbstract(QObject *parent, const QString &collectionFileName, const QVariantList &args)
+     : QObject(parent)
+     , m_engine(QStandardPaths::writableLocation(QStandardPaths::DataLocation)+'/'+collectionFileName)
+@@ -45,13 +91,56 @@ QtHelpProviderAbstract::QtHelpProviderAbstract(QObject *parent, const QString &c
+     if( !m_engine.setupData() ) {
+         qWarning() << "Couldn't setup QtHelp Collection file";
+     }
++    s_useExternalViewer = false;
+ }
+ 
+-
+ QtHelpProviderAbstract::~QtHelpProviderAbstract()
+ {
+ }
+ 
++void QtHelpProviderAbstract::setUseExternalViewer(const bool extViewer)
++{
++    s_useExternalViewer = extViewer;
++}
++
++ExternalViewerProcess* QtHelpProviderAbstract::externalViewer() const
++{
++    // turning off the use of an external help viewer shouldn't terminate
++    // an already running viewer process, we just stop using it.
++    if (!s_useExternalViewer) {
++        return Q_NULLPTR;
++    }
++    if (!m_externalViewerProcess) {
++        m_externalViewerProcess = new ExternalViewerProcess(qApp);
++        QStringList args = {"-enableRemoteControl"};
++        m_externalViewerProcess->start(QStandardPaths::findExecutable(QLatin1String("kdevelop-qthelp-viewer")),
++            args, QIODevice::WriteOnly|QIODevice::Append);
++        if (!m_externalViewerProcess->waitForStarted()) {
++            m_externalViewerProcess->deleteLater();
++            m_externalViewerProcess = NULL;
++        }
++    }
++    return m_externalViewerProcess;
++}
++
++bool QtHelpProviderAbstract::externalViewerCommand(const QByteArray& command) const
++{
++    if (externalViewer()) {
++        return externalViewer()->write(command) >= 0;
++    } else {
++        return false;
++    }
++}
++
++bool QtHelpProviderAbstract::externalViewerCommand(const char* command) const
++{
++    if (externalViewer()) {
++        return externalViewer()->write(command) >= 0;
++    } else {
++        return false;
++    }
++}
++
+ IDocumentation::Ptr QtHelpProviderAbstract::documentationForDeclaration(Declaration* dec) const
+ {
+     QtHelpDocumentation::s_provider = const_cast<QtHelpProviderAbstract*>(this);
+@@ -69,8 +158,22 @@ IDocumentation::Ptr QtHelpProviderAbstract::documentationForDeclaration(Declarat
+         if (!id.isEmpty()) {
+             QMap<QString, QUrl> links = m_engine.linksForIdentifier(id);
+ 
+-            if(!links.isEmpty())
++            if (!links.isEmpty()) {
++                if (externalViewer()) {
++                    QByteArray ba;
++                    const auto urls = links.values();
++                    foreach (const auto url, urls) {
++                        if (!url.isEmpty()) {
++                            ba.append("setSource " + url.toString().toUtf8() + "\n");
++                        }
++                    }
++                    qCDebug(QTHELP) << Q_FUNC_INFO << "Id=" << id << "links=" << links << "->" << ba;
++                    externalViewerCommand(ba);
++                    externalViewerCommand("show contents\n");
++                    externalViewerCommand("syncContents\n");
++                }
+                 return IDocumentation::Ptr(new QtHelpDocumentation(id, links));
++            }
+         }
+     }
+ 
+@@ -87,7 +190,21 @@ IDocumentation::Ptr QtHelpProviderAbstract::documentationForIndex(const QModelIn
+ {
+     QtHelpDocumentation::s_provider = const_cast<QtHelpProviderAbstract*>(this);
+     QString name=idx.data(Qt::DisplayRole).toString();
+-    return IDocumentation::Ptr(new QtHelpDocumentation(name, m_engine.indexModel()->linksForKeyword(name)));
++    QMap<QString, QUrl> links = m_engine.indexModel()->linksForKeyword(name);
++    if(!links.isEmpty() && externalViewer()) {
++        QByteArray ba;
++        const auto urls = links.values();
++        foreach (const auto url, urls) {
++            if (!url.isEmpty()) {
++                ba.append("setSource " + url.toString().toUtf8() + "\n");
++                ba.append(QLatin1String("show contents\n"));
++            }
++        }
++        qCDebug(QTHELP) << Q_FUNC_INFO << "name=" << name << "->" << ba;
++        externalViewerCommand(ba);
++        externalViewerCommand("syncContents\n");
++    }
++    return IDocumentation::Ptr(new QtHelpDocumentation(name, links));
+ }
+ 
+ void QtHelpProviderAbstract::jumpedTo(const QUrl& newUrl) const
+@@ -109,3 +226,5 @@ bool QtHelpProviderAbstract::isValid() const
+ {
+     return !m_engine.registeredDocumentations().isEmpty();
+ }
++
++#include "qthelpproviderabstract.moc"
+diff --git documentation/qthelp/qthelpproviderabstract.h documentation/qthelp/qthelpproviderabstract.h
+index 1f5f1b28fb..4ee523b1be 100644
+--- documentation/qthelp/qthelpproviderabstract.h
++++ documentation/qthelp/qthelpproviderabstract.h
+@@ -29,6 +29,8 @@
+ #include <QVariantList>
+ #include <QHelpEngine>
+ 
++class ExternalViewerProcess;
++
+ class QtHelpProviderAbstract : public QObject, public KDevelop::IDocumentationProvider
+ {
+     Q_OBJECT
+@@ -46,6 +48,11 @@ public:
+     /// @return False in case we failed to load any documentation files, else true
+     bool isValid() const;
+ 
++    ExternalViewerProcess *externalViewer() const;
++    bool externalViewerCommand(const QByteArray& command) const;
++    bool externalViewerCommand(const char* command) const;
++    void setUseExternalViewer(const bool extViewer);
++
+     QHelpEngine* engine() { return &m_engine; }
+ public slots:
+     void jumpedTo(const QUrl& newUrl) const;
+@@ -53,6 +60,9 @@ signals:
+     void addHistory(const KDevelop::IDocumentation::Ptr& doc) const override;
+ protected:
+     QHelpEngine m_engine;
++    static bool s_useExternalViewer;
++    static ExternalViewerProcess* m_externalViewerProcess;
++    friend class ExternalViewerProcess;
+ };
+ 
+ #endif // QTHELPPROVIDERABSTRACT_H
+diff --git documentation/qthelp/tests/test_qthelpplugin.cpp documentation/qthelp/tests/test_qthelpplugin.cpp
+index d5cd95da3b..a16b688776 100644
+--- documentation/qthelp/tests/test_qthelpplugin.cpp
++++ documentation/qthelp/tests/test_qthelpplugin.cpp
+@@ -58,7 +58,7 @@ void TestQtHelpPlugin::init()
+ {
+     m_plugin = new QtHelpPlugin(m_testCore, QVariantList());
+     // write default config and read it
+-    qtHelpWriteConfig(QStringList(), QStringList(), QStringList(), QStringList(), QString(), true);
++    qtHelpWriteConfig(QStringList(), QStringList(), QStringList(), QStringList(), QString(), true, false);
+     m_plugin->readConfig();
+ }
+ 
+@@ -82,7 +82,7 @@ void TestQtHelpPlugin::testDefaultValue()
+ 
+ void TestQtHelpPlugin::testUnsetQtHelpDoc()
+ {
+-    qtHelpWriteConfig(QStringList(), QStringList(), QStringList(), QStringList(), QString(), false);
++    qtHelpWriteConfig(QStringList(), QStringList(), QStringList(), QStringList(), QString(), false, false);
+     m_plugin->readConfig();
+ 
+     QCOMPARE(m_plugin->providers().size(), 0);
+@@ -95,7 +95,7 @@ void TestQtHelpPlugin::testAddOneValidProvider()
+     name << "file1";
+     icon << "myIcon";
+     ghns << "0";
+-    qtHelpWriteConfig(icon, name, path, ghns, QString(), true);
++    qtHelpWriteConfig(icon, name, path, ghns, QString(), true, false);
+     m_plugin->readConfig();
+ 
+     QCOMPARE(m_plugin->qtHelpProviderLoaded().size(), 1);
+@@ -111,7 +111,7 @@ void TestQtHelpPlugin::testAddTwoDifferentValidProvider()
+     name << "file1" << "file2";
+     icon << "myIcon" << "myIcon";
+     ghns << "0" << "0";
+-    qtHelpWriteConfig(icon, name, path, ghns, QString(), true);
++    qtHelpWriteConfig(icon, name, path, ghns, QString(), true, false);
+     m_plugin->readConfig();
+ 
+     QCOMPARE(m_plugin->qtHelpProviderLoaded().size(), 2);
+@@ -132,7 +132,7 @@ void TestQtHelpPlugin::testAddInvalidProvider()
+     name << "file1";
+     icon << "myIcon";
+     ghns << "0";
+-    qtHelpWriteConfig(icon, name, path, ghns, QString(), true);
++    qtHelpWriteConfig(icon, name, path, ghns, QString(), true, false);
+     m_plugin->readConfig();
+ 
+     QCOMPARE(m_plugin->qtHelpProviderLoaded().size(), 0);
+@@ -145,7 +145,7 @@ void TestQtHelpPlugin::testAddTwiceSameProvider()
+     name << "file1" << "file2";
+     icon << "myIcon" << "myIcon";
+     ghns << "0" << "0";
+-    qtHelpWriteConfig(icon, name, path, ghns, QString(), true);
++    qtHelpWriteConfig(icon, name, path, ghns, QString(), true, false);
+     m_plugin->readConfig();
+ 
+     QCOMPARE(m_plugin->qtHelpProviderLoaded().size(), 1);
+@@ -158,7 +158,7 @@ void TestQtHelpPlugin::testRemoveOneProvider()
+     name << "file1" << "file2";
+     icon << "myIcon" << "myIcon";
+     ghns << "0" << "0";
+-    qtHelpWriteConfig(icon, name, path, ghns, QString(), true);
++    qtHelpWriteConfig(icon, name, path, ghns, QString(), true, false);
+     m_plugin->readConfig();
+ 
+     QCOMPARE(m_plugin->qtHelpProviderLoaded().size(), 2);
+@@ -168,7 +168,7 @@ void TestQtHelpPlugin::testRemoveOneProvider()
+     name.removeAt(1);
+     icon.removeAt(1);
+     ghns.removeAt(1);
+-    qtHelpWriteConfig(icon, name, path, ghns, QString(), true);
++    qtHelpWriteConfig(icon, name, path, ghns, QString(), true, false);
+     m_plugin->readConfig();
+ 
+     QCOMPARE(m_plugin->qtHelpProviderLoaded().size(), 1);
