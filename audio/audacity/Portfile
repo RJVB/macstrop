@@ -60,30 +60,32 @@ use_parallel_build  no
 
 homepage            http://www.audacityteam.org/
 
-wxWidgets.use       wxWidgets-3.0
-
 compiler.blacklist  {*gcc-[234].[0-8]}
+
+wxWidgets.use       wxWidgets-3.0
+depends_build-append \
+                    port:${wxWidgets.port}
 
 depends_build-append \
                     port:cmake \
                     port:pkgconfig \
                     port:python27
-depends_lib-append  port:expat \
-                    path:lib/libavcodec.dylib:ffmpeg \
-                    port:flac \
+depends_build-append \
                     port:freetype \
                     port:harfbuzz \
                     port:lame \
                     port:libid3tag \
                     port:libmad \
+                    port:soundtouch \
+                    port:soxr \
+                    port:twolame
+depends_lib-append  port:expat \
+                    path:lib/libavcodec.dylib:ffmpeg \
+                    port:flac \
                     port:libogg \
                     port:libsndfile \
                     port:libvorbis \
-                    port:portaudio \
-                    port:soundtouch \
-                    port:soxr \
-                    port:twolame \
-                    port:${wxWidgets.port}
+                    port:portaudio
 # audacity could use port:lv2 and port:lilv but would also require a port:suil for that to be possible.
 
 patch.pre_args      -Np1
@@ -92,7 +94,8 @@ patch.pre_args      -Np1
 # - build and link VSTControlOSX.mm instead of the GTk interface
 # - address a visibility issue with the slider_array variable in libnyquist
 # - make the AudioUnits plugin support build; on 64bit and also include AUControl.mm
-patchfiles-append \
+platform darwin {
+    patchfiles-append \
                     fix-minsrc-autoreconf.patch                             \
                     libvamp-Makefile-for-osx.diff                           \
                     src-Makefile-for-osx.diff                               \
@@ -107,6 +110,7 @@ patchfiles-append \
                     patch-fix-casts.diff \
                     patch-add-MenusMac.diff \
                     patch-skip-gcc-version-test.diff
+}
 
 if {${subport} eq "${name}"} {
     patchfiles-append \
@@ -134,29 +138,31 @@ post-patch {
     reinplace -W ${worksrcpath} "s| -Werror||g" \
                                 lib-src/portaudio-v19/configure.in \
                                 lib-src/portaudio-v19/configure
-    # audacity 2.1.2 contains C++ files that include system SDK headers and ObjC code on OS X;
-    # they must thus be built as ObjC++
-    set make_objcpp { \
-        {CommandManager src/commands    {src/Makefile.in src/Makefile.am}} \
-        {Effect         src/effects     {src/Makefile.in src/Makefile.am}} \
-        {LV2Effect      src/effects/lv2 {src/Makefile.in src/Makefile.am}} \
-    }
-    foreach mm ${make_objcpp} {
-        set f  [lindex ${mm} 0]
-        set d  [lindex ${mm} 1]
-        set mk [lindex ${mm} 2]
-        foreach m ${mk} {
-            reinplace -W ${worksrcpath} "s|/${f}.cpp|/${f}.mm|g" ${m}
+    platform darwin {
+        # audacity 2.1.2 contains C++ files that include system SDK headers and ObjC code on OS X;
+        # they must thus be built as ObjC++
+        set make_objcpp { \
+            {CommandManager src/commands    {src/Makefile.in src/Makefile.am}} \
+            {Effect         src/effects     {src/Makefile.in src/Makefile.am}} \
+            {LV2Effect      src/effects/lv2 {src/Makefile.in src/Makefile.am}} \
         }
-        # it's easiest to symlink f.mm to f.cpp; clang++ will do the rest.
-        if {![file exists ${worksrcpath}/${d}/${f}.mm]} {
-            ln -s ${f}.cpp ${worksrcpath}/${d}/${f}.mm
+        foreach mm ${make_objcpp} {
+            set f  [lindex ${mm} 0]
+            set d  [lindex ${mm} 1]
+            set mk [lindex ${mm} 2]
+            foreach m ${mk} {
+                reinplace -W ${worksrcpath} "s|/${f}.cpp|/${f}.mm|g" ${m}
+            }
+            # it's easiest to symlink f.mm to f.cpp; clang++ will do the rest.
+            if {![file exists ${worksrcpath}/${d}/${f}.mm]} {
+                ln -s ${f}.cpp ${worksrcpath}/${d}/${f}.mm
+            }
         }
-    }
-    reinplace -W ${worksrcpath} "s|/VSTControlGTK.cpp|/VSTControlOSX.mm|g" \
-            src/Makefile.in src/Makefile.am
-    if {[file exists ${worksrcpath}/src/MenusMac.cpp] && ![file exists ${worksrcpath}/src/MenusMac.mm]} {
-        ln -s MenusMac.cpp ${worksrcpath}/src/MenusMac.mm
+        reinplace -W ${worksrcpath} "s|/VSTControlGTK.cpp|/VSTControlOSX.mm|g" \
+                src/Makefile.in src/Makefile.am
+        if {[file exists ${worksrcpath}/src/MenusMac.cpp] && ![file exists ${worksrcpath}/src/MenusMac.mm]} {
+            ln -s MenusMac.cpp ${worksrcpath}/src/MenusMac.mm
+        }
     }
 }
 
@@ -184,43 +190,46 @@ configure.args-append \
                     CPPFLAGS=-I${prefix}/include \
                     WX_CONFIG=${wxWidgets.wxconfig}
 
-set aud_app_path    ${applications_dir}/Audacity.app
-destroot.keepdirs   ${destroot}${aud_app_path}/Contents/Resources/en.lproj
+build.args-append   V=1 VERBOSE=1
 
-post-destroot {
-    # create the app bundle infrastructure
-    xinstall -m 755 -d ${destroot}${aud_app_path}/Contents/MacOS
-    xinstall -m 755 -d ${destroot}${aud_app_path}/Contents/Resources
-    # the BundleExec:
-    file rename ${destroot}${prefix}/bin/audacity ${destroot}${aud_app_path}/Contents/MacOS/Audacity
-    # install the Info.plist provided by Audacity
-    xinstall -m 644 ${worksrcpath}/mac/Info.plist ${destroot}${aud_app_path}/Contents/
-    # adapt the provided Info.plist
-    reinplace "s|AUDACITY_EXECUTABLE|Audacity|g" ${destroot}${aud_app_path}/Contents/Info.plist
-    reinplace "s|AUDACITY_INFO_VERSION|${version} (MacPorts)|g" ${destroot}${aud_app_path}/Contents/Info.plist
-    reinplace "s|\$(PRODUCT_BUNDLE_IDENTIFIER)|audacity|g" ${destroot}${aud_app_path}/Contents/Info.plist
-    # install the provided icons into the Resources directory
-    foreach r [glob -nocomplain ${worksrcpath}/mac/Resources/*.icns] {
-        xinstall -m 644 ${r} ${destroot}${aud_app_path}/Contents/Resources/
+platform darwin {
+    set aud_app_path    ${applications_dir}/Audacity.app
+    destroot.keepdirs   ${destroot}${aud_app_path}/Contents/Resources/en.lproj
+
+    post-destroot {
+        # create the app bundle infrastructure
+        xinstall -m 755 -d ${destroot}${aud_app_path}/Contents/MacOS
+        xinstall -m 755 -d ${destroot}${aud_app_path}/Contents/Resources
+        # the BundleExec:
+        file rename ${destroot}${prefix}/bin/audacity ${destroot}${aud_app_path}/Contents/MacOS/Audacity
+        # install the Info.plist provided by Audacity
+        xinstall -m 644 ${worksrcpath}/mac/Info.plist ${destroot}${aud_app_path}/Contents/
+        # adapt the provided Info.plist
+        reinplace "s|AUDACITY_EXECUTABLE|Audacity|g" ${destroot}${aud_app_path}/Contents/Info.plist
+        reinplace "s|AUDACITY_INFO_VERSION|${version} (MacPorts)|g" ${destroot}${aud_app_path}/Contents/Info.plist
+        # install the provided icons into the Resources directory
+        foreach r [glob -nocomplain ${worksrcpath}/mac/Resources/*.icns] {
+            xinstall -m 644 ${r} ${destroot}${aud_app_path}/Contents/Resources/
+        }
+        # allow the application to find certain things where it expects them on OS X (= inside the app bundle)
+        foreach r [glob -nocomplain ${destroot}${prefix}/share/audacity/*] {
+            ln -s ${prefix}/share/audacity/[file tail ${r}] ${destroot}${aud_app_path}/Contents/Resources
+        }
+        # install translation resources
+        foreach l [glob -nocomplain ${destroot}${prefix}/share/locale/*] {
+            set lang [file tail ${l}]
+            xinstall -m 755 -d ${destroot}${aud_app_path}/Contents/Resources/${lang}.lproj
+            ln -s ${prefix}/share/locale/${lang}/LC_MESSAGES/audacity.mo ${destroot}${aud_app_path}/Contents/Resources/${lang}.lproj/
+        }
+        foreach l [glob -nocomplain ${wxWidgets.prefix}/share/locale/*] {
+            set lang [file tail ${l}]
+            xinstall -m 755 -d ${destroot}${aud_app_path}/Contents/Resources/${lang}.lproj
+            ln -s ${l}/LC_MESSAGES/wxstd.mo ${destroot}${aud_app_path}/Contents/Resources/${lang}.lproj/
+        }
+        # install a wrapper script in ${prefix}/bin
+        system "echo \"#!/bin/sh\nexec \\\"${aud_app_path}/Contents/MacOS/Audacity\\\" \\\"\\\$\@\\\"\" > ${destroot}${prefix}/bin/audacity"
+        system "chmod 755 ${destroot}${prefix}/bin/audacity"
     }
-    # allow the application to find certain things where it expects them on OS X (= inside the app bundle)
-    foreach r [glob -nocomplain ${destroot}${prefix}/share/audacity/*] {
-        ln -s ${prefix}/share/audacity/[file tail ${r}] ${destroot}${aud_app_path}/Contents/Resources
-    }
-    # install translation resources
-    foreach l [glob -nocomplain ${destroot}${prefix}/share/locale/*] {
-        set lang [file tail ${l}]
-        xinstall -m 755 -d ${destroot}${aud_app_path}/Contents/Resources/${lang}.lproj
-        ln -s ${prefix}/share/locale/${lang}/LC_MESSAGES/audacity.mo ${destroot}${aud_app_path}/Contents/Resources/${lang}.lproj/
-    }
-    foreach l [glob -nocomplain ${wxWidgets.prefix}/share/locale/*] {
-        set lang [file tail ${l}]
-        xinstall -m 755 -d ${destroot}${aud_app_path}/Contents/Resources/${lang}.lproj
-        ln -s ${l}/LC_MESSAGES/wxstd.mo ${destroot}${aud_app_path}/Contents/Resources/${lang}.lproj/
-    }
-    # install a wrapper script in ${prefix}/bin
-    system "echo \"#!/bin/sh\nexec \\\"${aud_app_path}/Contents/MacOS/Audacity\\\" \\\"\\\$\@\\\"\" > ${destroot}${prefix}/bin/audacity"
-    system "chmod 755 ${destroot}${prefix}/bin/audacity"
 }
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
