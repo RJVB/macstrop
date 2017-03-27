@@ -42,7 +42,8 @@ namespace eval dev {
 options devport_content
 default devport_content ""
 
-proc create_devport_content {} {
+# create the online devport content archive
+proc create_devport_content_archive {} {
     global destroot prefix
     set rawargs [option devport_content]
     set args ""
@@ -61,6 +62,28 @@ proc create_devport_content {} {
     }
 }
 
+# registers content that standard devports will contain
+proc register_devport_standard_content {} {
+    global subport destroot prefix name
+    if {${subport} eq "${name}"} {
+        foreach h [glob -nocomplain ${destroot}${prefix}/include/*] {
+            devport_content-append [string map [list ${destroot} ""] ${h}]
+        }
+        foreach h [glob -nocomplain ${destroot}${prefix}/lib/lib*.a] {
+            devport_content-append [string map [list ${destroot} ""] ${h}]
+        }
+        foreach h [glob -nocomplain ${destroot}${prefix}/lib/lib*.la] {
+            devport_content-append [string map [list ${destroot} ""] ${h}]
+        }
+        foreach h [glob -nocomplain ${destroot}${prefix}/lib/lib*\[a-zA-Z\].so] {
+            devport_content-append [string map [list ${destroot} ""] ${h}]
+        }
+        foreach h [glob -nocomplain ${destroot}${prefix}/lib/pkgconfig/*] {
+            devport_content-append [string map [list ${destroot} ""] ${h}]
+        }
+    }
+}
+
 proc unpack_devport_content {} {
     global destroot prefix name
     if {[file exists ${dev::archdir}/${dev::archname}]} {
@@ -68,8 +91,8 @@ proc unpack_devport_content {} {
             ui_error "Failure unpacking ${dev::archdir}/${dev::archname}: ${err}"
         }
     } else {
-        ui_error "The port's content doesn't exists (${dev::archdir}/${dev::archname})!"
-        return -code error "Missing content; try re-activating or reinstalling port:${name}"
+        ui_error "The port's content archive doesn't exists (${dev::archdir}/${dev::archname})!"
+        return -code error "Missing content archive; try re-activating or reinstalling port:${name}"
     }
 }
 
@@ -94,8 +117,10 @@ proc create_devport {dependency} {
         }
         pre-activate {
             if {[file exists ${dev::archdir}/${dev::archname}]} {
-                ui_info "${subport} is now installed, removing installed archive ${dev::archdir}/${dev::archname}"
+                ui_info "${subport} is now installed, removing installed content archive ${dev::archdir}/${dev::archname}"
                 file delete -force ${dev::archdir}/${dev::archname}
+                # make sure the file exists to keep rev-upgrade happy
+                system "touch ${dev::archdir}/${dev::archname}"
             }
         }
     }
