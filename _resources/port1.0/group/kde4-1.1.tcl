@@ -235,7 +235,7 @@ configure.args-append   -DDOCBOOKXSL_DIR=${prefix}/share/xsl/docbook-xsl \
 
 # standard variant for building documentation
 variant docs description "Build documentation" {
-    depends_build-append    path:bin/doxygen:doxygen
+    depends_build-append    bin:doxygen:doxygen
     configure.args-delete   -DBUILD_doc=OFF -DBUILD_docs=OFF
 }
 
