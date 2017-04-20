@@ -1,0 +1,65 @@
+diff --git a/qtbase/src/plugins/platforms/cocoa/qcocoawindow.mm b/qtbase/src/plugins/platforms/cocoa/qcocoawindow.mm
+index f03809ec65e4a34ff55f68d7c36f2ca1e5562897..b58f07483095c48f52723b907eae67a1da29f50a 100644
+--- a/qtbase/src/plugins/platforms/cocoa/qcocoawindow.mm
++++ b/qtbase/src/plugins/platforms/cocoa/qcocoawindow.mm
+@@ -896,7 +896,8 @@ void QCocoaWindow::setWindowFlags(Qt::WindowFlags flags)
+         Qt::WindowType type = window()->type();
+         if ((type & Qt::Popup) != Qt::Popup && (type & Qt::Dialog) != Qt::Dialog) {
+             NSWindowCollectionBehavior behavior = [m_nsWindow collectionBehavior];
+-            if (flags & Qt::WindowFullscreenButtonHint) {
++            // Ignore Qt::WindowFullscreenButtonHint if a "simple" and consistent fullscreen mode is requested.
++            if ((flags & Qt::WindowFullscreenButtonHint) && !qEnvironmentVariableIsSet("QT_CONSISTENT_FULLSCREEN")) {
+                 behavior |= NSWindowCollectionBehaviorFullScreenPrimary;
+                 behavior &= ~NSWindowCollectionBehaviorFullScreenAuxiliary;
+             } else {
+@@ -1590,19 +1591,28 @@ void QCocoaWindow::syncWindowState(Qt::WindowState newState)
+     }
+ 
+     if ((m_synchedWindowState & Qt::WindowFullScreen) != (newState & Qt::WindowFullScreen)) {
+-        if (window()->flags() & Qt::WindowFullscreenButtonHint) {
++        if (m_nsWindow.collectionBehavior & NSWindowCollectionBehaviorFullScreenPrimary) {
+             if (m_effectivelyMaximized && m_synchedWindowState == Qt::WindowFullScreen)
+                 predictedState = Qt::WindowMaximized;
+             [m_nsWindow toggleFullScreen : m_nsWindow];
+         } else {
++            // fall back to a simple, DIY fullscreen mode that has the advantage of being fast,
++            // consistent (across platforms and MissionControl settings) and bug free.
++            NSWindow *nsWin = m_view.window;
++            bool wasActive = ([NSApp keyWindow] == nsWin);
++#if QT_MACOS_PLATFORM_SDK_EQUAL_OR_ABOVE(__MAC_10_9)
++            bool menuBarsOnAllScreens = [NSScreen screensHaveSeparateSpaces];
++#else
++            bool menuBarsOnAllScreens = false;
++#endif
+             if (newState & Qt::WindowFullScreen) {
+                 QScreen *screen = window()->screen();
+-                if (screen) {
+-                    if (m_normalGeometry.width() < 0) {
+-                        m_oldWindowFlags = m_windowFlags;
+-                        window()->setFlags(window()->flags() | Qt::FramelessWindowHint);
+-                        m_normalGeometry = nativeWindowGeometry();
+-                        setGeometry(screen->geometry());
++                if (screen && m_normalGeometry.width() < 0) {
++                    m_oldWindowFlags = m_windowFlags;
++                    window()->setFlags((window()->flags() & ~Qt::WindowFullscreenButtonHint) | Qt::Window | Qt::FramelessWindowHint);
++                    m_normalGeometry = nativeWindowGeometry();
++                    setGeometry(screen->geometry());
++                    if (menuBarsOnAllScreens || [nsWin screen] == [[NSScreen screens] firstObject]) {
+                         m_presentationOptions = [NSApp presentationOptions];
+                         [NSApp setPresentationOptions : m_presentationOptions | NSApplicationPresentationAutoHideMenuBar | NSApplicationPresentationAutoHideDock];
+                     }
+@@ -1611,7 +1621,13 @@ void QCocoaWindow::syncWindowState(Qt::WindowState newState)
+                 window()->setFlags(m_oldWindowFlags);
+                 setGeometry(m_normalGeometry);
+                 m_normalGeometry.setRect(0, 0, -1, -1);
+-                [NSApp setPresentationOptions : m_presentationOptions];
++                if (menuBarsOnAllScreens || [nsWin screen] == [[NSScreen screens] firstObject]) {
++                    [NSApp setPresentationOptions : m_presentationOptions];
++                }
++            }
++            if (wasActive) {
++                // make sure the operation doesn't cause a loss of focus
++                requestActivateWindow();
+             }
+         }
+     }
