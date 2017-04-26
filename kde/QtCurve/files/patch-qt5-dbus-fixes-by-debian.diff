@@ -1,5 +1,5 @@
 diff --git qt5/style/qtcurve.cpp qt5/style/qtcurve.cpp
-index 58084f0..e45af13 100644
+index 9e4b3aaa97b240ca8d4151d075c2b1c92acb4303..cbccef211b4b35c3d9fc774e14b3f3cd299ab911 100644
 --- qt5/style/qtcurve.cpp
 +++ qt5/style/qtcurve.cpp
 @@ -21,7 +21,6 @@
@@ -19,18 +19,63 @@ index 58084f0..e45af13 100644
  {
      const char *env = getenv(QTCURVE_PREVIEW_CONFIG);
  #ifdef QTC_QT5_ENABLE_KDE
-@@ -664,9 +663,7 @@ void Style::connectDBus()
+@@ -664,30 +663,36 @@ void Style::connectDBus()
  {
      if (m_dbusConnected)
          return;
 -    m_dbusConnected = registerCleanup([] (void *data) {
 -            reinterpret_cast<Style*>(data)->disconnectDBus();
 -        }, this);
-+    m_dbusConnected = true;
      auto bus = QDBusConnection::sessionBus();
-     bus.connect(QString(), "/KGlobalSettings", "org.kde.KGlobalSettings",
-                 "notifyChange", this, SLOT(kdeGlobalSettingsChange(int, int)));
-@@ -696,9 +693,7 @@ void Style::disconnectDBus()
+-    bus.connect(QString(), "/KGlobalSettings", "org.kde.KGlobalSettings",
+-                "notifyChange", this, SLOT(kdeGlobalSettingsChange(int, int)));
++    if (bus.isConnected()) {
++        m_dbusConnected = true;
++        if (QCoreApplication::instance()) {
++            bool ok = connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &Style::disconnectDBus);
++            // qWarning() << Q_FUNC_INFO << this << "connected to QCoreApplication::aboutToQuit from"
++            //     << QCoreApplication::instance() << ":" << ok;
++        }
++        bus.connect(QString(), "/KGlobalSettings", "org.kde.KGlobalSettings",
++                    "notifyChange", this, SLOT(kdeGlobalSettingsChange(int, int)));
+ #ifndef QTC_QT5_ENABLE_KDE
+-    bus.connect("org.kde.kwin", "/KWin", "org.kde.KWin", "compositingToggled",
+-                this, SLOT(compositingToggled()));
++        bus.connect("org.kde.kwin", "/KWin", "org.kde.KWin", "compositingToggled",
++                    this, SLOT(compositingToggled()));
+ #endif
+ 
+-    QString arg0 = qApp? qApp->arguments()[0] : QString();
+-    if (!qApp || (arg0 != "kwin" && arg0 != "kwin_x11" && arg0 != "kwin_wayland")) {
+-        bus.connect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
+-                    "borderSizesChanged", this, SLOT(borderSizesChanged()));
+-        if (opts.menubarHiding & HIDE_KWIN)
++        QString arg0 = qApp? qApp->arguments()[0] : QString();
++        if (!qApp || (arg0 != "kwin" && arg0 != "kwin_x11" && arg0 != "kwin_wayland")) {
++            // don't connect to signals if we know we're sending them out ourselves
+             bus.connect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
+-                        "toggleMenuBar",
+-                        this, SLOT(toggleMenuBar(unsigned int)));
+-
+-        if (opts.statusbarHiding & HIDE_KWIN) {
+-            bus.connect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
+-                        "toggleStatusBar",
+-                        this, SLOT(toggleStatusBar(unsigned int)));
++                        "borderSizesChanged", this, SLOT(borderSizesChanged()));
++            if (opts.menubarHiding & HIDE_KWIN)
++                bus.connect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
++                            "toggleMenuBar",
++                            this, SLOT(toggleMenuBar(unsigned int)));
++
++            if (opts.statusbarHiding & HIDE_KWIN) {
++                bus.connect("org.kde.kwin", "/QtCurve", "org.kde.QtCurve",
++                            "toggleStatusBar",
++                            this, SLOT(toggleStatusBar(unsigned int)));
++            }
+         }
+     }
+ }
+@@ -696,10 +701,9 @@ void Style::disconnectDBus()
  {
      if (!m_dbusConnected)
          return;
@@ -39,9 +84,11 @@ index 58084f0..e45af13 100644
 -    unregisterCleanup(cb);
 +    m_dbusConnected = false;
      auto bus = QDBusConnection::sessionBus();
++    // qWarning() << Q_FUNC_INFO << this << "Disconnecting from" << bus.name() << "/" << bus.baseService();
      bus.disconnect(QString(), "/KGlobalSettings", "org.kde.KGlobalSettings",
                     "notifyChange",
-@@ -708,14 +703,21 @@ void Style::disconnectDBus()
+                    this, SLOT(kdeGlobalSettingsChange(int, int)));
+@@ -708,19 +712,27 @@ void Style::disconnectDBus()
                     this, SLOT(compositingToggled()));
  #endif
  
@@ -71,10 +118,33 @@ index 58084f0..e45af13 100644
  }
  
  Style::~Style()
+ {
+-    disconnectDBus();
++    // qWarning() << Q_FUNC_INFO << this;
++//     disconnectDBus();
+     freeColors();
+     if (m_dBus) {
+         delete m_dBus;
 diff --git qt5/style/qtcurve.h qt5/style/qtcurve.h
-index 6930c08..170bdd2 100644
+index aedcd16a015d2f830879b4523fb19a78a1beda36..be9e485f624e1ae1db7bddfe9e814f7b5a7b7892 100644
 --- qt5/style/qtcurve.h
 +++ qt5/style/qtcurve.h
+@@ -184,7 +184,6 @@ public:
+ private:
+     void init(bool initial);
+     void connectDBus();
+-    void disconnectDBus();
+     void freeColor(QSet<QColor*> &freedColors, QColor **cols);
+     void freeColors();
+     void polishFormLayout(QFormLayout *layout);
+@@ -359,6 +358,7 @@ private:
+     int getFrameRound(const QWidget *widget) const;
+ 
+ private Q_SLOTS:
++    void disconnectDBus();
+     void kdeGlobalSettingsChange(int type, int);
+     void borderSizesChanged();
+     void toggleMenuBar(unsigned int xid);
 @@ -519,7 +519,6 @@ private:
                                        const QStyleOption *option,
                                        QPainter *painter,
@@ -93,7 +163,7 @@ index 6930c08..170bdd2 100644
      KSharedConfigPtr m_configFile;
      KSharedConfigPtr m_kdeGlobals;
 diff --git qt5/style/qtcurve_plugin.cpp qt5/style/qtcurve_plugin.cpp
-index 8af8933c0f16150e62e58cb814a0af3984e828c7..75003a05bc981981ec2b54bf72e9398ac61dc71a 100644
+index 8af8933c0f16150e62e58cb814a0af3984e828c7..d6a22eabf9e8e644ccdc0c8f639b0793e9577b30 100644
 --- qt5/style/qtcurve_plugin.cpp
 +++ qt5/style/qtcurve_plugin.cpp
 @@ -27,7 +27,6 @@
@@ -154,26 +224,27 @@ index 8af8933c0f16150e62e58cb814a0af3984e828c7..75003a05bc981981ec2b54bf72e9398a
  __attribute__((hot)) static void
  polishQuickControl(QObject *obj)
  {
-@@ -164,7 +120,6 @@ StylePlugin::create(const QString &key)
+@@ -164,7 +120,7 @@ StylePlugin::create(const QString &key)
  
  StylePlugin::~StylePlugin()
  {
 -    runAllCleanups();
++    // qWarning() << Q_FUNC_INFO << this;
      if (m_eventNotifyCallbackInstalled) {
          QInternal::unregisterCallback(QInternal::EventNotifyCallback,
                                      qtcEventCallback);
-@@ -188,5 +143,4 @@ StylePlugin::init()
+@@ -188,5 +144,4 @@ StylePlugin::init()
  #endif
          });
  }
 -
  }
 diff --git qt5/style/qtcurve_plugin.h qt5/style/qtcurve_plugin.h
-index fc81107..95bbfed 100644
+index 1a0cf1d89e73d15ad41cd9d0553d62721b382261..06ef609250accd2834b4433222f460777f0b164e 100644
 --- qt5/style/qtcurve_plugin.h
 +++ qt5/style/qtcurve_plugin.h
-@@ -36,10 +36,6 @@ private:
-     void init();
+@@ -37,10 +37,6 @@ private:
+     bool m_eventNotifyCallbackInstalled = false;
      std::once_flag m_ref_flag;
  };
 -
