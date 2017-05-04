@@ -120,6 +120,7 @@ proc create_devport {dependency} {
                 ui_info "${subport} is now installed, removing installed content archive ${dev::archdir}/${dev::archname}"
                 file delete -force ${dev::archdir}/${dev::archname}
                 # make sure the file exists to keep rev-upgrade happy
+                # NB: this c/should be a symlink to the port's image tarball!
                 system "touch ${dev::archdir}/${dev::archname}"
             }
         }
