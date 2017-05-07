@@ -462,7 +462,7 @@ if {![info exists building_qt5]} {
     }
 }
 
-if {![info exists QT53] || !${QT53}} {
+if {![tbool QT53] && ![tbool qt5.no_LTO_variant]} {
     variant LTO description {Build with Link-Time Optimisation (LTO) (experimental)} {}
 }
 
