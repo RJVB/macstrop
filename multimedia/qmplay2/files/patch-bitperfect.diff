@@ -27,10 +27,10 @@ index b0310d5cdfb9cfe43991cdf44505c22f5e01ae7f..0dd0c4746211c35fa9ae8a531ff3a81c
  install(TARGETS ${PROJECT_NAME} LIBRARY DESTINATION ${MODULES_INSTALL_PATH})
 diff --git a/src/modules/PortAudio/Mac/AudioDevice.h b/src/modules/PortAudio/Mac/AudioDevice.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..925a0ace88b90dc6aca1fb7306c6345dccac1ace
+index 0000000000000000000000000000000000000000..bf9962e9f4da40c00a50ecc221c718cbbc4d5a17
 --- /dev/null
 +++ b/src/modules/PortAudio/Mac/AudioDevice.h
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,136 @@
 +/*
 +     File: AudioDevice.h 
 + Adapted from the CAPlayThough example
@@ -155,6 +155,7 @@ index 0000000000000000000000000000000000000000..925a0ace88b90dc6aca1fb7306c6345d
 +	UInt32 mSafetyOffset;
 +	UInt32 mBufferSizeFrames;
 +	AudioStreamBasicDescription mFormat;
++	char mDevName[256] = "";
 +
 +	bool mInitialised = false;
 +
@@ -168,10 +169,10 @@ index 0000000000000000000000000000000000000000..925a0ace88b90dc6aca1fb7306c6345d
 +#endif // __AudioDevice_h__
 diff --git a/src/modules/PortAudio/Mac/AudioDevice.mm b/src/modules/PortAudio/Mac/AudioDevice.mm
 new file mode 100644
-index 0000000000000000000000000000000000000000..2b599124681cd6c250cbacc4875efc3ab8fdc2d5
+index 0000000000000000000000000000000000000000..df05c9139898013ba52c6daaa14305fdfed9de05
 --- /dev/null
 +++ b/src/modules/PortAudio/Mac/AudioDevice.mm
-@@ -0,0 +1,641 @@
+@@ -0,0 +1,642 @@
 +/*
 +     File: AudioDevice.cpp
 + Adapted from the CAPlayThough example
@@ -253,9 +254,8 @@ index 0000000000000000000000000000000000000000..2b599124681cd6c250cbacc4875efc3a
 +    Float64 sampleRate;
 +    AudioDevice *dev = (AudioDevice *) inClientData;
 +    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
-+    const char *devName = dev ? dev->GetName() : "??";
-+    NSString *msg = [NSString stringWithFormat:@"Property %s of device %u (%s) changed; data=%p",
-+                     OSTStr((OSType)inPropertyID), (unsigned int)inDevice, devName, inClientData ];
++    NSString *msg = [NSString stringWithFormat:@"Property %s of device %u changed; data=%p",
++                     OSTStr((OSType)inPropertyID), (unsigned int)inDevice, inClientData ];
 +    AudioObjectPropertyAddress theAddress = { inPropertyID,
 +                                              forInput ? kAudioDevicePropertyScopeInput : kAudioDevicePropertyScopeOutput,
 +                                              kAudioObjectPropertyElementMaster
@@ -304,10 +304,9 @@ index 0000000000000000000000000000000000000000..2b599124681cd6c250cbacc4875efc3a
 +    Float64 sampleRate;
 +    AudioDevice *dev = static_cast<AudioDevice *>(inClientData);
 +    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
-+    const char *devName = dev ? dev->GetName() : "??";
 +    for (int i = 0 ; i < inNumberProperties ; ++i) {
-+        NSString *msg = [NSString stringWithFormat:@"#%d Property %s of device %u (%s) changed; data=%p", i,
-+                         OSTStr((OSType)propTable[i].mElement), (unsigned int)inObjectID, devName, inClientData ];
++        NSString *msg = [NSString stringWithFormat:@"#%d Property %s of device %u changed; data=%p", i,
++                         OSTStr((OSType)propTable[i].mElement), (unsigned int)inObjectID, inClientData ];
 +        switch (propTable[i].mElement) {
 +            case kAudioDevicePropertyNominalSampleRate:
 +                size = sizeof(sampleRate);
@@ -349,6 +348,10 @@ index 0000000000000000000000000000000000000000..2b599124681cd6c250cbacc4875efc3a
 +    if (mID == kAudioDeviceUnknown) {
 +        return;
 +    }
++	OSStatus err = noErr;
++
++	// getting the device name can be surprisingly slow, so we get and cache it here
++	GetName();
 +
 +    UInt32 propsize = sizeof(Float32);
 +
@@ -374,7 +377,6 @@ index 0000000000000000000000000000000000000000..2b599124681cd6c250cbacc4875efc3a
 +                                            kAudioObjectPropertyScopeGlobal,
 +                                            kAudioObjectPropertyElementMaster
 +                                          };
-+        OSStatus err;
 +        if ((err = AudioObjectAddPropertyListener(mID, &prop, lProc, this)) != noErr) {
 +            NSLog(@"Couldn't register property listener for actual sample rate: %d (%s)", err, OSTStr(err));
 +        }
@@ -400,7 +402,7 @@ index 0000000000000000000000000000000000000000..2b599124681cd6c250cbacc4875efc3a
 +    propsize = 0;
 +    theAddress.mSelector = kAudioDevicePropertyAvailableNominalSampleRates;
 +    // attempt to build a list of the supported sample rates
-+    if (AudioObjectGetPropertyDataSize(mID, &theAddress, 0, NULL, &propsize) == noErr) {
++    if ((err = AudioObjectGetPropertyDataSize(mID, &theAddress, 0, NULL, &propsize)) == noErr) {
 +        AudioValueRange *list;
 +        // use a fall-back value of 100 supported rates:
 +        if (propsize == 0) {
@@ -408,14 +410,11 @@ index 0000000000000000000000000000000000000000..2b599124681cd6c250cbacc4875efc3a
 +        }
 +        if ((list = (AudioValueRange *) calloc(1, propsize))) {
 +            theAddress.mSelector = kAudioDevicePropertyAvailableNominalSampleRates;
-+            OSStatus err = AudioObjectGetPropertyData(mID, &theAddress, 0, NULL, &propsize, list);
++            err = AudioObjectGetPropertyData(mID, &theAddress, 0, NULL, &propsize, list);
 +            if (err == noErr) {
 +                UInt32 i;
-+                char name[256];
 +                NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
 +                NSMutableArray *a = [NSMutableArray arrayWithCapacity:nominalSampleRates];
-+                name[0] = '\0';
-+                GetName(name, sizeof(name));
 +                nominalSampleRates = propsize / sizeof(AudioValueRange);
 +                a = [NSMutableArray arrayWithCapacity:nominalSampleRates];
 +                minNominalSR = list[0].mMinimum;
@@ -469,11 +468,11 @@ index 0000000000000000000000000000000000000000..2b599124681cd6c250cbacc4875efc3a
 +                        }
 +                    }
 +                    NSLog(@"Using audio device %u \"%s\", %u sample rates in %u range(s); [%g,%g] %@; current sample rate %gHz",
-+                          mID, name, nominalSampleRates, propsize / sizeof(AudioValueRange),
++                          mID, GetName(), nominalSampleRates, propsize / sizeof(AudioValueRange),
 +                          minNominalSR, maxNominalSR, (discreteSampleRateList) ? [a description] : @"continuous", currentNominalSR);
 +                } else {
 +                    NSLog(@"Using audio device %u \"%s\", %u sample rates in %u range(s); [%g,%g] %s; current sample rate %gHz",
-+                          mID, name, nominalSampleRates, propsize / sizeof(AudioValueRange),
++                          mID, GetName(), nominalSampleRates, propsize / sizeof(AudioValueRange),
 +                          minNominalSR, maxNominalSR, (discreteSampleRateList) ? "" : "continuous", currentNominalSR);
 +                }
 +                // [a] will be flushed down the drain:
@@ -519,14 +518,13 @@ index 0000000000000000000000000000000000000000..2b599124681cd6c250cbacc4875efc3a
 +{
 +    if (mID != kAudioDeviceUnknown && mInitialised) {
 +        OSStatus err;
-+        char devName[256];
-+        GetName(devName, sizeof(devName));
++		AudioDeviceID devId = mID;
 +        // RJVB 20120902: setting the StreamFormat to the initially read values will set the channel bitdepth to 16??
-+//      err = AudioDeviceSetProperty(mID, NULL, 0, mForInput, kAudioDevicePropertyStreamFormat, propsize, &mInitialFormat);
++		// so we reset just the nominal sample rate.
 +        err = SetNominalSampleRate(mInitialFormat.mSampleRate);
 +        if (err != noErr) {
 +            fprintf(stderr, "Cannot reset initial settings for device %u (%s): err %s, %ld\n",
-+                    (unsigned int) mID, devName, OSTStr(err), (long) err);
++                    (unsigned int) mID, GetName(), OSTStr(err), (long) err);
 +        }
 +        if (listenerProc) {
 +#ifdef DEPRECATED_LISTENER_API
@@ -548,7 +546,7 @@ index 0000000000000000000000000000000000000000..2b599124681cd6c250cbacc4875efc3a
 +        if (nominalSampleRateList) {
 +            delete nominalSampleRateList;
 +        }
-+        NSLog(@"AudioDevice \"%s\" released", devName);
++        NSLog(@"AudioDevice %s (%u) released", mDevName, devId);
 +    }
 +}
 +
@@ -646,6 +644,8 @@ index 0000000000000000000000000000000000000000..2b599124681cd6c250cbacc4875efc3a
 +                    sampleRate = minNominalSR;
 +                }
 +            }
++            // note that we really ought to resample the content if we're sending it to a 
++            // device running at a lower sample rate!
 +        }
 +    }
 +    return sampleRate;
@@ -755,10 +755,12 @@ index 0000000000000000000000000000000000000000..2b599124681cd6c250cbacc4875efc3a
 +
 +char *AudioDevice::GetName(char *buf, UInt32 maxlen)
 +{
-+    static char nameBuf[256];
 +    if (!buf) {
-+        buf = nameBuf;
-+        maxlen = sizeof(nameBuf) / sizeof(char);
++        buf = mDevName;
++        maxlen = sizeof(mDevName) / sizeof(char);
++		if (*buf) {
++			return buf;
++		}
 +    }
 +    AudioObjectPropertyAddress theAddress = { kAudioDevicePropertyDeviceName,
 +                                              mForInput ? kAudioDevicePropertyScopeInput : kAudioDevicePropertyScopeOutput,
@@ -812,7 +814,7 @@ index 0000000000000000000000000000000000000000..2b599124681cd6c250cbacc4875efc3a
 +    return dev;
 +}
 +
-+// kate: indent-mode cstyle; indent-width 4; replace-tabs on; 
++// kate: indent-mode cstyle; indent-width 4; replace-tabs on;
 diff --git a/src/modules/PortAudio/Mac/AudioDeviceList.cpp b/src/modules/PortAudio/Mac/AudioDeviceList.cpp
 new file mode 100644
 index 0000000000000000000000000000000000000000..3363cb3cb44c380e6f007ec25a5fb24c35900355
