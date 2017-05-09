@@ -240,6 +240,27 @@ if {${kf5::includecounter} == 0} {
         configure.args-delete \
                             -DBUILD_doc=OFF \
                             -DBUILD_docs=OFF
+        if {${subport} ne "kf5-kapidox" && ${subport} ne "kf5-kapidox-devel"} {
+            if {[tbool kf5.allow_apidocs_generation]} {
+                if {![info exists kf5.framework]} {
+                    kf5.depends_build_frameworks \
+                                kdoctools
+                }
+                if {[info exists kf5.framework]} {
+                    # KF5 frameworks are more or less guaranteed to have a metainfo.yaml file
+                    # which is required for newer kapidox versions. We could check for
+                    # the existence of that file, but that would mean depending on both
+                    # versions of the framework.
+                    kf5.depends_build_frameworks \
+                            kapidox
+                } else {
+                    # other software will be processed by an older KApiDox version,
+                    # installed under the name kf5-kgenapidox
+                    kf5.depends_build_frameworks \
+                            kgenapidox
+                }
+            }
+        }
     }
     platform darwin {
         post-destroot {
@@ -497,25 +518,8 @@ if {${kf5::includecounter} == 0} {
 
     if {[variant_isset docs]} {
         if {${subport} ne "kf5-kapidox" && ${subport} ne "kf5-kapidox-devel"} {
-            if {![info exists kf5.framework]} {
-                kf5.depends_build_frameworks \
-                            kdoctools
-            }
-            if {[info exists kf5.allow_apidocs_generation] && ${kf5.allow_apidocs_generation}} {
-                if {[info exists kf5.framework]} {
-                    # KF5 frameworks are more or less guaranteed to have a metainfo.yaml file
-                    # which is required for newer kapidox versions. We could check for
-                    # the existence of that file, but that would mean depending on both
-                    # versions of the framework.
-                    kf5.depends_build_frameworks \
-                            kapidox
-                } else {
-                    # other software will be processed by an older KApiDox version,
-                    # installed under the name kf5-kgenapidox
-                    kf5.depends_build_frameworks \
-                            kgenapidox
-                }
-                post-build {
+            post-build {
+                if {[tbool kf5.allow_apidocs_generation]} {
                     ui_msg "--->  Generating documentation for ${subport} (this can take a while)"
                     # generate the documentation, working from ${build.dir}
                     file delete -force ${workpath}/apidocs
@@ -558,7 +562,9 @@ if {${kf5::includecounter} == 0} {
                         file delete -force ${build.dir}/apidocs
                     }
                 }
-                post-destroot {
+            }
+            post-destroot {
+                if {[tbool kf5.allow_apidocs_generation]} {
                     xinstall -m 755 -d ${destroot}${kf5.docs_dir}
                     # this appears to be necessary, sometimes:
                     system "chmod 755 ${destroot}${kf5.docs_dir}"
