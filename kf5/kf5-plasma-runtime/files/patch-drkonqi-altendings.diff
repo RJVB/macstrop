@@ -1,0 +1,103 @@
+--- drkonqi/bugzillaintegration/orig.productmapping.cpp	2017-02-28 14:08:09.000000000 +0100
++++ drkonqi/bugzillaintegration/productmapping.cpp	2017-05-11 16:28:53.145916319 +0200
+@@ -17,6 +17,10 @@
+ *
+ ******************************************************************/
+ 
++#undef NDEBUG
++#undef QT_NO_DEBUG
++#undef QT_NO_DEBUG_OUTPUT
++
+ #include "productmapping.h"
+ 
+ #include <KConfig>
+@@ -57,6 +61,7 @@
+ 
+ void ProductMapping::mapUsingInternalFile(const QString & appName)
+ {
++    static bool scanningAlt = false;
+     KConfig mappingsFile(QString::fromLatin1("mappings"), KConfig::NoGlobals, QStandardPaths::DataLocation);
+     const KConfigGroup mappings = mappingsFile.group("Mappings");
+     if (mappings.hasKey(appName)) {
+@@ -74,6 +79,20 @@
+             qWarning() << "Error while reading mapping entry. Entry exists but it is empty "
+                             "(or there was an error when reading)";
+         }
++    } else if (!scanningAlt) {
++        QStringList alternateEndings = { QStringLiteral("5"), QStringLiteral(".bin") };
++        scanningAlt = true;
++        foreach (const auto &alt, alternateEndings) {
++            if (appName.endsWith(alt)) {
++                QString altName = appName;
++                altName.chop(alt.size());
++                mapUsingInternalFile(altName);
++                if (m_bugzillaProduct == altName) {
++                    qWarning() << "Reporting" << appName << "as" << altName;
++                }
++            }
++        }
++        scanningAlt = false;
+     }
+ }
+ 
+@@ -102,6 +121,12 @@
+ 
+     //Add the product itself
+     m_relatedBugzillaProducts = QStringList() << m_bugzillaProduct;
++    QStringList alternateEndings = { QStringLiteral("5"), QStringLiteral(".bin") };
++    foreach (const auto &alt, alternateEndings) {
++        if (!m_bugzillaProduct.endsWith(alt)) {
++            m_relatedBugzillaProducts << m_bugzillaProduct + alt;
++        }
++    }
+ 
+     //Get related products of each related group
+     Q_FOREACH( const QString & group, groups ) {
+@@ -112,6 +137,11 @@
+                 QStringList relatedGroups = bzGroup.split('|', QString::SkipEmptyParts);
+                 if (relatedGroups.size()>0) {
+                     m_relatedBugzillaProducts.append(relatedGroups);
++                    foreach (const auto &entry, relatedGroups) {
++                        foreach (const auto &alt, alternateEndings) {
++                            m_relatedBugzillaProducts << entry + alt;
++                        }
++                    }
+                 }
+             } else {
+                 qWarning() << "Error while reading mapping entry. Entry exists but it is empty "
+--- drkonqi/bugzillaintegration/orig.bugzillalib.cpp	2017-02-28 14:08:09.000000000 +0100
++++ drkonqi/bugzillaintegration/bugzillalib.cpp	2017-05-11 16:34:34.463918913 +0200
+@@ -271,7 +271,16 @@
+ {
+     QMap<QString, QVariant> args;
+ 
+-    args.insert(QStringLiteral("names"), (QStringList() << product) ) ;
++    QStringList nameList = QStringList() << product;
++    QStringList alternateEndings = { QStringLiteral("5"), QStringLiteral(".bin") };
++    foreach (const auto &alt, alternateEndings) {
++        if (product.endsWith(alt)) {
++            QString altName = product;
++            altName.chop(alt.size());
++            nameList << altName;
++        }
++    }
++    args.insert(QStringLiteral("names"), nameList ) ;
+ 
+     QStringList includeFields;
+     // currently we only need these informations
+@@ -279,6 +288,7 @@
+ 
+     args.insert(QStringLiteral("include_fields"), includeFields) ;
+ 
++    qWarning() << "Fetching product info for" << product << ", considering" << nameList;
+     callBugzilla("Product.get", "Product.get.versions", args, SecurityDisabled);
+ }
+ 
+@@ -369,6 +379,7 @@
+     bool active = map.value(QStringLiteral("is_active")).toBool();
+ 
+     Product product(name, active);
++    qWarning() << "Found matching product" << name << "active:" << active;
+ 
+     QVariantList components = map.value(QStringLiteral("components")).toList();
+     foreach (const QVariant& c, components) {
