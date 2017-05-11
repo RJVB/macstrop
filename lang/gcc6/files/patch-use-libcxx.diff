@@ -1,25 +1,42 @@
 --- gcc/orig.incpath.c	2017-02-20 12:38:16.000000000 +0100
-+++ gcc/incpath.c	2017-02-20 12:38:50.000000000 +0100
-@@ -129,6 +129,9 @@
++++ gcc/incpath.c	2017-05-11 19:02:37.000000000 +0200
+@@ -129,6 +129,13 @@
    int relocated = cpp_relocated ();
    size_t len;
  
-+  if (cxx_stdinc) {
-+      add_path (xstrdup ("@PREFIX@/libexec/llvm-3.9/include/c++/v1"), SYSTEM, true, false);
-+  }
++  if (cxx_stdinc)
++    {
++      if (!getenv("LIBCPP_INCLUDE_PATH"))
++        {
++          add_path (xstrdup ("@LLVMHEADERPATH@"), SYSTEM, true, false);
++        }
++    }
    if (iprefix && (len = cpp_GCC_INCLUDE_DIR_len) != 0)
      {
        /* Look for directories that start with the standard prefix.
+@@ -474,6 +481,8 @@
+   /* CPATH and language-dependent environment variables may add to the
+      include chain.  */
+   add_env_var_paths ("CPATH", BRACKET);
++  if (stdinc && cxx_stdinc)
++    add_env_var_paths ("LIBCPP_INCLUDE_PATH", SYSTEM);
+   add_env_var_paths (lang_env_vars[idx], SYSTEM);
+ 
+   target_c_incpath.extra_pre_includes (sysroot, iprefix, stdinc);
 --- gcc/cp/orig.g++spec.c	2016-01-04 15:30:50.000000000 +0100
-+++ gcc/cp/g++spec.c	2017-05-10 20:22:44.000000000 +0200
-@@ -46,13 +46,17 @@
++++ gcc/cp/g++spec.c	2017-05-11 19:21:23.000000000 +0200
+@@ -46,13 +46,21 @@
  #endif
  
  #ifndef LIBSTDCXX
 -#define LIBSTDCXX "stdc++"
 +#define LIBSTDCXX "c++"
 +#define LIBSTDCXXABI "c++abi"
++// using libsupc++ is a hack, probably to be dropped on systems that have a new enough libc++
++// which has `operator delete(void*, unsigned long)`
 +#define LIBSUPCXX "supc++"
++#else
++#warning "LIBSTDCXX predefined"
  #endif
 -#ifndef LIBSTDCXX_PROFILE
 +#undef LIBSTDCXX_PROFILE
@@ -27,24 +44,49 @@
 -#endif
 +
  #ifndef LIBSTDCXX_STATIC
--#define LIBSTDCXX_STATIC NULL
-+// this is a hack, probably to be dropped on systems that have a new enough libc++
-+// which has `operator delete(void*, unsigned long)`
-+#define LIBSTDCXX_STATIC "stdc++"
+ #define LIBSTDCXX_STATIC NULL
++#else
++#warning "LIBSTDCXX_STATIC predefined"
  #endif
  
  void
-@@ -347,6 +351,13 @@
- 		       CL_DRIVER, &new_decoded_options[j]);
-       added_libraries++;
-       j++;
-+      // add -lc++abi and -lsupc++
-+      generate_option (OPT_l, LIBSTDCXXABI, 1,
-+		       CL_DRIVER, &new_decoded_options[j]);
-+      generate_option (OPT_l, LIBSUPCXX, 1,
-+		       CL_DRIVER, &new_decoded_options[j]);
-+      added_libraries += 2;
-+      j += 2;
-       /* Add target-dependent static library, if necessary.  */
-       if ((static_link || library > 1) && LIBSTDCXX_STATIC != NULL)
+@@ -342,13 +350,32 @@
+ 	  j++;
+ 	}
+ #endif
+-      generate_option (OPT_l,
+-		       saw_profile_flag ? LIBSTDCXX_PROFILE : LIBSTDCXX, 1,
+-		       CL_DRIVER, &new_decoded_options[j]);
+-      added_libraries++;
+-      j++;
+-      /* Add target-dependent static library, if necessary.  */
+-      if ((static_link || library > 1) && LIBSTDCXX_STATIC != NULL)
++    // NOT checking for the existence of LIBSTDCXXABI and LIBSUPCXX on purpose
++	 if (getenv ("GCC_FORCE_LIBSTDCPP")) {
++		 fprintf(stderr, "GCC_FORCE_LIBSTDCPP - using -lstdc++ instead of -l%s -l%s -l%s\n",
++                 LIBSTDCXX, LIBSTDCXXABI, LIBSUPCXX);
++		 generate_option (OPT_l, "stdc++", 1,
++				  CL_DRIVER, &new_decoded_options[j]);
++		 added_libraries++;
++		 j++;
++	 } else {
++		 generate_option (OPT_l,
++				  saw_profile_flag ? LIBSTDCXX_PROFILE : LIBSTDCXX, 1,
++				  CL_DRIVER, &new_decoded_options[j]);
++		 added_libraries++;
++		 j++;
++		 // add -lc++abi and -lsupc++
++		 generate_option (OPT_l, LIBSTDCXXABI, 1,
++				  CL_DRIVER, &new_decoded_options[j]);
++		 added_libraries++;
++		 j++;
++		 generate_option (OPT_l, LIBSUPCXX, 1,
++				  CL_DRIVER, &new_decoded_options[j]);
++		 added_libraries++;
++		 j++;
++	 }
++	 /* Add target-dependent static library, if necessary.  */
++	 if ((static_link || library > 1) && LIBSTDCXX_STATIC != NULL)
  	{
+ 	  generate_option (OPT_l, LIBSTDCXX_STATIC, 1,
+ 			   CL_DRIVER, &new_decoded_options[j]);
