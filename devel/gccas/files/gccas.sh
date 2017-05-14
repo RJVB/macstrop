@@ -7,11 +7,15 @@
 # with the goal of having access to the full x86_64 instruction set from
 # those compilers (which include gfortran).
 
-HAS_INPUT_FILE=0 
-
-if [ "${CLANG_ASSEMBLER}" = "" ] ;then
+if [ "${GCCAS_SHUNT}" != "" ] ;then
+    echo ${GCCAS_SHUNT} "$@"
+    exec ${GCCAS_SHUNT} "$@"
+elif [ "${CLANG_ASSEMBLER}" = "" ] ;then
     CLANG_ASSEMBLER="@CLANG@ -x assembler -c"
 fi
+
+HAS_INPUT_FILE=0 
+
 CLARGS=""
 
 # let's hope we never meet arguments with whitespace...
@@ -36,14 +40,21 @@ while [ $# -ne 0 ]; do
             echo "Usage: `basename $0` [options] <inputs>"
             echo "Default clang assembler command: \$CLANG_ASSEMBLER=\"${CLANG_ASSEMBLER}\""
             echo "Override by setting the CLANG_ASSEMBLER env. variable"
+            echo "Bypass the clang assembler argument translation by setting GCCAS_SHUNT to the path of the desired assembler"
             echo
             CLARGS="${CLARGS} ${1}"
             ;;
         -c)
             # already included in the command
             ;;
+        -force_cpusubtype_ALL|-mmacosx-version-min=*)
+            # arguments that would be passed to the linker:
+            ;;
+        -o|-arch)
+            CLARGS="${CLARGS} ${1} ${2}"
+		  shift
+            ;;
         -*)
-            # use generic options as assembler-specific
             CLARGS="${CLARGS} ${1}"
             ;;
         *)
