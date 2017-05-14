@@ -10,7 +10,7 @@
 HAS_INPUT_FILE=0 
 
 if [ "${CLANG_ASSEMBLER}" = "" ] ;then
-    CLANG_ASSEMBLER="/opt/local/bin/clang-mp-4.0 -x assembler -c"
+    CLANG_ASSEMBLER="@CLANG@ -x assembler -c"
 fi
 CLARGS=""
 
