@@ -8,11 +8,30 @@
 # those compilers (which include gfortran).
 
 if [ "${GCCAS_SHUNT}" != "" ] ;then
-    echo ${GCCAS_SHUNT} "$@"
     exec ${GCCAS_SHUNT} "$@"
 elif [ "${CLANG_ASSEMBLER}" = "" ] ;then
-    CLANG_ASSEMBLER="@CLANG@ -x assembler -c"
+#     CLANG_ASSEMBLER="@CLANG@ -x assembler -c"
+    # it turns out `as` has an option to pull the trick we need:
+    CLANG_ASSEMBLER="@PREFIX@/bin/as -q"
 fi
+
+case ${CLANG_ASSEMBLER} in
+    "as "*|*"/as "*)
+        if [ "$1" = "-help" -o "$1" = "--help" ] ;then
+            echo "Usage: `basename $0` [options] <inputs>"
+            echo "Default clang assembler command: \$CLANG_ASSEMBLER=\"${CLANG_ASSEMBLER}\""
+            echo "Override by setting the CLANG_ASSEMBLER env. variable"
+            echo "Bypass the clang assembler argument translation by setting GCCAS_SHUNT to the path of the desired assembler"
+            echo
+            exit 1
+        fi
+
+        exec ${CLANG_ASSEMBLER} "$@"
+        ;;
+esac
+
+# assume we're being pointed to clang - obsolete code, possibly to be converted
+# to support 3rd party assemblers like nasm?
 
 HAS_INPUT_FILE=0 
 
