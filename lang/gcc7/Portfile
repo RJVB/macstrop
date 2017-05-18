@@ -3,6 +3,7 @@
 PortSystem 1.0
 PortGroup select 1.0
 PortGroup compiler_blacklist_versions 1.0
+PortGroup active_variants 1.1
 
 name                gcc7
 subport             libgcc {}
@@ -50,6 +51,10 @@ platform darwin {
 
     # see https://gcc.gnu.org/ml/gcc-patches/2012-05/msg00672.html
     patchfiles-append         patch-float128.diff
+    # cause `as` to be invoked with the -q option so that it
+    # invokes the clang integrated assembler (instead of the obsolete GNU as)
+    # `man as` claims that this is the default but clearly that is not true everywhere.
+    patchfiles-append         patch-default-clang-assembler.diff
 }
 
 configure.dir       ${workpath}/build
@@ -132,8 +137,19 @@ use_parallel_build  yes
 
 destroot.target     install install-info-host
 
+set standardLibs    {libgcc_ext.10.4.dylib libgcc_ext.10.5.dylib \
+    libgcc_s.1.dylib libgfortran.4.dylib libquadmath.0.dylib \
+    libstdc++.6.dylib libobjc-gnu.4.dylib libgomp.1.dylib \
+    libitm.1.dylib libssp.0.dylib libasan.0.dylib libatomic.1.dylib}
+
 if {${subport} eq "libgcc"} {
     conflicts       libgcc-devel
+    long_description-append \
+                    This port installs the standard libraries, including libstdc++. \
+                    Users building from source can install port:${name}+with_libgcc \
+                    and port:${subport}+stub to avoid building everything twice.
+
+    variant stub description "Use when the standard libraries are provided by the main port:${name}+with_libgcc" {}
 
     # http://trac.macports.org/ticket/35770
     # http://trac.macports.org/ticket/38814
@@ -147,70 +163,116 @@ if {${subport} eq "libgcc"} {
     # version should continue to provide a subport for that and older gcc
     # versions.
 
-    depends_lib-delete path:lib/libgcc/libgcc_s.1.dylib:libgcc
+    if {![catch {set result [active_variants ${name} with_libgcc {}]}]} {
+        if {${result}} {
+            default_variants-append +stub
+        }
+    }
+    if {[variant_isset stub]} {
+        # reset the depspecs to just port:${name}
+        depends_lib     port:${name}
+        require_active_variants ${name} with_libgcc
 
-    configure.args-delete --libdir=${prefix}/lib/${name}
-    configure.args-append --libdir=${prefix}/lib/libgcc
+        use_configure   no
 
-    # TODO: Possibly disable bootstrap with appropriate configure flags.
-    #       the problem is that libstdc++'s configure script tests for tls support
-    #       using the running compiler (not gcc for which libstdc++ is being built).
-    #       Thus when we build with clang, we get a mismatch
-    # http://trac.macports.org/ticket/36116
-    #compiler.blacklist-append {clang < 425}
-    #configure.args-append --disable-bootstrap
-    #build.target        all
+        fetch           {}
+        extract         {}
+        build           {}
+        destroot {
+            # install symlinks to the set of standardLibs that have in this case been
+            # installed by the main port. In other words, use the reverse logic to the
+            # comparable foreach loop in the main port's post-destroot, minus the deleting.
+            foreach dylib ${standardLibs} {
+                # Different OS versions (eg: Leopard) or architectures (eg: PPC) don't produce all the dylibs
+                # https://trac.macports.org/ticket/40098
+                # https://trac.macports.org/ticket/40100
+                if {[file exists ${prefix}/lib/${name}/${dylib}]} {
+                    ln -s ${prefix}/lib/${dylib} ${destroot}${prefix}/lib/libgcc/${dylib}
+                }
 
-    post-destroot {
-        file mkdir ${destroot}${prefix}/lib/libgcc.merged
-
-        # Note that we really don't want to include libgcc_ext.10.[45].dylib here, but install_name_tool
-        # doesn't know how to change the id of stubs, and it's easier than recreating them for each
-        # gcc port.
-        set dylibs {libgcc_ext.10.4.dylib libgcc_ext.10.5.dylib libgcc_s.1.dylib libgfortran.4.dylib libquadmath.0.dylib libstdc++.6.dylib libobjc-gnu.4.dylib libgomp.1.dylib libitm.1.dylib libssp.0.dylib libasan.0.dylib libatomic.1.dylib}
-
-        foreach dylib ${dylibs} {
-            # Different OS versions (eg: Leopard) or architectures (eg: PPC) don't produce all the dylibs
-            # https://trac.macports.org/ticket/40098
-            # https://trac.macports.org/ticket/40100
-            if {! [file exists ${destroot}${prefix}/lib/libgcc/${dylib}]} {
-                continue
-            }
-
-            move ${destroot}${prefix}/lib/libgcc/${dylib} ${destroot}${prefix}/lib/libgcc.merged
-            if {[variant_isset universal]} {
-                foreach archdir [glob ${destroot}${prefix}/lib/libgcc/*/] {
-                    set archdir_nodestroot [string map "${destroot}/ /" ${archdir}]
-                    if {[file exists ${archdir}/${dylib}]} {
-                        system "install_name_tool -id ${prefix}/lib/libgcc/${dylib} ${archdir}/${dylib}"
-                        foreach link ${dylibs} {
-                            system "install_name_tool -change ${archdir_nodestroot}${link} ${prefix}/lib/libgcc/${link} ${archdir}/${dylib}"
+                if {[variant_isset universal]} {
+                    foreach archdir [glob ${prefix}/lib/${name}/*/] {
+                        if {[file exists ${archdir}/${dylib}]} {
+                            ln -s ${archdir}/${dylib} ${destroot}${prefix}/lib/libgcc/${dylib}
                         }
-                        system "lipo -create -output ${destroot}${prefix}/lib/libgcc.merged/${dylib}~ ${destroot}${prefix}/lib/libgcc.merged/${dylib} ${archdir}/${dylib} && mv ${destroot}${prefix}/lib/libgcc.merged/${dylib}~ ${destroot}${prefix}/lib/libgcc.merged/${dylib}"
                     }
                 }
             }
-
-            # strip debug symbols to supress debugger warnings:
-            # http://trac.macports.org/attachment/ticket/34831
-            if {! [string match *libgcc_ext* ${dylib}]} {
-                system "strip -x ${destroot}${prefix}/lib/libgcc.merged/${dylib}"
-            }
         }
+    } else {
+        depends_lib-delete path:lib/libgcc/libgcc_s.1.dylib:libgcc
+        require_active_variants ${name} "" with_libgcc
 
-        file delete -force ${destroot}${prefix}/bin
-        file delete -force ${destroot}${prefix}/share
-        file delete -force ${destroot}${prefix}/include
-        file delete -force ${destroot}${prefix}/lib/libgcc
-        file delete -force ${destroot}${prefix}/libexec
+        configure.args-delete --libdir=${prefix}/lib/${name}
+        configure.args-append --libdir=${prefix}/lib/libgcc
 
-        move ${destroot}${prefix}/lib/libgcc.merged ${destroot}${prefix}/lib/libgcc
+        # TODO: Possibly disable bootstrap with appropriate configure flags.
+        #       the problem is that libstdc++'s configure script tests for tls support
+        #       using the running compiler (not gcc for which libstdc++ is being built).
+        #       Thus when we build with clang, we get a mismatch
+        # http://trac.macports.org/ticket/36116
+        #compiler.blacklist-append {clang < 425}
+        #configure.args-append --disable-bootstrap
+        #build.target        all
 
-        # For binary compatibility with binaries that linked against the old libstdcxx port
-        ln -s libgcc/libstdc++.6.dylib ${destroot}${prefix}/lib/libstdc++.6.dylib
+        post-destroot {
+            file mkdir ${destroot}${prefix}/lib/libgcc.merged
+
+            # Note that we really don't want to include libgcc_ext.10.[45].dylib here, but install_name_tool
+            # doesn't know how to change the id of stubs, and it's easier than recreating them for each
+            # gcc port.
+#             set dylibs {libgcc_ext.10.4.dylib libgcc_ext.10.5.dylib libgcc_s.1.dylib libgfortran.4.dylib libquadmath.0.dylib libstdc++.6.dylib libobjc-gnu.4.dylib libgomp.1.dylib libitm.1.dylib libssp.0.dylib libasan.0.dylib libatomic.1.dylib}
+
+            foreach dylib ${standardLibs} {
+                # Different OS versions (eg: Leopard) or architectures (eg: PPC) don't produce all the dylibs
+                # https://trac.macports.org/ticket/40098
+                # https://trac.macports.org/ticket/40100
+                if {! [file exists ${destroot}${prefix}/lib/libgcc/${dylib}]} {
+                    continue
+                }
+
+                move ${destroot}${prefix}/lib/libgcc/${dylib} ${destroot}${prefix}/lib/libgcc.merged
+                if {[variant_isset universal]} {
+                    foreach archdir [glob ${destroot}${prefix}/lib/libgcc/*/] {
+                        set archdir_nodestroot [string map "${destroot}/ /" ${archdir}]
+                        if {[file exists ${archdir}/${dylib}]} {
+                            system "install_name_tool -id ${prefix}/lib/libgcc/${dylib} ${archdir}/${dylib}"
+                            foreach link ${dylibs} {
+                                system "install_name_tool -change ${archdir_nodestroot}${link} ${prefix}/lib/libgcc/${link} ${archdir}/${dylib}"
+                            }
+                            system "lipo -create -output ${destroot}${prefix}/lib/libgcc.merged/${dylib}~ ${destroot}${prefix}/lib/libgcc.merged/${dylib} ${archdir}/${dylib} && mv ${destroot}${prefix}/lib/libgcc.merged/${dylib}~ ${destroot}${prefix}/lib/libgcc.merged/${dylib}"
+                        }
+                    }
+                }
+
+                # strip debug symbols to supress debugger warnings:
+                # http://trac.macports.org/attachment/ticket/34831
+                if {! [string match *libgcc_ext* ${dylib}]} {
+                    system "strip -x ${destroot}${prefix}/lib/libgcc.merged/${dylib}"
+                }
+            }
+
+            file delete -force ${destroot}${prefix}/bin
+            file delete -force ${destroot}${prefix}/share
+            file delete -force ${destroot}${prefix}/include
+            file delete -force ${destroot}${prefix}/lib/libgcc
+            file delete -force ${destroot}${prefix}/libexec
+
+            move ${destroot}${prefix}/lib/libgcc.merged ${destroot}${prefix}/lib/libgcc
+
+            # For binary compatibility with binaries that linked against the old libstdcxx port
+            ln -s libgcc/libstdc++.6.dylib ${destroot}${prefix}/lib/libstdc++.6.dylib
+        }
     }
 } else {
+
+variant with_libgcc description "Include the standard libraries instead of getting them from port:libgcc. Speeds up building from source." {}
+
 depends_run-append         port:gcc_select
+if {[variant_isset with_libgcc]} {
+    # we install libgcc's content ourselves
+    depends_lib-delete path:lib/libgcc/libgcc_s.1.dylib:libgcc
+}
 
 post-destroot {
     file delete ${destroot}${prefix}/share/info/dir
@@ -222,20 +284,22 @@ post-destroot {
         file rename ${file} ${newfile}
     }
 
-    foreach dylib {libgcc_ext.10.4.dylib libgcc_ext.10.5.dylib libgcc_s.1.dylib libgfortran.3.dylib libquadmath.0.dylib libstdc++.6.dylib libobjc-gnu.4.dylib libgomp.1.dylib libitm.1.dylib libssp.0.dylib libasan.0.dylib libatomic.1.dylib} {
-        # Different OS versions (eg: Leopard) or architectures (eg: PPC) don't produce all the dylibs
-        # https://trac.macports.org/ticket/40098
-        # https://trac.macports.org/ticket/40100
-        if {[file exists ${destroot}${prefix}/lib/${name}/${dylib}]} {
-            delete ${destroot}${prefix}/lib/${name}/${dylib}
-            ln -s ${prefix}/lib/libgcc/${dylib} ${destroot}${prefix}/lib/${name}/${dylib}
-        }
+    if {![variant_isset with_libgcc]} {
+        foreach dylib ${standardLibs} {
+            # Different OS versions (eg: Leopard) or architectures (eg: PPC) don't produce all the dylibs
+            # https://trac.macports.org/ticket/40098
+            # https://trac.macports.org/ticket/40100
+            if {[file exists ${destroot}${prefix}/lib/${name}/${dylib}]} {
+                delete ${destroot}${prefix}/lib/${name}/${dylib}
+                ln -s ${prefix}/lib/libgcc/${dylib} ${destroot}${prefix}/lib/${name}/${dylib}
+            }
 
-        if {[variant_isset universal]} {
-            foreach archdir [glob ${destroot}${prefix}/lib/${name}/*/] {
-                if {[file exists ${archdir}/${dylib}]} {
-                    delete ${archdir}/${dylib}
-                    ln -s ${prefix}/lib/libgcc/${dylib} ${archdir}/${dylib}
+            if {[variant_isset universal]} {
+                foreach archdir [glob ${destroot}${prefix}/lib/${name}/*/] {
+                    if {[file exists ${archdir}/${dylib}]} {
+                        delete ${archdir}/${dylib}
+                        ln -s ${prefix}/lib/libgcc/${dylib} ${archdir}/${dylib}
+                    }
                 }
             }
         }
