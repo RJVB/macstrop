@@ -34,24 +34,24 @@ use_parallel_build      yes
 
 test.run                yes
 
-destroot.destdir        prefix=${destroot}${prefix}
-
 patch.pre_args         -p1
 
 variant ng conflicts cloudflare description {provides the "Next Generation" zlib-ng project} {}
 if {[variant_isset ng]} {
     PortGroup           github 1.0
     PortGroup           cmake 1.1
+    PortGroup           muniversal 1.0
     long_description-append This variant provides the "Next Generation" zlib-ng library.
     git.branch          75e76eebeb08dccea44a1d9933699f7f9a0a97ea
     github.setup        Dead2 zlib-ng ${git.branch}
     fetch.type          git
     name                zlib
     version             1.2.11
+    supported_archs     i386 x86_64
     distname            zlib-ng
     worksrcdir          ${distname}
     depends_build       port:cpuid
-    patchfiles          patch-ng-cmakelists.diff
+    patchfiles          ng/patch-ng-cmakelists.diff
     configure.args-append \
                         -DZLIB_COMPAT:BOOL=ON \
                         -DWITH_GZFILEOP:BOOL=ON \
@@ -63,13 +63,11 @@ if {[variant_isset ng]} {
                         -mno-sse4
         }
         if {[catch {system "${prefix}/bin/cpuid | fgrep -i pclmul"} has_pclmul]} {
-            ui_warn "Your CPU doesn't have the PCLMUL instruction: ${has_pclmul}"
+            ui_warn "Your CPU or build architecture doesn't support the PCLMUL code"
             configure.optflags-append \
                         -mno-pclmul
         }
     }
-    # this port needs DESTDIR to be set in the environment!!!
-    destroot.env-append DESTDIR=${destroot}
 
     # 20170521 : 3x minigzip64 of a 128Mb file > /dev/null on a 1.6Ghz Intel Celeron N3150:
     # 1.344 user_cpu 0.063 kernel_cpu 0:01.31 total_time 106.8%CPU {2712M 8F 219R 262149I 0O 1w 1320c}
@@ -79,38 +77,64 @@ if {[variant_isset ng]} {
     # 2.635 user_cpu 0.056 kernel_cpu 0:02.51 total_time 106.7%CPU {2672M 0F 207R 262147I 0O 1w 2522c}
     # 2.622 user_cpu 0.057 kernel_cpu 0:02.50 total_time 106.8%CPU {2672M 0F 210R 262147I 0O 1w 2505c}
     # 2.640 user_cpu 0.040 kernel_cpu 0:02.51 total_time 106.7%CPU {2672M 0F 210R 262147I 0O 1w 2519c}
+    # 2.7 Ghz i7, OS X 10.9, -O3 -march=native, clang-4.0, 262Mb source tarball as test
+    # 4.641 user_cpu 0.083 kernel_cpu 0:04.72 total_time 100.0%CPU {978944M 0F 275R 0I 0O 0k 0w 134c}
+    # 4.644 user_cpu 0.083 kernel_cpu 0:04.73 total_time 99.7%CPU {978944M 0F 275R 0I 0O 0k 0w 130c}
+    # 4.671 user_cpu 0.084 kernel_cpu 0:04.75 total_time 100.0%CPU {978944M 0F 275R 0I 0O 0k 0w 125c}
+    # stock 1.2.11 idem but with -flto:
+    # 7.704 user_cpu 0.089 kernel_cpu 0:07.80 total_time 99.7%CPU {966656M 0F 272R 0I 0O 0k 0w 245c}
+    # 7.676 user_cpu 0.089 kernel_cpu 0:07.77 total_time 99.7%CPU {958464M 0F 270R 0I 0O 0k 0w 241c}
+    # 7.889 user_cpu 0.089 kernel_cpu 0:07.98 total_time 99.7%CPU {958464M 0F 270R 0I 0O 0k 0w 209c}
+} else {
+    # don't muck with this setting for the +ng variant (or it will destroot directly into ${prefix})
+    destroot.destdir    prefix=${destroot}${prefix}
 }
 
 global cloudflare-commit
 variant cloudflare conflicts ng description {Applies CloudFlare's patches to use SSE for accelerated compression. \
                             Note it is not 100% certain the zlib license continues to apply to this variant!} {
     PortGroup               github 1.0
+    PortGroup               muniversal 1.0
     long_description-append This variant has the CloudFlare patches for SSE accelerated compression
     # This version contains a GPL'ed assembly file which may be incorporated. Just add GPL2+ to the license info.
     license-append          GPL-2+
     github.setup            cloudflare zlib 836eb111a5c5df7db3f2469a867a6f7c1b2e7bdb
     fetch.type              git
     version                 1.2.8.21
+    supported_archs         i386 x86_64
     distname                zlib-cloudflare
     worksrcdir              ${distname}
-    supported_archs         i386 x86_64
     depends_build           port:cpuid
+    if {[catch {system "${prefix}/bin/cpuid | fgrep -i sse4.2"} has_sse4]} {
+        set has_sse4 no
+    } else {
+        set has_sse4 yes
+        configure.optflags-append \
+                            -msse4
+    }
     pre-fetch {
-        if {[catch {system "${prefix}/bin/cpuid | fgrep -i sse4.2"} has_sse4]} {
+        if {!${has_sse4}} {
             ui_error "Error checking for the SSE4.2 instruction set: ${has_sse4}"
             return -code error "Your CPU doesn't seem to have the SSE4.2 instruction set: please install the regular zlib port"
         }
     }
     global cloudflare-commit
     set cloudflare-commit   836eb111a5c5df7db3f2469a867a6f7c1b2e7bdb
-    patchfiles              patch-configure-clang.diff
-    pre-patch {
-        if {[catch {system "${prefix}/bin/cpuid | fgrep -i pclmul"} has_pclmul]} {
-            ui_warn "Your CPU doesn't have the PCLMUL instruction: ${has_pclmul}"
-            patchfiles-append \
-                            patch-disable-pclmul.diff
-            configure.optflags-append \
+    patchfiles              cloudflare/patch-configure-clang.diff
+    if {${os.arch} eq "i386" || [catch {system "${prefix}/bin/cpuid | fgrep -i pclmul"} has_pclmul]} {
+        set has_pclmul no
+        configure.optflags-append \
                             -mno-pclmul
+    } else {
+        set has_pclmul yes
+        configure.optflags-append \
+                            -mnpclmul
+    }
+    pre-patch {
+        if {!${has_pclmul}} {
+            ui_warn "Your CPU or build architecture doesn't support the PCLMUL code"
+            patchfiles-append \
+                            cloudflare/patch-disable-pclmul.diff
             post-patch {
                 ui_info "removing GPL'ed file crc32-pclmul_asm.S we won't be using anyway"
                 delete ${worksrcpath}/contrib/amd64/crc32-pclmul_asm.S
@@ -118,7 +142,7 @@ variant cloudflare conflicts ng description {Applies CloudFlare's patches to use
         } else {
             platform darwin {
                 patchfiles-append \
-                            patch-crc32pclmul-apple.diff
+                            cloudflare/patch-crc32pclmul-apple.diff
             }
         }
     }
@@ -126,67 +150,10 @@ variant cloudflare conflicts ng description {Applies CloudFlare's patches to use
     post-destroot {
         set docdir ${prefix}/share/doc/${name}
         xinstall -d ${destroot}${docdir}
-        xinstall -m 0644 -W ${filespath} CloudFlare.txt ${destroot}${docdir}
+        xinstall -m 0644 -W ${filespath} cloudflare/CloudFlare.txt ${destroot}${docdir}
         reinplace "s|@@HOST@@|[exec hostname]|g" ${destroot}${docdir}/CloudFlare.txt
         reinplace "s|@@COMMIT@@|${cloudflare-commit}|g" ${destroot}${docdir}/CloudFlare.txt
     }
-    # > time sudo afsctool -cfv -9 kk1
-    # kk1:
-    # Number of HFS+ compressed files: 4581
-    # Total number of files: 4631
-    # Total number of file hard links: 0
-    # Total number of folders: 4132
-    # Total number of folder hard links: 0
-    # Total number of items (number of files + number of folders): 8763
-    # Folder size (uncompressed; reported size by Mac OS 10.6+ Finder): 1051069380 bytes / 1.06 GB (gigabytes) / 1013.3 MiB (mebibytes)
-    # Folder size (compressed - decmpfs xattr; reported size by Mac OS 10.0-10.5 Finder): 283334679 bytes / 286.9 MB (megabytes) / 273.6 MiB (mebibytes)
-    # Folder size (compressed): 286451492 bytes / 290 MB (megabytes) / 276.6 MiB (mebibytes)
-    # Compression savings: 72.7%
-    # Approximate total folder size (files + file overhead + folder overhead): 293218773 bytes / 293.2 MB (megabytes) / 279.6 MiB (mebibytes)
-    # 119.699 user_cpu 9.758 kernel_cpu 2:33.34 total_time 84.4%CPU {0W 0X 0D 0K 54403072M 7F 68570R 379I 1347O 0r 0s 1k 4971w 15128c}
-    # > time sudo afsctool -cfnv -9 kk2
-    # kk2:
-    # Number of HFS+ compressed files: 4581
-    # Total number of files: 4631
-    # Total number of file hard links: 0
-    # Total number of folders: 4132
-    # Total number of folder hard links: 0
-    # Total number of items (number of files + number of folders): 8763
-    # Folder size (uncompressed; reported size by Mac OS 10.6+ Finder): 1051069380 bytes / 1.06 GB (gigabytes) / 1013.3 MiB (mebibytes)
-    # Folder size (compressed - decmpfs xattr; reported size by Mac OS 10.0-10.5 Finder): 283334679 bytes / 286.9 MB (megabytes) / 273.6 MiB (mebibytes)
-    # Folder size (compressed): 286451492 bytes / 290 MB (megabytes) / 276.6 MiB (mebibytes)
-    # Compression savings: 72.7%
-    # Approximate total folder size (files + file overhead + folder overhead): 293218773 bytes / 293.2 MB (megabytes) / 279.6 MiB (mebibytes)
-    # 130.684 user_cpu 2.776 kernel_cpu 2:37.64 total_time 84.6%CPU {0W 0X 0D 0K 38275072M 19F 48789R 350I 1294O 0r 0s 1k 3946w 16520c}
-    ## with stock zlib:
-    # > time sudo afsctool -cfv -9 kk1
-    # kk1:
-    # Number of HFS+ compressed files: 4581
-    # Total number of files: 4631
-    # Total number of file hard links: 0
-    # Total number of folders: 4132
-    # Total number of folder hard links: 0
-    # Total number of items (number of files + number of folders): 8763
-    # Folder size (uncompressed; reported size by Mac OS 10.6+ Finder): 1051069380 bytes / 1.06 GB (gigabytes) / 1013.3 MiB (mebibytes)
-    # Folder size (compressed - decmpfs xattr; reported size by Mac OS 10.0-10.5 Finder): 277922731 bytes / 281.4 MB (megabytes) / 268.4 MiB (mebibytes)
-    # Folder size (compressed): 281037067 bytes / 284.5 MB (megabytes) / 271.4 MiB (mebibytes)
-    # Compression savings: 73.3%
-    # Approximate total folder size (files + file overhead + folder overhead): 287711540 bytes / 287.7 MB (megabytes) / 274.4 MiB (mebibytes)
-    # 201.855 user_cpu 10.711 kernel_cpu 3:58.17 total_time 89.2%CPU {0W 0X 0D 0K 54493184M 8F 69898R 477I 1497O 0r 0s 1k 3289w 18858c}
-    # > time sudo afsctool -cfnv -9 kk2
-    # kk2:
-    # Number of HFS+ compressed files: 4581
-    # Total number of files: 4631
-    # Total number of file hard links: 0
-    # Total number of folders: 4132
-    # Total number of folder hard links: 0
-    # Total number of items (number of files + number of folders): 8763
-    # Folder size (uncompressed; reported size by Mac OS 10.6+ Finder): 1051069380 bytes / 1.06 GB (gigabytes) / 1013.3 MiB (mebibytes)
-    # Folder size (compressed - decmpfs xattr; reported size by Mac OS 10.0-10.5 Finder): 277922731 bytes / 281.4 MB (megabytes) / 268.4 MiB (mebibytes)
-    # Folder size (compressed): 281037067 bytes / 284.5 MB (megabytes) / 271.4 MiB (mebibytes)
-    # Compression savings: 73.3%
-    # Approximate total folder size (files + file overhead + folder overhead): 287711540 bytes / 287.7 MB (megabytes) / 274.4 MiB (mebibytes)
-    # 188.971 user_cpu 2.963 kernel_cpu 3:39.85 total_time 87.3%CPU {0W 0X 0D 0K 38146048M 0F 48588R 327I 1373O 0r 0s 1k 4889w 16362c}
     # 20170521 : 3x minigzip64 of a 128Mb file > /dev/null on a 1.6Ghz Intel Celeron N3150:
     #    1.328 user_cpu 0.051 kernel_cpu 0:01.29 total_time 106.2%CPU {2672M 0F 212R 262147I 0O 1w 1294c}
     #    1.319 user_cpu 0.067 kernel_cpu 0:01.29 total_time 106.2%CPU {2672M 0F 214R 262147I 0O 1w 1298c}
@@ -199,6 +166,14 @@ variant cloudflare conflicts ng description {Applies CloudFlare's patches to use
     # 2.635 user_cpu 0.056 kernel_cpu 0:02.51 total_time 106.7%CPU {2672M 0F 207R 262147I 0O 1w 2522c}
     # 2.622 user_cpu 0.057 kernel_cpu 0:02.50 total_time 106.8%CPU {2672M 0F 210R 262147I 0O 1w 2505c}
     # 2.640 user_cpu 0.040 kernel_cpu 0:02.51 total_time 106.7%CPU {2672M 0F 210R 262147I 0O 1w 2519c}
+    # 2.7 Ghz i7, OS X 10.9, -O3 -march=native, clang-4.0, 262Mb source tarball as test
+    # 4.665 user_cpu 0.086 kernel_cpu 0:04.76 total_time 99.5%CPU {958464M 0F 270R 0I 0O 0k 0w 215c}
+    # 4.520 user_cpu 0.081 kernel_cpu 0:04.60 total_time 100.0%CPU {958464M 0F 270R 0I 0O 0k 0w 117c}
+    # 4.640 user_cpu 0.084 kernel_cpu 0:04.72 total_time 100.0%CPU {958464M 0F 270R 0I 0O 0k 0w 134c}
+    # stock 1.2.11 idem but with -flto:
+    # 7.704 user_cpu 0.089 kernel_cpu 0:07.80 total_time 99.7%CPU {966656M 0F 272R 0I 0O 0k 0w 245c}
+    # 7.676 user_cpu 0.089 kernel_cpu 0:07.77 total_time 99.7%CPU {958464M 0F 270R 0I 0O 0k 0w 241c}
+    # 7.889 user_cpu 0.089 kernel_cpu 0:07.98 total_time 99.7%CPU {958464M 0F 270R 0I 0O 0k 0w 209c}
 }
 
 post-destroot {
