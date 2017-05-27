@@ -1,0 +1,170 @@
+diff --git a/app/CMakeLists.txt b/app/CMakeLists.txt
+index 03e973594b7b4bfac48166c1280eb7e404533057..bd3dab4da08691bd6f12b8f75e34a9c1887a57d9 100644
+--- a/app/CMakeLists.txt
++++ b/app/CMakeLists.txt
+@@ -29,6 +29,24 @@ target_link_libraries(ark
+     KF5::KIOFileWidgets
+     KF5::Parts)
+ 
++# we provide our own Info.plist containing a simple "we open anything" instruction.
++if(APPLE)
++    # own plist template
++    set_target_properties (ark PROPERTIES MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/MacOSXBundleInfo.plist.in)
++
++    # the MacOSX bundle display name property (CFBundleDisplayName) is not currently supported by cmake,
++    # so has to be set for all targets in this cmake file
++    set(MACOSX_BUNDLE_DISPLAY_NAME Ark)
++    set_target_properties(ark PROPERTIES MACOSX_BUNDLE_GUI_IDENTIFIER "org.kde.Ark")
++    set_target_properties(ark PROPERTIES MACOSX_BUNDLE_BUNDLE_NAME "Ark")
++    set_target_properties(ark PROPERTIES MACOSX_BUNDLE_DISPLAY_NAME "Ark")
++    set_target_properties(ark PROPERTIES MACOSX_BUNDLE_INFO_STRING "Ark - KDE Archiving Tool")
++    set_target_properties(ark PROPERTIES MACOSX_BUNDLE_LONG_VERSION_STRING "Ark ${KDE_APPLICATIONS_VERSION}")
++    set_target_properties(ark PROPERTIES MACOSX_BUNDLE_SHORT_VERSION_STRING "${KDE_APPLICATIONS_VERSION}")
++    set_target_properties(ark PROPERTIES MACOSX_BUNDLE_BUNDLE_VERSION "${KDE_APPLICATIONS_VERSION}")
++    set_target_properties(ark PROPERTIES MACOSX_BUNDLE_COPYRIGHT "1997-2017, The Ark Developers")
++endif()
++
+ # Remove duplicate mimetypes from list of supported formats.
+ list(REMOVE_DUPLICATES SUPPORTED_ARK_MIMETYPES)
+ 
+diff --git a/app/MacOSXBundleInfo.plist.in b/app/MacOSXBundleInfo.plist.in
+new file mode 100644
+index 0000000000000000000000000000000000000000..ab421eaf886684ed5b8f507661d0ebf08bc1e6bc
+--- /dev/null
++++ b/app/MacOSXBundleInfo.plist.in
+@@ -0,0 +1,55 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++        <key>NSPrincipalClass</key>
++        <string>NSApplication</string>
++        <key>NSHighResolutionCapable</key>
++        <string>True</string>
++        <key>CFBundleDevelopmentRegion</key>
++        <string>English</string>
++        <key>CFBundleExecutable</key>
++        <string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
++        <key>CFBundleGetInfoString</key>
++        <string>${MACOSX_BUNDLE_INFO_STRING}</string>
++        <key>CFBundleIconFile</key>
++        <string>${MACOSX_BUNDLE_ICON_FILE}</string>
++        <key>CFBundleIdentifier</key>
++        <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
++        <key>CFBundleInfoDictionaryVersion</key>
++        <string>6.0</string>
++        <key>CFBundleLongVersionString</key>
++        <string>${MACOSX_BUNDLE_LONG_VERSION_STRING}</string>
++        <key>CFBundleName</key>
++        <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
++        <key>CFBundlePackageType</key>
++        <string>APPL</string>
++        <key>CFBundleShortVersionString</key>
++        <string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
++        <key>CFBundleSignature</key>
++        <string>????</string>
++        <key>CFBundleVersion</key>
++        <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
++        <key>CSResourcesFileMapped</key>
++        <true/>
++        <key>LSRequiresCarbon</key>
++        <true/>
++        <key>NSHumanReadableCopyright</key>
++        <string>${MACOSX_BUNDLE_COPYRIGHT}</string>
++        <key>LSMultipleInstancesProhibited</key>
++        <true/>
++        <key>CFBundleDocumentTypes</key>
++        <array>
++            <dict>
++                <key>CFBundleTypeExtensions</key>
++                <array>
++                        <string>*</string>
++                </array>
++                <key>CFBundleTypeName</key>
++                <string>NSStringPboardType</string>
++                <key>CFBundleTypeRole</key>
++                <string>Editor</string>
++            </dict>
++        </array>
++</dict>
++</plist>
+diff --git a/app/main.cpp b/app/main.cpp
+index 02dafea8a4c298a5dc7de2c3c2f8559ef4c09c3e..0ffe772280ce9061ed96f6170af9678d1811ec6d 100644
+--- a/app/main.cpp
++++ b/app/main.cpp
+@@ -31,6 +31,9 @@
+ #include <QCommandLineParser>
+ #include <QByteArray>
+ #include <QFileInfo>
++#ifdef Q_OS_MACOS
++#include <QFileOpenEvent>
++#endif
+ 
+ #include <KAboutData>
+ #include <KCrash>
+@@ -40,6 +43,35 @@
+ 
+ using Kerfuffle::AddToArchive;
+ 
++class OpenFileEventHandler : public QObject
++{
++    Q_OBJECT
++public:
++    OpenFileEventHandler(QApplication *parent, MainWindow *w)
++        : QObject(parent)
++        , m_window(w)
++    {
++#ifdef Q_OS_MACOS
++        parent->installEventFilter(this);
++#endif
++    }
++
++    bool eventFilter(QObject *obj, QEvent *event) override
++    {
++#ifdef Q_OS_MACOS
++        if (event->type() == QEvent::FileOpen) {
++            QFileOpenEvent *openEvent = static_cast<QFileOpenEvent*>(event);
++            qCDebug(ARK) << "File open event:" << openEvent->url() << "for window" << m_window;
++            m_window->openUrl(openEvent->url());
++            return true;
++        }
++#endif
++        return QObject::eventFilter(obj, event);
++    }
++private:
++    MainWindow *m_window;
++};
++
+ int main(int argc, char **argv)
+ {
+     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts); // Required for the webengine part.
+@@ -127,7 +159,7 @@ int main(int argc, char **argv)
+                         QStringLiteral("http://littlesvr.ca/misc/contactandrew.php"));
+ 
+     KAboutData::setApplicationData(aboutData);
+-    application.setWindowIcon(QIcon::fromTheme(QStringLiteral("ark")));
++    application.setWindowIcon(QIcon::fromTheme(QStringLiteral("ark"), application.windowIcon()));
+ 
+     QCommandLineParser parser;
+     parser.addHelpOption();
+@@ -293,6 +325,12 @@ int main(int argc, char **argv)
+                 }
+                 window->openUrl(QUrl::fromUserInput(urls.at(0), QString(), QUrl::AssumeLocalFile));
+             }
++#ifdef Q_OS_MACOS
++            volatile const OpenFileEventHandler *openFileEventHandler = new OpenFileEventHandler(&application, window);
++            Q_UNUSED(openFileEventHandler);
++            // we don't provide a fullscreen mode
++            window->setWindowFlags(window->windowFlags() & ~Qt::WindowFullscreenButtonHint);
++#endif
+             window->show();
+         }
+     }
+@@ -300,3 +338,7 @@ int main(int argc, char **argv)
+     qCDebug(ARK) << "Entering application loop";
+     return application.exec();
+ }
++
++#ifdef Q_OS_MACOS
++#include "main.moc"
++#endif
