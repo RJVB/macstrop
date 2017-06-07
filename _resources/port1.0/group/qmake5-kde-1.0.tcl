@@ -154,6 +154,9 @@ pre-configure {
         puts ${qt5::cache} "QMAKE_LINK=${configure.cxx}"
         puts ${qt5::cache} "QMAKE_LINK_SHLIB=${configure.cxx}"
     }
+    # add our compiler options
+    puts ${qt5::cache} "QMAKE_CFLAGS+=${configure.cflags}"
+    puts ${qt5::cache} "QMAKE_CXXFLAGS+=${configure.cxxflags}"
 
     set qt5::qt_version [qt5.active_version]
 

@@ -348,9 +348,15 @@ if {${os.platform} eq "darwin"} {
     set qt_qmake_spec_32        macx-clang-32
     set qt_qmake_spec_64        macx-clang
 } elseif {${os.platform} eq "linux"} {
-    set qt_qmake_spec_32        linux-g++
-    set qt_qmake_spec_64        linux-g++-64
-    compiler.blacklist-append   clang
+    if {[string match *clang* ${configure.compiler}]} {
+        set qt_qmake_spec_32    linux-clang
+        set qt_qmake_spec_64    linux-clang
+    } else
+        set qt_qmake_spec_32    linux-g++
+        set qt_qmake_spec_64    linux-g++-64
+        compiler.blacklist-append \
+                                clang
+    }
 }
 
 proc qt5::get_default_spec {} {
