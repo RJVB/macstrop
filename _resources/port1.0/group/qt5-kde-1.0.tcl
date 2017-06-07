@@ -351,6 +351,9 @@ if {${os.platform} eq "darwin"} {
     if {[string match *clang* ${configure.compiler}]} {
         set qt_qmake_spec_32    linux-clang
         set qt_qmake_spec_64    linux-clang
+        # this has probably not been taken care of:
+        configure.cxxflags-append \
+                                -std=c++11
     } else {
         set qt_qmake_spec_32    linux-g++
         set qt_qmake_spec_64    linux-g++-64
