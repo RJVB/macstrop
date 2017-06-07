@@ -351,7 +351,7 @@ if {${os.platform} eq "darwin"} {
     if {[string match *clang* ${configure.compiler}]} {
         set qt_qmake_spec_32    linux-clang
         set qt_qmake_spec_64    linux-clang
-    } else
+    } else {
         set qt_qmake_spec_32    linux-g++
         set qt_qmake_spec_64    linux-g++-64
         compiler.blacklist-append \
