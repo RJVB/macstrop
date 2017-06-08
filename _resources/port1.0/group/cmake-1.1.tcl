@@ -266,8 +266,8 @@ pre-configure {
     # In addition, CMake provides build-type-specific flags for
     # Release (-O3 -DNDEBUG), Debug (-g), MinSizeRel (-Os -DNDEBUG), and
     # RelWithDebInfo (-O2 -g -DNDEBUG). If the configure.optflags have been
-    # set (-Os by default), we have to remove the optimisation flags from the
-    # from the concerned Release build type so that configure.optflags
+    # set (-Os by default), we have to remove the optimisation flags from
+    # the concerned Release build type so that configure.optflags
     # gets honored (Debug used by the +debug variant does not set
     # optimisation flags by default).
     # NB: more recent CMake versions (>=3?) no longer take the env. variables into
