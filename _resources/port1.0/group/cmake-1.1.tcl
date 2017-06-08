@@ -168,6 +168,13 @@ proc cmake::handle_generator {option action args} {
                 destroot.destdir    DESTDIR=${destroot}
                 # unset the DESTDIR env. variable if it has been set before
                 destroot.env-delete DESTDIR=${destroot}
+#                 proc ui_progress_info {string} {
+#                     if {[scan $string "\[%d%%\] " perc] == 1} {
+#                         return $perc
+#                     } else {
+#                         return -1
+#                     }
+#                 }
             }
             "*Ninja" {
                 ui_debug "Selecting the Ninja generator ($args)"
