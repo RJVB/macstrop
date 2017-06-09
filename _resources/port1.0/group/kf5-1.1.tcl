@@ -724,7 +724,9 @@ if {${kf5::includecounter} == 0} {
     proc kf5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""}} {
         global kf5.applications_dir os.platform kf5.wrapper_env_additions
 
-        qt5.wrapper_env_additions "[join ${kf5.wrapper_env_additions}]"
+        platform darwin {
+            depends_run-append ${kf5::osx-integration_dep}
+        }
         if {${os.platform} eq "darwin"} {
             if {${bundlename} eq ""} {
                 set bundlename ${wrappername}
@@ -744,7 +746,13 @@ if {${kf5::includecounter} == 0} {
                 set bundleexec ${bundlename}
             }
         }
-        qt5.add_app_wrapper ${wrappername} ${bundlename} ${bundleexec} ${kf5.applications_dir}
+        set kf5::wrappername ${wrappername}
+        set kf5::wrapper_bundlename ${bundlename}
+        set kf5::wrapper_bundleexec ${bundleexec}
+        post-destroot {
+            qt5.wrapper_env_additions "[join ${kf5.wrapper_env_additions}]"
+            qt5.add_app_wrapper ${kf5::wrappername} ${kf5::wrapper_bundlename} ${kf5::wrapper_bundleexec} ${kf5.applications_dir}
+        }
     }
 
     # procedure to record a conflict with a KDE4 port if kde4compat isn't active. This procedure
