@@ -719,6 +719,8 @@ if {${kf5::includecounter} == 0} {
 
 
     # create a wrapper script in ${prefix}/bin for an application bundle in kf5.applications_dir
+    # This script has to be called from the (sub)port's toplevel, and will add a runtime
+    # dependency on port:kf5-osx-integration(-devel).
     options kf5.wrapper_env_additions
     default kf5.wrapper_env_additions ""
     proc kf5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""}} {
