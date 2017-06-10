@@ -135,7 +135,7 @@ proc cmake::module_path {} {
 # cmake.generator "Eclipse CDT4 - Ninja"
 # if maintaining the port means editing it using an IDE of choice.
 #
-default cmake.generator             {"Unix Makefiles"}
+default cmake.generator             {"CodeBlocks - Unix Makefiles"}
 # CMake generates Unix Makefiles that contain a special "fast" install target
 # which skips the whole "let's see if there's anything left to (re)build before
 # we install" you normally get with `make install`. That check should be
@@ -300,7 +300,7 @@ pre-configure {
             configure.objcflags-append  ${flag}
             configure.objcxxflags-append   ${flag}
         }
-        ui_debug "CFLAGS=\"${configure.cflags}\" CXXFLAGS=\"${configure.cxxflags}\""
+        ui_debug "CPPFLAGS=\"${cppflags}\" inserted into CFLAGS=\"${configure.cflags}\" CXXFLAGS=\"${configure.cxxflags}\""
     }
 
     configure.pre_args-prepend "-G \"[join ${cmake.generator}]\""
