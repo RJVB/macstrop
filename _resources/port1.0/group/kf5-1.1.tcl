@@ -184,9 +184,6 @@ if {${kf5::includecounter} == 0} {
 
     # configure.args-append   -G "\"CodeBlocks - Unix Makefiles\""
 
-    # Use directory set by qt5-kde or qt5-mac
-    configure.args-append   -DECM_MKSPECS_INSTALL_DIR=${qt_mkspecs_dir}/modules
-
     # set a best-compromise plugin destination directory, the one from Qt5.
     # this is also what Kubuntu does, and possibly the only way to ensure that Qt5
     # and KF5 find each other's (and their own...) plugins.
