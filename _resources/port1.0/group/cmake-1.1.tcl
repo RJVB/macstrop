@@ -352,6 +352,10 @@ proc cmake.save_configure_cmd {} {
             close ${fd}
             unset fd
         }
+        if {[file exists ${build.dir}/CMakeCache.txt]} {
+            # keep a backup of the CMake cache file
+            file copy ${build.dir}/CMakeCache.txt ${build.dir}/CMakeCache-MacPorts.txt
+        }
     }
 }
 
