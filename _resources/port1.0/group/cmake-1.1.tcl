@@ -321,6 +321,10 @@ post-configure {
 }
 
 proc cmake.save_configure_cmd {} {
+    pre-configure {
+        configure.post_args-append "| tee ${workpath}/.macports.${subport}.configure.log"
+        ui_debug "cmake.save_configure_cmd set configure.post_args to \"${configure.post_args}\""
+    }
     post-configure {
         if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
             foreach var [array names ::env] {
@@ -354,8 +358,17 @@ proc cmake.save_configure_cmd {} {
         }
         if {[file exists ${build.dir}/CMakeCache.txt]} {
             # keep a backup of the CMake cache file
-            file delete -force ${build.dir}/CMakeCache-MacPorts.txt
-            file copy ${build.dir}/CMakeCache.txt ${build.dir}/CMakeCache-MacPorts.txt
+            file copy -force ${build.dir}/CMakeCache.txt ${build.dir}/CMakeCache-MacPorts.txt
+        }
+        set portdir [getportdir "file://${filespath}/.."]
+        set logfile [file join [getportlogpath ${portdir} ${subport}] "main.log"]
+        if {[file exists ${logfile}]} {
+            catch {
+                # force a flush by appending to the file via an external command
+                system "echo '\nbacking up logfile' >> ${logfile}"
+                system "sync"
+                file copy -force ${logfile} ${workpath}/.macports.${subport}.configure.log2
+            }
         }
     }
 }
