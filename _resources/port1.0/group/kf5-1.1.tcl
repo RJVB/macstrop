@@ -44,15 +44,6 @@ namespace eval kf5 {
 }
 
 if {${kf5::includecounter} == 0} {
-    platform linux {
-        pre-configure {
-            # no multi-arch support on Linux;
-            # adding "-arch foo" to the compiler options just causes warnings on each invocation
-            ui_debug "Resetting configure.build_arch, was ${configure.build_arch}"
-            configure.build_arch
-        }
-    }
-
     PortGroup           cmake 1.1
     set qt5.prefer_kde  1
     PortGroup           qt5 1.0
@@ -931,7 +922,7 @@ if {${kf5::includecounter} == 0} {
     }
 
     # create a .macports-$subport-configure.cmd file containing the cmake invocation details
-    cmake.save_configure_cmd
+    cmake.save_configure_cmd "log too"
 
 }
 
