@@ -43,6 +43,8 @@ proc trAccept {path} {
     }
 }
 
+fileutil::traverse Trawler . -filter trAccept
+
 # extend a command with a new subcommand
 proc extend {cmd body} {
     if {![namespace exists ${cmd}]} {
@@ -207,20 +209,26 @@ if {[llength $::argv] == 0} {
 
 foreach portName $::argv {
     set pWD ""
+    set OK 0
     if {[file exists ${portName}] && [file type ${portName}] eq "directory"} {
         # we're pointed to a directory
         set pWD ${portName}
+        cd ${pWD}
+        set OK 1
+        ui_msg "Checking in directory ${pWD}"
     } elseif {${_WD_port} ne ${portName}} {
         set _WD_port ${portName}
         set pWD [port_workdir ${portName}]
-    }
-    if {${pWD} ne ""} {
-        ui_debug "${portName}: ${pWD}"
+        ui_msg "Checking port:${portName}: ${pWD}"
         if {[file exists "${pWD}/destroot"]} {
             cd "${pWD}/destroot"
+            set OK 1
+        }
+    }
+    if {${pWD} ne ""} {
+        if {${OK}} {
             set FILES {}
             ui_debug "Building file list for ${portName}"
-            fileutil::traverse Trawler . -filter trAccept
             Trawler foreach file {
                 set FILES [lappend FILES "${file}"]
             }
