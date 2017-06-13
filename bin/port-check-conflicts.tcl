@@ -30,6 +30,49 @@ package require Tclx
 package require macports
 package require Pextlib 1.0
 
+package require fileutil::traverse
+
+# fileutil::traverse filter:
+proc trAccept {path} {
+    set ftype [file type ${path}]
+    if {![string equal ${ftype} "directory"]} {
+        ui_debug "${path} : accepting ${ftype}"
+        return 1
+    } else {
+        return 0
+    }
+}
+
+# extend a command with a new subcommand
+proc extend {cmd body} {
+    if {![namespace exists ${cmd}]} {
+        set wrapper [string map [list %C $cmd %B $body] {
+            namespace eval %C {}
+            rename %C %C::%C
+            namespace eval %C {
+                proc _unknown {junk subc args} {
+                    return [list %C::%C $subc]
+                }
+                namespace ensemble create -unknown %C::_unknown
+            }
+        }]
+    }
+
+    append wrapper [string map [list %C $cmd %B $body] {
+        namespace eval %C {
+            %B
+            namespace export -clear *
+        }
+    }]
+    uplevel 1 $wrapper
+}
+
+extend string {
+    proc cat args {
+        join $args ""
+    }
+}
+
 set macportsTclPath /Library/Tcl
 set inverse 0
 set showVersion 0
@@ -110,6 +153,41 @@ proc port_workdir {portname} {
     }
 }
 
+proc macports::normalise { filename } {
+    set prefmap [list [file dirname [file normalize "${macports::prefix}/foo"]] ${macports::prefix}]
+    return [string map ${prefmap} [file normalize $filename]]
+}
+
+proc port_provides { fileNames } {
+    # In this case, portname is going to be used for the filename... since
+    # that is the first argument we expect... perhaps there is a better way
+    # to do this?
+    if { ![llength $fileNames] } {
+        ui_error "Please specify a filename to check which port provides that file."
+        return 1
+    }
+    foreach filename $fileNames {
+        set file [macports::normalise $filename]
+        if {[file exists $file] || ![catch {file type $file}]} {
+            if {![file isdirectory $file] || [file type $file] eq "link"} {
+                set port [registry::file_registered $file]
+                if { $port != 0 } {
+                    dict set providers "${filename}" "${port}"
+                } else {
+                    dict set providers "${filename}" "not_by_MacPorts"
+                }
+            } else {
+                dict set providers "${filename}" "is_a_directory"
+            }
+        } else {
+            dict set providers "${filename}" "does_not_exist"
+        }
+    }
+    registry::close_file_map
+
+    return ${providers}
+}
+
 if {[catch {mportinit ui_options global_options global_variations} result]} {
     puts \$::errorInfo
         fatal "Failed to initialise MacPorts, \$result"
@@ -140,18 +218,54 @@ foreach portName $::argv {
         ui_debug "${portName}: ${pWD}"
         if {[file exists "${pWD}/destroot"]} {
             cd "${pWD}/destroot"
-            set FILES [exec find . -type f]
+            set FILES {}
+            ui_debug "Building file list for ${portName}"
+            fileutil::traverse Trawler . -filter trAccept
+            Trawler foreach file {
+                set FILES [lappend FILES "${file}"]
+            }
             set InstalledDupsList {}
             set DestrootDupsList {}
+            if {${inverse}} {
+                ui_debug "Checking [llength ${FILES}] files for already installed copies"
+            } else {
+                ui_debug "Checking [llength ${FILES}] files for new, not-yet-installed items"
+            }
             foreach f $FILES {
                 set g [string range ${f} 1 end]
                 if {[file exists "${g}"]} {
                     if {!${inverse}} {
-                        set InstalledDupsList [lappend InstalledDupsList ${g}]
-                        set DestrootDupsList [lappend DestrootDupsList ${f}]
+                        set InstalledDupsList [lappend InstalledDupsList "${g}"]
+                        set DestrootDupsList [lappend DestrootDupsList "${f}"]
                     }
                 } elseif {${inverse}} {
-                    puts "${g} doesn't exist yet"
+                    regsub -all {[ \r\t\n]+} ${g} "" gg
+                    if {${g} ne ${gg}} {
+                        puts "\"${g}\" doesn't exist yet"
+                    } else {
+                        puts "${g} doesn't exist yet"
+                    }
+                }
+            }
+            if {[llength ${InstalledDupsList}]} {
+                ui_msg "[llength ${InstalledDupsList}] files already exist, checking if any do not already belong to ${portName}"
+                set ProviderDict [port_provides ${InstalledDupsList}]
+                set DUPS {}
+                dict for {g provider} ${ProviderDict} {
+                    if {${provider} ne ${portName}} {
+                        regsub -all {[ \r\t\n]+} ${g} "" gg
+                        if {${g} ne ${gg}} {
+                            puts "\"${g}\" already exists"
+                        } else {
+                            puts "${g} already exists"
+                        }
+                        puts "\tprovided by: ${provider}"
+                        system "ls -l \"./${g}\" \"${g}\""
+                        set DUPS [lappend DUPS [string cat "${g}" "\n"]]
+                    }
+                }
+                if {[llength ${DUPS}]} {
+                    puts [join ${DUPS}]
                 }
             }
         }
