@@ -437,6 +437,7 @@ proc kf5.set_project {project} {
     global filespath
     global version
     set p ${project}
+    set dbranch "stable"
     # get rid of the currently registered category:
     categories-delete       ${kf5::cat}
     if { ![info exists kf5.framework] && ![info exists kf5.portingAid] } {
@@ -457,6 +458,9 @@ proc kf5.set_project {project} {
                     }
                     set kf5::cat "Plasma5"
                 } else {
+                    if {[vercmp ${kf5.release} 17.04.0] < 0} {
+                        set dbranch "Attic"
+                    }
                     set f   "${kf5.virtualPath}/${kf5.release}/src"
                     if {![info exists version]} {
                         version \
@@ -490,7 +494,7 @@ proc kf5.set_project {project} {
         }
         distname            ${project}-${kf5.version}.git
     } else {
-        master_sites        http://download.kde.org/stable/${f}
+        master_sites        http://download.kde.org/${dbranch}/${f}
     }
 }
 
