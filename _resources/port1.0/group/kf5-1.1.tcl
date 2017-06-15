@@ -116,7 +116,7 @@ if {![info exists kf5.version]} {
 if {![ info exists kf5.release ]} {
     set kf5.release     16.12.0
     set kf5.latest_release \
-                        17.04.0
+                        17.04.2
 }
 
 # KF5 Plasma version
