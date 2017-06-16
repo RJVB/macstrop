@@ -321,12 +321,12 @@ post-configure {
 }
 
 proc cmake.save_configure_cmd {{save_log_too ""}} {
-    if {${save_log_too} ne ""} {
-        pre-configure {
-            configure.post_args-append "| tee ${workpath}/.macports.${subport}.configure.log"
-            ui_debug "cmake.save_configure_cmd set configure.post_args to \"${configure.post_args}\""
-        }
-    }
+#     if {${save_log_too} ne ""} {
+#         pre-configure {
+#             configure.post_args-append "| tee ${workpath}/.macports.${subport}.configure.log"
+#             ui_debug "cmake.save_configure_cmd set configure.post_args to \"${configure.post_args}\""
+#         }
+#     }
     post-configure {
         if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
             foreach var [array names ::env] {
