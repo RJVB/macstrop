@@ -46,7 +46,7 @@ variant langselect description "prune translations from ${prefix}/share/locale, 
             }
         }
         if {[info exists keep_languages]} {
-            foreach l [glob -nocomplain ${destroot}${prefix}/share/locale/*] {
+            foreach l [glob -nocomplain ${destroot}${prefix}/share/locale/* ${destroot}${prefix}/share/doc/HTML/*] {
                 set lang [file tail ${l}]
                 if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
                     ui_info "rm ${l}"
