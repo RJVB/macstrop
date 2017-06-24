@@ -130,7 +130,7 @@ platforms               darwin linux
 categories              kf5 kde devel
 license                 GPL-2+
 
-set kf5.branch           [join [lrange [split ${kf5.version} .] 0 1] .]
+set kf5.branch          [join [lrange [split ${kf5.version} .] 0 1] .]
 
 if {${kf5::includecounter} == 0} {
 
@@ -140,7 +140,7 @@ if {${kf5::includecounter} == 0} {
     configure.cppflags-delete -I${prefix}/include
 
     if {![info exists kf5.dont_use_xz]} {
-        use_xz              yes
+        use_xz          yes
     }
 
     # kf5.py* variable definitions (now kf5::py* namespaced variables) were
@@ -152,7 +152,7 @@ if {${kf5::includecounter} == 0} {
     #     if {![file exists ${qt_includes_dir}/QtCore/qextstandardpaths.h]}
         if {![catch {set result [active_variants qt5-qtbase {}]}]} {
             ui_debug "port:qt5-qtbase is installed and active"
-            default_variants    +nativeQSP
+            default_variants +nativeQSP
         }
 
         if {![variant_isset nativeQSP]} {
@@ -245,7 +245,7 @@ if {${kf5::includecounter} == 0} {
             if {[tbool kf5.allow_apidocs_generation]} {
                 if {![info exists kf5.framework]} {
                     kf5.depends_build_frameworks \
-                                kdoctools
+                            kdoctools
                 }
                 if {[info exists kf5.framework]} {
                     # KF5 frameworks are more or less guaranteed to have a metainfo.yaml file
@@ -467,9 +467,9 @@ proc kf5.set_project {project} {
                             ${kf5.release}
                     }
                     livecheck.url \
-                                http://download.kde.org/stable/${kf5.virtualPath}
+                            http://download.kde.org/stable/${kf5.virtualPath}
                     livecheck.regex \
-                                (\\d+\\.\\d+\\.\\d)
+                            (\\d+\\.\\d+\\.\\d)
                     set kf5::cat "KF5-Applications"
                 }
             }
@@ -499,7 +499,7 @@ proc kf5.set_project {project} {
 }
 
 if {[info exists kf5.project]} {
-    kf5.set_project     ${kf5.project}
+    kf5.set_project         ${kf5.project}
 }
 
 ### kf5.depends_frameworks and the framework dependency defs used to be inlined here
@@ -604,9 +604,9 @@ if {${kf5::includecounter} == 0} {
     proc kf5.add_test_library_path {path} {
         global os.platform
         if {${os.platform} eq "darwin"} {
-            test.env    DYLD_LIBRARY_PATH=${path}
+            test.env DYLD_LIBRARY_PATH=${path}
         } else {
-            test.env    LD_LIBRARY_PATH=${path}
+            test.env LD_LIBRARY_PATH=${path}
         }
     }
 
