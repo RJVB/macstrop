@@ -78,9 +78,13 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10} {
     # (checking if "plugins" is a directory is probably redundant)
     ui_debug "Qt5 is provided by port:qt5"
     PortGroup           qt5 1.0
-    if {[info exists qt5.prefer_kde] && [info exists building_qt5]} {
-        # user tries to install say qt5-kde-qtwebkit against qt5-qtbase etc.
-        ui_error "You cannot install a Qt5-KDE port with port:qt5 or one of its subports installed!"
+    if {[variant_isset qt5kde] || ([info exists qt5.prefer_kde] && [info exists building_qt5])} {
+        if {[variant_isset qt5kde]} {
+            ui_error "You cannot install ports with the +qt5kde variant when port:qt5 or one of its subports installed!"
+        } else {
+            # user tries to install say qt5-kde-qtwebkit against qt5-qtbase etc.
+            ui_error "You cannot install a Qt5-KDE port with port:qt5 or one of its subports installed!"
+        }
         # print the error but only raise it when attempting to fetch or configure the port.
         pre-fetch {
             return -code error "Deactivate the conflicting port:qt5 port(s) first!"
@@ -91,7 +95,7 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10} {
     }
     # we're done
     return
-} elseif {[info exists qt5.prefer_kde]} {
+} elseif {[info exists qt5.prefer_kde] || [variant_isset qt5kde]} {
     # The calling port has indicated a preference and no Qt5 port is installed already
     ui_debug "Qt5 will be provided by port:qt5-kde, by request"
     # we're in the right PortGroup, otherwise we'd need to
@@ -175,6 +179,11 @@ if {![variant_exists qt5kde]} {
     variant qt5kde description {default variant set for port:qt5-kde* and ports that depend on them} {}
 }
 # it should no longer be necessary to set qt5kde but we will continue to do so for now.
+if {[variant_isset qt5kde]} {
+    ui_debug "+qt5kde is set for port:${subport}"
+} else {
+    ui_debug "+qt5kde is not yet but will be set for port:${subport}"
+}
 default_variants        +qt5kde
 
 # standard Qt5 name. This should be just "qt5" (or qt53 for instance when more

@@ -60,8 +60,12 @@ if {([file exists ${prefix}/include/qt5/QtCore/QtCore]
     ui_debug "Qt5 is provided by port:qt5"
     PortGroup   qt5-mac 1.0
     set qt5.using_kde   no
-    if {[info exists qt5.prefer_kde] && [info exists building_qt5]} {
-        ui_error "You cannot install a Qt5-KDE port with port:qt5 or one of its subports installed!"
+    if {[variant_isset qt5kde] || ([info exists qt5.prefer_kde] && [info exists building_qt5])} {
+        if {[variant_isset qt5kde]} {
+            ui_error "You cannot install ports with the +qt5kde variant when port:qt5 or one of its subports installed!"
+        } else {
+            ui_error "You cannot install a Qt5-KDE port with port:qt5 or one of its subports installed!"
+        }
         pre-fetch {
             return -code error "Deactivate the conflicting port:qt5 (subports) first!"
         }
@@ -69,7 +73,7 @@ if {([file exists ${prefix}/include/qt5/QtCore/QtCore]
             return -code error "Deactivate the conflicting port:qt5 (subports) first!"
         }
     }
-} elseif {[info exists qt5.prefer_kde]} {
+} elseif {[info exists qt5.prefer_kde] || [variant_isset qt5kde]} {
     # The calling port has indicated a preference and no Qt5 port is installed already
     ui_debug "Qt5 will be provided by port:qt5-kde, by request"
     PortGroup   qt5-kde 1.0
