@@ -295,3 +295,32 @@ user (not with sudo) before any KDE programs will launch.
 To start it run the following command:
  launchctl load -w /Library/LaunchAgents/org.freedesktop.dbus-session.plist
 "
+
+# create a wrapper script in ${prefix}/bin for an application bundle in ${applications_dir}/KDE4
+options kde4.wrapper_env_additions
+default kde4.wrapper_env_additions ""
+proc kde4.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""}} {
+    global applications_dir os.platform kde4.wrapper_env_additions
+
+    qt4.wrapper_env_additions "[join ${kde4.wrapper_env_additions}]"
+    if {${os.platform} eq "darwin"} {
+        if {${bundlename} eq ""} {
+            set bundlename ${wrappername}
+        }
+        if {${bundleexec} eq ""} {
+            set bundleexec ${bundlename}
+        }
+    } else {
+        global qt_libs_dir
+        # no app bundles on this platform, but provide the same API by pretending there are.
+        # If unset, use subport to guess the exec. name because evidently we cannot
+        # symlink ${wrappername} onto itself.
+        if {${bundlename} eq ""} {
+            set bundlename ${subport}
+        }
+        if {${bundleexec} eq ""} {
+            set bundleexec ${bundlename}
+        }
+    }
+    qt4.add_app_wrapper ${wrappername} ${bundlename} ${bundleexec} ${applications_dir}/KDE4
+}

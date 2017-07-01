@@ -88,7 +88,7 @@ if {[info exists name] && ${subport} ne "${name}-transitional"} {
     # exclusive mode doesn't make sense for the transitional subport ...
     variant exclusive description {Builds and installs Qt4-mac the older way, such that other Qt versions can NOT be installed alongside it} {}
     variant LTO description {Build with Link-Time Optimisation (LTO) (currently not 100% compatible with SSE4+ and 3DNow intrinsics)} {}
-} elseif {![info exists building_qt5] && ![variant_exists LTO]} {
+} elseif {![info exists building_qt4] && ![variant_exists LTO]} {
     variant LTO description {Build with Link-Time Optimisation (LTO) (currently not 100% compatible with SSE4+ and 3DNow intrinsics)} {}
 }
 
@@ -176,7 +176,7 @@ if {[info exists qt4_is_concurrent]} {
     set qt_examples_dir     ${applications_dir}/Qt4/examples
     set qt_demos_dir        ${applications_dir}/Qt4/demos
     # no need to change the cmake_module_dir, though I'd have preferred to
-    # put it into ${prefix}/lib/cmake as qt5-mac also does, and which is the place Linux uses
+    # put it into ${prefix}/lib/cmake as qt4-mac also does, and which is the place Linux uses
     set qt_cmake_module_dir ${prefix}/share/cmake/Modules
     set qt_qmake_cmd        ${qt_dir}/bin/qmake
     set qt_moc_cmd          ${qt_dir}/bin/moc
@@ -343,3 +343,60 @@ if {![info exists building_qt4]} {
 } else {
     destroot.env-append QMAKE_NO_DEFAULTS=""
 }
+
+# create a wrapper script in ${prefix}/bin for an application bundle in qt_apps_dir
+options qt4.wrapper_env_additions
+default qt4.wrapper_env_additions ""
+
+proc qt4.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""}} {
+    global qt_apps_dir destroot prefix os.platform qt4.wrapper_env_additions subport
+    if {${appdir} eq ""} {
+        set appdir ${qt_apps_dir}
+    }
+    xinstall -m 755 -d ${destroot}${prefix}/bin
+    if {![catch {set fd [open "${destroot}${prefix}/bin/${wrappername}" "w"]} err]} {
+        # this wrapper exists to a large extent to improve integration of "pure" qt4
+        # apps with KF5 apps, in particular through the use of the KDE platform theme plugin
+        # Hence the reference to KDE things in the preamble.
+        puts ${fd} "#!/bin/sh\n\
+            if \[ -r ~/.kde4.env \] ;then\n\
+            \t. ~/.kde4.env\n\
+            else\n\
+            \texport KDE_SESSION_VERSION=4\n\
+            fi"
+        set wrapper_env_additions "[join ${qt4.wrapper_env_additions}]"
+        if {${wrapper_env_additions} ne ""} {
+            puts ${fd} "# Additional env. variables specified by port:${subport} :"
+            puts ${fd} "export ${wrapper_env_additions}"
+            puts ${fd} "#"
+        }
+        if {${os.platform} eq "darwin"} {
+            if {${bundlename} eq ""} {
+                set bundlename ${wrappername}
+            }
+            if {${bundleexec} eq ""} {
+                set bundleexec ${bundlename}
+            }
+            puts ${fd} "exec \"${appdir}/${bundlename}.app/Contents/MacOS/${bundleexec}\" \"\$\@\""
+        } else {
+            global qt_libs_dir
+            # no app bundles on this platform, but provide the same API by pretending there are.
+            # If unset, use ${subport} to guess the exec. name because evidently we cannot
+            # symlink ${wrappername} onto itself.
+            if {${bundlename} eq ""} {
+                set bundlename ${subport}
+            }
+            if {${bundleexec} eq ""} {
+                set bundleexec ${bundlename}
+            }
+            puts ${fd} "export LD_LIBRARY_PATH=\$\{LD_LIBRARY_PATH\}:${prefix}/lib:${qt_libs_dir}"
+            puts ${fd} "exec \"${appdir}/${bundleexec}\" \"\$\@\""
+        }
+        close ${fd}
+        system "chmod 755 ${destroot}${prefix}/bin/${wrappername}"
+    } else {
+        ui_error "Failed to (re)create \"${destroot}${prefix}/bin/${wrappername}\" : ${err}"
+        return -code error ${err}
+    }
+}
+
