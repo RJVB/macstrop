@@ -1,0 +1,95 @@
+From a7d72628d130cf5ef8cc4fcf819c2a7d5b0ad6ca Mon Sep 17 00:00:00 2001
+From: Kevin Funk <kfunk@kde.org>
+Date: Fri, 7 Jul 2017 10:38:47 +0200
+Subject: backgroundparser: Ensure jobs are finished on exit
+
+---
+ language/backgroundparser/backgroundparser.cpp | 25 +++++++++++++++++++++++++
+ language/backgroundparser/backgroundparser.h   |  2 ++
+ shell/core.cpp                                 |  6 +++++-
+ 3 files changed, 32 insertions(+), 1 deletion(-)
+
+diff --git language/backgroundparser/backgroundparser.cpp language/backgroundparser/backgroundparser.cpp
+index 2fb1e03..26004c2 100644
+--- language/backgroundparser/backgroundparser.cpp
++++ language/backgroundparser/backgroundparser.cpp
+@@ -23,6 +23,7 @@
+ 
+ #include "backgroundparser.h"
+ 
++#include <QCoreApplication>
+ #include <QList>
+ #include <QMutex>
+ #include <QMutexLocker>
+@@ -811,6 +812,30 @@ QList< IndexedString > BackgroundParser::managedDocuments()
+     return d->m_managed.keys();
+ }
+ 
++
++bool BackgroundParser::waitForIdle() const
++{
++    QList<IndexedString> runningParseJobsUrls;
++    forever {
++        {
++            QMutexLocker lock(&d->m_mutex);
++            if (d->m_parseJobs.isEmpty()) {
++                qCDebug(LANGUAGE) << "All parse jobs done" << d->m_parseJobs.keys();
++                return true;
++            }
++
++            if (d->m_parseJobs.size() != runningParseJobsUrls.size()) {
++                runningParseJobsUrls = d->m_parseJobs.keys();
++                qCDebug(LANGUAGE) << "Waiting for background parser to get in idle state... -- the following parse jobs are still running:" << runningParseJobsUrls;
++            }
++        }
++
++        QCoreApplication::processEvents();
++        QThread::msleep(100);
++    }
++    return false;
++}
++
+ DocumentChangeTracker* BackgroundParser::trackerForUrl(const KDevelop::IndexedString& url) const
+ {
+     if (url.isEmpty()) {
+diff --git language/backgroundparser/backgroundparser.h language/backgroundparser/backgroundparser.h
+index 642b0e1..7752bf4 100644
+--- language/backgroundparser/backgroundparser.h
++++ language/backgroundparser/backgroundparser.h
+@@ -117,6 +117,8 @@ public:
+      * */
+     DocumentChangeTracker* trackerForUrl(const IndexedString& url) const;
+ 
++    bool waitForIdle() const;
++
+ Q_SIGNALS:
+     /**
+      * Emitted whenever a document parse-job has finished.
+diff --git shell/core.cpp shell/core.cpp
+index 4ce3265..d949fb1 100644
+--- shell/core.cpp
++++ shell/core.cpp
+@@ -429,7 +429,7 @@ void Core::cleanup()
+     emit aboutToShutdown();
+ 
+     if (!d->m_cleanedUp) {
+-        // first of all: stop background jobs
++        // first of all: request stop of all background parser jobs
+         d->languageController->backgroundParser()->abortAllJobs();
+         d->languageController->backgroundParser()->suspend();
+ 
+@@ -450,7 +450,11 @@ void Core::cleanup()
+         }
+         d->projectController.data()->cleanup();
+         d->sourceFormatterController.data()->cleanup();
++
++        // before unloading language plugins, we need to make sure all parse jobs are done
++        d->languageController->backgroundParser()->waitForIdle();
+         d->pluginController.data()->cleanup();
++
+         d->sessionController.data()->cleanup();
+ 
+         d->testController.data()->cleanup();
+-- 
+cgit v0.11.2
+
