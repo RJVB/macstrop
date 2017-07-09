@@ -1,7 +1,6 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
-# $Id: muniversal-1.0.tcl 146912 2016-03-20 17:55:04Z mcalhoun@macports.org $
 #
-# Copyright (c) 2009-2015 The MacPorts Project,
+# Copyright (c) 2009-2017 The MacPorts Project,
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -198,8 +197,6 @@ variant universal {
     }
 
     configure {
-        # Fix inability to find nm when cross-compiling (#22224, #23431, #23687, #24477, et al)
-        configure.env-append    NM=/usr/bin/nm
 
         foreach arch ${universal_archs_to_use} {
             ui_msg "$UI_PREFIX [format [msgcat::mc "  Configuring %1\$s for architecture %2\$s"] ${subport} ${arch}]"
@@ -397,8 +394,14 @@ variant universal {
                 # The build directory is inside the source directory, so put in the new source directory name.
                 option build.dir [string map "${worksrcpath} ${worksrcpath}-${arch}" ${build.dir}]
             } else {
-                # The build directory is outside the source directory, so give it a new name by appending ${arch}.
-                option build.dir ${build.dir}-${arch}
+                if { [string match "${configure.dir}/*" ${build.dir}] } {
+                    # The build directory is outside the source directory, and ${build.dir} is a subdirectory of ${configure.dir}, so
+                    #    append ${arch} to the ${configure.dir} part
+                    option build.dir [string map "${configure.dir} ${configure.dir}-${arch}" ${build.dir}]
+                } else {
+                    # The build directory is outside the source directory, so give it a new name by appending ${arch}.
+                    option build.dir ${build.dir}-${arch}
+                }
                 if { ![file exists ${build.dir}] } {
                     file mkdir ${build.dir}
                 }
@@ -434,8 +437,14 @@ variant universal {
                 # The destroot directory is inside the source directory, so put in the new source directory name.
                 option destroot.dir [string map "${worksrcpath} ${worksrcpath}-${arch}" ${destroot.dir}]
             } else {
-                # The destroot directory is outside the source directory, so give it a new name by appending ${arch}.
-                option destroot.dir ${destroot.dir}-${arch}
+                if { [string match "${configure.dir}/*" ${destroot.dir}] } {
+                    # The destroot directory is outside the source directory, and ${destroot.dir} is a subdirectory of ${configure.dir}, so
+                    #    append ${arch} to the ${configure.dir} part
+                    option destroot.dir [string map "${configure.dir} ${configure.dir}-${arch}" ${destroot.dir}]
+                } else {
+                    # The destroot directory is outside the source directory, so give it a new name by appending ${arch}.
+                    option destroot.dir ${destroot.dir}-${arch}
+                }
                 if { ![file exists ${destroot.dir}] } {
                     file mkdir ${destroot.dir}
                 }
@@ -763,8 +772,14 @@ variant universal {
                     # The test directory is inside the source directory, so put in the new source directory name.
                     option test.dir [string map "${worksrcpath} ${worksrcpath}-${arch}" ${test.dir}]
                 } else {
-                    # The test directory is outside the source directory, so give it a new name by appending ${arch}.
-                    option test.dir ${test.dir}-${arch}
+                    if { [string match "${configure.dir}/*" ${test.dir}] } {
+                        # The test directory is outside the source directory, and ${test.dir} is a subdirectory of ${configure.dir}, so
+                        #    append ${arch} to the ${configure.dir} part
+                        option test.dir [string map "${configure.dir} ${configure.dir}-${arch}" ${test.dir}]
+                    } else {
+                        # The test directory is outside the source directory, so give it a new name by appending ${arch}.
+                        option test.dir ${test.dir}-${arch}
+                    }
                     if { ![file exists ${test.dir}] } {
                         file mkdir ${test.dir}
                     }
