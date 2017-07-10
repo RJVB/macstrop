@@ -60,9 +60,11 @@ proc preserve_libraries {srcdir patternlist} {
         if {[file type ${srcdir}] eq "directory"} {
             set prevdir "${preserve_runtime_library_dir}"
             xinstall -m 755 -d ${destroot}${srcdir}/${prevdir}
+            ui_debug "preserve_libraries ${srcdir} ${patternlist}"
             foreach pattern ${patternlist} {
                 # first handle the preserved backups that already exist
-                foreach l [glob -nocomplain ${srcdir}/${prevdir}/${pattern}] {
+                set existing_backups [glob -nocomplain ${srcdir}/${prevdir}/${pattern}]
+                foreach l ${existing_backups} {
                     set lib [file tail ${l}]
                     set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
                     if {![file exists ${prevlib}] && ![file exists ${destroot}${l}]} {
@@ -78,9 +80,12 @@ proc preserve_libraries {srcdir patternlist} {
                 # now we can do the libraries to backup from ${prefix}/lib (srcdir) itself
                 # any of those that are symlinks into ${prevdir} will be pruned because they
                 # have already been handled.
-                foreach l [glob -nocomplain ${srcdir}/${pattern}] {
+                set current_libs [glob -nocomplain ${srcdir}/${pattern}]
+                foreach l ${current_libs} {
                     set fport [registry_file_registered ${l}]
-                    if {${fport} eq "${subport}"} {
+                    # registry_file_registered returns "0" for files not belonging to a port
+                    # we give the port author the favour of the doubt and backup the file anyway.
+                    if {${fport} eq "${subport}" || ${fport} eq "0"} {
                         set lib [file tail ${l}]
                         set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
                         if {![file exists ${prevlib}] && ![file exists ${destroot}${l}]} {
@@ -95,6 +100,11 @@ proc preserve_libraries {srcdir patternlist} {
                     } else {
                         ui_info "not preserving runtime library ${l} that belongs to port:${fport}"
                     }
+                }
+                if {"${existing_backups}" eq "" && "${current_libs}" eq ""} {
+                    ui_info "preserve_libraries ${srcdir} \"${patternlist}\" preserved nothing for \"${pattern}\""
+                    ui_info "\texisting backups found: \"${existing_backups}\""
+                    ui_info "\tcurrent libraries: \"${current_libs}\""
                 }
             }
         } else {
