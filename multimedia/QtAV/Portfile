@@ -1,0 +1,139 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
+PortSystem          1.0
+PortGroup           qt5 1.0
+PortGroup           cmake 1.1
+PortGroup           github 1.0
+platform darwin {
+    if {[variant_isset players]} {
+        PortGroup   app 1.0
+    }
+}
+
+name                QtAV
+
+description         Multimedia playback library based on Qt and FFmpeg.
+long_description    QtAV is a multimedia playback library based on Qt and FFmpeg. \
+                    It can help you to write a player with less effort than ever before.
+license             LGPL-2.1
+maintainers         gmail.com:rjvbertin openmaintainer
+platforms           darwin linux
+
+subport             ${name}-devel {
+    long_description A QMPlay2 port aimed at development purposes.
+}
+
+variant players description {build the players} {
+    license-append  GPL-3
+    configure.args-replace \
+                    -DBUILD_PLAYERS=OFF \
+                    -DBUILD_PLAYERS=ON
+}
+variant examples description {build the examples} {
+    license-append  GPL-3
+    configure.args-replace \
+                    -DBUILD_EXAMPLES=OFF \
+                    -DBUILD_EXAMPLES=ON
+}
+
+if {${subport} eq "${name}"} {
+    github.setup    wang-bin QtAV v1.12.0
+    fetch.type      git
+} else {
+    github.setup    wang-bin QtAV 5f5706c1975f2091b30a7cefd0a287d6e10dae73
+    version         1.12.0.30
+    # this port is intended to facilitate development efforts shared with "upstreams"
+    # so using git instead of a tarball fetch type is more appropriate.
+    fetch.type      git
+    distname        ${name}-git
+}
+post-extract {
+    system -W ${worksrcpath} "git submodule update --init"
+}
+
+homepage            http://www.qtav.org/
+
+if {[info procs cmake.save_configure_cmd] ne ""} {
+    # create a .macports-$subport-configure.cmd file containing the cmake invocation details
+    # (provided by a pending update to cmake-1.1
+    cmake.save_configure_cmd "log too"
+}
+
+configure.args-append \
+                    -DBUILD_EXAMPLES=OFF \
+                    -DBUILD_PLAYERS=OFF
+
+platform linux {
+    cmake.install_rpath-prepend \
+                    ${qt_libs_dir}
+    configure.args-append \
+                    -DSET_INSTALL_RPATH=OFF
+}
+
+qt5.depends_component \
+                    qtdeclarative
+depends_lib-append  port:ffmpeg \
+                    port:portaudio
+
+patch.pre_args      -Np1
+patchfiles-append   patch-build-for-MP.diff
+
+platform darwin {
+    ## build system is set up to create a standalone, all-inclusive app bundle!
+    depends_lib-append \
+                    port:libass
+
+    patchfiles-append \
+                    patch-no-pulseaudio.diff
+
+    if {[variant_isset players]} {
+        app.name        QtAV-Player
+        app.executable  ${build.dir}/bin/Player
+        app.icon        ${worksrcpath}/src/QtAV.icns
+    }
+
+    post-destroot {
+        if {[variant_isset players]} {
+            # move to the intended directory
+            xinstall -m 755 -d ${destroot}${qt_apps_dir}
+            file rename ${destroot}${applications_dir}/QtAV-Player.app ${destroot}${qt_apps_dir}/QtAV-Player.app
+            # rename the .app bundle
+            file rename ${destroot}${qt_apps_dir}/QtAV-Player.app/Contents/MacOS/QtAV-Player \
+                ${destroot}${qt_apps_dir}/QtAV-Player.app/Contents/MacOS/Player
+            # rename the icon file
+            file rename ${destroot}${qt_apps_dir}/QtAV-Player.app/Contents/Resources/QtAV-Player.icns \
+                ${destroot}${qt_apps_dir}/QtAV-Player.app/Contents/Resources/QtAV.icns
+            xinstall -m 755 ${worksrcpath}/examples/common/Info.plist  ${destroot}${qt_apps_dir}/QtAV-Player.app/Contents/Info.plist
+            file copy ${destroot}${qt_apps_dir}/QtAV-Player.app ${destroot}${qt_apps_dir}/QtAV-QMLPlayer.app
+            file delete ${destroot}${qt_apps_dir}/QtAV-QMLPlayer.app/Contents/MacOS/Player \
+                ${destroot}${prefix}/bin/Player
+            file rename ${destroot}${prefix}/bin/QMLPlayer \
+                ${destroot}${qt_apps_dir}/QtAV-QMLPlayer.app/Contents/MacOS/QMLPlayer
+            reinplace -W ${destroot}${qt_apps_dir} "s|@EXECUTABLE@|Player|g" QtAV-Player.app/Contents/Info.plist
+            reinplace -W ${destroot}${qt_apps_dir} "s|@EXECUTABLE@|QMLPlayer|g" QtAV-QMLPlayer.app/Contents/Info.plist
+            reinplace -W ${destroot}${qt_apps_dir} "s|@SHORT_VERSION@|${version}|g" \
+                QtAV-Player.app/Contents/Info.plist \
+                QtAV-QMLPlayer.app/Contents/Info.plist
+            reinplace -W ${destroot}${qt_apps_dir} "s|@FULL_VERSION@|${version}|g" \
+                QtAV-Player.app/Contents/Info.plist \
+                QtAV-QMLPlayer.app/Contents/Info.plist
+        }
+        if {[variant_isset examples]} {
+            xinstall -m 755 -d ${destroot}${prefix}/share/examples/QtAV
+            foreach e {audiopipeline filters framereader glslfilter shader sharedoutput \
+                        simpleplayer simpletranscode videocapture videographicsitem videogroup videowall window} {
+                xinstall -m 755 ${build.dir}/bin/${e} ${destroot}${prefix}/share/examples/QtAV/${e}
+            }
+        }
+        # install a wrapper script in ${prefix}/bin
+        if {[info procs "qt5.add_app_wrapper"] ne ""} {
+            qt5.add_app_wrapper QtAV-Player QtAV-Player Player
+            qt5.add_app_wrapper QtAV-QMLPlayer QtAV-QMLPlayer QMLPlayer
+        } else {
+            system "echo \"#!/bin/sh\nexec \\\"${qt_apps_dir}/QtAV-Player.app/Contents/MacOS/Player\\\" \\\"\\\$\@\\\"\" > ${destroot}${prefix}/bin/QtAV-Player"
+            system "chmod 755 ${destroot}${prefix}/bin/QtAV-Player"
+            system "echo \"#!/bin/sh\nexec \\\"${qt_apps_dir}/QtAV-QMLPlayer.app/Contents/MacOS/QMLPlayer\\\" \\\"\\\$\@\\\"\" > ${destroot}${prefix}/bin/QtAV-Player"
+            system "chmod 755 ${destroot}${prefix}/bin/QtAV-QMLPlayer"
+        }
+    }
+}
