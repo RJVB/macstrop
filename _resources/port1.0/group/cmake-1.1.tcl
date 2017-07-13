@@ -217,6 +217,9 @@ configure.cmd       ${prefix}/bin/cmake
 # appropriate default settings for configure.pre_args
 # variables are grouped thematically, with the more important ones
 # at the beginning or end for somewhat easier at-a-glance verification.
+# Policy 25=new: identify Apple Clang as AppleClang to ensure
+#                consistency in compiler feature determination
+# Policy 60=new: don't rewrite ${prefix}/lib/libfoo.dylib as -lfoo
 default configure.pre_args {[list \
                     -DCMAKE_BUILD_TYPE=${cmake.build_type} \
                     -DCMAKE_INSTALL_PREFIX="${cmake.install_prefix}" \
@@ -225,6 +228,7 @@ default configure.pre_args {[list \
                     {-DCMAKE_C_COMPILER="$CC"} \
                     {-DCMAKE_CXX_COMPILER="$CXX"} \
                     -DCMAKE_POLICY_DEFAULT_CMP0025=NEW \
+                    -DCMAKE_POLICY_DEFAULT_CMP0060=NEW \
                     -DCMAKE_VERBOSE_MAKEFILE=ON \
                     -DCMAKE_COLOR_MAKEFILE=ON \
                     -DCMAKE_FIND_FRAMEWORK=LAST \
