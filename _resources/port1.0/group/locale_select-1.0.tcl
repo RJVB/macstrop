@@ -37,7 +37,8 @@
 # the selection is made in ${prefix}/etc/macports/locales.tcl (which should really become locales.conf);
 # a template is provided in `port dir K5rameworks` .
 variant langselect description "prune translations from ${prefix}/share/locale, leaving only those\
-                                specified in ${prefix}/etc/macports/locales.tcl" {
+                                specified in ${prefix}/etc/macports/locales.tcl" {}
+if {[variant_isset langselect]} {
     post-destroot {
         if {[file exists ${prefix}/etc/macports/locales.tcl] && [file exists ${destroot}${prefix}/share/locale]} {
             if {[catch {source "${prefix}/etc/macports/locales.tcl"} err]} {
