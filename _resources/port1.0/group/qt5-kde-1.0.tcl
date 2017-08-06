@@ -55,6 +55,15 @@
 # set qt5_min_reference_version  12
 # set qt5_max_reference_version  15
 
+# define all available port:qt5* versions
+global available_qt5_versions
+set available_qt5_versions {
+    qt5
+    qt56
+    qt55
+    qt53
+}
+
 if {[tbool just_want_qt5_version_info]} {
     PortGroup           qt5 1.0
     return
@@ -454,12 +463,16 @@ global qt5_dependency
 global qt5webkit_dependency
 if {${os.platform} eq "darwin"} {
     # We define a depspec for port:qt5-kde or port:qt53-kde if we're on OS X 10.6
-    switch ${os.major} {
-        "10" {
-            set qt5::pprefix  "qt53-kde"
-        }
-        default {
-            set qt5::pprefix  "qt5-kde"
+    if {[info exists building_qt5]} {
+        set qt5::pprefix            ${basename}
+    } else {
+        switch ${os.major} {
+            "10" {
+                set qt5::pprefix    "qt53-kde"
+            }
+            default {
+                set qt5::pprefix    "qt5-kde"
+            }
         }
     }
     # see if the framework install exists, and if so depend on it;
@@ -479,7 +492,11 @@ if {${os.platform} eq "darwin"} {
     set qt5webengine_dependency \
                         path:libexec/${qt_name}/Library/Frameworks/QtWebEngineCore.framework/QtWebEngineCore:${qt5::pprefix}-qtwebengine
 } elseif {${os.platform} eq "linux"} {
-    set qt5::pprefix "qt5-kde"
+    if {[info exists building_qt5]} {
+        set qt5::pprefix            ${basename}
+    } else {
+        set qt5::pprefix            "qt5-kde"
+    }
     set qt5_pathlibspec path:libexec/${qt_name}/lib/libQt5Core.${qt_libs_ext}
     set qt5_dependency ${qt5_pathlibspec}:${qt5::pprefix}
     set qt5webkit_dependency path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext}:${qt5::pprefix}-qtwebkit
@@ -748,10 +765,10 @@ proc qt5::depends_component_p {deptype args} {
     if {!${is_qt5kde}} {
         switch ${os.major} {
             "11" {
-                set qt5pprefix  "qt55"
+                set qt5::pprefix    "qt55"
             }
             default {
-                set qt5pprefix  "qt5"
+                set qt5::pprefix    "qt5"
             }
         }
     }
