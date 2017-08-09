@@ -1,0 +1,115 @@
+diff --git src/kxmlguiclient.cpp src/kxmlguiclient.cpp
+index 0a011b8821407a2e85f8fb72a6f1ac71ba92b248..6d521ecfdc9bd5dfdb0e69e723bbe0e33a20c91d 100644
+--- src/kxmlguiclient.cpp
++++ src/kxmlguiclient.cpp
+@@ -40,6 +40,91 @@
+ 
+ #include <assert.h>
+ 
++#if defined(Q_OS_SOLARIS) || defined(__FreeBSD__) || defined(Q_OS_MACOS) || defined(Q_OS_UNIX)
++#define HAVE_BACKTRACE (1)
++#endif
++
++#if HAVE_BACKTRACE
++#include <execinfo.h>
++#if defined(__GNUC__) || defined(__clang__)
++#define HAVE_BACKTRACE_DEMANGLE
++#include <cxxabi.h>
++#endif
++#endif
++
++#if HAVE_BACKTRACE
++static QString maybeDemangledName(char *name)
++{
++#ifdef HAVE_BACKTRACE_DEMANGLE
++    const int len = strlen(name);
++    QByteArray in = QByteArray::fromRawData(name, len);
++#ifdef Q_OS_MACOS
++    const int mangledNameStart = in.indexOf(" _"), startOffset = 1;
++#elif defined(__FreeBSD__)
++    const int mangledNameStart = in.indexOf(" <_"), startOffset = 2;
++#elif defined(__sun) && defined(__SVR4)
++    const int mangledNameStart = in.indexOf("'"), startOffset = 0;
++#else
++    const int mangledNameStart = in.indexOf("(_"), startOffset = 1;
++#endif
++    if (mangledNameStart >= 0) {
++        int mangledNameEnd = in.indexOf('+', mangledNameStart + 2);
++        // check for and suppress trailing whitespace:
++        if (mangledNameEnd > 1 && isspace(name[mangledNameEnd-1])) {
++            mangledNameEnd -= 1;
++            while (mangledNameEnd > 1 && isspace(name[mangledNameEnd-1])) {
++                --mangledNameEnd;
++            }
++        }
++        if (mangledNameEnd >= 0) {
++            int status;
++            // if we forget about this line and the one that undoes its effect we don't change the
++            // internal data of the QByteArray::fromRawData() ;)
++            const char endChar = name[mangledNameEnd];
++            name[mangledNameEnd] = 0;
++            char *demangled = abi::__cxa_demangle(name + mangledNameStart + startOffset, nullptr, nullptr, &status);
++            name[mangledNameEnd] = endChar;
++            if (demangled) {
++                QString ret = QString::fromLatin1(name, mangledNameStart + startOffset) +
++                              QString::fromLatin1(demangled) +
++                              QString::fromLatin1(name + mangledNameEnd, len - mangledNameEnd);
++                free(demangled);
++                return ret;
++            }
++        }
++    }
++#endif
++    return QString::fromLatin1(name);
++}
++#endif
++
++QStringList kRealBacktrace(int levels)
++{
++    QStringList s;
++#if HAVE_BACKTRACE
++    void *trace[256];
++    int n = backtrace(trace, 256);
++    if (!n) {
++        return s;
++    }
++    char **strings = backtrace_symbols(trace, n);
++
++    if (strings) {
++        if (levels != -1) {
++            n = qMin(n, levels);
++        }
++
++        // skip the first entry, which will be us (kRealBacktrace):
++        for (int i = 1; i < n; ++i) {
++            s += QString::number(i) + QLatin1String(": ") +
++                 maybeDemangledName(strings[i]);
++        }
++        free(strings);
++    }
++#endif
++    return s;
++}
++
+ class KXMLGUIClientPrivate
+ {
+ public:
+@@ -101,8 +186,16 @@ KXMLGUIClient::~KXMLGUIClient()
+     }
+ 
+     if (d->m_factory) {
+-        qWarning() << this << "deleted without having been removed from the factory first. This will leak standalone popupmenus and could lead to crashes.";
++        const QString compDisplayName = actionCollection() ? actionCollection()->componentDisplayName() : QString();
++        qWarning() << this << componentName() << compDisplayName
++            << "deleted without having been removed from the factory first. This will leak standalone popupmenus and could lead to crashes.";
+         d->m_factory->forgetClient(this);
++        if (componentName().isEmpty()) {
++            qWarning() << "\t### Backtrace:";
++            foreach (const auto frame, kRealBacktrace(-1)) {
++                qWarning() << "\t" << frame;
++            }
++        }
+     }
+ 
+     Q_FOREACH (KXMLGUIClient *client, d->m_children) {
+
