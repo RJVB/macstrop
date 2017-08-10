@@ -3,6 +3,7 @@
 # Copyright (c) 2015, 2016 R.J.V. Bertin
 
 PortSystem          1.0
+PortGroup           conflicts_build 1.0
 
 set basename        qt5-kde
 set namesuffix      -angel
@@ -13,21 +14,8 @@ ui_debug "Port ${subport}, configure.optflags=${configure.optflags} configure.co
 variant testing description "Maintainer only: install everything to ${prefix}/testing." {}
 default_variants +testing
 
-# Qt 5.4 will not build on OS X 10.6, so we provide 5.3 on that OS.
-# The just-release Qt 5.5 release should build on OS X 10.7 (to be confirmed)
-if {${os.platform} eq "darwin" && ${os.major} <= 10} {
-    version         5.3.2
-    set QT53        yes
-} else {
-    variant legacy description {Installs version 5.3.2 also on OS X 10.7+. Only for testing, please do not use.} {}
-    if {[variant_isset legacy]} {
-        version     5.3.2
-        set QT53    yes
-    } else {
-        version     5.8.0
-        set QT53    no
-    }
-}
+version             5.8.0
+set QT53            no
 
 #### revision magic
 # platform darwin {
@@ -49,6 +37,8 @@ platform darwin {
     if {${subport} eq "${name}-x11"} {
         revision    [expr ${revision} + 1]
     }
+    # for guaranteed building against OpenAL.framework
+    revision        [expr ${revision} + 1]
 }
 ####
 
@@ -156,10 +146,8 @@ set branch          [join [lrange [split ${version} .] 0 1] .]
 if {[expr ${branch} >= 5.8]} {
     set QT58        yes
     set PF58x       "qt580/"
-    set PF532       ""
 } else {
     set QT58        no
-    set PF532       qt532/
 }
 
 categories          aqua
@@ -191,20 +179,15 @@ distname            qt-everywhere-opensource-src-${version}
 master_sites        http://download.qt.io/official_releases/qt/${branch}/${version}/single/
 
 use_xz              yes
-if {${QT53}} {
-    checksums       rmd160  e4664d55eb4cfb04e982d680602e4cdcd4f2ac05 \
-                    sha256  7f5bf93344cb57bac374ea4a32c8eda87f1357f998f14278e717cf84d0289bf0
-} else {
 # 20161005 : got qtwebkit to build as a true subport
 #     set qtwebkit_is_stub yes
 #     # 5.6.1 branch head at 20160615
 #     set qtwebkit_commit b889f460280ad98c89ede179bd3b9ce
-    if {${subport} ne "${name}-qtwebkit"} {
-        distfiles \
-                ${distname}${extract.suffix}
-        checksums rmd160  d539bdb0e1b56912e8dd117ad8c5e3c0a63f1735 \
-                  sha256  0f4c54386d3dbac0606a936a7145cebb7b94b0ca2d29bc001ea49642984824b6
-    }
+if {${subport} ne "${name}-qtwebkit"} {
+    distfiles \
+                    ${distname}${extract.suffix}
+    checksums       rmd160  d539bdb0e1b56912e8dd117ad8c5e3c0a63f1735 \
+                    sha256  0f4c54386d3dbac0606a936a7145cebb7b94b0ca2d29bc001ea49642984824b6
 }
 
 # Share the distfiles dir with port:qt5
@@ -305,54 +288,7 @@ if {[info exists env(QTDIR)]} {
     unset env(QTDIR)
 }
 
-if {${QT53}} {
-    set clang_versions {4.0 3.9 3.8 3.7 3.6 3.5 3.4}
-    proc qt_cc {} {
-        global prefix clang_versions
-        foreach v ${clang_versions} {
-            set cc "clang-mp-${v}"
-            if {[file exists ${prefix}/bin/${cc}]} {
-                return ${prefix}/bin/${cc}
-            }
-        }
-        ui_error "\nNo compatible MacPorts clang compiler found. This is a bug, please report\n"
-        return -code error "No compatible clang found in ${prefix}/bin"
-    }
-    proc qt_cxx {} {
-        global prefix clang_versions
-        foreach v ${clang_versions} {
-            set cxx "clang++-mp-${v}"
-            if {[file exists ${prefix}/bin/${cxx}]} {
-                return ${prefix}/bin/${cxx}
-            }
-        }
-        ui_error "\nNo compatible MacPorts clang++ compiler found. This is a bug, please report\n"
-        return -code error "No compatible clang++ found in ${prefix}/bin"
-    }
-}
-
-# these are set only when building Qt 5.3.2 on 10.6, but configure.cxx c.s.
-# have a habit of changing behind our backs if we set them just on the toplevel.
-# Try using a proc that can be invoked in every relevant pre-phase.
-proc setQt53Compilers {} {
-    global workpath configure.cc configure.cxx configure.objc configure.objcxx configure.compiler
-    if {[file exists ${workpath}/build/qtbase/bin/clang]} {
-        configure.cc        ${workpath}/build/qtbase/bin/clang
-        configure.objc      ${workpath}/build/qtbase/bin/clang
-        ui_info "Found (Obj)C compiler ${configure.cc}"
-    }
-    if {[file exists ${workpath}/build/qtbase/bin/clang++]} {
-        #configure.compiler  ${workpath}/build/qtbase/bin/clang++
-        configure.cxx       ${workpath}/build/qtbase/bin/clang++
-        configure.objcxx    ${workpath}/build/qtbase/bin/clang++
-        ui_info "Found (Obj)C++ compiler ${configure.cxx}"
-    }
-}
-setQt53Compilers
-
-if {!${QT53}} {
-    patch.pre_args      -Np1
-}
+patch.pre_args          -Np1
 
 if {${subport} eq ${name}} {
 #     PortGroup           select 1.0
@@ -437,227 +373,154 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         }
     }
 
-    if {${QT53}} {
-        # header file QtCore/private/qmachparser_p.h is included only if "defined(QT_BUILD_INTERNAL) && defined(Q_OF_MACH_O)"
-        #     code from header is used only "ifdef Q_OF_MACH_O"
-        #     the two must be consistent
-        #     assume the header include code is correct
-        patchfiles-append qt532/patch-tst_qpluginloader.diff
-    }
-
     # When testing, ensure that a universal object file is not created inadvertently.
-    patchfiles-append ${PF532}patch-machtest.diff
+    patchfiles-append       patch-machtest.diff
 
     # see http://stackoverflow.com/questions/14506151/invalid-symbol-redefinition-in-inline-asm-on-llvm
-    patchfiles-append ${PF532}patch-tst_benchlibcallgrind.diff
+    patchfiles-append       patch-tst_benchlibcallgrind.diff
 
     if {${subport} ne "${name}-x11"} {
         # see #44934 (and #35067 for the qt4-mac version)
-        patchfiles-append ${PF532}patch-shared.diff
-        if {${QT53}} {
-            # see https://bugreports.qt-project.org/browse/QTBUG-41136
-            patchfiles-append qt532/patch-avfmediaplayersession.diff
-        }
+        patchfiles-append   patch-shared.diff
     }
 
-    if {${QT53}} {
-        # see https://bugreports.qt-project.org/browse/QTBUG-41367
-        patchfiles-append   qt532/patch-qmacstyle_mac.diff
-        patchfiles-append   qt532/fix-qsp_fontlocations.patch
-        ## TODO : backport the qsp_xdg (qmake) / QspXDG (cmake) activators ##
-        patchfiles-append   qt532/fix-qstandardpaths3.patch
-        patchfiles-append   qt532/patch-missing-autoreleasepools.diff
-        if {[variant_isset legacy]} {
-            # this is probably not required on 10.6 (I can't remember it was)
-            patchfiles-append \
-                            qt532/patch-lalr.diff
-        }
-    } else {
-        # Mac menu items shouldn't have icons according to the HIG (and I agree)
-        patchfiles-append   ${PF58x}patch-no-icons-in-menus.diff
-        patchfiles-append   ${PF58x}patch-find-opengl.diff
-        # correct the font directories returned by QStandardPaths (incorporated into the qsp patch #4):
-        # patchfiles-append   fix-qsp_fontlocations.patch
-        # patch QStandardPaths so that it can optionally return XDG-compliant locations
-        # the patch of headers.pri is in a separate file because it contains very long lines.
-        # The linux patch is safe to apply on OS X and probably required on FreeBSD
-        patchfiles-append   ${PF58x}fix-qstandardpaths6.patch \
+    # Mac menu items shouldn't have icons according to the HIG (and I agree)
+    patchfiles-append       ${PF58x}patch-no-icons-in-menus.diff
+    patchfiles-append       ${PF58x}patch-find-opengl.diff
+    # correct the font directories returned by QStandardPaths (incorporated into the qsp patch #4):
+    # patchfiles-append   fix-qsp_fontlocations.patch
+    # patch QStandardPaths so that it can optionally return XDG-compliant locations
+    # the patch of headers.pri is in a separate file because it contains very long lines.
+    # The linux patch is safe to apply on OS X and probably required on FreeBSD
+    patchfiles-append       ${PF58x}fix-qstandardpaths6.patch \
                             ${PF58x}fix-qstandardpaths-headerspri.patch \
                             fix-qstandardpaths-linux.patch \
                             patch-lookup-css-monospace-font.diff
-        if {${os.platform} eq "linux"} {
-            post-patch {
-                # build the QspXDG activator CMake stuff even if it doesn't do anything on Linux
-                reinplace "s|mac : SUBDIRS += src_qsp_xdg|SUBDIRS += src_qsp_xdg|g" ${worksrcpath}/qtbase/src/src.pro
-            }
+    if {${os.platform} eq "linux"} {
+        post-patch {
+            # build the QspXDG activator CMake stuff even if it doesn't do anything on Linux
+            reinplace "s|mac : SUBDIRS += src_qsp_xdg|SUBDIRS += src_qsp_xdg|g" ${worksrcpath}/qtbase/src/src.pro
         }
-        # patch qtpaths and qtdiag:
-        if {${subport} eq "${name}"} {
-            patchfiles-append   patch-qtdiag-all-locations-and-qspmode.diff \
-                                patch-qtpaths-all-locations.diff
-            if {${os.platform} eq "darwin"} {
-                patchfiles-append \
-                                patch-qtpaths-qspmode.diff
-            }
-        }
-        # https://bugreports.qt.io/browse/QTBUG-31034 and https://bugreports.qt.io/browse/QTBUG-31034?focusedCommentId=277009
-        patchfiles-append   patch-missing-autoreleasepools.diff
-        # https://bugreports.qt.io/browse/QTBUG-59001
-        patchfiles-append   ${PF58x}patch-retain-foreign-nsviews.diff
-
-        platform darwin {
-            # these enable automatic loading of a KDE platform theme plugin
-            # they're tested on Linux too but not used "official" builds there
-            patchfiles-append \
-                            ${PF58x}patch-enable-qgenericunixthemes.diff \
-                            ${PF58x}patch-enable-qgenericunixservices.diff
-            # and this one if probably required because of adding the genericunix stuff:
-            patchfiles-append \
-                            ${PF58x}patch-enable-fontconfig.diff
-        }
-
-        # 2 more reported bugs
-        patchfiles-append   ${PF58x}patch-nonull-setAsDockMenu.diff \
-                            patch-qkqueuefilesystemwatcher_addPaths.diff
-        # https://bugreports.qt.io/browse/QTBUG-49887 ; a bit overzealous!
-        #patchfiles-append   patch-qpbutton-noshowicon.diff
-        # # don't unload plugins on exit: https://codereview.qt-project.org/140750
-        # committed in modified form in 5.8.0
-        # patchfiles-append   patch-dont-unload-plugins.diff
-
-        # make sure the private headers are always found through the CMake files,
-        # even in an out-of-tree build
-        patchfiles-append always_include_private_headers.diff
-
-        # print out some more info when warning about a menu item already added somewhere else
-        patchfiles-append ${PF58x}patch-better-menuitem-insert-warning.diff
-
-        # it's not Qt's role to inform the user constantly if s/he removed fonts that are in Apple's fallback font list
-        patchfiles-append ${PF58x}dont-warn-missing-fallback-fonts.patch
     }
+    # patch qtpaths and qtdiag:
+    if {${subport} eq "${name}"} {
+        patchfiles-append   patch-qtdiag-all-locations-and-qspmode.diff \
+                            patch-qtpaths-all-locations.diff
+        if {${os.platform} eq "darwin"} {
+            patchfiles-append \
+                            patch-qtpaths-qspmode.diff
+        }
+    }
+    # https://bugreports.qt.io/browse/QTBUG-31034 and https://bugreports.qt.io/browse/QTBUG-31034?focusedCommentId=277009
+    patchfiles-append       patch-missing-autoreleasepools.diff
+    # https://bugreports.qt.io/browse/QTBUG-59001
+    patchfiles-append       ${PF58x}patch-retain-foreign-nsviews.diff
+
+    platform darwin {
+        # these enable automatic loading of a KDE platform theme plugin
+        # they're tested on Linux too but not used "official" builds there
+        patchfiles-append   ${PF58x}patch-enable-qgenericunixthemes.diff \
+                            ${PF58x}patch-enable-qgenericunixservices.diff
+        # and this one if probably required because of adding the genericunix stuff:
+        patchfiles-append   ${PF58x}patch-enable-fontconfig.diff
+    }
+
+    # 2 more reported bugs
+    patchfiles-append       ${PF58x}patch-nonull-setAsDockMenu.diff \
+                            patch-qkqueuefilesystemwatcher_addPaths.diff
+    # https://bugreports.qt.io/browse/QTBUG-49887 ; a bit overzealous!
+#     patchfiles-append       patch-qpbutton-noshowicon.diff
+
+    # make sure the private headers are always found through the CMake files,
+    # even in an out-of-tree build
+    patchfiles-append       always_include_private_headers.diff
+
+    # print out some more info when warning about a menu item already added somewhere else
+    patchfiles-append       ${PF58x}patch-better-menuitem-insert-warning.diff
+
+    # it's not Qt's role to inform the user constantly if s/he removed fonts that are in Apple's fallback font list
+    patchfiles-append       ${PF58x}dont-warn-missing-fallback-fonts.patch
 
     # patches from Ubuntu 5.3.2+dfsg-4ubuntu8 (from Vivid Vervet)
     if {[variant_isset examples]} {
-        patchfiles-append       ${PF532}remove_icon_from_example.patch
-                                ${PF532}remove_google_adsense.patch
+        patchfiles-append   remove_icon_from_example.patch
+                            remove_google_adsense.patch
     }
 
-    if {${QT53}} {
-        # patches remove_icon_from_example and remove_google_adsense are identical for Qt 5.4 and Qt 5.3.2
-        patchfiles-append       qt532/gnukfreebsd.diff \
-                                qt532/fix_bug_in_internal_comparison_operator.patch \
-                                qt532/fix_sparc_atomics.patch \
-                                qt532/load_testability_from_env_var.patch \
-                                qt532/dbus_correct_signal_name_disconnect.patch \
-                                qt532/Fix-crash-in-QNetworkAccessCacheBackend-closeDownstr.patch \
-                                qt532/Don-t-always-chmod-the-XDG_RUNTIME_DIR.patch \
-                                qt532/Report-the-system-error-on-why-chmod-2-failed-in-XDG.patch \
-                                qt532/disable-generic-plugin-when-others-available.patch \
-                                qt532/update-QtBearer-NetworkManager-backend-API.patch \
-                                qt532/Reset-QNAM-s-NetworkConfiguration-when-state-changes.patch \
-                                qt532/Use-a-property-cache-to-cut-down-on-blocking-calls.patch \
-                                qt532/QtBearer-networkmanager-make-sure-to-set-flag-Active.patch \
-                                qt532/Always-lock-the-DBus-dispatcher-before-dbus_connecti.patch \
-                                qt532/QDBusConnection-Merge-the-dispatch-and-the-watch-and.patch \
-                                qt532/Partially-revert-Fix-a-deadlock-introduced-by-the-ra.patch \
-                                qt532/Break-after-handling-the-read-write.patch
-    } else {
-        patchfiles-append       load_testability_from_env_var.patch \
-                                disable-generic-plugin-when-others-available.patch
-    }
+    patchfiles-append       load_testability_from_env_var.patch \
+                            disable-generic-plugin-when-others-available.patch
 
     if {${subport} eq ${name} && ${os.platform} eq "darwin"} {
         if {![variant_isset abort]} {
-            if {${QT53}} {
-                patchfiles-append   qt532/patch-qFatal-no-abort.diff
-            } else {
-                patchfiles-append   patch-qFatal-no-abort.diff
-            }
+            patchfiles-append   patch-qFatal-no-abort.diff
         }
-        if {!${QT53}} {
-            # emulate QMenu sections (QMenu::addSection). This is done by adding
-            # an inactive, centred text item and a separator to the menu instead of
-            # a separator with text hint ("underlined text") when the style use doesn't
-            # support such "texted separators". This is the case notably with the native
-            # Mac style.
-            # The Qt devs refuse to see the problem with dropping potentially crucial
-            # information from menus and reject patches like this.
-            # Also improve the fallback fullscreen mode.
-            patchfiles-append   ${PF58x}patch-qmenuAddSection.diff \
-                                ${PF58x}patch-improve-fallback-fullscreen-mode.diff
-        }
+        # emulate QMenu sections (QMenu::addSection). This is done by adding
+        # an inactive, centred text item and a separator to the menu instead of
+        # a separator with text hint ("underlined text") when the style use doesn't
+        # support such "texted separators". This is the case notably with the native
+        # Mac style.
+        # The Qt devs refuse to see the problem with dropping potentially crucial
+        # information from menus and reject patches like this.
+        # Also improve the fallback fullscreen mode.
+        patchfiles-append   ${PF58x}patch-qmenuAddSection.diff \
+                            ${PF58x}patch-improve-fallback-fullscreen-mode.diff
     }
 
-    if {${QT53}} {
-        patchfiles-append   qt532/patch-improve-fontweight-support8.diff \
-                            qt532/patch-fontpanel.diff
-    } else {
-        patchfiles-append   ${PF58x}patch-improve-fontweight-support9.diff \
+    patchfiles-append       ${PF58x}patch-improve-fontweight-support9.diff \
                             patch-fontpanel.diff
-    }
 
     platform darwin {
-        if {!${QT53}} {
-#             # For KDE: support XDG icon themes when QSP is in XDG-compliant mode
-#             patchfiles-append   ${PF58x}patch-cocoatheme-icontheme-support.diff
-#             depends_run-append  port:ciment-icons
-            patchfiles-append   patch-respect-DontSwapCtrlMeta.diff
-        }
+#         # For KDE: support XDG icon themes when QSP is in XDG-compliant mode
+#         patchfiles-append   ${PF58x}patch-cocoatheme-icontheme-support.diff
+#         depends_run-append  port:ciment-icons
+        patchfiles-append   patch-respect-DontSwapCtrlMeta.diff
     }
 
-    if {!${QT53}} {
-        # https://codereview.qt-project.org/124643/
-        # starting with Freetype font rendering: -platform cocoa:fontengine=freetype
-        patchfiles-append   ${PF58x}patch-fix-build-when-system-freetype-is-detected.diff
-        # fix font colour due to inappropriate gamma
-        patchfiles-append   patch-freetype-gamma-cocoa.diff
-        patchfiles-append   patch-silence-qpixmap-warnings.diff \
+    # https://codereview.qt-project.org/124643/
+    # starting with Freetype font rendering: -platform cocoa:fontengine=freetype
+    patchfiles-append       ${PF58x}patch-fix-build-when-system-freetype-is-detected.diff
+    # fix font colour due to inappropriate gamma
+    patchfiles-append       patch-freetype-gamma-cocoa.diff
+    patchfiles-append       patch-silence-qpixmap-warnings.diff \
                             patch-silence-setscreen-warning.diff
-        # do not omit pkg-config files:
-        # https://codereview.qt-project.org/#/c/140954/
-        # https://github.com/Homebrew/legacy-homebrew/commit/620baaf10c957875d9d2b958343456f0d35d15fc
-        patchfiles-append   patch-restore-pc-files.diff
+    # do not omit pkg-config files:
+    # https://codereview.qt-project.org/#/c/140954/
+    # https://github.com/Homebrew/legacy-homebrew/commit/620baaf10c957875d9d2b958343456f0d35d15fc
+    patchfiles-append       patch-restore-pc-files.diff
 
-        # https://codereview.qt-project.org/157488 + https://codereview.qt-project.org/161056
-        patchfiles-append   ${PF58x}patch-fix-dbus-crash-at-exit.diff
-        if {${subport} eq "${name}"} {
-            # https://codereview.qt-project.org/#/c/172619/
-            patchfiles-append \
-                            ${PF58x}patch-qtconn-for-10.12.diff \
+    # https://codereview.qt-project.org/157488 + https://codereview.qt-project.org/161056
+    patchfiles-append       ${PF58x}patch-fix-dbus-crash-at-exit.diff
+    if {${subport} eq "${name}"} {
+        # https://codereview.qt-project.org/#/c/172619/
+        patchfiles-append   ${PF58x}patch-qtconn-for-10.12.diff \
                             patch-qttools-skip-assistant.diff
-            # https://codereview.qt-project.org/181230/
-            patchfiles-append \
-                            ${PF58x}patch-cmake-warn-compile_features.diff
-            patchfiles-append \
-                            ${PF58x}patch-keyboard-mapping.diff
-            patchfiles-append \
-                            ${PF58x}patch-no-pulseaudio+gstreamer.diff
-            # https://bugreports.qt.io/browse/QTBUG-58267
-            patchfiles-append \
-                            ${PF58x}patch-readable-selected-tab.diff
-            # support NSMenuFunctionKey and Qt::Key_Menu
-            patchfiles-append \
-                            ${PF58x}patch-keyboard-support-menukey.diff
-            # https://trac.macports.org/ticket/53369
-            patchfiles-append   patch-use-openssl-mp.diff
-#             # https://bugreports.qt.io/browse/QTBUG-57365 (fixed in the 5.8.0 release version?)
-#             patchfiles-append   ${PF58x}patch-restore-systraymenu-mac.diff
-            patchfiles-append \
-                            ${PF58x}/patch-firstObject.diff
-            patchfiles-append \
-                            ${PF58x}/patch-define-qtnoexceptions.diff
-        }
-        # https://codereview.qt-project.org/#/c/182877/
-        patchfiles-append   ${PF58x}patch-no-native-crossbuilds.diff
-        # https://bugreports.qt.io/browse/QTBUG-57656
-        patchfiles-append   ${PF58x}patch-install-headeronly-frameworks.diff
-        # https://codereview.qt-project.org/#/c/177188/
-        patchfiles-append   ${PF58x}patch-ibus-fix.diff \
-                            ${PF58x}patch-ibus-fix2.diff
+        # https://codereview.qt-project.org/181230/
+        patchfiles-append   ${PF58x}patch-cmake-warn-compile_features.diff
+        patchfiles-append   ${PF58x}patch-keyboard-mapping.diff
+        patchfiles-append   ${PF58x}patch-no-pulseaudio+gstreamer.diff
+        # https://bugreports.qt.io/browse/QTBUG-58267
+        patchfiles-append   ${PF58x}patch-readable-selected-tab.diff
+        # support NSMenuFunctionKey and Qt::Key_Menu
+        patchfiles-append   ${PF58x}patch-keyboard-support-menukey.diff
+        # https://trac.macports.org/ticket/53369
+        patchfiles-append   patch-use-openssl-mp.diff
+#         # https://bugreports.qt.io/browse/QTBUG-57365 (fixed in the 5.8.0 release version?)
+#         patchfiles-append   ${PF58x}patch-restore-systraymenu-mac.diff
+        patchfiles-append   ${PF58x}/patch-firstObject.diff
+        patchfiles-append   ${PF58x}/patch-define-qtnoexceptions.diff
     }
+    # https://codereview.qt-project.org/#/c/182877/
+    patchfiles-append       ${PF58x}patch-no-native-crossbuilds.diff
+    # https://bugreports.qt.io/browse/QTBUG-57656
+    patchfiles-append       ${PF58x}patch-install-headeronly-frameworks.diff
+    # https://codereview.qt-project.org/#/c/177188/
+    patchfiles-append       ${PF58x}patch-ibus-fix.diff \
+                            ${PF58x}patch-ibus-fix2.diff
+    # avoid warnings about -Wdate-time
+    patchfiles-append       ${PF58x}patch-wdate-time.diff
 
     # --prefix is not recognised.
-    configure.pre_args-delete       --prefix=${prefix}
+    configure.pre_args-delete --prefix=${prefix}
 
     # --disable-dependency-tracking is not recognised.
     configure.universal_args-delete --disable-dependency-tracking
@@ -783,16 +646,11 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         configure.args-append \
             -no-libudev       \
             -no-egl
-        if {!${QT53}} {
+        configure.args-append \
+            -no-libproxy
+        if {${os.major} <= 13} {
             configure.args-append \
-                -no-libproxy
-            if {${os.major} <= 13} {
-                configure.args-append \
-                    -c++std "c++11"
-            }
-        } else {
-            configure.args-append \
-                -no-c++11
+                -c++std "c++11"
         }
     } else {
         configure.args-delete  \
@@ -850,12 +708,7 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         -dbus-linked         \
         -glib                \
         -no-directfb
-    if {!${QT53}} {
-        configure.args-append   -no-use-gold-linker
-    }
-    if {!${QT58}} {
-        configure.args-append   -iconv
-    }
+    configure.args-append       -no-use-gold-linker
 
     configure.args-append       -optimized-qmake
 
@@ -870,105 +723,36 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
 
 
     if {${subport} eq "${name}-x11"} {
-        patchfiles-delete       ${PF532}patch-fontpanel.diff
-        if {${QT53}} {
-            patchfiles-append   ${PF532}patch-to-build-xcb.diff
-        } else {
-            patchfiles-append   ${PF58x}patch-to-build-xcb.diff
-        }
+        patchfiles-delete       patch-fontpanel.diff
+        patchfiles-append       ${PF58x}patch-to-build-xcb.diff
         post-patch {
-            if {${QT53}} {
-                # this may already have been done in patch-enable-qgenericunixservices.diff
-                reinplace -W ${worksrcpath}/qtbase/src "s|unix:!mac|unix|g" platformsupport/services/services.pri
-            } else {
-                # avoid introducing dependencies on the OpenGL frameworks; that means not building the cocoa QPA
-                # which is fine because we don't need it (and it's already installed).
-                set ext "pro"
-                reinplace -W ${worksrcpath}/qtbase/src "s|mac:|cocoa:|g" platformsupport/cglconvenience/cglconvenience.${ext}
-                reinplace -W ${worksrcpath}/qtbase/src "s|mac |cocoa |g" plugins/platforms/platforms.pro
-            }
+            # avoid introducing dependencies on the OpenGL frameworks; that means not building the cocoa QPA
+            # which is fine because we don't need it (and it's already installed).
+            set ext "pro"
+            reinplace -W ${worksrcpath}/qtbase/src "s|mac:|cocoa:|g" platformsupport/cglconvenience/cglconvenience.${ext}
+            reinplace -W ${worksrcpath}/qtbase/src "s|mac |cocoa |g" plugins/platforms/platforms.pro
         }
         configure.args-delete   -no-xinput2 -no-xcb -no-xcb-xlib
         configure.args-append   -xcb -xcb-xlib -qpa xcb
-        if {${QT53}} {
-            configure.args-append \
-                                -I ${prefix}/include -L ${prefix}/lib
-            patchfiles-append   qt532/patch-xcb-XOpenGL.diff \
-                                qt532/patch-xcb-missing-functions.diff
-        } else {
-            patchfiles-append   patch-xcb-XOpenGL-full.diff
-        }
+        patchfiles-append       patch-xcb-XOpenGL-full.diff
     } else {
         # make sure that the Designer doesn't try to use a global menubar when using the xcb plugin.
         # Yes, this patch has to be applied when building the master port, not the xcb plugin subport...
-        if {${QT53}} {
-            patchfiles-append   ${PF532}patch-designer-show-menubar-on-xcb.diff
-        } else {
-            patchfiles-append   ${PF58x}patch-designer-show-menubar-on-xcb.diff
-        }
-                # configure options that don't show up in configure --help
-        if {${os.platform} eq "darwin" && !${QT58}} {
-            # openvg makes sense only when using X11 ...
-            configure.args-append   -no-openvg
-        }
+        patchfiles-append       ${PF58x}patch-designer-show-menubar-on-xcb.diff
+        # configure options that don't show up in configure --help
+#         if {${os.platform} eq "darwin" && !${QT58}} {
+#             # openvg makes sense only when using X11 ...
+#             configure.args-append   -no-openvg
+#         }
     }
 
     if {${os.platform} eq "darwin"} {
-        if {${QT53}} {
-            # Some extra blackish magic to get Qt 5.3.2 to build on OS X 10.6, using a recent clang version.
-            patchfiles-append       qt532/patch-configure-allow-macports-binutils.diff \
-                                    qt532/patch-nistest.diff \
-                                    qt532/patch-icutest.pro.diff \
-                                    qt532/patch-clangconf.diff
-            if {${subport} ne "${name}-x11" && ${subport} ne "${name}-zz-docs"} {
-                patchfiles-append   qt532/patch-geoclue-gvalue-init.diff
-            }
-            patchfiles-append       qt532/patch-sdk.prf-no-xcrun.diff
-            # a hackery bit of post-patch to be done pre-configure
-            # (or post-patch, so it can be checked before running configure)
-            post-patch {
-                xinstall -m 755 -d ${workpath}/build/qtbase
-                xinstall -m 755 -d ${workpath}/build/qtbase/bin
-                # take some measures to pick the appropriate clang compiler. The compiler_blacklist portgroup and MacPorts based
-                # have already introduced a dependency on clang-3.5 (unless clang-3.4 is installed?!). We create symlinks to clang
-                # 3.4 or 3.5 in our build tree, so that the user doesn't have to do a `port select` for us.
-                if {![file exists ${workpath}/build/qtbase/bin/clang++]} {
-                    ln -s [qt_cc] ${workpath}/build/qtbase/bin/clang
-                    ln -s [qt_cxx] ${workpath}/build/qtbase/bin/clang++
-                }
-                # instruct the build system to use these for building:
-                reinplace -W ${worksrcpath}/qtbase "s|PREFIX|${prefix}|g" config.tests/unix/icu/icu.pro
-                # the configure script will build a bootstrap qmake executable respecting our mkspec (macx-clang referring to a MacPorts clang version)
-                # because we patched it to do just that (patch-configure-allow-macports-binutils.diff).
-                # We also provide an appropriate .qmake.stash to be sure that qmake doesn't generate a less appropriate one (despite the sdk.prf patch)
-                # NB: this issue also hampers the universal build of the qtwebengine subport.
-                if {![file exists ${workpath}/build/qtbase/.qmake.stash]} {
-                    file copy ${filespath}/qt532/qmake.stash.in ${workpath}/build/qtbase/.qmake.stash
-                }
-                reinplace -W ${workpath}/build/qtbase "s|PREFIX/bin/clang|${workpath}/build/qtbase/bin/clang|g" .qmake.stash
-                reinplace -W ${workpath}/build/qtbase "s|PREFIX|${prefix}|g" .qmake.stash
-                # put a copy at the build root, which will be required for building qtwebkit
-                # (way ahead in the future...)
-                if {![file exists ${workpath}/build/.qmake.stash]} {
-                    file copy ${workpath}/build/qtbase/.qmake.stash ${workpath}/build
-                }
-                if {[file exists ${worksrcpath}/qtwebkit/Source/WebCore/bindings/scripts/CodeGeneratorObjC.pm]} {
-                    reinplace "s|/usr/bin/clang|${workpath}/build/qtbase/bin/clang|g" \
-                                ${worksrcpath}/qtwebkit/Source/WebCore/bindings/scripts/CodeGeneratorObjC.pm
-                }
-                ui_msg "Everything is set up to use the Qt-specific compiler symlink ${workpath}/build/qtbase/bin/clang++\
-                        but the build system will probably resolve the actual compiler to which this link points ([qt_cxx]).\
-                        That is of no consequence; future Qt5 ports will use the Qt compiler in ${qt_bins_dir}."
-            }
-            configure.args-append   -process
-        } else {
-            # We don't want qmake to 2nd-guess the compiler we specify in our mkspec and
-            # replace it with an Xcode compiler determined by xcrun.
-            # 20150723: also exclude the QMAKE_LINK commands from being determined by xcrun
-            patchfiles-append       ${PF58x}patch-sdk.prf-xcrun-not-for-compilers.diff
-            # UsingTheRightCompiler:
-            patchfiles-append       patch-clangconf.diff
-        }
+        # We don't want qmake to 2nd-guess the compiler we specify in our mkspec and
+        # replace it with an Xcode compiler determined by xcrun.
+        # 20150723: also exclude the QMAKE_LINK commands from being determined by xcrun
+        patchfiles-append       ${PF58x}patch-sdk.prf-xcrun-not-for-compilers.diff
+        # UsingTheRightCompiler:
+        patchfiles-append       patch-clangconf.diff
     }
 
     # Qt builds part of the system using environment provided by MacPorts.
@@ -993,15 +777,9 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         configure.universal_cppflags
 
     # patches for improving the KDE experience (and facilitating debugging)
-    patchfiles-append       ${PF532}patch-enable-dumpObjectInfo.diff
-    if {${QT53}} {
-        patchfiles-append   qt532/correct-systraymenu-iconhandling.patch \
-                            qt532/deactivate-menurole-heuristics.patch \
-                            qt532/debug-negative-qtimerint.patch
-    } else {
-        patchfiles-append   deactivate-menurole-heuristics.patch \
+    patchfiles-append       patch-enable-dumpObjectInfo.diff
+    patchfiles-append       deactivate-menurole-heuristics.patch \
                             debug-negative-qtimerint.patch
-    }
 
     configure.args-append   -force-debug-info -no-strip -no-separate-debug-info
 }
@@ -1010,12 +788,9 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
 if { (${subport} eq ${name}) \
     || (${subport} eq "${name}-x11") || (${subport} eq "${name}-qtwebengine") } {
 
-    if {${QT53} && [variant_isset LTO]} {
-        ui_msg "The LTO variant is currently ignored for Qt 5.3"
-    }
     if {[variant_isset LTO] && ${os.platform} eq "darwin"} {
         if {(${os.major} <= 13) || ${CXX_mp}} {
-            patchfiles-append       ${PF532}patch-clangconf-lto-commands.diff
+            patchfiles-append       patch-clangconf-lto-commands.diff
         }
     }
     configure.ldflags-append        ${configure.optflags}
@@ -1037,6 +812,7 @@ if { (${subport} eq ${name}) \
         if {!${QT58}} {
             depends_lib-append port:libiconv
         }
+        conflicts_build-append      openal openal-soft
     } else {
         depends_build-append \
             port:tiff-dev
@@ -1352,7 +1128,7 @@ proc move_and_proxy_appbundles {} {
 
 if { (${subport} eq ${name}) \
     || (${subport} eq "${name}-x11") || (${subport} eq "${name}-qtwebengine")
-    || (!${QT53} && ![info exists qtwebkit_is_stub] && (${subport} eq "${name}-qtwebkit")) } {
+    || (![info exists qtwebkit_is_stub] && (${subport} eq "${name}-qtwebkit")) } {
 
     post-destroot {
 
@@ -1381,27 +1157,14 @@ if { (${subport} eq ${name}) \
 
             move_and_proxy_appbundles
 
-            if {${QT53}} {
-                # create our own compiler symlinks in qt_bins_dir:
-                ln -s [qt_cc] ${destroot}${qt_bins_dir}/clang
-                ln -s [qt_cxx] ${destroot}${qt_bins_dir}/clang++
-                # edit the build scripts to use those compilers:
-                reinplace "s|${build.dir}/qtbase/bin/clang|${qt_bins_dir}/clang|g" ${destroot}${qt_mkspecs_dir}/common/clang.conf
-                reinplace "s|${prefix}/bin/clang-mp-.*|${qt_bins_dir}/clang|g" ${destroot}${qt_mkspecs_dir}/qmodule.pri
-                reinplace "s|${prefix}/bin/clang\+\+-mp-.*|${qt_bins_dir}/clang\+\+|g" ${destroot}${qt_mkspecs_dir}/qmodule.pri
-                notes-append "Qt ${version} has been configured to use the C++ compiler ${qt_bins_dir}/clang++,\
-                    which is a symlink to [qt_cxx]. Remember to update this link (and its C compiler companion, clang)\
-                    if ever you upgrade your port:clang installation and remove the current version."
-            } else {
-                if {[file exists ${destroot}${qt_mkspecs_dir}/qmodule.pri]} {
-                    # clean up the generated mkspecs/qmodule.pri:
-                    # undo any symlink normalisation that introduced the clang version number into QMAKE_CC/CXX (e.g. clang++-mp-3.5)
-                    reinplace "s|${prefix}/bin/clang-mp-.*|clang|g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
-                    reinplace "s|${prefix}/bin/clang\+\+-mp-.*|clang\+\+|g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
-                    # UsingTheRightCompiler:
-                    reinplace -W ${destroot}${qt_mkspecs_dir}/common "s|${configure.cxx}|clang++|g" clang.conf
-                    reinplace -W ${destroot}${qt_mkspecs_dir}/common "s|${configure.cc}|clang|g" clang.conf
-                }
+            if {[file exists ${destroot}${qt_mkspecs_dir}/qmodule.pri]} {
+                # clean up the generated mkspecs/qmodule.pri:
+                # undo any symlink normalisation that introduced the clang version number into QMAKE_CC/CXX (e.g. clang++-mp-3.5)
+                reinplace "s|${prefix}/bin/clang-mp-.*|clang|g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
+                reinplace "s|${prefix}/bin/clang\+\+-mp-.*|clang\+\+|g"  ${destroot}${qt_mkspecs_dir}/qmodule.pri
+                # UsingTheRightCompiler:
+                reinplace -W ${destroot}${qt_mkspecs_dir}/common "s|${configure.cxx}|clang++|g" clang.conf
+                reinplace -W ${destroot}${qt_mkspecs_dir}/common "s|${configure.cc}|clang|g" clang.conf
             }
             if {[file exists ${destroot}${qt_mkspecs_dir}/qmodule.pri]} {
                 correct_qmodulepri_flags  ${destroot}${qt_mkspecs_dir}/qmodule.pri
@@ -1561,12 +1324,6 @@ pre-configure {
         if {[file exists ${build.dir}/qtbase/mkspecs/qmodule.pri]} {
             file delete -force ${build.dir}/qtbase/mkspecs/qmodule.pri
         }
-    } elseif {${QT53}} {
-        setQt53Compilers
-        set env(CC)         ${configure.cc}
-        set env(OBJC)       ${configure.objc}
-        set env(CXX)        ${configure.cxx}
-        set env(OBJCXX)     ${configure.objcxx}
     }
 }
 
@@ -1615,7 +1372,7 @@ post-configure {
             close $qfp
         }
     }
-    if {!${QT53} && [file exists ${worksrcpath}/qtwebkit/.git]} {
+    if {[file exists ${worksrcpath}/qtwebkit/.git]} {
         # Do what qmake would do during an in-tree build:
         system -W ${worksrcpath}/qtwebkit "../qtbase/bin/syncqt.pl Source -version ${version}"
     }
@@ -1631,26 +1388,9 @@ post-configure {
     }
 }
 
-pre-build {
-    if {${QT53}} {
-        setQt53Compilers
-        set env(CC)         ${configure.cc}
-        set env(OBJC)       ${configure.objc}
-        set env(CXX)        ${configure.cxx}
-        set env(OBJCXX)     ${configure.objcxx}
-    }
-}
-
 set webcorestlib ${build.dir}/Source/WebCore/release/libWebCore.a
 set compress_webcorestlib   no
 pre-destroot {
-    if {${QT53}} {
-        setQt53Compilers
-        set env(CC)         ${configure.cc}
-        set env(OBJC)       ${configure.objc}
-        set env(CXX)        ${configure.cxx}
-        set env(OBJCXX)     ${configure.objcxx}
-    }
     if {[file exists ${webcorestlib}.bz2]
             && ![file exists ${webcorestlib}]} {
         # others who like me keep the Qt5 build.dir around may appreciate the possibility to
@@ -1677,10 +1417,8 @@ subport ${name}-x11 {
         # extract only the qtbase component
         extract_components-append \
                             ${distname}/qtbase ${distname}/qtx11extras ${distname}/configure ${distname}/qt.pro
-        if {!${QT53}} {
-            extract_components-append \
+        extract_components-append \
                             ${distname}/.gitmodules
-        }
     } else {
         ui_msg "x11 subport unsupported on ${os.platform}"
         description         unsupported on ${os.platform}
@@ -1729,7 +1467,7 @@ subport ${name}-zz-docs {
     if {${QT58}} {
         patchfiles-append   ${PF58x}patch-configure-docs-no-build-qmake.diff
     } else {
-        patchfiles-append   ${PF532}patch-configure-docs-no-build-qmake.diff
+        patchfiles-append   patch-configure-docs-no-build-qmake.diff
     }
 
     default configure.dir       {${workpath}/build}
@@ -1749,17 +1487,12 @@ subport ${name}-zz-docs {
         # Also put a symlink to qmake where the configure script expects it
         xinstall -d -m 755 ${build.dir}/qtbase/bin/
         ln -s ${qt_bins_dir}/qmake ${build.dir}/qtbase/bin
-        if {${QT53}} {
-            ln -s ${qt_bins_dir}/qdoc ${build.dir}/qtbase/src/tools/qdoc/
-            ln -s ${qt_bins_dir}/qdoc ${build.dir}/qtbase/bin
-        } else {
-#             ln -s ${qt_bins_dir}/qdoc ${build.dir}/qttools/src/qdoc/
-            ln -s ${qt_bins_dir}/qdoc ${build.dir}/qttools/bin
-            ln -s ${qt_bins_dir}/moc ${build.dir}/qtbase/bin
-            ln -s ${qt_bins_dir}/rcc ${build.dir}/qtbase/bin
-            ln -s ${qt_bins_dir}/uic ${build.dir}/qtbase/bin
-            ln -s ${qt_bins_dir}/qtattributionsscanner ${build.dir}/qttools/bin
-        }
+#         ln -s ${qt_bins_dir}/qdoc ${build.dir}/qttools/src/qdoc/
+        ln -s ${qt_bins_dir}/qdoc ${build.dir}/qttools/bin
+        ln -s ${qt_bins_dir}/moc ${build.dir}/qtbase/bin
+        ln -s ${qt_bins_dir}/rcc ${build.dir}/qtbase/bin
+        ln -s ${qt_bins_dir}/uic ${build.dir}/qtbase/bin
+        ln -s ${qt_bins_dir}/qtattributionsscanner ${build.dir}/qttools/bin
 
         # Without this file, the makefile ${worksrcpath}/qtwebkit/Source/WebCore/Makefile.WebCore.Target
         #    keeps generating itself over and over again.
@@ -1798,11 +1531,10 @@ post-build {
 
 # See http://qt-project.org/doc/qt-5/sql-driver.html for info on building SQL Database Drivers
 
-if {!${QT53}} {
-  if {[info exists qtwebkit_is_stub]} {
+if {[info exists qtwebkit_is_stub]} {
     # add this one to the list of stub ports
     set qt5.kde_stubports [lappend qt5.kde_stubports qtwebkit]
-  } else {
+} else {
     subport ${name}-qtwebkit {
         description Qt5 WebKit
         long_description \
@@ -1827,8 +1559,7 @@ if {!${QT53}} {
                     port:leveldb
         }
         platform linux {
-            PortGroup       conflicts_build 1.0
-            conflicts_build leveldb
+            conflicts_build-append leveldb
         }
         use_PortGroup qmake5 1.0
         PortGroup   xcodeversion 1.0
@@ -1895,169 +1626,166 @@ if {!${QT53}} {
             }
         }
     }
-  }
 }
 
-if {!${QT53}} {
-    subport ${name}-qtwebengine {
-#         ###### sneak preview: push a newer QtWebEngine than the rest of Qt ######
-#         set qt_version      ${version}
-#         version             5.7.1
-#         set branch          [join [lrange [split ${version} .] 0 1] .]
-#         distname            qtwebengine-opensource-src-${version}
-#         distfiles \
-#                             ${distname}${extract.suffix}
-#         master_sites        http://download.qt.io/official_releases/qt/${branch}/${version}/submodules/
-#         checksums           rmd160  07bf263f775ac2a72f8db18ef53862b62be873a0 \
-#                             sha256  2101883e3d632b50133a14e3bbdc1d4d649e405c9618f2eef1b72a7b821ccc2b
-#         patch.pre_args      -Np2
-#         ########################################################################
+subport ${name}-qtwebengine {
+#     ###### sneak preview: push a newer QtWebEngine than the rest of Qt ######
+#     set qt_version      ${version}
+#     version             5.7.1
+#     set branch          [join [lrange [split ${version} .] 0 1] .]
+#     distname            qtwebengine-opensource-src-${version}
+#     distfiles \
+#                         ${distname}${extract.suffix}
+#     master_sites        http://download.qt.io/official_releases/qt/${branch}/${version}/submodules/
+#     checksums           rmd160  07bf263f775ac2a72f8db18ef53862b62be873a0 \
+#                         sha256  2101883e3d632b50133a14e3bbdc1d4d649e405c9618f2eef1b72a7b821ccc2b
+#     patch.pre_args      -Np2
+#     ########################################################################
 
-        if {(${os.platform} eq "darwin") && [vercmp ${macosx_deployment_target} 10.9] < 0} {
-            ui_error "qtwebengine ${version} won't build"
-            return -code error "unsupported OS X version"
-        }
-
-        conflicts-append    [qt5_port_conflicts qtwebengine]
-        description         ${description} - the QtWebEngine component
-        long_description    ${long_description} This port installs the  \
-                            QtWebEngine component.
-        use_PortGroup       qmake5 1.0
-        # see https://wiki.qt.io/QtWebEngine
-        PortGroup           xcodeversion 1.0
-        minimum_xcodeversions   {12 5.1}
-        universal_variant   no
-        # ninja is used, which has its own parallel cooker; it's called through
-        # a toplevel Makefile which should not be parsed in parallel to avoid
-        # some kind of process multiplication (I've seen peak CPU loads of 30 in a supposedly
-        # serial build ...)
-        use_parallel_build  no
-        # use NINJAFLAGS to tell ninja to use the desired number (N) of parallel compile jobs
-        # this still leads to CPU loads that are significantly higher than N though not more than 2x
-        # If necessary we can use ninja's -l N option which limits CPU load instead of job number.
-        build.args-append   NINJAFLAGS=-j${build.jobs}
-        if {[variant_isset universal]} {
-            # See the comments about qmake and .qmake.stash above. It is likely that the same "feature"
-            # prevents us from doing cross-bitwidth (32 on 64bit and vice-versa) builds inside the Qt
-            # source tree.
-            ui_msg "Warning: this component doesn't currently support a universal build (probable Qt bug)"
-        }
-        variant strip conflicts debug {reduce the disk footprint by stripping debug-related information (at the cost of increased build time)} {}
-
-        # the QtWebengine components is built using an included copy of ninja
-        depends_lib-append \
-                            ${qt5_dependency} \
-                            port:snappy
-        # qtwebengine/src/3rdparty/ninja/bootstrap.py calls g++ (must set CXX)
-        build.env-append    CXX=${configure.cxx}
-
-        # set up things for an out-of-source build:
-        default configure.dir \
-                            {${workpath}/build}
-        default build.dir   {${workpath}/build}
-
-        # check if we're using the all-inclusive distribution tarball
-        # (that's the case when the "sneak preview" code above is activated so
-        # we can ship a newer QtWebEngine version before upgrading the rest of Qt.)
-        if {${distname} eq "qtwebengine-opensource-src-${version}"} {
-            configure.args  -Wall -r ../${worksrcdir}/qtwebengine.pro \
-                            QMAKE_LINK=${configure.cxx}
-        } else {
-            # extract only the qtwebengine component
-            extract_components-append \
-                            ${distname}/qtwebengine
-            configure.args  -Wall -r ../${worksrcdir}/qtwebengine/qtwebengine.pro \
-                            QMAKE_LINK=${configure.cxx}
-        }
-
-        platform darwin 13 {
-            set macosx_deployment_target 10.10
-            # getting the CFAllocator context fails for me, so disable it
-            # https://bugreports.qt.io/browse/QTBUG-56703
-            patchfiles-append \
-                        ${PF58x}patch-qwe-no-allocator-context.diff
-            post-destroot {
-                # correct the rpath to the CoreBluetooth framework binary.
-                # Mostly required to satisfy `port rev-upgrade`
-                system "install_name_tool -change /System/Library/Frameworks/CoreBluetooth.framework/Versions/A/CoreBluetooth \
-                    /System/Library/Frameworks/IOBluetooth.framework/Frameworks/CoreBluetooth.framework/Versions/A/CoreBluetooth \
-                    ${destroot}${prefix}/libexec/qt5/Library/Frameworks/QtWebEngineCore.framework/Versions/5/QtWebEngineCore"
-            }
-            configure.args-append \
-                        QMAKE_MAC_SDK=macosx10.10
-        }
-        platform linux {
-            patchfiles-append \
-                        ${PF58x}/patch-qwe-ignore-jj-variants.diff
-        }
-        patchfiles-append \
-                        patch-qwe-bluetooth-57x.diff
-        # avoid using an __attribute__ not known by all clang versions
-        patchfiles-append \
-                        ${PF58x}patch-qwe-no-sanitisation.diff
-        post-destroot {
-            if {[info exists qt_version] && [vercmp ${version} ${qt_version}] != 0} {
-                reinplace "s|${version} \$\{_Qt5WebEngineCore_FIND_VERSION_EXACT\}|${qt_version} \$\{_Qt5WebEngineCore_FIND_VERSION_EXACT\}|g" \
-                    ${destroot}${qt_cmake_module_dir}/Qt5WebEngineCore/Qt5WebEngineCoreConfig.cmake
-            }
-        }
-        # UsingTheRightCompiler (https://trac.macports.org/wiki/UsingTheRightCompiler)
-        build.env-append    CXX=${configure.cxx}
-
-        configure.post_args-append -after QMAKE_CXXFLAGS-=-O3
-        configure.post_args-append QMAKE_CXXFLAGS-=-O2
-        configure.post_args-append QMAKE_CXXFLAGS-=-g
-        configure.post_args-append "QMAKE_CXXFLAGS+=\"${configure.cxxflags}\""
-        configure.args-append \
-                            WEBENGINE_CONFIG+=use_proprietary_codecs \
-                            CONFIG-=debug \
-                            WEBENGINE_CONFIG+=reduce_binary_size \
-                            WEBENGINE_CONFIG+=use_system_snappy \
-                            WEBENGINE_CONFIG+=use_system_icu \
-                            WEBENGINE_CONFIG+=use_system_ffmpeg \
-                            WEBENGINE_CONFIG+=use_native_spellchecker
-        if {${os.platform} eq "darwin"} {
-            # Qt's new-style configure options are better suited for configure.post_args:
-            configure.post_args-append \
-                            -- -no-pulseaudio -proprietary-codecs
-        } else {
-            PortGroup       conflicts_build 1.0
-            conflicts_build \
-                            gettext-dev libvpx-dev \
-                            ${subport} qt5-kde-qtwebengine qt5-qtwebengine
-            depends_lib-append \
-                            port:libxml2
-            patchfiles-append \
-                            patch-qwe-disable-libvpx.diff
-            configure.args-append \
-                            WEBENGINE_CONFIG+=use_system_libxml
-            configure.args-delete \
-                            WEBENGINE_CONFIG+=use_system_icu
-            configure.post_args-append \
-                            -- -proprietary-codecs
-        }
+    if {(${os.platform} eq "darwin") && [vercmp ${macosx_deployment_target} 10.9] < 0} {
+        ui_error "qtwebengine ${version} won't build"
+        return -code error "unsupported OS X version"
     }
 
-    subport ${name}-qtwebview {
-        use_PortGroup           qmake5 1.0
+    conflicts-append    [qt5_port_conflicts qtwebengine]
+    description         ${description} - the QtWebEngine component
+    long_description    ${long_description} This port installs the  \
+                        QtWebEngine component.
+    use_PortGroup       qmake5 1.0
+    # see https://wiki.qt.io/QtWebEngine
+    PortGroup           xcodeversion 1.0
+    minimum_xcodeversions   {12 5.1}
+    universal_variant   no
+    # ninja is used, which has its own parallel cooker; it's called through
+    # a toplevel Makefile which should not be parsed in parallel to avoid
+    # some kind of process multiplication (I've seen peak CPU loads of 30 in a supposedly
+    # serial build ...)
+    use_parallel_build  no
+    # use NINJAFLAGS to tell ninja to use the desired number (N) of parallel compile jobs
+    # this still leads to CPU loads that are significantly higher than N though not more than 2x
+    # If necessary we can use ninja's -l N option which limits CPU load instead of job number.
+    build.args-append   NINJAFLAGS=-j${build.jobs}
+    if {[variant_isset universal]} {
+        # See the comments about qmake and .qmake.stash above. It is likely that the same "feature"
+        # prevents us from doing cross-bitwidth (32 on 64bit and vice-versa) builds inside the Qt
+        # source tree.
+        ui_msg "Warning: this component doesn't currently support a universal build (probable Qt bug)"
+    }
+    variant strip conflicts debug {reduce the disk footprint by stripping debug-related information (at the cost of increased build time)} {}
 
-        description             ${description} - the Qt WebView component
-        long_description        ${long_description} - the Qt WebView component.
-        conflicts-append        [qt5_port_conflicts qtwebview]
+    # the QtWebengine components is built using an included copy of ninja
+    depends_lib-append \
+                        ${qt5_dependency} \
+                        port:snappy
+    # qtwebengine/src/3rdparty/ninja/bootstrap.py calls g++ (must set CXX)
+    build.env-append    CXX=${configure.cxx}
 
+    # set up things for an out-of-source build:
+    default configure.dir \
+                        {${workpath}/build}
+    default build.dir   {${workpath}/build}
 
+    # check if we're using the all-inclusive distribution tarball
+    # (that's the case when the "sneak preview" code above is activated so
+    # we can ship a newer QtWebEngine version before upgrading the rest of Qt.)
+    if {${distname} eq "qtwebengine-opensource-src-${version}"} {
+        configure.args  -Wall -r ../${worksrcdir}/qtwebengine.pro \
+                        QMAKE_LINK=${configure.cxx}
+    } else {
+        # extract only the qtwebengine component
         extract_components-append \
-                                ${distname}/qtwebview
-        depends_lib-append      ${qt5_dependency} \
-                                ${qt5webengine_dependency}
-        default configure.dir   {${workpath}/build}
-        configure.pre_args-append \
-                                ../${worksrcdir}/qtwebview/qtwebview.pro
-        default build.dir       {${workpath}/build}
-        platform darwin {
-            post-destroot {
-                proxy_includes_and_libs
-            }
+                        ${distname}/qtwebengine
+        configure.args  -Wall -r ../${worksrcdir}/qtwebengine/qtwebengine.pro \
+                        QMAKE_LINK=${configure.cxx}
+    }
+
+    platform darwin 13 {
+        set macosx_deployment_target 10.10
+        # getting the CFAllocator context fails for me, so disable it
+        # https://bugreports.qt.io/browse/QTBUG-56703
+        patchfiles-append \
+                    ${PF58x}patch-qwe-no-allocator-context.diff
+        post-destroot {
+            # correct the rpath to the CoreBluetooth framework binary.
+            # Mostly required to satisfy `port rev-upgrade`
+            system "install_name_tool -change /System/Library/Frameworks/CoreBluetooth.framework/Versions/A/CoreBluetooth \
+                /System/Library/Frameworks/IOBluetooth.framework/Frameworks/CoreBluetooth.framework/Versions/A/CoreBluetooth \
+                ${destroot}${prefix}/libexec/qt5/Library/Frameworks/QtWebEngineCore.framework/Versions/5/QtWebEngineCore"
+        }
+        configure.args-append \
+                    QMAKE_MAC_SDK=macosx10.10
+    }
+    platform linux {
+        patchfiles-append \
+                    ${PF58x}/patch-qwe-ignore-jj-variants.diff
+    }
+    patchfiles-append \
+                    patch-qwe-bluetooth-57x.diff
+    # avoid using an __attribute__ not known by all clang versions
+    patchfiles-append \
+                    ${PF58x}patch-qwe-no-sanitisation.diff
+    post-destroot {
+        if {[info exists qt_version] && [vercmp ${version} ${qt_version}] != 0} {
+            reinplace "s|${version} \$\{_Qt5WebEngineCore_FIND_VERSION_EXACT\}|${qt_version} \$\{_Qt5WebEngineCore_FIND_VERSION_EXACT\}|g" \
+                ${destroot}${qt_cmake_module_dir}/Qt5WebEngineCore/Qt5WebEngineCoreConfig.cmake
+        }
+    }
+    # UsingTheRightCompiler (https://trac.macports.org/wiki/UsingTheRightCompiler)
+    build.env-append    CXX=${configure.cxx}
+
+    configure.post_args-append -after QMAKE_CXXFLAGS-=-O3
+    configure.post_args-append QMAKE_CXXFLAGS-=-O2
+    configure.post_args-append QMAKE_CXXFLAGS-=-g
+    configure.post_args-append "QMAKE_CXXFLAGS+=\"${configure.cxxflags}\""
+    configure.args-append \
+                        WEBENGINE_CONFIG+=use_proprietary_codecs \
+                        CONFIG-=debug \
+                        WEBENGINE_CONFIG+=reduce_binary_size \
+                        WEBENGINE_CONFIG+=use_system_snappy \
+                        WEBENGINE_CONFIG+=use_system_icu \
+                        WEBENGINE_CONFIG+=use_system_ffmpeg \
+                        WEBENGINE_CONFIG+=use_native_spellchecker
+    if {${os.platform} eq "darwin"} {
+        # Qt's new-style configure options are better suited for configure.post_args:
+        configure.post_args-append \
+                        -- -no-pulseaudio -proprietary-codecs
+    } else {
+        PortGroup       conflicts_build 1.0
+        conflicts_build \
+                        gettext-dev libvpx-dev \
+                        ${subport} qt5-kde-qtwebengine qt5-qtwebengine
+        depends_lib-append \
+                        port:libxml2
+        patchfiles-append \
+                        patch-qwe-disable-libvpx.diff
+        configure.args-append \
+                        WEBENGINE_CONFIG+=use_system_libxml
+        configure.args-delete \
+                        WEBENGINE_CONFIG+=use_system_icu
+        configure.post_args-append \
+                        -- -proprietary-codecs
+    }
+}
+
+subport ${name}-qtwebview {
+    use_PortGroup           qmake5 1.0
+
+    description             ${description} - the Qt WebView component
+    long_description        ${long_description} - the Qt WebView component.
+    conflicts-append        [qt5_port_conflicts qtwebview]
+
+
+    extract_components-append \
+                            ${distname}/qtwebview
+    depends_lib-append      ${qt5_dependency} \
+                            ${qt5webengine_dependency}
+    default configure.dir   {${workpath}/build}
+    configure.pre_args-append \
+                            ../${worksrcdir}/qtwebview/qtwebview.pro
+    default build.dir       {${workpath}/build}
+    platform darwin {
+        post-destroot {
+            proxy_includes_and_libs
         }
     }
 }
@@ -2087,10 +1815,6 @@ if {${subport} eq "${name}-sqlite3-plugin"} {
     PortGroup       obsolete 1.0
 }
 
-if {${QT53}} {
-    # qtwebkit is a stubport before Qt 5.6.0
-    set qt5.kde_stubports [lappend qt5.kde_stubports qtwebkit]
-}
 foreach sp ${qt5.kde_stubports} {
     subport ${name}-${sp} {
         conflicts-append    [qt5_port_conflicts ${sp}]
@@ -2281,13 +2005,7 @@ subport ${name}-examples {
                                 ${distname}/qtxmlpatterns/examples/     \
                                 ${distname}/qt3d/examples               \
                                 ${distname}/qtcanvas3d/examples
-    if {${QT53}} {
-        extract_components-append \
-                                ${distname}/qtquick1/examples/          \
-                                ${distname}/qtwebkit-examples/examples/
-    } else {
-        extract_components-append \
-                                ${distname}/qt3d/examples \
+    extract_components-append   ${distname}/qt3d/examples \
                                 ${distname}/qtcharts/examples \
                                 ${distname}/qtdatavis3d/examples \
                                 ${distname}/qtgamepad/examples \
@@ -2298,24 +2016,19 @@ subport ${name}-examples {
                                 ${distname}/qtserialport/examples/   \
                                 ${distname}/qtvirtualkeyboard/examples
 
-        variant qtwebengine description {build the qtwebengine and qtwebview examples too} {
-#             depends_lib-append          ${qt5webengine_dependency}
-            qt5.depends_component       qtwebengine qtwebview
-            extract_components-append   ${distname}/qtwebengine/examples/ \
-                                        ${distname}/qtwebview/examples/
-        }
-        platform linux {
-            extract_components-append   ${distname}/qtwayland/examples
-        }
+    variant qtwebengine description {build the qtwebengine and qtwebview examples too} {
+#         depends_lib-append          ${qt5webengine_dependency}
+        qt5.depends_component       qtwebengine qtwebview
+        extract_components-append   ${distname}/qtwebengine/examples/ \
+                                    ${distname}/qtwebview/examples/
     }
-    depends_lib-append          ${qt5_dependency}
+    platform linux {
+        extract_components-append   ${distname}/qtwayland/examples
+    }
+    depends_lib-append              ${qt5_dependency}
 
     post-extract {
-        if {${QT53}} {
-            copy -force ${filespath}/${PF532}/all-examples.pro ${workpath}/${worksrcdir}/all-examples.pro
-        } else {
-            copy -force ${filespath}/${PF58x}/all-examples.pro ${workpath}/${worksrcdir}/all-examples.pro
-        }
+        copy -force ${filespath}/${PF58x}/all-examples.pro ${workpath}/${worksrcdir}/all-examples.pro
         if {![variant_isset qtwebengine]} {
             reinplace "/qtwebengine/d" ${workpath}/${worksrcdir}/all-examples.pro
             reinplace "/qtwebview/d" ${workpath}/${worksrcdir}/all-examples.pro
@@ -2327,8 +2040,8 @@ subport ${name}-examples {
         xinstall -m 755 -d ${workpath}/build
     }
 
-    patchfiles-append           ${PF532}remove_icon_from_example.patch \
-                                ${PF532}remove_google_adsense.patch
+    patchfiles-append           remove_icon_from_example.patch \
+                                remove_google_adsense.patch
 
     variant debug description {This variant builds with more debugging info} {
         if {[string match *clang* ${configure.cxx}]} {
@@ -2405,18 +2118,14 @@ subport ${name}-assistant {
     depends_lib-append          ${qt5_dependency}
 
     variant qtwebkit description {build the full-featured version that uses QtWebKit for rendering} {}
-    if {!${QT53}} {
-        # Qt 5.3 only had QtWebKit
-        if {[variant_isset qtwebkit]} {
-            qt5.depends_component \
-                                qtwebkit
-            patchfiles-append   patch-assistant-with-qtwebkit.diff
-        } else {
-            patchfiles-append   patch-assistant-without-qtwebkit.diff
-        }
+    if {[variant_isset qtwebkit]} {
+        qt5.depends_component   qtwebkit
+        patchfiles-append       patch-assistant-with-qtwebkit.diff
+    } else {
+        patchfiles-append       patch-assistant-without-qtwebkit.diff
     }
 
-    patchfiles-append           ${PF532}patch-fontpanel.diff
+    patchfiles-append           patch-fontpanel.diff
 
     default configure.dir       {${workpath}/build}
     configure.pre_args-append   ../${worksrcdir}/qttools/src/assistant/assistant/assistant.pro
