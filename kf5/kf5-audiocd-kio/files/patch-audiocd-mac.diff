@@ -1,18 +1,7 @@
---- plugins/wav/orig.encodercda.cpp	2017-06-20 14:55:21.000000000 +0200
-+++ plugins/wav/encodercda.cpp	2017-08-12 15:55:10.000000000 +0200
-@@ -43,9 +43,7 @@
- extern "C"
- {
-   //cdda_interface.h in cdparanoia 10.2 has a member called 'private' which the C++ compiler doesn't like
--  #define private _private
--  #include <cdda_interface.h>
--  #undef private
-+  #include "cdda_interface_local.h"
- }
- 
- inline int16_t swap16 (int16_t i)
---- orig.audiocd.cpp	2017-06-20 14:55:21.000000000 +0200
-+++ audiocd.cpp	2017-08-12 16:54:12.000000000 +0200
+diff --git a/audiocd.cpp b/audiocd.cpp
+index 926308d..49f8f9a 100644
+--- a/audiocd.cpp
++++ b/audiocd.cpp
 @@ -28,10 +28,8 @@
  extern "C"
  {
@@ -25,7 +14,83 @@
  	void paranoiaCallback(long, int);
  
  	KDE_EXPORT int kdemain(int argc, char ** argv);
-@@ -806,12 +804,16 @@
+@@ -55,6 +53,7 @@ extern "C"
+ #include <klocale.h>
+ #include <QRegExp>
+ #include <QHash>
++#include <QDebug>
+ #include <KLocalizedString>
+ // CDDB
+ #include <KCddb/Client>
+@@ -83,14 +82,14 @@ int kdemain(int argc, char ** argv)
+ 	KCmdLineArgs::addCmdLineOptions(options);
+ 	KApplication app(true);
+ 
+-	kDebug(7117) << "Starting " << getpid();
++	qWarning() << "Starting " << getpid();
+ 
+ 	KCmdLineArgs* args = KCmdLineArgs::parsedArgs();
+ 	AudioCDProtocol slave(args->arg(0).toLocal8Bit(), args->arg(1).toLocal8Bit(), args->arg(2).toLocal8Bit());
+ 	args->clear();
+ 	slave.dispatchLoop();
+ 
+-	kDebug(7117) << "Done";
++	qWarning() << "Done";
+ 	return 0;
+ }
+ 
+@@ -223,6 +222,9 @@ static void setDeviceToCd(KCompactDisc *cd, struct cdrom_drive *drive)
+ {
+ #if defined(HAVE_CDDA_IOCTL_DEVICE)
+ 	cd->setDevice(QLatin1String( drive->ioctl_device_name ), 50, false);
++#elif defined(Q_OS_MACOS)
++	cd->setDevice(QLatin1String( drive->cdda_device_name ), 50, false);
++    qWarning() << drive->ioctl_device_name;
+ #elif defined(__FreeBSD__) || defined(__DragonFly__)
+ 	// FreeBSD's cdparanoia as of january 5th 2006 has rather broken
+ 	// support for non-SCSI devices. Although it finds ATA cdroms just
+@@ -235,12 +237,12 @@ static void setDeviceToCd(KCompactDisc *cd, struct cdrom_drive *drive)
+ 		// For ATAPI devices, we have no real choice. Use the
+ 		// user selected value, even if there is none.
+ 		//
+-		kWarning(7117) << "Found an ATAPI device, assuming it is the one specified by the user.";
++		qWarning() << "Found an ATAPI device, assuming it is the one specified by the user.";
+ 		cd->setDevice( drive->cdda_device_name );
+ 	}
+ 	else
+ 	{
+-		kDebug(7117) << "Found a SCSI or ATAPICAM device.";
++		qWarning() << "Found a SCSI or ATAPICAM device.";
+ 		if ( strlen(drive->dev->device_path) > 0 )
+ 		{
+ 			cd->setDevice( drive->dev->device_path );
+@@ -254,15 +256,13 @@ static void setDeviceToCd(KCompactDisc *cd, struct cdrom_drive *drive)
+ 			QString devname = QString::fromLatin1( "/dev/%1%2" )
+ 				.arg( drive->dev->given_dev_name )
+ 				.arg( drive->dev->given_unit_number ) ;
+-			kDebug(7117) << "  Using derived name " << devname;
++			qWarning() << "  Using derived name " << devname;
+ 			cd->setDevice( devname );
+ 		}
+ 	}
+ #else
+-#ifdef __GNUC__
+ 	#warning audiocd ioslave is not going to work for you
+ #endif
+-#endif
+ }
+ 
+ struct cdrom_drive * AudioCDProtocol::initRequest(const QUrl & url)
+@@ -422,7 +422,7 @@ struct cdrom_drive * AudioCDProtocol::initRequest(const QUrl & url)
+ 	if (d->req_track >= (int)d->tracks)
+ 		d->req_track = -1;
+ 
+-	kDebug(7117) << "path=" << path << " file=" << d->fname
++	qWarning() << "path=" << path << " file=" << d->fname
+ 		<< " req_track=" << d->req_track << " which_dir=" << d->which_dir << " full CD?=" << d->req_allTracks << endl;
+ 	return drive;
+ }
+@@ -806,15 +806,22 @@ struct cdrom_drive *AudioCDProtocol::getDrive()
  {
  	const QByteArray device(QFile::encodeName(d->device));
  
@@ -38,7 +103,384 @@
  	drive = cdda_identify(device, CDDA_MESSAGE_FORGETIT, 0);
 +#else
 +	struct cdrom_drive * drive = cdda_find_a_cdrom(CDDA_MESSAGE_PRINTIT, 0);
++	if (drive) {
++		cdda_verbose_set(drive,CDDA_MESSAGE_PRINTIT,CDDA_MESSAGE_PRINTIT);
++	}
 +#endif
  
  	if (0 == drive) {
- 		kDebug(7117) << "Can't find an audio CD on: \"" << d->device << "\"";
+-		kDebug(7117) << "Can't find an audio CD on: \"" << d->device << "\"";
++		qWarning() << "Can't find an audio CD on: \"" << d->device << "\"";
+ 
+ 		const QFileInfo fi(d->device);
+ 		if(!fi.isReadable())
+@@ -830,11 +837,17 @@ i18n("Unknown error.  If you have a cd in the drive try running cdparanoia -vsQ
+ 
+ 	if (0 != cdda_open(drive))
+ 	{
+-		kDebug(7117) << "cdda_open failed";
++		qWarning() << "cdda_open failed";
+ 		error(KIO::ERR_CANNOT_OPEN_FOR_READING, d->device);
+ 		cdda_close(drive);
+ 		return 0;
+ 	}
++#ifdef Q_OS_MACOS
++	else
++	{
++		d->device = QString::fromUtf8(drive->cdda_device_name);
++	}
++#endif
+ 
+ 	return drive;
+ }
+@@ -853,7 +866,7 @@ void AudioCDProtocol::paranoiaRead(
+ 
+ 	cdrom_paranoia * paranoia = paranoia_init(drive);
+ 	if (0 == paranoia) {
+-		kDebug(7117) << "paranoia_init failed";
++		qWarning() << "paranoia_init failed";
+ 		return;
+ 	}
+ 
+@@ -902,7 +915,7 @@ void AudioCDProtocol::paranoiaRead(
+ 			warned = 1;
+ 		}
+ 		if (0 == buf) {
+-			kDebug(7117) << "Unrecoverable error in paranoia_read";
++			qWarning() << "Unrecoverable error in paranoia_read";
+ 			ok = false;
+ 			error( ERR_SLAVE_DEFINED, i18n( "Error reading audio data for %1 from the CD", fileName ) );
+ 			break;
+@@ -912,7 +925,7 @@ void AudioCDProtocol::paranoiaRead(
+ 
+ 		int encoderProcessed = encoder->read(buf, CD_FRAMESAMPLES);
+ 		if(encoderProcessed == -1){
+-			kDebug(7117) << "Encoder processing error, stopping.";
++			qWarning() << "Encoder processing error, stopping.";
+ 			ok = false;
+ 			QString errMsg = i18n( "Could not read %1: encoding failed", fileName );
+ 			QString details = encoder->lastErrorMessage();
+@@ -1039,7 +1052,7 @@ void AudioCDProtocol::parseURLArgs(const QUrl & url)
+ 		else if (attribute == QLatin1String("niceLevel")){
+ 			int niceLevel = value.toInt();
+ 			if(setpriority(PRIO_PROCESS, getpid(), niceLevel) != 0)
+-				kDebug(7117) << "Setting nice level to (" << niceLevel << ") failed.";
++				qWarning() << "Setting nice level to (" << niceLevel << ") failed.";
+ 		}
+ 	}
+ }
+@@ -1070,7 +1083,7 @@ void AudioCDProtocol::loadSettings()
+ 	if(groupCDDA.hasKey("niceLevel")) {
+ 		int niceLevel = groupCDDA.readEntry("niceLevel", 0);
+ 		if(setpriority(PRIO_PROCESS, getpid(), niceLevel) != 0)
+-			kDebug(7117) << "Setting nice level to (" << niceLevel << ") failed.";
++			qWarning() << "Setting nice level to (" << niceLevel << ") failed.";
+ 	}
+ 
+ 	// The default track filename template
+@@ -1169,54 +1182,54 @@ void paranoiaCallback(long, int function)
+ {
+ 	switch(function){
+ 		case PARANOIA_CB_VERIFY:
+-			//kDebug(7117) << "PARANOIA_CB_VERIFY";
++			//qWarning() << "PARANOIA_CB_VERIFY";
+ 			break;
+ 
+ 		case PARANOIA_CB_READ:
+-			//kDebug(7117) << "PARANOIA_CB_READ";
++			//qWarning() << "PARANOIA_CB_READ";
+ 			break;
+ 
+ 		case PARANOIA_CB_FIXUP_EDGE:
+-			//kDebug(7117) << "PARANOIA_CB_FIXUP_EDGE";
++			//qWarning() << "PARANOIA_CB_FIXUP_EDGE";
+ 			paranoia_read_limited_error = 2;
+ 			break;
+ 
+ 		case PARANOIA_CB_FIXUP_ATOM:
+-			//kDebug(7117) << "PARANOIA_CB_FIXUP_ATOM";
++			//qWarning() << "PARANOIA_CB_FIXUP_ATOM";
+ 			paranoia_read_limited_error = 6;
+ 			break;
+ 
+ 		case PARANOIA_CB_READERR:
+-			kDebug(7117) << "PARANOIA_CB_READERR";
++			qWarning() << "PARANOIA_CB_READERR";
+ 			paranoia_read_limited_error = 6;
+ 			break;
+ 
+ 		case PARANOIA_CB_SKIP:
+-			kDebug(7117) << "PARANOIA_CB_SKIP";
++			qWarning() << "PARANOIA_CB_SKIP";
+ 			paranoia_read_limited_error = 8;
+ 			break;
+ 
+ 		case PARANOIA_CB_OVERLAP:
+-			//kDebug(7117) << "PARANOIA_CB_OVERLAP";
++			//qWarning() << "PARANOIA_CB_OVERLAP";
+ 			break;
+ 
+ 		case PARANOIA_CB_SCRATCH:
+-			kDebug(7117) << "PARANOIA_CB_SCRATCH";
++			qWarning() << "PARANOIA_CB_SCRATCH";
+ 			paranoia_read_limited_error = 7;
+ 			break;
+ 
+ 		case PARANOIA_CB_DRIFT:
+-			//kDebug(7117) << "PARANOIA_CB_DRIFT";
++			//qWarning() << "PARANOIA_CB_DRIFT";
+ 			paranoia_read_limited_error = 4;
+ 			break;
+ 
+ 		case PARANOIA_CB_FIXUP_DROPPED:
+-			kDebug(7117) << "PARANOIA_CB_FIXUP_DROPPED";
++			qWarning() << "PARANOIA_CB_FIXUP_DROPPED";
+ 			paranoia_read_limited_error = 5;
+ 			break;
+ 
+ 		case PARANOIA_CB_FIXUP_DUPED:
+-			kDebug(7117) << "PARANOIA_CB_FIXUP_DUPED";
++			qWarning() << "PARANOIA_CB_FIXUP_DUPED";
+ 			paranoia_read_limited_error = 5;
+ 			break;
+ 	}
+diff --git a/cdda_interface_local.h b/cdda_interface_local.h
+new file mode 100644
+index 0000000..0d236bb
+--- /dev/null
++++ b/cdda_interface_local.h
+@@ -0,0 +1,219 @@
++/******************************************************************
++ * CopyPolicy: GNU Lesser General Public License 2.1 applies
++ * Copyright (C) 2001-2008 Xiph.org
++ * Original version by Heiko Eissfeldt heiko@escape.colossus.de
++ *
++ * Toplevel interface header; applications include this
++ *
++ ******************************************************************/
++
++#ifndef _cdda_interface_h_
++#define _cdda_interface_h_
++
++#ifndef CD_FRAMESIZE
++#define CD_FRAMESIZE 2048
++#endif
++#ifndef CD_FRAMESIZE_RAW
++#define CD_FRAMESIZE_RAW 2352
++#endif
++#define CD_FRAMESAMPLES (CD_FRAMESIZE_RAW / 4)
++
++#ifdef __APPLE__
++#include <IOKit/IOKitLib.h>
++#include <IOKit/storage/IOCDTypes.h>
++#endif
++
++#include <sys/types.h>
++#include <signal.h>
++
++#define MAXTRK 100
++
++typedef struct TOC {	/* structure of table of contents */
++  unsigned char bFlags;
++  unsigned char bTrack;
++  int32_t dwStartSector;
++} TOC;
++
++/* interface types */
++#define GENERIC_SCSI	 0
++#define COOKED_IOCTL	 1
++#define TEST_INTERFACE	 2
++#define SGIO_SCSI	 3
++#define SGIO_SCSI_BUGGY1 4
++#define IOKIT_INTERFACE  5
++
++#define CDDA_MESSAGE_FORGETIT 0
++#define CDDA_MESSAGE_PRINTIT 1
++#define CDDA_MESSAGE_LOGIT 2
++
++/* cdrom access function pointer */
++
++typedef struct cdda_private_data cdda_private_data_t;
++
++typedef struct cdrom_drive{
++
++  int opened; /* This struct may just represent a candidate for opening */
++
++  char *cdda_device_name;
++  char *ioctl_device_name;
++
++  int cdda_fd;
++  int ioctl_fd;
++
++  char *drive_model;
++  int drive_type;
++  int interface;
++  int bigendianp;
++  int nsectors;
++
++  int cd_extra;
++  int tracks;
++  TOC disc_toc[MAXTRK];
++  long audio_first_sector;
++  long audio_last_sector;
++
++  int errordest;
++  int messagedest;
++  char *errorbuf;
++  char *messagebuf;
++
++  /* functions specific to particular drives/interfaces */
++
++  int  (*enable_cdda)  (struct cdrom_drive *d, int onoff);
++  int  (*read_toc)     (struct cdrom_drive *d);
++  long (*read_audio)   (struct cdrom_drive *d, void *p, long begin, 
++		       long sectors);
++  int  (*set_speed)    (struct cdrom_drive *d, int speed);
++  int error_retry;
++  int report_all;
++
++  int is_atapi;
++  int is_mmc;
++
++  cdda_private_data_t *_private;
++  void         *reserved;
++  unsigned char inqbytes[4];
++
++  /* Scsi parameters and state */
++  unsigned char density;
++  unsigned char orgdens;
++  unsigned int orgsize;
++  long bigbuff;
++  int adjust_ssize;
++
++  int fua;
++  int lun;
++
++  sigset_t sigset;
++
++#ifdef __APPLE__
++  io_object_t io;
++
++  CDTOC *raw_toc;
++  int descriptor_count;
++#endif
++} cdrom_drive;
++
++#define IS_AUDIO(d,i) (!(d->disc_toc[i].bFlags & 0x04))
++
++/******** Identification/autosense functions */
++
++extern cdrom_drive *cdda_find_a_cdrom(int messagedest, char **message);
++extern cdrom_drive *cdda_identify(const char *device, int messagedest,
++				  char **message);
++extern cdrom_drive *cdda_identify_cooked(const char *device,int messagedest,
++					 char **message);
++extern cdrom_drive *cdda_identify_scsi(const char *generic_device, 
++				       const char *ioctl_device,
++				       int messagedest, char **message);
++#ifdef CDDA_TEST
++extern cdrom_drive *cdda_identify_test(const char *filename,
++				       int messagedest, char **message);
++#endif
++
++/******** Drive oriented functions */
++
++extern char *cdda_version();
++extern int cdda_speed_set(cdrom_drive *d, int speed);
++extern void cdda_verbose_set(cdrom_drive *d,int err_action, int mes_action);
++extern char *cdda_messages(cdrom_drive *d);
++extern char *cdda_errors(cdrom_drive *d);
++
++extern int cdda_close(cdrom_drive *d);
++extern int cdda_open(cdrom_drive *d);
++extern long cdda_read(cdrom_drive *d, void *buffer,
++		       long beginsector, long sectors);
++extern long cdda_read_timed(cdrom_drive *d, void *buffer,
++			    long beginsector, long sectors, int *milliseconds);
++
++extern long cdda_track_firstsector(cdrom_drive *d,int track);
++extern long cdda_track_lastsector(cdrom_drive *d,int track);
++extern long cdda_tracks(cdrom_drive *d);
++extern int cdda_sector_gettrack(cdrom_drive *d,long sector);
++extern int cdda_track_channels(cdrom_drive *d,int track);
++extern int cdda_track_audiop(cdrom_drive *d,int track);
++extern int cdda_track_copyp(cdrom_drive *d,int track);
++extern int cdda_track_preemp(cdrom_drive *d,int track);
++extern long cdda_disc_firstsector(cdrom_drive *d);
++extern long cdda_disc_lastsector(cdrom_drive *d);
++
++/* transport errors: */
++
++#define TR_OK            0
++#define TR_EWRITE        1  /* Error writing packet command (transport) */
++#define TR_EREAD         2  /* Error reading packet data (transport) */
++#define TR_UNDERRUN      3  /* Read underrun */
++#define TR_OVERRUN       4  /* Read overrun */
++#define TR_ILLEGAL       5  /* Illegal/rejected request */
++#define TR_MEDIUM        6  /* Medium error */
++#define TR_BUSY          7  /* Device busy */
++#define TR_NOTREADY      8  /* Device not ready */
++#define TR_FAULT         9  /* Devive failure */
++#define TR_UNKNOWN      10  /* Unspecified error */
++#define TR_STREAMING    11  /* loss of streaming */
++
++static char *strerror_tr[]={
++  "Success",
++  "Error writing packet command to device",
++  "Error reading command from device",
++  "SCSI packet data underrun (too little data)",
++  "SCSI packet data overrun (too much data)",
++  "Illegal SCSI request (rejected by target)",
++  "Medium reading data from medium",
++  "Device busy",
++  "Device not ready",
++  "Target hardware fault",
++  "Unspecified error",
++  "Drive lost streaming"
++};
++
++/* Errors returned by lib: 
++
++001: Unable to set CDROM to read audio mode
++002: Unable to read table of contents lead-out
++003: CDROM reporting illegal number of tracks
++004: Unable to read table of contents header
++005: Unable to read table of contents entry
++006: Could not read any data from drive
++007: Unknown, unrecoverable error reading data
++008: Unable to identify CDROM model
++009: CDROM reporting illegal table of contents
++010: Unaddressable sector 
++
++100: Interface not supported
++101: Drive is neither a CDROM nor a WORM device
++102: Permision denied on cdrom (ioctl) device
++103: Permision denied on cdrom (data) device
++
++300: Kernel memory error
++
++400: Device not open
++401: Invalid track number
++402: Track not audio data
++403: No audio tracks on disc
++404: No medium present
++405: Option not supported by drive
++
++*/
++#endif
++
+diff --git a/plugins/wav/encodercda.cpp b/plugins/wav/encodercda.cpp
+index d3b4aec..16f323b 100644
+--- a/plugins/wav/encodercda.cpp
++++ b/plugins/wav/encodercda.cpp
+@@ -43,9 +43,7 @@ const char * EncoderCda::mimeType() const {
+ extern "C"
+ {
+   //cdda_interface.h in cdparanoia 10.2 has a member called 'private' which the C++ compiler doesn't like
+-  #define private _private
+-  #include <cdda_interface.h>
+-  #undef private
++  #include "cdda_interface_local.h"
+ }
+ 
+ inline int16_t swap16 (int16_t i)
