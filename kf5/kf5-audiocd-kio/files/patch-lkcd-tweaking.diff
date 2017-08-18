@@ -1,0 +1,134 @@
+diff --git a/src/kcompactdisc.cpp b/src/kcompactdisc.cpp
+index b7b06eed317db098433977f55f04e24a94e6a140..2afea41b2348546904f2c7fed81f566e1e62bf50 100644
+--- a/src/kcompactdisc.cpp
++++ b/src/kcompactdisc.cpp
+@@ -76,6 +76,7 @@ static void refreshListOfCdromDevices()
+         else
+             name = (QLatin1Char('[') + type + QLatin1String( " - unknown vendor - " ) + device.product() + QLatin1Char( ']' ));
+ 
++        qCDebug(KCD) << "name=" << name << "url=" << url;
+         cdromsNameToDeviceUrl.insert(name, url);
+         cdromsNameToUdi.insert(name, device.udi());
+     }
+@@ -528,7 +529,11 @@ void KCompactDisc::setAutoMetadataLookup(bool autoMetadata)
+ bool KCompactDisc::setDevice(const QString &deviceName, unsigned volume,
+     bool digitalPlayback, const QString &audioSystem, const QString &audioDevice)
+ {
++#ifdef USE_WMLIB
+ 	const QString as = digitalPlayback ? audioSystem : QLatin1String("cdin");
++#else
++	const QString as = digitalPlayback ? audioSystem : QLatin1String("phonon");
++#endif
+ 	const QString ad = digitalPlayback ? audioDevice : QString();
+     qCDebug(KCD) << "Device init: " << deviceName << ", " << as << ", " << ad;
+ 
+diff --git a/src/kcompactdisc_p.cpp b/src/kcompactdisc_p.cpp
+index 0999c23f142c8f0104f1b5662938eb337e861d24..99be780d798a77306e3d2cd2d54109874d660e99 100644
+--- a/src/kcompactdisc_p.cpp
++++ b/src/kcompactdisc_p.cpp
+@@ -67,9 +67,6 @@ bool KCompactDiscPrivate::moveInterface(const QString &deviceName,
+ 
+ 	KCompactDiscPrivate *pOld, *pNew;
+ 
+-    qCDebug(KCD) << "switch from " << q->d_ptr->m_interface << " on " << q->d_ptr->m_deviceName;
+-    qCDebug(KCD) << "         to " << audioSystem << " on " << deviceName;
+-
+ 	/* switch temporary to dummy implementation */
+ 	if(q->d_ptr != this) {
+ 		pOld = q->d_ptr;
+@@ -80,11 +77,18 @@ bool KCompactDiscPrivate::moveInterface(const QString &deviceName,
+ #ifdef USE_WMLIB
+ 	if(audioSystem == QLatin1String("phonon"))
+ #endif
++    {
++        qCDebug(KCD) << "switch from " << q->d_ptr->m_interface << " on " << q->d_ptr->m_deviceName;
++        qCDebug(KCD) << "         to " << audioSystem << " on " << deviceName;
+ 		pNew = new KPhononCompactDiscPrivate(q, deviceName);
++    }
+ #ifdef USE_WMLIB
+-	else
++	else {
++        qCDebug(KCD) << "switch from " << q->d_ptr->m_interface << " on " << q->d_ptr->m_deviceName;
++        qCDebug(KCD) << "         to " << audioSystem << " on " << deviceName << "with audio device" << audioDevice;
+ 		pNew = new KWMLibCompactDiscPrivate(q, deviceName,
+ 			audioSystem, audioDevice);
++    }
+ #endif
+ 
+ 	pNew->m_infoMode = m_infoMode;
+diff --git a/src/phonon_interface.cpp b/src/phonon_interface.cpp
+index 065e07ce07bdd73d1fd0e5166e02818cef3346a4..e9e5b9886008ce0c739f50e3057cc8d1c53e8a65 100644
+--- a/src/phonon_interface.cpp
++++ b/src/phonon_interface.cpp
+@@ -36,6 +36,7 @@
+ #include <solid/device.h>
+ #include <solid/opticaldrive.h>
+ #include <solid/opticaldisc.h>
++#include <solid/block.h>
+ 
+ #define WM_MSG_CLASS WM_MSG_CLASS_PLATFORM
+ 
+@@ -59,6 +60,7 @@ ProducerWidget::ProducerWidget(KPhononCompactDiscPrivate *p, const QString &Udi)
+     m_mediaController(0)
+ {
+     m_media = new MediaObject(this);
++    m_mediaController = new MediaController(m_media);
+     connect(m_media, SIGNAL(metaDataChanged()), SLOT(updateMetaData()));
+     m_media->setTickInterval(1000);
+ 
+@@ -73,7 +75,14 @@ ProducerWidget::ProducerWidget(KPhononCompactDiscPrivate *p, const QString &Udi)
+     MediaSource *m_mediaSource = new MediaSource(Phonon::Cd, Udi);
+     m_media->setCurrentSource(*m_mediaSource);
+ 
+-    m_mediaController = new MediaController(m_media);
++    qCDebug(KCD) << "mediaController" << m_mediaController << "with features" << m_mediaController->supportedFeatures();
++    qCDebug(KCD) << "mediaSource: type=" << m_mediaSource->type()
++        << "\n\tfileName=" << m_mediaSource->fileName()
++        << "\n\tmrl=" << m_mediaSource->mrl()
++        << "\n\turl=" << m_mediaSource->url()
++        << "\n\tdiscType=" << m_mediaSource->discType()
++        << "\n\tdeviceName=" << m_mediaSource->deviceName();
++    qCDebug(KCD) << "Last mediaObject error:" << m_media->errorString();
+ }
+ 
+ ProducerWidget::~ProducerWidget()
+@@ -126,17 +135,32 @@ ProducerWidget *KPhononCompactDiscPrivate::producer()
+ 	if(!m_producerWidget) {
+ 		Solid::Device opticalDevice(m_udi);
+ 		Solid::OpticalDrive *opticalDrive = opticalDevice.as<Solid::OpticalDrive>();
+-		qCDebug(KCD) << "producer called, opticalDrive is " << opticalDrive;
++        const QString devName = opticalDevice.as<Solid::Block>()->device();
++        QString udi, devicePath;
++		qCDebug(KCD) << "producer called, opticalDrive is " << opticalDrive << devName;
+ 
+ 		if(opticalDrive) {
+-			Solid::OpticalDisc *opticalDisc = opticalDevice.as<Solid::OpticalDisc>();
+-            qCDebug(KCD) << "opticalDisc " << opticalDisc;
+-			//if(opticalDisc && (opticalDisc->availableContent() == Solid::OpticalDisc::Audio)) {
+-				m_producerWidget = new ProducerWidget(this, m_udi);
++            const Solid::OpticalDisc *opticalDisc = 0;
++            QList<Solid::Device> opticalDiscDevice = Solid::Device::listFromType(Solid::DeviceInterface::OpticalDisc, m_udi);
++            foreach (auto &oDisc, opticalDiscDevice) {
++                if (oDisc.as<Solid::Block>()->device() == devName) {
++                    opticalDisc = oDisc.as<Solid::OpticalDisc>();
++                    udi = oDisc.udi();
++                    devicePath = devName;
++                }
++            }
++            qCDebug(KCD) << "opticalDisc " << opticalDisc << "capacity=" << opticalDisc->capacity() << "udi=" << udi;
++			if(!devicePath.isEmpty()) {
++				m_producerWidget = new ProducerWidget(this, devicePath);
+ 				stateChanged(m_producerWidget->m_media->state(), Phonon::StoppedState);
+-			//}
++			}
+ 		}
+-	}
++	} else {
++        const QString errorString = m_producerWidget->m_media->errorString();
++        if (!errorString.isEmpty()) {
++            qCDebug(KCD) << "Last produced error:" << errorString;
++        }
++    }
+ 
+ 	return m_producerWidget;
+ }
