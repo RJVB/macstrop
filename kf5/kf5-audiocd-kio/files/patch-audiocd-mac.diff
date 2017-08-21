@@ -1,53 +1,119 @@
-diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 178e816ca35df687cc4563aeae5f3c7c26d8615b..b5efcdfaf3b120d5f6f50601d369b5bdf6de919b 100644
---- a/CMakeLists.txt
-+++ b/CMakeLists.txt
-@@ -59,6 +59,15 @@ if(CDDA_IOCTL_DEVICE_EXISTS)
- else()
-     set(HAVE_CDDA_IOCTL_DEVICE 0)
- endif()
-+execute_process(
-+    COMMAND sed -e "s|cdda_private_data_t \\*private;|cdda_private_data_t \\*private_data;|g"
-+    INPUT_FILE ${CDPARANOIA_INCLUDE_DIR}/cdda_interface.h
-+    OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/cdda_interface.hpp
-+    RESULT_VARIABLE CDDA_INTERFACE_EDIT_ERROR
-+)
-+if (CDDA_INTERFACE_EDIT_ERROR)
-+    message(STATUS "Fixing cdda_interface.h for C++ failed with exit code ${CDDA_INTERFACE_EDIT_ERROR}")
-+endif()
- 
- configure_file(config-audiocd.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/config-audiocd.h)
- 
 diff --git a/audiocd.cpp b/audiocd.cpp
-index 926308d5afca7462204409f04feda32071b51212..badc9d4745e3a8c2aed8798df9297e95a83cc64c 100644
+index 335196357ae9a5f7cfb44d1dcf31653706423f1f..c1c7cb9b111c1cae66aaaef037c92468780c6237 100644
 --- a/audiocd.cpp
 +++ b/audiocd.cpp
-@@ -28,10 +28,9 @@
- extern "C"
- {
- 	//cdda_interface.h in cdparanoia 10.2 has a member called 'private' which the C++ compiler doesn't like
--	#define private _private
--	#include <cdda_interface.h>
-+    //we will thus use a generated local copy which renames that member.
-+	#include "cdda_interface.hpp"
- 	#include <cdda_paranoia.h>
--	#undef private
- 	void paranoiaCallback(long, int);
+@@ -45,6 +45,8 @@ extern "C"
+ #include <stdlib.h>
+ #include <sys/time.h>
+ #include <sys/resource.h>
++#include <errno.h>
++#include <string.h>
  
- 	KDE_EXPORT int kdemain(int argc, char ** argv);
-diff --git a/plugins/wav/encodercda.cpp b/plugins/wav/encodercda.cpp
-index d3b4aecf245a74bf792d88d2db68f0869d088365..de612296bebc933a007b55530bb2bd3770640bd1 100644
---- a/plugins/wav/encodercda.cpp
-+++ b/plugins/wav/encodercda.cpp
-@@ -43,9 +43,8 @@ const char * EncoderCda::mimeType() const {
- extern "C"
+ #include <kmacroexpander.h>
+ #include <QFile>
+@@ -132,6 +134,9 @@ public:
+ 
+ 	void setToc(struct cdrom_drive *drive)
+ 	{
++#ifdef Q_OS_MACOS
++        drive->read_toc(drive);
++#endif
+ 		for (int i = 0; i < drive->tracks; ++i)
+ 		{
+ 			disc_toc[i].dwStartSector = drive->disc_toc[i].dwStartSector;
+@@ -224,6 +229,9 @@ static void setDeviceToCd(KCompactDisc *cd, struct cdrom_drive *drive)
  {
-   //cdda_interface.h in cdparanoia 10.2 has a member called 'private' which the C++ compiler doesn't like
--  #define private _private
--  #include <cdda_interface.h>
--  #undef private
-+  //we will thus use a generated local copy which renames that member.
-+  #include "cdda_interface.hpp"
+ #if defined(HAVE_CDDA_IOCTL_DEVICE)
+ 	cd->setDevice(QLatin1String( drive->ioctl_device_name ), 50, false);
++#elif defined(Q_OS_MACOS)
++	cd->setDevice(QLatin1String( drive->cdda_device_name ), 50, false);
++	qCDebug(AUDIOCD) << "Mac optical device name:" << drive->cdda_device_name;
+ #elif defined(__FreeBSD__) || defined(__DragonFly__)
+ 	// FreeBSD's cdparanoia as of january 5th 2006 has rather broken
+ 	// support for non-SCSI devices. Although it finds ATA cdroms just
+@@ -290,12 +298,29 @@ struct cdrom_drive * AudioCDProtocol::initRequest(const QUrl & url)
+ 		setDeviceToCd(&cd, drive);
+ 		d->setToc(drive);
+ 
++#ifdef Q_OS_MACOS
++		d->tracks = drive->tracks;
++        QList<unsigned int> signature;
++#else
++        auto signature = cd.discSignature();
+ 		d->tracks = cd.tracks();
+-		for(uint i=0; i< cd.tracks(); i++)
++#endif
++		for(uint i=0; i< d->tracks; i++) {
+ 			d->trackIsAudio[i] = cd.isAudio(i+1);
++#ifdef Q_OS_MACOS
++            signature.append(drive->disc_toc[i].dwStartSector);
++#endif
++        }
++#ifdef Q_OS_MACOS
++        // lead-out
++        signature.append(drive->disc_toc[d->tracks].dwStartSector);
++#endif
++        qCDebug(AUDIOCD) << "tracks found:" << d->tracks
++            << "isAudio first/last:" << cd.isAudio(1) << cd.isAudio(d->tracks)
++            << "signature:" << signature;
+ 
+ 		KCDDB::Client c;
+-		d->cddbResult = c.lookup(cd.discSignature());
++		d->cddbResult = c.lookup(signature);
+ 		if (d->cddbResult == Success)
+ 		{
+ 			d->cddbList = c.lookupResponse();
+@@ -805,12 +830,19 @@ struct cdrom_drive *AudioCDProtocol::getDrive()
+ {
+ 	const QByteArray device(QFile::encodeName(d->device));
+ 
++#ifndef Q_OS_MACOS
+ 	if (device.isEmpty())
+ 		return 0;
+ 
+ 	struct cdrom_drive * drive = 0;
+ 
+ 	drive = cdda_identify(device, CDDA_MESSAGE_FORGETIT, 0);
++#else
++	struct cdrom_drive * drive = cdda_find_a_cdrom(CDDA_MESSAGE_PRINTIT, 0);
++	if (drive) {
++		cdda_verbose_set(drive,CDDA_MESSAGE_PRINTIT,CDDA_MESSAGE_PRINTIT);
++	}
++#endif
+ 
+ 	if (0 == drive) {
+ 		qCDebug(AUDIOCD) << "Can't find an audio CD on: \"" << d->device << "\"";
+@@ -834,6 +866,15 @@ i18n("Unknown error.  If you have a cd in the drive try running cdparanoia -vsQ
+ 		cdda_close(drive);
+ 		return 0;
+ 	}
++#ifdef Q_OS_MACOS
++	else
++	{
++		d->device = QString::fromUtf8(drive->cdda_device_name);
++		drive->read_toc(drive);
++		qCDebug(AUDIOCD) << "Found Mac optical drive" << drive << d->device
++			<< "with" << drive->tracks << "tracks";
++	}
++#endif
+ 
+ 	return drive;
  }
+@@ -1038,7 +1079,7 @@ void AudioCDProtocol::parseURLArgs(const QUrl & url)
+ 		else if (attribute == QLatin1String("niceLevel")){
+ 			int niceLevel = value.toInt();
+ 			if(setpriority(PRIO_PROCESS, getpid(), niceLevel) != 0)
+-				qCDebug(AUDIOCD) << "Setting nice level to (" << niceLevel << ") failed.";
++				qCDebug(AUDIOCD) << "Setting nice level to (" << niceLevel << ") failed:" << strerror(errno);
+ 		}
+ 	}
+ }
+@@ -1069,7 +1110,7 @@ void AudioCDProtocol::loadSettings()
+ 	if(groupCDDA.hasKey("niceLevel")) {
+ 		int niceLevel = groupCDDA.readEntry("niceLevel", 0);
+ 		if(setpriority(PRIO_PROCESS, getpid(), niceLevel) != 0)
+-			qCDebug(AUDIOCD) << "Setting nice level to (" << niceLevel << ") failed.";
++			qCDebug(AUDIOCD) << "Setting pid" << getpid() << "nice level to (" << niceLevel << ") failed:" << strerror(errno);
+ 	}
  
- inline int16_t swap16 (int16_t i)
+ 	// The default track filename template
