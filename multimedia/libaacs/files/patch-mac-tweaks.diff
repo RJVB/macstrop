@@ -1,0 +1,205 @@
+diff --git a/src/file/mmc_device_darwin.c b/src/file/mmc_device_darwin.c
+index dc430ca..9da72c2 100644
+--- a/src/file/mmc_device_darwin.c
++++ b/src/file/mmc_device_darwin.c
+@@ -37,6 +37,9 @@
+ #include <IOKit/IOKitLib.h>
+ #include <IOKit/IOCFPlugIn.h>
+ 
++#include <IOKit/usb/IOUSBLib.h>
++#include <IOKit/firewire/IOFireWireLib.h>
++
+ #include <DiskArbitration/DiskArbitration.h>
+ 
+ /* need to undefine VERSION as one of the members of struct
+@@ -259,47 +262,69 @@ static int iokit_mount (MMCDEV *mmc) {
+ }
+ 
+ static int iokit_find_service_matching (MMCDEV *mmc, io_service_t *servp) {
+-    CFMutableDictionaryRef matchingDict = IOServiceMatching("IOBDServices");
+-    io_iterator_t deviceIterator;
+-    io_service_t service;
+-    int rc;
++    CFMutableDictionaryRef matchingDict = IOServiceMatching("IOBDMedia");
++    io_iterator_t mediaIterator;
++    io_object_t medium;
++    io_registry_entry_t parent;
++    io_service_t service = NULL;
++    int rc, N;
+ 
+     assert (NULL != servp);
+ 
+     *servp = 0;
+ 
+     if (!matchingDict) {
+-        BD_DEBUG(DBG_MMC, "Could not create a matching dictionary for IOBDServices\n");
++        BD_DEBUG(DBG_MMC, "Could not create a matching dictionary for IOBDMedia\n");
+         return -1;
+     }
+ 
+     /* this call consumes the reference to the matchingDict. we do not need to release it */
+-    rc = IOServiceGetMatchingServices(kIOMasterPortDefault, matchingDict, &deviceIterator);
+-    if (kIOReturnSuccess != rc) {
+-        BD_DEBUG(DBG_MMC, "Could not create device iterator\n");
++    rc = IOServiceGetMatchingServices(kIOMasterPortDefault, matchingDict, &mediaIterator);
++    if (kIOReturnSuccess != rc || !mediaIterator) {
++        BD_DEBUG(DBG_MMC, "Could not create IOBDMedia iterator\n");
+         return -1;
+     }
+ 
+-    while (0 != (service = IOIteratorNext (deviceIterator))) {
++    N = 0;
++    while (0 != (medium = IOIteratorNext (mediaIterator))) {
++//         CFMutableDictionaryRef propertyDict = 0;
++//         if (IORegistryEntryCreateCFProperties(medium, &propertyDict, kCFAllocatorDefault, kNilOptions) == KERN_SUCCESS) {
++//             CFShow(propertyDict);
++//             CFRelease(propertyDict);
++//         }
++
++        N += 1;
+         CFStringRef data;
+         char name[128] = "";
+ 
+-        data = IORegistryEntrySearchCFProperty (service, kIOServicePlane, CFSTR("BSD Name"),
++        data = IORegistryEntrySearchCFProperty (medium, kIOServicePlane, CFSTR("BSD Name"),
+                                                 kCFAllocatorDefault, kIORegistryIterateRecursively);
+ 
+         if (NULL != data) {
+             rc = CFStringGetCString (data, name, sizeof (name), kCFStringEncodingASCII);
+             CFRelease (data);
+             if (0 == strcmp (name, mmc->bsd_name)) {
++                BD_DEBUG(DBG_MMC, "BD #%d is in the target device %s\n", N, name);
+                 break;
+             }
+         }
+ 
+-        (void) IOObjectRelease (service);
++        (void) IOObjectRelease (medium);
++        medium = NULL;
+     }
++    BD_DEBUG(DBG_MMC, "Scanned %d media, found IOBDMedia %p\n", N, medium);
+ 
+-    IOObjectRelease (deviceIterator);
++    IOObjectRelease (mediaIterator);
+ 
++    if (IORegistryEntryGetParentEntry(medium, kIOServicePlane, &parent) == kIOReturnSuccess && parent) {
++        if (IORegistryEntryGetParentEntry(parent, kIOServicePlane, &service) != kIOReturnSuccess || !service) {
++            BD_DEBUG(DBG_MMC|DBG_CRIT, "Can't get IOBDBlockStoreDriver for device %s\n", mmc->bsd_name);
++        }
++        IOObjectRelease(parent);
++    } else {
++        BD_DEBUG(DBG_MMC|DBG_CRIT, "Can't get IOBDServices for device %s\n", mmc->bsd_name);
++    }
++    IOObjectRelease(medium);
+     *servp = service;
+ 
+     return (service) ? 0 : -1;
+@@ -310,10 +335,56 @@ static int iokit_find_interfaces (MMCDEV *mmc, io_service_t service) {
+     SInt32 score;
+     int rc;
+ 
+-    rc = IOCreatePlugInInterfaceForService (service, kIOMMCDeviceUserClientTypeID,
++    // iterate upwards from the service ref, looking for the entry that
++    // has the IOPlugin information we need:
++    io_registry_entry_t parent = service, grandparent = NULL;
++    CFTypeRef pluginUUIDRef = kIOMMCDeviceUserClientTypeID;
++    int i;
++    for (i = 0; parent; ++i) {
++        CFDictionaryRef pluginKeyRef = IORegistryEntryCreateCFProperty (parent, CFSTR("IOCFPlugInTypes"), kCFAllocatorDefault, 0);
++        CFStringRef usbAddressRef = IORegistryEntryCreateCFProperty (parent, CFSTR("USB Address"), kCFAllocatorDefault, 0);
++        if (pluginKeyRef && usbAddressRef && CFDictionaryGetCount(pluginKeyRef) == 1) {
++            const void *keys[1], *values[1];
++            CFDictionaryGetKeysAndValues(pluginKeyRef, keys, values);
++            pluginUUIDRef = CFUUIDCreateFromString(kCFAllocatorDefault, (CFTypeRef) keys[0]);
++            CFShow(pluginUUIDRef);
++            BD_DEBUG(DBG_MMC, "Service parent #%d (%p) has IOCFPlugins:\n", i, parent);
++            CFRelease(pluginKeyRef);
++            CFRelease(usbAddressRef);
++            break;
++        }
++        if (pluginKeyRef) {
++            CFRelease(pluginKeyRef);
++        }
++        if (usbAddressRef) {
++            CFRelease(usbAddressRef);
++        }
++        if (IORegistryEntryGetParentEntry(parent, kIOServicePlane, &grandparent) == kIOReturnSuccess) {
++            if (parent != service) {
++                IOObjectRelease(parent);
++            }
++            parent = grandparent;
++            grandparent = NULL;
++        } else {
++            parent = grandparent = NULL;
++            break;
++        }
++    }
++    if (parent) {
++        service = parent;
++    } else {
++        BD_DEBUG(DBG_MMC|DBG_CRIT, "Scanned %d parents in vain for %p an IOPlugin\n", i, service);
++    }
++
++    // try to obtain the plugin interface
++    rc = IOCreatePlugInInterfaceForService (service, pluginUUIDRef,
+                                             kIOCFPlugInInterfaceID, &plugInInterface,
+                                             &score);
++    if (pluginUUIDRef != kIOMMCDeviceUserClientTypeID) {
++        CFRelease(pluginUUIDRef);
++    }
+     if (kIOReturnSuccess != rc || NULL == plugInInterface) {
++        BD_DEBUG(DBG_MMC|DBG_CRIT, "IOCreatePlugInInterfaceForService for %p failed with rc=%d\n", service, rc);
+         return -1;
+     }
+ 
+@@ -324,6 +395,12 @@ static int iokit_find_interfaces (MMCDEV *mmc, io_service_t service) {
+                                             (LPVOID)&mmc->mmcInterface);
+     /* call release instead of IODestroyPlugInInterface to avoid stopping IOBDServices */
+     (*plugInInterface)->Release(plugInInterface);
++
++    // now release the parent reference if it's not the service ref. itself
++    if (parent && parent != service) {
++        IOObjectRelease(parent);
++    }
++
+     if (kIOReturnSuccess != rc || NULL == mmc->mmcInterface) {
+         BD_DEBUG(DBG_MMC, "Could not get multimedia commands (MMC) interface\n");
+         return -1;
+@@ -371,6 +448,7 @@ static int mmc_open_iokit (const char *path, MMCDEV *mmc) {
+     (void) IOObjectRelease (service);
+ 
+     if (0 != rc) {
++        BD_DEBUG(DBG_MMC|DBG_CRIT, "Could not find interface for service %p\n", service);
+         return rc;
+     }
+ 
+@@ -404,10 +482,14 @@ MMCDEV *device_open(const char *path)
+         return NULL;
+     }
+ 
++    BD_DEBUG(DBG_MMC, "Opening Darwin MMC drive path=%s...\n", path);
+     rc = mmc_open_iokit (path, dev);
+     if (0 != rc) {
++        BD_DEBUG(DBG_MMC | DBG_CRIT, "Failed to open device %s, path %s\n", dev->bsd_name, path);
+         device_close (dev);
+         return NULL;
++    } else {
++        BD_DEBUG(DBG_MMC, "\tdrive device: %s\n", dev->bsd_name);
+     }
+ 
+     return dev;
+diff --git a/src/libaacs/aacs.c b/src/libaacs/aacs.c
+index 6302868..d752335 100644
+--- a/src/libaacs/aacs.c
++++ b/src/libaacs/aacs.c
+@@ -596,6 +596,10 @@ static int _mmc_read_auth(AACS *aacs, cert_list *hcl, int type, uint8_t *p1, uin
+ {
+     MMC* mmc = NULL;
+     if (!(mmc = mmc_open(aacs->path))) {
++#ifdef __APPLE__
++        BD_DEBUG(DBG_AACS, "Ignoring MMC failure on Mac; working without certificates");
++        return AACS_SUCCESS;
++#endif
+         return AACS_ERROR_MMC_OPEN;
+     }
+ 
