@@ -1,13 +1,13 @@
 # -*- coding: utf-8; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
-# $Id: Portfile 133968 2015-03-16 09:49:19Z petr@macports.org $
 
 PortSystem          1.0
 PortGroup           cmake 1.1
-cmake.out_of_source yes
 
 name                GammaRay
-version             2.2.50
+# merge `git describe` and the version in the Cmake file:
+set version_string  2.8.50.309
+version             ${version_string}
 
 description         a Qt poking-around tool.
 long_description    GammaRay is a tool to poke around in a Qt-application and also to manipulate the application to some extent.
@@ -18,33 +18,36 @@ platforms           darwin
 license             {GPL-2 GPL-3}
 maintainers         gmail.com:rjvbertin openmaintainer
 universal_variant   no
-installs_libs       no
 
 if {${subport} ne ${name}} {
     fetch.type          git
-    git.branch          9e4d6de641b9cb293bbe932c8bfc0480ea05dbbb
-    if {[file exists ${filespath}/${name}-git/.git]} {
-        git.url         file://${filespath}/${name}-git
-    } else {
-        PortGroup       github 1.0
-        github.setup    KDAB GammaRay ${git.branch}
-    }
+    # v2.8.0-309-g6a60dd0
+    git.branch          6a60dd0f24d0a146d7293e7c75fc5027f2c743d0
+    PortGroup           github 1.0
+    github.setup        KDAB GammaRay ${git.branch}
+    installs_libs       yes
+    version             ${version_string}
+} else {
+    installs_libs       no
 }
+worksrcdir              ${name}-git
+distname                ${name}-git
 
-depends_build-append    port:git port:doxygen
-depends_lib-append      port:graphviz \
-                        port:openssl \
-                        port:perl5
+depends_build-append    port:git \
+                        port:doxygen
+depends_lib-append      port:perl5
 
-variant kde description {build KDE support (currently only KDE4)} {}
+variant kde description {build KDE support} {}
 
-configure.args-append   -DCMAKE_DISABLE_FIND_PACKAGE_VTK=true
+configure.args-append   -DCMAKE_DISABLE_FIND_PACKAGE_VTK=true \
+                        -DGAMMARAY_ENABLE_GPL_ONLY_FEATURES=true \
+                        -DGAMMARAY_INSTALL_QT_LAYOUT=false
 
 subport ${name}-qt4 {
     description-append      Includes the Qt4 probe
     long_description-append This port includes the Qt4 probe
     PortGroup               qt4 1.0
-    conflicts               ${name}-qt4
+    conflicts               ${name}-qt5
     configure.args-append   -DGAMMARAY_ENFORCE_QT4_BUILD=true
     depends_lib-append      port:automoc port:phonon
     if {[variant_isset kde]} {
@@ -55,11 +58,21 @@ subport ${name}-qt4 {
 subport ${name}-qt5 {
     description-append      Includes the Qt5 probe
     long_description-append This port includes the Qt5 probe
+    set qt5.prefer_kde      1
     PortGroup               qt5 1.0
-    conflicts               ${name}-qt5
+    conflicts               ${name}-qt4
     # this can optionally depend also on https://github.com/KDAB/KDStateMachineEditor
     if {[variant_isset kde]} {
-        notes-append "KDE support with Qt5 requires KF5 which is not yet available on OS X"
+        PortGroup           kf5 1.1
+        kf5.depends_frameworks \
+                            kcoreaddons ksyntaxhighlighting
+        kf5.allow_apidocs_generation no
+    }
+    post-configure {
+        system -W ${build.dir} "${build.cmd} man"
+    }
+    platform darwin {
+        qt5.add_app_wrapper gammaray5 GammaRay GammaRayUI
     }
 }
 
@@ -67,7 +80,7 @@ subport ${name}-qt5 {
 # only provide a "probe" subport that can build either the Qt4 or the Qt5 subport.
 subport ${name}-probe {
     description                 The Qt4/Qt5 probe for ${name}-qt5/${name}-qt4
-    long_description-append     This port builds either the Qt4 for ${name}-qt5 or the Qt5 probe for ${name}-qt4.
+    long_description-append     This port builds either the Qt4 probe for ${name}-qt5 or the Qt5 probe for ${name}-qt4.
 
     configure.args-append       -DGAMMARAY_PROBE_ONLY_BUILD=true
 
@@ -98,8 +111,6 @@ subport ${name}-probe {
         }
     }
 }
-
-patchfiles-append           patch-prefer-lldb.diff
 
 if {![variant_isset kde]} {
     patchfiles-append       patch-no-KDE.diff
@@ -135,27 +146,42 @@ if {${subport} eq "${name}-qt4"} {
     }
 }
 
+if {[info procs qt5.depends_component] != ""} {
+    # we build a subport depending on Qt5. Declare all
+    # dependencies
+    qt5.depends_component   qt3d \
+                            qtconnectivity \
+                            qtdeclarative \
+                            qtgamepad \
+                            qtlocation \
+                            qtscxml \
+                            qtsvg \
+                            qttools \
+                            qtwebkit
+}
+
 post-destroot {
-    if {${subport} ne ${name}} {
-        xinstall -m 755 -d ${destroot}/${qt_apps_dir}
-        xinstall -m 755 -d ${destroot}/${qt_mkspecs_dir}/modules
-        if {${subport} eq "${name}-probe"} {
-            delete ${destroot}/${prefix}/GammaRay.app/Contents/Resources
-            delete ${destroot}/${prefix}/mkspecs
-        } else {
-            move ${destroot}/${prefix}/GammaRay.app/Contents/Resources/cmake ${destroot}${prefix}/share
-            move ${destroot}/${prefix}/GammaRay.app/Contents/Resources/include/gammaray ${destroot}${prefix}/include
-            delete ${destroot}/${prefix}/GammaRay.app/Contents/Resources/include
-            delete ${destroot}/${prefix}/GammaRay.app/Contents/Resources/man
-            foreach pri [glob  ${destroot}/${prefix}/mkspecs/modules/*] {
-                move ${pri} ${destroot}/${qt_mkspecs_dir}/modules
+    platform darwin {
+        if {${subport} ne ${name}} {
+            xinstall -m 755 -d ${destroot}/${qt_apps_dir}
+            xinstall -m 755 -d ${destroot}/${qt_mkspecs_dir}/modules
+            if {${subport} eq "${name}-probe"} {
+                delete ${destroot}/${prefix}/GammaRay.app/Contents/Resources
+                delete ${destroot}/${prefix}/mkspecs
+            } else {
+                move ${destroot}/${prefix}/GammaRay.app/Contents/Resources/man/man1/gammaray.1 ${destroot}${prefix}/share/man/man1
+                move ${destroot}/${prefix}/GammaRay.app/Contents/Resources/cmake ${destroot}${prefix}/share
+                move ${destroot}/${prefix}/GammaRay.app/Contents/Resources/include/gammaray ${destroot}${prefix}/include
+                delete ${destroot}/${prefix}/GammaRay.app/Contents/Resources/include
+                delete ${destroot}/${prefix}/GammaRay.app/Contents/Resources/man
+                foreach pri [glob  ${destroot}/${prefix}/GammaRay.app/Contents/Resources/${qt_mkspecs_dir}/modules/*] {
+                    move ${pri} ${destroot}/${qt_mkspecs_dir}/modules
+                }
             }
+            foreach pri [glob  ${destroot}/${prefix}/GammaRay.app/Contents/Frameworks/*.dylib] {
+                move ${pri} ${destroot}${prefix}/lib
+            }
+            move ${destroot}/${prefix}/GammaRay.app ${destroot}/${qt_apps_dir}
         }
-        foreach pri [glob  ${destroot}/${prefix}/GammaRay.app/Contents/Frameworks/*.dylib] {
-            move ${pri} ${destroot}${prefix}/lib
-        }
-    #     move ${destroot}/${prefix}/GammaRay.app/Contents/MacOS/gammaray ${destroot}${prefix}/bin
-        delete ${destroot}/${prefix}/GammaRay.app/Contents/MacOS/gammaray
-        move ${destroot}/${prefix}/GammaRay.app ${destroot}/${qt_apps_dir}
     }
 }
