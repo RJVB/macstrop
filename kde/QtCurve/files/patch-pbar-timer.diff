@@ -1,0 +1,148 @@
+diff --git qt5/style/qtcurve.h qt5/style/qtcurve.h
+index 57bb93846e7981b827e328a9eb2cde77bb8cced5..1f41b9f6079de5a1a63c7b4728b5f161faa8b2e2 100644
+--- qt5/style/qtcurve.h
++++ qt5/style/qtcurve.h
+@@ -557,6 +557,7 @@ private:
+     mutable QLabel *m_clickedLabel;
+     QSet<QProgressBar*> m_progressBars;
+     int m_progressBarAnimateTimer,
++        m_progressBarAnimateFps,
+         m_animateStep;
+     QTime m_timer;
+     mutable QMap<int, QColor*> m_titleBarButtonsCols;
+diff --git qt5/style/qtcurve_api.cpp qt5/style/qtcurve_api.cpp
+index 54efc6461dd1a9bfbc6ca0215a99ed985d769652..75270f4d086bb5f9a2305b64c898a4dbbc7b3cf6 100644
+--- qt5/style/qtcurve_api.cpp
++++ qt5/style/qtcurve_api.cpp
+@@ -1313,10 +1313,15 @@ bool Style::eventFilter(QObject *object, QEvent *event)
+         if(bar)
+         {
+             m_progressBars.insert(bar);
+-            if (1==m_progressBars.size())
++            if (!m_progressBarAnimateTimer)
+             {
+                 m_timer.start();
+-                m_progressBarAnimateTimer = startTimer(1000 / constProgressBarFps);
++                // set the short interval when required, otherwise a less expensive "idling" interval
++                // that still maintains a reasonable reaction time when a progress bar is toggled
++                // into "busy" (animated) mode.
++                m_progressBarAnimateFps = (opts.animatedProgress || (0 == bar->minimum() && 0 == bar->maximum())) ? 
++                    constProgressBarFps : constProgressBarIdleFps;
++                m_progressBarAnimateTimer = startTimer(1000/m_progressBarAnimateFps);
+             }
+         } else if (!(opts.square & SQUARE_POPUP_MENUS) &&
+                    object->inherits("QComboBoxPrivateContainer")) {
+@@ -1420,6 +1425,7 @@ bool Style::eventFilter(QObject *object, QEvent *event)
+ void Style::timerEvent(QTimerEvent *event)
+ {
+     if (event->timerId() == m_progressBarAnimateTimer) {
++        bool hasAnimation = false;
+         m_animateStep = m_timer.elapsed() / (1000 / constProgressBarFps);
+         for (QProgressBar *bar: const_(m_progressBars)) {
+             if ((opts.animatedProgress && 0 == m_animateStep % 2 &&
+@@ -1427,7 +1433,20 @@ void Style::timerEvent(QTimerEvent *event)
+                  bar->value() != bar->maximum()) ||
+                 (0 == bar->minimum() && 0 == bar->maximum())) {
+                 bar->update();
+-            }
++                hasAnimation = true;
++            }
++        }
++        if (hasAnimation && m_progressBarAnimateFps == constProgressBarIdleFps) {
++            // go into "high frequency" mode because we're no longer firing
++            // idly.
++            killTimer(m_progressBarAnimateTimer);
++            m_progressBarAnimateFps = constProgressBarFps;
++            m_progressBarAnimateTimer = startTimer(1000/m_progressBarAnimateFps);
++        } else if (!hasAnimation && m_progressBarAnimateFps == constProgressBarFps) {
++            // go back to "idling frequency" mode.
++            killTimer(m_progressBarAnimateTimer);
++            m_progressBarAnimateFps = constProgressBarIdleFps;
++            m_progressBarAnimateTimer = startTimer(1000/m_progressBarAnimateFps);
+         }
+     }
+ 
+diff --git qt5/style/qtcurve_p.h qt5/style/qtcurve_p.h
+index d4b2d9091e6de43bbe44a618507713df5b049509..8e7dc2cdaf52e233bdb864543446e6dfbd00e7f5 100644
+--- qt5/style/qtcurve_p.h
++++ qt5/style/qtcurve_p.h
+@@ -44,6 +44,7 @@ extern QString appName;
+ static const int constMenuPixmapWidth = 22;
+ static const int constWindowMargin = 2;
+ static const int constProgressBarFps = 20;
++static const int constProgressBarIdleFps = 2;
+ static const int constTabPad = 6;
+ 
+ static const QLatin1String constDwtClose("qt_dockwidget_closebutton");
+diff --git qt4/style/qtcurve.cpp qt4/style/qtcurve.cpp
+index 4493b06933abcaddaef99a8637c667c3d0bb8cac..d5d9cd286318c7be4640ec1d2c5a8f7b842475b1 100644
+--- qt4/style/qtcurve.cpp
++++ qt4/style/qtcurve.cpp
+@@ -576,6 +576,7 @@ enum WindowsStyleConsts
+ 
+ static const int constWindowMargin   =  2;
+ static const int constProgressBarFps = 20;
++static const int constProgressBarIdleFps = 2;
+ static const int constTabPad         =  6;
+ 
+ static const QLatin1String constDwtClose("qt_dockwidget_closebutton");
+@@ -2694,10 +2695,15 @@ bool Style::eventFilter(QObject *object, QEvent *event)
+             if(bar)
+             {
+                 m_progressBars.insert(bar);
+-                if (1==m_progressBars.size())
++                if (!m_progressBarAnimateTimer)
+                 {
+                     m_timer.start();
+-                    m_progressBarAnimateTimer = startTimer(1000 / constProgressBarFps);
++                // set the short interval when required, otherwise a less expensive "idling" interval
++                // that still maintains a reasonable reaction time when a progress bar is toggled
++                // into "busy" (animated) mode.
++                m_progressBarAnimateFps = (opts.animatedProgress || (0 == bar->minimum() && 0 == bar->maximum())) ? 
++                    constProgressBarFps : constProgressBarIdleFps;
++                m_progressBarAnimateTimer = startTimer(1000/m_progressBarAnimateFps);
+                 }
+             } else if(!POPUP_MENUS_SQUARE(opts) &&
+                       object->inherits("QComboBoxPrivateContainer")) {
+@@ -2821,6 +2827,7 @@ bool Style::eventFilter(QObject *object, QEvent *event)
+ void Style::timerEvent(QTimerEvent *event)
+ {
+     if (event->timerId() == m_progressBarAnimateTimer) {
++        bool hasAnimation = false;
+         m_animateStep = m_timer.elapsed() / (1000 / constProgressBarFps);
+         foreach (QProgressBar *bar, const_(m_progressBars)) {
+             if ((opts.animatedProgress && 0 == m_animateStep % 2 &&
+@@ -2828,7 +2835,20 @@ void Style::timerEvent(QTimerEvent *event)
+                  bar->value() != bar->maximum()) ||
+                 (0 == bar->minimum() && 0 == bar->maximum())) {
+                 bar->update();
+-            }
++                hasAnimation = true;
++            }
++        }
++        if (hasAnimation && m_progressBarAnimateFps == constProgressBarIdleFps) {
++            // go into "high frequency" mode because we're no longer firing
++            // idly.
++            killTimer(m_progressBarAnimateTimer);
++            m_progressBarAnimateFps = constProgressBarFps;
++            m_progressBarAnimateTimer = startTimer(1000/m_progressBarAnimateFps);
++        } else if (!hasAnimation && m_progressBarAnimateFps == constProgressBarFps) {
++            // go back to "idling frequency" mode.
++            killTimer(m_progressBarAnimateTimer);
++            m_progressBarAnimateFps = constProgressBarIdleFps;
++            m_progressBarAnimateTimer = startTimer(1000/m_progressBarAnimateFps);
+         }
+     }
+ 
+diff --git qt4/style/qtcurve.h qt4/style/qtcurve.h
+index f4928b76e33b4443775aed1028be6eb3346ea88d..836ebe7a2c4d66b4c3d486b1df8f8612ed758414 100644
+--- qt4/style/qtcurve.h
++++ qt4/style/qtcurve.h
+@@ -437,6 +437,7 @@ private:
+     mutable QLabel *m_clickedLabel;
+     QSet<QProgressBar*> m_progressBars;
+     int m_progressBarAnimateTimer,
++        m_progressBarAnimateFps,
+         m_animateStep;
+     QTime m_timer;
+     mutable QMap<int, QColor*> m_titleBarButtonsCols;
