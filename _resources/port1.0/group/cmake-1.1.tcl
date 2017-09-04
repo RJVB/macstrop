@@ -48,7 +48,8 @@ options                             cmake.build_dir \
                                     cmake.module_path \
                                     cmake_share_module_dir \
                                     cmake.out_of_source \
-                                    cmake.set_osx_architectures
+                                    cmake.set_osx_architectures \
+                                    cmake.ccache
 
 # make out-of-source builds the default (finally)
 default cmake.out_of_source         {yes}
@@ -71,6 +72,9 @@ default cmake.build_type            {MacPorts}
 
 # cmake-based ports may want to modify the install prefix
 default cmake.install_prefix        {${prefix}}
+
+# we support ccache via our own cache variable (which incompatible projects can turn off).
+default cmake.ccache                [tbool configure.ccache]
 
 # minimal/initial value for the install rpath:
 default cmake.install_rpath         {${prefix}/lib}
@@ -209,7 +213,19 @@ default configure.dir {[cmake::build_dir]}
 default build.dir {${configure.dir}}
 default build.post_args {VERBOSE=ON}
 
-#FIXME: ccache works with cmake on linux
+# tell CMake to use ccache via the CMAKE_<LANG>_COMPILER_LAUNCHER variable
+# and unset the global configure.ccache option which is not supported
+# by CMake.
+# See https://stackoverflow.com/questions/1815688/how-to-use-ccache-with-cmake
+proc cmake::ccaching {} {
+    global cmake.ccache prefix
+    if {[tbool cmake.ccache] && [file exists ${prefix}/bin/ccache]} {
+        return [list \
+            -DCMAKE_C_COMPILER_LAUNCHER=${prefix}/bin/ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=${prefix}/bin/ccache]
+    }
+}
+
 configure.ccache    no
 
 configure.cmd       ${prefix}/bin/cmake
@@ -225,6 +241,7 @@ default configure.pre_args {[list \
                     -DCMAKE_INSTALL_PREFIX="${cmake.install_prefix}" \
                     -DCMAKE_INSTALL_NAME_DIR="${cmake.install_prefix}/lib" \
                     {*}[cmake::system_prefix_path] \
+                    {*}[cmake::ccaching] \
                     {-DCMAKE_C_COMPILER="$CC"} \
                     {-DCMAKE_CXX_COMPILER="$CXX"} \
                     -DCMAKE_POLICY_DEFAULT_CMP0025=NEW \
@@ -310,6 +327,9 @@ pre-configure {
     configure.pre_args-prepend "-G \"[join ${cmake.generator}]\""
     # CMake doesn't like --enable-debug, so remove it unconditionally.
     configure.args-delete --enable-debug
+    if {[tbool cmake.ccache]} {
+        ui_info "        (using ccache)"
+    }
 }
 
 post-configure {
