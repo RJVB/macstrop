@@ -59,6 +59,7 @@
 global available_qt5_versions
 set available_qt5_versions {
     qt5
+    qt57
     qt56
     qt55
     qt53
@@ -451,12 +452,16 @@ set qt5.kde_stubports \
 }
 # new in 5.7.1: qtcharts qtdatavis3d qtgamepad qtpurchasing qtscxml
 # removed in 5.7: qtenginio (kept as stubport for 1 or 2 versions)
-if {![info exists building_qt5] || [vercmp ${version} 5.7.0] >= 0} {
-    # these stubports are added to the list for dependents, but not for port:qt5*-kde itself
-    # this allows to define them only in port:qt5-kde, not qt56-kde .
-    lappend qt5.kde_stubports qtcharts qtdatavis3d qtgamepad qtpurchasing qtscxml
-    # qttranslations is moved to its own subport; remove it from the stubports list:
-    set qt5.kde_stubports [lsearch -all -inline -not -exact ${qt5.kde_stubports} qttranslations]
+if {[info exists version]} {
+    if {[vercmp ${version} 5.7.0] >= 0} {
+        # new stubports to be added to the list for dependents.
+        lappend qt5.kde_stubports qtcharts qtdatavis3d qtgamepad qtpurchasing qtscxml
+        # qttranslations is moved to its own subport; remove it from the stubports list:
+        set qt5.kde_stubports [lsearch -all -inline -not -exact ${qt5.kde_stubports} qttranslations]
+    }
+    if {[vercmp ${version} 5.8.0] >= 0} {
+        lappend qt5.kde_stubports qtnetworkauth qtspeech
+    }
 }
 
 global qt5_dependency
