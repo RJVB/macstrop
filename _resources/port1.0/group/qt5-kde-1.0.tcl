@@ -441,6 +441,23 @@ if {${os.platform} eq "darwin"} {
 
 # allow for depending on either qt5[-mac] or qt5[-mac]-devel or qt5[-mac]*-kde, simultaneously
 
+proc qt5.active_version {} {
+    global prefix
+    namespace upvar ::qt5 active_version av
+    if {[info exists av]} {
+        return ${av}
+    }
+    if {[info exists building_qt5]} {
+        set av ${version}
+        return ${av}
+    } elseif {[file exists ${prefix}/bin/pkg-config]} {
+        set av [exec ${prefix}/bin/pkg-config --modversion Qt5Core]
+        return ${av}
+    } else {
+        return 0.0.0
+    }
+}
+
 set qt5.kde_stubports \
             {qtbase qtdeclarative qtserialbus qtserialport qtsensors \
             qtquick1 qtwebchannel qtimageformats qtsvg qtmacextras \
@@ -452,16 +469,17 @@ set qt5.kde_stubports \
 }
 # new in 5.7.1: qtcharts qtdatavis3d qtgamepad qtpurchasing qtscxml
 # removed in 5.7: qtenginio (kept as stubport for 1 or 2 versions)
-if {[info exists version]} {
-    if {[vercmp ${version} 5.7.0] >= 0} {
-        # new stubports to be added to the list for dependents.
-        lappend qt5.kde_stubports qtcharts qtdatavis3d qtgamepad qtpurchasing qtscxml
-        # qttranslations is moved to its own subport; remove it from the stubports list:
-        set qt5.kde_stubports [lsearch -all -inline -not -exact ${qt5.kde_stubports} qttranslations]
-    }
-    if {[vercmp ${version} 5.8.0] >= 0} {
-        lappend qt5.kde_stubports qtnetworkauth qtspeech
-    }
+# these are added to the list either when not building Qt, or when
+# building a Qt5 version of the proper version. This is to avoid that
+# we define inappropriate stub subports.
+if {![info exist building_qt5] || [vercmp ${version} 5.7.0] >= 0} {
+    # new stubports to be added to the list for dependents.
+    lappend qt5.kde_stubports qtcharts qtdatavis3d qtgamepad qtpurchasing qtscxml
+    # qttranslations is moved to its own subport; remove it from the stubports list:
+    set qt5.kde_stubports [lsearch -all -inline -not -exact ${qt5.kde_stubports} qttranslations]
+}
+if {![info exist building_qt5] || [vercmp ${version} 5.8.0] >= 0} {
+    lappend qt5.kde_stubports qtnetworkauth qtspeech
 }
 
 global qt5_dependency
@@ -827,20 +845,6 @@ proc qt5.depends_build_component {args} {
 
 proc qt5.depends_run_component {args} {
     return [qt5::depends_component_p depends_run {*}${args}]
-}
-
-proc qt5.active_version {} {
-    global prefix
-    namespace upvar ::qt5 active_version av
-    if {[info exists av]} {
-        return ${av}
-    }
-    if {[file exists ${prefix}/bin/pkg-config]} {
-        set av [exec ${prefix}/bin/pkg-config --modversion Qt5Core]
-        return ${av}
-    } else {
-        return 0.0.0
-    }
 }
 
 # this function registers the specified qch file(s) by installing
