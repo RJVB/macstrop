@@ -13,6 +13,7 @@ subport             libgcc {}
 
 epoch               2
 version             7.2.0
+
 platforms           darwin
 categories          lang
 maintainers         nomaintainer
@@ -146,6 +147,10 @@ use_parallel_build  yes
 
 destroot.target     install install-info-host
 
+# moved upwards from the "dylibs" variable in the port:libgcc post-destroot;
+# these are the libraries that are potential dependencies for other ports
+# and that are either installed by that port and not the
+# main port, or by the main port and as symlinks by port:libgcc.
 set standardLibs    {libgcc_ext.10.4.dylib libgcc_ext.10.5.dylib \
     libgcc_s.1.dylib libgfortran.4.dylib libquadmath.0.dylib \
     libstdc++.6.dylib libobjc-gnu.4.dylib libgomp.1.dylib \
@@ -162,7 +167,7 @@ if {${subport} eq "libgcc"} {
                     Users building from source can install port:${name}+with_libgcc \
                     and port:${subport}+stub to avoid building everything twice.
 
-    variant stub description "Use when the standard libraries are provided by the main port:${name}+with_libgcc" {}
+    variant stub description "Don't touch, used automatically when the main port:${name} is installed +with_libgcc" {}
 
     # http://trac.macports.org/ticket/35770
     # http://trac.macports.org/ticket/38814
@@ -211,6 +216,14 @@ if {${subport} eq "libgcc"} {
                         }
                     }
                 }
+            }
+            xinstall -m 755 -d ${destroot}${prefix}/include/gcc
+            if {[file exists ${prefix}/include/${name}/c++]} {
+                # this dir should always exist unless port:gcc is installed +libcxx (temporarily)
+                ln -s ${prefix}/include/${name}/c++ ${destroot}${prefix}/include/gcc/c++
+            } else {
+                # this will apply until port:gcc has proper support for -stdlib=libc++
+                ln -s ${prefix}/include/${name}-stdinc/c++ ${destroot}${prefix}/include/gcc/c++
             }
         }
     } else {
@@ -267,7 +280,6 @@ if {${subport} eq "libgcc"} {
 
             file delete -force ${destroot}${prefix}/bin
             file delete -force ${destroot}${prefix}/share
-            file delete -force ${destroot}${prefix}/include
             file delete -force ${destroot}${prefix}/lib/libgcc
             file delete -force ${destroot}${prefix}/libexec
 
@@ -275,6 +287,11 @@ if {${subport} eq "libgcc"} {
 
             # For binary compatibility with binaries that linked against the old libstdcxx port
             ln -s libgcc/libstdc++.6.dylib ${destroot}${prefix}/lib/libstdc++.6.dylib
+
+            # keep the headerfiles so that clang can build against libstdc++ without needing
+            # a full gcc port installed, accessing them via a version-independent symlink
+            xinstall -m 755 -d ${destroot}${prefix}/include/gcc
+            ln -s ${prefix}/include/${name}/c++ ${destroot}${prefix}/include/gcc/c++
         }
     }
 
@@ -285,16 +302,18 @@ if {${subport} eq "libgcc"} {
     ### MacStrop private
 
 } else {
+### Main port
 
-variant with_libgcc description "Include the standard libraries instead of getting them from port:libgcc. Speeds up building from source." {}
+variant with_libgcc description "Include the standard libraries instead of getting them from port:libgcc. For if you install from source." {}
 
-depends_run-append         port:gcc_select
+depends_run-append          port:gcc_select
 if {[variant_isset with_libgcc]} {
     # we install libgcc's content ourselves
     depends_lib-delete path:lib/libgcc/libgcc_s.1.dylib:libgcc
 }
 
-foreach cdv {{} 3.9 4.0} {
+set libcxx_versions         {{} 3.9 4.0 5.0}
+foreach cdv ${libcxx_versions} {
     set cv [join [split ${cdv} "."] ""]
     if {${cdv} eq {}} {
         variant libcxx description "Build to use libc++ and the corresponding headers from Xcode" {}
@@ -339,7 +358,7 @@ post-destroot {
 
     if {![variant_isset with_libgcc]} {
         foreach dylib ${standardLibs} {
-            # Different OS versions (eg: Leopard) or architectures (eg: PPC) don't produce all the dylibs
+            # Different OS versions (e.g. Leopard) or architectures (e.g. PPC) don't produce all the dylibs
             # https://trac.macports.org/ticket/40098
             # https://trac.macports.org/ticket/40100
             if {[file exists ${destroot}${prefix}/lib/${name}/${dylib}]} {
@@ -356,11 +375,14 @@ post-destroot {
                 }
             }
         }
+        # The C++ headerfiles should be installed by port:libgcc too
+        delete -force ${destroot}${prefix}/include/${name}/c++
     }
-    foreach cdv {{} 3.9 4.0} {
+    foreach cdv ${libcxx_versions} {
         set cv [join [split ${cdv} "."] ""]
-        if {[variant_isset libcxx${cv}]} {
+        if {[variant_isset libcxx${cv}] && [file exists ${destroot}${prefix}/include/${name}/c++]} {
             # move the stdc++ headers out of the way
+            # FIXME: needs to go when gcc supports -stdlib=libc++ !
             xinstall -m 755 -d ${destroot}${prefix}/include/${name}-stdinc
             file rename ${destroot}${prefix}/include/${name}/c++ ${destroot}${prefix}/include/${name}-stdinc/c++
         }
