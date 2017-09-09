@@ -163,7 +163,15 @@ diff --git kdevplatform/shell/projectcontroller.cpp kdevplatform/shell/projectco
 index 5acf203fb9642a791916c22c5b554b2954d9ea6e..839946d5724d3bc61c6960ca4da502d2d1d7ecea 100644
 --- kdevplatform/shell/projectcontroller.cpp
 +++ kdevplatform/shell/projectcontroller.cpp
-@@ -59,6 +59,7 @@ Boston, MA 02110-1301, USA.
+@@ -35,6 +35,7 @@ Boston, MA 02110-1301, USA.
+ #include <QSet>
+ #include <QTemporaryFile>
+ #include <QVBoxLayout>
++#include <QElapsedTimer>
+ 
+ #include <KActionCollection>
+ #include <KConfigGroup>
+@@ -59,6 +60,7 @@ Boston, MA 02110-1301, USA.
  #include <project/interfaces/iprojectfilemanager.h>
  #include <project/interfaces/ibuildsystemmanager.h>
  #include <project/interfaces/iprojectbuilder.h>
@@ -171,15 +179,49 @@ index 5acf203fb9642a791916c22c5b554b2954d9ea6e..839946d5724d3bc61c6960ca4da502d2
  #include <project/projectchangesmodel.h>
  #include <project/projectmodel.h>
  #include <project/projectbuildsetmodel.h>
-@@ -109,6 +110,7 @@ public:
+@@ -87,6 +89,8 @@ Boston, MA 02110-1301, USA.
+ namespace KDevelop
+ {
+ 
++static QElapsedTimer m_timer;
++
+ class ProjectControllerPrivate
+ {
+ public:
+@@ -109,6 +113,8 @@ public:
      bool m_cleaningUp; //Temporary flag enabled while destroying the project-controller
      QPointer<ProjectChangesModel> m_changesModel;
      QHash< IProject*, QPointer<KJob> > m_parseJobs; // parse jobs that add files from the project to the background parser.
 +    QList<IProject*> m_finaliseProjectImports; // project dir watchers and/or parse jobs waiting to be started
++    QHash <IProject*, QElapsedTimer*> m_timers; // TEMPORARY: project load timers
  
      ProjectControllerPrivate( ProjectController* p )
          : m_core(nullptr), model(nullptr), selectionModel(nullptr), dialog(nullptr), q(p), buildset(nullptr), m_foundProjectFile(false), m_cleaningUp(false)
-@@ -887,7 +889,21 @@ void ProjectController::projectImportingFinished( IProject* project )
+@@ -313,6 +319,11 @@ public:
+             return;
+         }
+ 
++        if (!m_timer.isValid()) {
++            m_timer.start();
++            qCWarning(SHELL) << "Starting project import timer";
++        }
++
+         foreach( IProject* project, m_projects )
+         {
+             if ( url == project->projectFile().toUrl() )
+@@ -331,6 +342,11 @@ public:
+         m_core->pluginControllerInternal()->loadProjectPlugins();
+ 
+         Project* project = new Project();
++        // TEMPORARY: initialise project load timer
++        if (qEnvironmentVariableIsSet("KDEV_DONT_DEFER_PROJECT_PARSING")) {
++            m_timers[project] = new QElapsedTimer;
++            m_timers[project]->start();
++        }
+         QObject::connect(project, &Project::aboutToOpen,
+                          q, &ProjectController::projectAboutToBeOpened);
+         if ( !project->open( Path(url) ) )
+@@ -887,7 +903,43 @@ void ProjectController::projectImportingFinished( IProject* project )
      d->m_currentlyOpening.removeAll(project->projectFile().toUrl());
      emit projectOpened( project );
  
@@ -187,22 +229,44 @@ index 5acf203fb9642a791916c22c5b554b2954d9ea6e..839946d5724d3bc61c6960ca4da502d2
 +    // don't call reparseProject immediately, defer until all currently opening
 +    // projects have been imported. Parsing is done in the background but
 +    // importing can block the UI so should be as fast as possible.
++    // TEMPORARY: deferFinalise
++    bool deferFinalise = !qEnvironmentVariableIsSet("KDEV_DONT_DEFER_PROJECT_PARSING");
 +    if (d->m_currentlyOpening.isEmpty()) {
++        if (deferFinalise) {
++            qCInfo(SHELL) << "All projects imported in" << m_timer.elapsed() / 1000.0 << "seconds";
++        }
++        m_timer.restart();
 +        createProjectWatcher(project);
 +        reparseProject(project);
-+        //qWarning() << "started parsing" << project->name();
-+        foreach (const auto p, d->m_finaliseProjectImports) {
-+            createProjectWatcher(p);
-+            reparseProject(p);
++        if (deferFinalise) {
++            foreach (const auto p, d->m_finaliseProjectImports) {
++                createProjectWatcher(p);
++                reparseProject(p);
++            }
++            qCInfo(SHELL) << "\tcreating dir watchers and/or starting parse jobs took an additional"
++                << m_timer.elapsed() / 1000.0 << "seconds";
 +        }
 +        d->m_finaliseProjectImports.clear();
++        m_timer.invalidate();
 +    } else {
-+        d->m_finaliseProjectImports.append(project);
++        if (deferFinalise) {
++            d->m_finaliseProjectImports.append(project);
++        }
++    }
++    if (!deferFinalise) {
++        qCInfo(SHELL) << "Project" << project->name() << "imported in"
++            << d->m_timers[project]->elapsed() / 1000.0 << "seconds";
++        createProjectWatcher(project);
++        reparseProject(project);
++        qCInfo(SHELL) << "\t" << project->name()
++            << ": creating dir watchers and/or starting parse jobs took an additional"
++            << d->m_timers[project]->elapsed() / 1000.0 << "seconds";
++        delete d->m_timers[project];
 +    }
  }
  
  // helper method for closeProject()
-@@ -1226,6 +1242,15 @@ QString ProjectController::mapSourceBuild( const QString& path_, bool reverse, b
+@@ -1226,6 +1278,15 @@ QString ProjectController::mapSourceBuild( const QString& path_, bool reverse, b
      return QString();
  }
  
