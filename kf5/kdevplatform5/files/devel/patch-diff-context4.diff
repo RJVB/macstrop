@@ -70,21 +70,10 @@ diff --git a/kdevplatform/plugins/patchreview/patchreview.cpp b/kdevplatform/plu
 index 47b6fa255ac06e6221f09cb3f9c45d1149f15b15..8fc87495d8020f13b137c750c338b88d6dcd3ed5 100644
 --- a/kdevplatform/plugins/patchreview/patchreview.cpp
 +++ b/kdevplatform/plugins/patchreview/patchreview.cpp
-@@ -217,9 +217,23 @@ void PatchReviewPlugin::notifyPatchChanged() {
+@@ -227,6 +227,17 @@ void PatchReviewPlugin::forceUpdate() {
+     }
+ }
  
- void PatchReviewPlugin::forceUpdate() {
-     if( m_patch ) {
--        m_patch->update();
-+        // only trigger an update if the plugin can update itself
-+        VCSDiffPatchSource *vcsPatch = dynamic_cast<VCSDiffPatchSource*>(m_patch.data());
-+        if (!vcsPatch || vcsPatch->m_updater) {
-+            m_patch->update();
-+            notifyPatchChanged();
-+        }
-+    }
-+}
- 
--        notifyPatchChanged();
 +void PatchReviewPlugin::forceUpdateWithContext(int contextLines) {
 +    if( m_patch ) {
 +        // register the requested number of lines of context
@@ -93,9 +82,12 @@ index 47b6fa255ac06e6221f09cb3f9c45d1149f15b15..8fc87495d8020f13b137c750c338b88d
 +        forceUpdate();
 +    } else {
 +        qWarning() << Q_FUNC_INFO << "called while m_patch==" << m_patch;
-     }
- }
- 
++     }
++}
++ 
+ void PatchReviewPlugin::updateKompareModel() {
+     if ( !m_patch ) {
+         ///TODO: this method should be cleaned up, it can be called by the timer and
 diff --git a/kdevplatform/plugins/patchreview/patchreview.h b/kdevplatform/plugins/patchreview/patchreview.h
 index 92090e124a495377a44dcbc6ac37fe9c740f0ea8..e6b81327a7c8e9a490098a750862609480520fb4 100644
 --- a/kdevplatform/plugins/patchreview/patchreview.h
@@ -421,68 +413,3 @@ index 796eb9eb0abc3d317f08354372893431a1693e82..5ffe7d452d2da6c96bb1105983d54f82
  };
  
  class KDEVPLATFORMVCS_EXPORT VCSStandardDiffUpdater : public VCSDiffUpdater {
-diff --git a/kdevplatform/vcs/dvcs/ui/branchmanager.cpp b/kdevplatform/vcs/dvcs/ui/branchmanager.cpp
-index cbe5c29c223f6e8fda07f16822dfeae410c6cc4d..fc90007520cd8042d2953fa046c0683efbb6c82c 100644
---- a/kdevplatform/vcs/dvcs/ui/branchmanager.cpp
-+++ b/kdevplatform/vcs/dvcs/ui/branchmanager.cpp
-@@ -194,6 +194,49 @@ void BranchManager::mergeBranch()
-     }
- }
- 
-+// adapted from VCSStandardDiffUpdater
-+class VCSBranchDiffUpdater : public VCSDiffUpdater {
-+public:
-+    VCSBranchDiffUpdater(const QString& repo, const QString& src, KDevelop::DistributedVersionControlPlugin* vcs);
-+    ~VCSBranchDiffUpdater() override;
-+    KDevelop::VcsDiff update() const override;
-+    KDevelop::IBasicVersionControl* vcs() const override { return m_vcs; }
-+    QUrl url() const override { return QUrl::fromLocalFile(m_repository); }
-+private:
-+    const QString m_repository;
-+    const QString m_src;
-+    KDevelop::DistributedVersionControlPlugin* m_vcs;
-+};
-+
-+VCSBranchDiffUpdater::VCSBranchDiffUpdater(const QString& repo, const QString& src,
-+        KDevelop::DistributedVersionControlPlugin* vcs)
-+    : m_repository(repo)
-+    , m_src(src)
-+    , m_vcs(vcs)
-+{
-+}
-+
-+VCSBranchDiffUpdater::~VCSBranchDiffUpdater() {
-+}
-+
-+VcsDiff VCSBranchDiffUpdater::update() const
-+{
-+    m_vcs->setDiffContextLines(m_contextLines);
-+
-+    VcsRevision srcRev;
-+    srcRev.setRevisionValue(m_src, KDevelop::VcsRevision::GlobalNumber);
-+    // see comment in BranchManager::diffFromBranch()
-+    const auto destRev = VcsRevision::createSpecialRevision(KDevelop::VcsRevision::Working);
-+    QScopedPointer<VcsJob> diffJob(m_vcs->diff(QUrl::fromLocalFile(m_repository), srcRev, destRev));
-+    const bool success = diffJob ? diffJob->exec() : false;
-+    if (!success) {
-+        KMessageBox::error(nullptr, i18n("Could not create a patch for the current version."));
-+        return {};
-+    }
-+
-+    return diffJob->fetchResults().value<VcsDiff>();
-+}
-+
- void BranchManager::diffFromBranch()
- {
-     const auto dest = m_model->currentBranch();
-@@ -234,7 +277,9 @@ void BranchManager::diffJobFinished(KJob* job)
-         return;
-     }
- 
--    auto patch = new VCSDiffPatchSource(diff);
-+//     auto patch = new VCSDiffPatchSource(diff);
-+    auto patch = new VCSDiffPatchSource(new VCSBranchDiffUpdater(m_repository,
-+        m_ui->branchView->currentIndex().data().toString(), m_dvcPlugin));
-     showVcsDiff(patch);
-     close();
- }
