@@ -96,10 +96,18 @@ configure.args      --enable-languages=c,c++,objc,obj-c++,lto,fortran \
                     --enable-lto \
                     --enable-libstdcxx-time \
                     --with-build-config=bootstrap-debug \
-                    --with-as=${prefix}/bin/as \
                     --with-ld=${prefix}/bin/ld \
                     --with-ar=${prefix}/bin/ar \
                     --with-bugurl=https://trac.macports.org/newticket
+
+# use the system assembler by default; now that we use `as -q` that is the
+# only way that doesn't oblige users to install a port:clang-xy in addition
+# to port:gccN. This can change when the `as` command from port:cctools takes
+# a --clang argument to use a specific clang.
+configure.args-append \
+                    --with-as=/usr/bin/as
+configure.env-append \
+                    AS_FOR_TARGET=/usr/bin/as
 
 # see https://lists.macports.org/pipermail/macports-dev/2017-August/036209.html
 # --disable-tls does not limit functionality
@@ -109,7 +117,6 @@ configure.args-append \
 
 configure.env-append \
                     AR_FOR_TARGET=${prefix}/bin/ar \
-                    AS_FOR_TARGET=${prefix}/bin/as \
                     LD_FOR_TARGET=${prefix}/bin/ld \
                     NM_FOR_TARGET=${prefix}/bin/nm \
                     OBJDUMP_FOR_TARGET=${prefix}/bin/objdump \
@@ -319,8 +326,15 @@ foreach cdv ${libcxx_versions} {
     if {[variant_isset libcxx${cv}]} {
         if {${cdv} ne {}} {
             depends_run-append  port:clang-${cdv}
+            depends_skip_archcheck-append llvm_select
             set libcxx_headers  "${prefix}/libexec/llvm-${cdv}/include/c++/v1"
             set clang_mp        "${prefix}/bin/clang-mp-${cdv}"
+            pre-fetch {
+                if {![file exists ${prefix}/bin/clang]} {
+                    ui_error "You need to run `port select --set clang mp-clang-${cdv}`"
+                    return -code error "port:${name} needs ${prefix}/bin/clang"
+                }
+            }
         } else {
             set libcxx_headers "[file dir [exec xcrun --find clang]]/../include/c++/v1"
             set clang_mp        "[exec xcrun --find clang]"
@@ -328,12 +342,21 @@ foreach cdv ${libcxx_versions} {
         patchfiles-append   patch-use-libcxx.diff
         post-patch {
             reinplace "s|@LLVMHEADERPATH@|${libcxx_headers}|g" ${worksrcpath}/gcc/incpath.c
+            # this will apply when as -q takes a --clang argument.
             reinplace "s|@CLANG@|${clang_mp}|g" ${worksrcpath}/gcc/config/darwin.h
         }
 
         # the reason for the change proposed in https://lists.macports.org/pipermail/macports-dev/2017-August/036209.html
         # is moot when using libc++ ; reenable TLS support
         configure.args-delete   --disable-tls
+
+        # we need a clang installation anyway, use it for the compiler too
+        # (if the user used port select to that extent).
+        configure.args-replace  --with-as=/usr/bin/as \
+                                --with-as=${prefix}/bin/as
+        configure.env-append    AS_FOR_TARGET=/usr/bin/as \
+                                AS_FOR_TARGET=${prefix}/bin/as
+
 
         # GCC_IS_BUILDING_ITSELF: causes g++ to add a static libstdc++ just like it does when building with/for libstdc++
         # GCC_FORCE_LIBSTDCPP: forces the use of libstdc++ for the current build and ignores the default clang C++ header location
