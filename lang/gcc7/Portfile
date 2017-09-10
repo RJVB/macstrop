@@ -6,6 +6,7 @@ PortGroup compiler_blacklist_versions 1.0
 PortGroup active_variants 1.1
 ### MacStrop private
 PortGroup compress_workdir 1.0
+PortGroup preserve_runtime_libraries 1.0
 ### MacStrop private
 
 name                gcc7
@@ -13,6 +14,7 @@ subport             libgcc {}
 
 epoch               2
 version             7.2.0
+set ver3char        [join [split ${version} '.'] ""]
 
 platforms           darwin
 categories          lang
@@ -54,18 +56,29 @@ platform darwin {
     configure.pre_args-append --build=${build_arch}-apple-darwin${os.major}
 
     # see https://gcc.gnu.org/ml/gcc-patches/2012-05/msg00672.html
-    patchfiles-append         patch-float128.diff
+    patchfiles-append patch-float128.diff
     # cause `as` to be invoked with the -q option so that it
     # invokes the clang integrated assembler (instead of the obsolete GNU as)
     # `man as` claims that this is the default but clearly that is not true everywhere.
-    patchfiles-append         patch-default-clang-assembler.diff
+    patchfiles-append patch-default-clang-assembler.diff
 }
 
 configure.dir       ${workpath}/build
 configure.cmd       ${worksrcpath}/configure
+
+set provides_libgcc 1
+
+# where to install the headers, should be unversioned for the GCC version that
+# provides port:libgcc and versioned for all other ports
+if {${provides_libgcc}} {
+    set gcc_headerdir ${prefix}/include/gcc
+} else {
+    set gcc_headerdir ${prefix}/include/${name}
+}
+
 configure.args      --enable-languages=c,c++,objc,obj-c++,lto,fortran \
-                    --libdir=${prefix}/lib/${name} \
-                    --includedir=${prefix}/include/${name} \
+                    --libdir=${prefix}/lib/gcc${ver3char} \
+                    --includedir=${gcc_headerdir} \
                     --infodir=${prefix}/share/info \
                     --mandir=${prefix}/share/man \
                     --datarootdir=${prefix}/share/gcc-${major} \
@@ -73,7 +86,7 @@ configure.args      --enable-languages=c,c++,objc,obj-c++,lto,fortran \
                     --with-system-zlib \
                     --disable-nls \
                     --program-suffix=-mp-${major} \
-                    --with-gxx-include-dir=${prefix}/include/${name}/c++/ \
+                    --with-gxx-include-dir=${gcc_headerdir}/c++/ \
                     --with-gmp=${prefix} \
                     --with-mpfr=${prefix} \
                     --with-mpc=${prefix} \
@@ -157,9 +170,6 @@ set standardLibs    {libgcc_ext.10.4.dylib libgcc_ext.10.5.dylib \
     libitm.1.dylib libssp.0.dylib libasan.0.dylib libatomic.1.dylib}
 
 if {${subport} eq "libgcc"} {
-    ### MacStrop private
-    PortGroup preserve_runtime_libraries 1.0
-    ### MacStrop private
 
     conflicts       libgcc-devel
     long_description-append \
@@ -167,7 +177,7 @@ if {${subport} eq "libgcc"} {
                     Users building from source can install port:${name}+with_libgcc \
                     and port:${subport}+stub to avoid building everything twice.
 
-    variant stub description "Don't touch, used automatically when the main port:${name} is installed +with_libgcc" {}
+    variant stub conflicts universal description "Don't touch, used automatically when the main port:${name} is installed +with_libgcc" {}
 
     # http://trac.macports.org/ticket/35770
     # http://trac.macports.org/ticket/38814
@@ -197,31 +207,14 @@ if {${subport} eq "libgcc"} {
         patch           {}
         build           {}
         destroot {
-            # install symlinks to the set of standardLibs that have in this case been
-            # installed by the main port. In other words, use the reverse logic to the
-            # comparable foreach loop in the main port's post-destroot, minus the deleting.
+            # install something relevant into $prefix/lib/libgcc
             xinstall -m 755 -d ${destroot}${prefix}/lib/libgcc
-            foreach dylib ${standardLibs} {
-                # Different OS versions (eg: Leopard) or architectures (eg: PPC) don't produce all the dylibs
-                # https://trac.macports.org/ticket/40098
-                # https://trac.macports.org/ticket/40100
-                if {[file exists ${prefix}/lib/${name}/${dylib}]} {
-                    ln -s ${prefix}/lib/${name}/${dylib} ${destroot}${prefix}/lib/libgcc/${dylib}
-                }
-
-                if {[variant_isset universal]} {
-                    foreach archdir [glob ${prefix}/lib/${name}/*/] {
-                        if {[file exists ${archdir}/${dylib}]} {
-                            ln -s ${archdir}/${dylib} ${destroot}${prefix}/lib/libgcc/${dylib}
-                        }
-                    }
-                }
-            }
+            system "echo ${version} > ${destroot}${prefix}/lib/libgcc/libgcc_version.txt"
             xinstall -m 755 -d ${destroot}${prefix}/include/gcc
-            if {[file exists ${prefix}/include/${name}/c++]} {
+            if {!${provides_libgcc} && [file exists ${gcc_headerdir}/c++]} {
                 # this dir should always exist unless port:gcc is installed +libcxx (temporarily)
                 ln -s ${prefix}/include/${name}/c++ ${destroot}${prefix}/include/gcc/c++
-            } else {
+            } elseif {[file exists ${prefix}/include/${name}-stdinc/c++]} {
                 # this will apply until port:gcc has proper support for -stdlib=libc++
                 ln -s ${prefix}/include/${name}-stdinc/c++ ${destroot}${prefix}/include/gcc/c++
             }
@@ -230,8 +223,8 @@ if {${subport} eq "libgcc"} {
         depends_lib-delete path:lib/libgcc/libgcc_s.1.dylib:libgcc
         require_active_variants ${name} "" with_libgcc
 
-        configure.args-delete --libdir=${prefix}/lib/${name}
-        configure.args-append --libdir=${prefix}/lib/libgcc
+        configure.args-replace  --libdir=${prefix}/lib/gcc${ver3char} \
+                                --libdir=${prefix}/lib/libgcc
 
         # TODO: Possibly disable bootstrap with appropriate configure flags.
         #       the problem is that libstdc++'s configure script tests for tls support
@@ -271,10 +264,13 @@ if {${subport} eq "libgcc"} {
                     }
                 }
 
-                # strip debug symbols to supress debugger warnings:
-                # http://trac.macports.org/attachment/ticket/34831
-                if {! [string match *libgcc_ext* ${dylib}]} {
-                    system "strip -x ${destroot}${prefix}/lib/libgcc.merged/${dylib}"
+                if {${os.major} < 13} {
+                    # strip debug symbols to suppress debugger warnings:
+                    # http://trac.macports.org/attachment/ticket/34831
+                    # This isn't required for lldb
+                    if {! [string match *libgcc_ext* ${dylib}]} {
+                        system "strip -x ${destroot}${prefix}/lib/libgcc.merged/${dylib}"
+                    }
                 }
             }
 
@@ -288,10 +284,10 @@ if {${subport} eq "libgcc"} {
             # For binary compatibility with binaries that linked against the old libstdcxx port
             ln -s libgcc/libstdc++.6.dylib ${destroot}${prefix}/lib/libstdc++.6.dylib
 
-            # keep the headerfiles so that clang can build against libstdc++ without needing
-            # a full gcc port installed, accessing them via a version-independent symlink
-            xinstall -m 755 -d ${destroot}${prefix}/include/gcc
-            ln -s ${prefix}/include/${name}/c++ ${destroot}${prefix}/include/gcc/c++
+#             # keep the headerfiles so that clang can build against libstdc++ without needing
+#             # a full gcc port installed, accessing them via a version-independent symlink
+#             xinstall -m 755 -d ${destroot}${prefix}/include/gcc
+#             ln -s ${prefix}/include/${name}/c++ ${destroot}${prefix}/include/gcc/c++
         }
     }
 
@@ -304,7 +300,7 @@ if {${subport} eq "libgcc"} {
 } else {
 ### Main port
 
-variant with_libgcc description "Include the standard libraries instead of getting them from port:libgcc. For if you install from source." {}
+variant with_libgcc conflicts universal description "Include the standard libraries instead of getting them from port:libgcc. For if you install from source." {}
 
 depends_run-append          port:gcc_select
 if {[variant_isset with_libgcc]} {
@@ -323,13 +319,16 @@ foreach cdv ${libcxx_versions} {
     if {[variant_isset libcxx${cv}]} {
         if {${cdv} ne {}} {
             depends_run-append  port:clang-${cdv}
-            set libcxx_headers "${prefix}/libexec/llvm-${cdv}/include/c++/v1"
+            set libcxx_headers  "${prefix}/libexec/llvm-${cdv}/include/c++/v1"
+            set clang_mp        "${prefix}/bin/clang-mp-${cdv}"
         } else {
             set libcxx_headers "[file dir [exec xcrun --find clang]]/../include/c++/v1"
+            set clang_mp        "[exec xcrun --find clang]"
         }
         patchfiles-append   patch-use-libcxx.diff
         post-patch {
             reinplace "s|@LLVMHEADERPATH@|${libcxx_headers}|g" ${worksrcpath}/gcc/incpath.c
+            reinplace "s|@CLANG@|${clang_mp}|g" ${worksrcpath}/gcc/config/darwin.h
         }
 
         # the reason for the change proposed in https://lists.macports.org/pipermail/macports-dev/2017-August/036209.html
@@ -344,6 +343,11 @@ foreach cdv ${libcxx_versions} {
         build.env-append        GCC_IS_BUILDING_ITSELF=1 GCC_FORCE_LIBSTDCPP=1
         destroot.env-append     GCC_IS_BUILDING_ITSELF=1 GCC_FORCE_LIBSTDCPP=1
     }
+}
+post-patch {
+    # use the system clang as assembler if not libcxx variant is set
+    set clang_mp "[exec xcrun --find clang]"
+    reinplace "s|@CLANG@|${clang_mp}|g" ${worksrcpath}/gcc/config/darwin.h
 }
 
 post-destroot {
@@ -377,6 +381,60 @@ post-destroot {
         }
         # The C++ headerfiles should be installed by port:libgcc too
         delete -force ${destroot}${prefix}/include/${name}/c++
+    } else {
+        file mkdir ${destroot}${prefix}/lib/libgcc
+        foreach dylib ${standardLibs} {
+            # This is a modified "inversed" version of what port:libgcc does when not in stub mode
+            # the difference is that here we're moving the ${standardLibs} from lib/gcc${ver3char} ($prefix/lib/gcc7)
+            # into the unversioned $prefix/lib/libgcc and need to adapt their ID and link info accordingly.
+            if {! [file exists ${destroot}${prefix}/lib/gcc${ver3char}/${dylib}]} {
+                continue
+            }
+
+            move ${destroot}${prefix}/lib/gcc${ver3char}/${dylib} ${destroot}${prefix}/lib/libgcc
+            # put an appropriate symlink in the versioned location
+            ln -s ${prefix}/lib/libgcc/${dylib} ${destroot}${prefix}/lib/gcc${ver3char}/${dylib}
+
+            # update ${dylib}'s ID and all of its dependents to match the new location
+            if {[variant_isset universal]} {
+                # this case is untested and should never be executed because of the with_libgcc/universal conflict
+                # Keeping it around for the "just in case".
+                foreach archdir [glob ${destroot}${prefix}/lib/gcc${ver3char}/*/] {
+                    set archdir_nodestroot [string map "${destroot}/ /" ${archdir}]
+                    if {[file exists ${archdir}/${dylib}]} {
+                        system "install_name_tool -id ${prefix}/lib/libgcc/${dylib} ${archdir}/${dylib}"
+                        foreach link ${dylibs} {
+                            system "install_name_tool -change ${archdir_nodestroot}${link} ${prefix}/lib/libgcc/${link} ${archdir}/${dylib}"
+                        }
+                        system "lipo -create -output ${destroot}${prefix}/lib/libgcc/${dylib}~ ${destroot}${prefix}/lib/libgcc/${dylib} ${archdir}/${dylib} && mv ${destroot}${prefix}/lib/libgcc/${dylib}~ ${destroot}${prefix}/lib/libgcc/${dylib}"
+                    }
+                }
+            } else {
+                if {[string match *libgcc_ext* ${dylib}]} {
+                    # libgcc_ext is a stub library which install_name_tool cannot handle.
+                    # do 
+                    system "/usr/bin/ex -b +:1s,${prefix}/lib/gcc${ver3char}/libgcc_s.1.dylib,${prefix}/lib/libgcc/libgcc_s.1.dylib,g +:wq ${destroot}${prefix}/lib/libgcc/${dylib}"
+                } else {
+                    system "install_name_tool -id ${prefix}/lib/libgcc/${dylib} ${destroot}${prefix}/lib/libgcc/${dylib}"
+                    foreach dep [glob ${destroot}${prefix}/lib/gcc${ver3char}/*.dylib ${destroot}${prefix}/lib/libgcc/*.dylib] {
+                        if {[file type ${dep}] eq "file" && ![string match *libgcc_ext* ${dep}]} { 
+                            # ${dylib} has been moved, so update all of its dependents
+                            set old ${prefix}/lib/gcc${ver3char}/${dylib}
+                            set new ${prefix}/lib/libgcc/${dylib}
+                            system "install_name_tool -change ${old} ${new} ${dep}"
+                        }
+                    }
+                }
+            }
+
+            if {${os.major} < 13} {
+                # strip debug symbols to suppress debugger warnings:
+                # http://trac.macports.org/attachment/ticket/34831
+                if {! [string match *libgcc_ext* ${dylib}]} {
+                    system "strip -x ${destroot}${prefix}/lib/libgcc/${dylib}"
+                }
+            }
+        }
     }
     foreach cdv ${libcxx_versions} {
         set cv [join [split ${cdv} "."] ""]
@@ -384,9 +442,16 @@ post-destroot {
             # move the stdc++ headers out of the way
             # FIXME: needs to go when gcc supports -stdlib=libc++ !
             xinstall -m 755 -d ${destroot}${prefix}/include/${name}-stdinc
-            file rename ${destroot}${prefix}/include/${name}/c++ ${destroot}${prefix}/include/${name}-stdinc/c++
+            file rename ${destroot}${gcc_headerdir}/c++ ${destroot}${prefix}/include/${name}-stdinc/c++
         }
     }
+
+    # make the library directory available via the old path too
+    ln -s gcc${ver3char} ${destroot}${prefix}/lib/${name}
+
+    ### MacStrop private
+    preserve_libraries ${prefix}/lib/libgcc lib*.*.dylib
+    ### MacStrop private
 }
 
 select.group        gcc
