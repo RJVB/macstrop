@@ -11,6 +11,7 @@ PortGroup preserve_runtime_libraries 1.0
 
 name                gcc7
 
+# are we the port that currently provides libgcc?
 set provides_libgcc 1
 
 epoch               2
@@ -20,9 +21,9 @@ set major           [lindex [split ${version} .-] 0]
 set ver3char        [join [split ${version} '.'] ""]
 
 if {${provides_libgcc}} {
-	set libgcc_port libgcc
+    set libgcc_port libgcc
 } else {
-	set libgcc_port libgcc${major}
+    set libgcc_port libgcc${major}
 }
 
 subport             ${libgcc_port} {}
@@ -48,6 +49,8 @@ use_xz              yes
 
 checksums           rmd160  fa8eed36c78cf135f9cc88e60845996b5cfaba52 \
                     sha256  1cf7adf8ff4b5aa49041c8734bbcf1ad18cc4c94d0029aae0f4e48841088479a
+
+installs_libs       yes
 
 depends_lib         port:cctools \
                     port:gmp \
@@ -187,6 +190,11 @@ compiler.blacklist-append {clang < 300}
 # "-stdlib" would be passed on to the bootstrap compiler if present
 configure.cxx_stdlib
 
+build.dir           ${configure.dir}
+use_parallel_build  yes
+
+destroot.target     install install-info-host
+
 # moved upwards from the "dylibs" variable in the port:libgcc post-destroot;
 # these are the libraries that are potential dependencies for other ports
 # and that are either installed by that port and not the
@@ -224,11 +232,13 @@ if {${subport} eq "${libgcc_port}"} {
         }
     }
     if {[variant_isset stub]} {
-        # reset the depspecs to just port:${name}
-        depends_lib     port:${name}
+        # reset the depspecs
+        depends_lib
         require_active_variants ${name} with_libgcc
 
         use_configure   no
+        installs_libs   no
+        supported_archs noarch
         fetch           {}
         extract         {}
         patch           {}
@@ -237,16 +247,9 @@ if {${subport} eq "${libgcc_port}"} {
             # install something relevant into $prefix/lib/libgcc
             xinstall -m 755 -d ${destroot}${prefix}/lib/libgcc
             system "echo ${version} > ${destroot}${prefix}/lib/libgcc/libgcc_version.txt"
-            xinstall -m 755 -d ${destroot}${prefix}/include/gcc
-            if {!${provides_libgcc} && [file exists ${gcc_headerdir}/c++]} {
-                # this dir should always exist unless port:gcc is installed +libcxx (temporarily)
-                ln -s ${gcc_headerdir}/c++ ${destroot}${prefix}/include/gcc/c++
-            } elseif {[file exists ${prefix}/include/${name}-stdinc/c++]} {
-                # port:gcc proper support for -stdlib=libc++ will include support
-                # for having GCC's C++ headers available in the expected location.
-                # Currently that is NOT possible.
-#                 ln -s ${prefix}/include/${name}-stdinc/c++ ${destroot}${prefix}/include/gcc/c++
-            }
+            # there should be no need to install anything related to headers
+            # For binary compatibility with binaries that linked against the old libstdcxx port
+            ln -s libgcc/libstdc++.6.dylib ${destroot}${prefix}/lib/libstdc++.6.dylib
         }
     } else {
         depends_lib-delete path:lib/libgcc/libgcc_s.1.dylib:libgcc
@@ -256,15 +259,24 @@ if {${subport} eq "${libgcc_port}"} {
         configure.args-replace  --libdir=${prefix}/lib/gcc${ver3char} \
                                 --libdir=${prefix}/lib/libgcc
 
-        # bootstrap-less building, see:
+        # bootstrap-less building is a *lot* faster, see:
         # http://trac.macports.org/ticket/36116
         # and
         # https://trac.macports.org/changeset/103047
         if {${os.major} >= 12} {
             compiler.blacklist-append {clang < 425}
-            compiler.blacklist-append {macports-clang < 3.2}
             configure.args-append --disable-bootstrap
             build.target        all
+        } else {
+            configure.cc_archflags
+            configure.cxx_archflags
+            configure.objc_archflags
+            configure.ld_archflags
+            configure.universal_cflags
+            configure.universal_cxxflags
+            configure.universal_ldflags
+            configure.universal_args
+            build.target        bootstrap-lean
         }
 
         post-destroot {
@@ -315,11 +327,6 @@ if {${subport} eq "${libgcc_port}"} {
 
             # For binary compatibility with binaries that linked against the old libstdcxx port
             ln -s libgcc/libstdc++.6.dylib ${destroot}${prefix}/lib/libstdc++.6.dylib
-
-#             # keep the headerfiles so that clang can build against libstdc++ without needing
-#             # a full gcc port installed, accessing them via a version-independent symlink
-#             xinstall -m 755 -d ${destroot}${prefix}/include/gcc
-#             ln -s ${prefix}/include/${name}/c++ ${destroot}${prefix}/include/gcc/c++
         }
     }
 
@@ -338,10 +345,6 @@ variant quick description "Build ${name} without the usual 3-stage bootstrap.\
     Probably safest with configure.compiler=macports-gcc-${major} but not when that compiler uses libc++!" {}
 
 depends_run-append          port:gcc_select
-if {[variant_isset with_libgcc]} {
-    # we install libgcc's content ourselves
-    depends_lib-delete path:lib/libgcc/libgcc_s.1.dylib:libgcc
-}
 
 if {${os.major} >= 13} {
     # OS X 10.9 and up support the system clang toolchain from Xcode and
@@ -525,6 +528,25 @@ post-destroot {
 select.group        gcc
 select.file         ${filespath}/mp-${name}
 
+if {[variant_exists quick] && [variant_isset quick]} {
+    # quick (and hopefully not too dirty) build: don't bootstrap
+    # and leave the configure environment mostly intact.
+    configure.args-replace \
+                    --with-build-config=bootstrap-debug \
+                    --disable-bootstrap
+} else {
+    configure.cc_archflags
+    configure.cxx_archflags
+    configure.objc_archflags
+    configure.ld_archflags
+    configure.universal_cflags
+    configure.universal_cxxflags
+    configure.universal_ldflags
+    configure.universal_args
+    build.target    bootstrap-lean
+}
+
+### End main port
 }
 
 platform powerpc {
@@ -545,28 +567,6 @@ build.env-append    CPP="${configure.cc} -E" \
 
 configure.cc-append [get_canonical_archflags]
 configure.cxx-append ${configure.cxx_archflags}
-
-build.dir           ${configure.dir}
-if {[variant_exists quick] && [variant_isset quick]} {
-    # quick (and hopefully not too dirty) build: don't bootstrap
-    # and leave the configure environment mostly intact.
-    configure.args-replace \
-                    --with-build-config=bootstrap-debug \
-                    --disable-bootstrap
-} else {
-    configure.cc_archflags
-    configure.cxx_archflags
-    configure.objc_archflags
-    configure.ld_archflags
-    configure.universal_cflags
-    configure.universal_cxxflags
-    configure.universal_ldflags
-    configure.universal_args
-    build.target    bootstrap-lean
-}
-use_parallel_build  yes
-
-destroot.target     install install-info-host
 
 livecheck.type      regex
 livecheck.url       http://ftp.gnu.org/gnu/gcc/
