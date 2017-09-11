@@ -10,11 +10,22 @@ PortGroup preserve_runtime_libraries 1.0
 ### MacStrop private
 
 name                gcc7
-subport             libgcc {}
+
+set provides_libgcc 1
 
 epoch               2
 version             7.2.0
+
+set major           [lindex [split ${version} .-] 0]
 set ver3char        [join [split ${version} '.'] ""]
+
+if {${provides_libgcc}} {
+	set libgcc_port libgcc
+} else {
+	set libgcc_port libgcc${major}
+}
+
+subport             ${libgcc_port} {}
 
 platforms           darwin
 categories          lang
@@ -50,8 +61,6 @@ depends_lib         port:cctools \
 depends_skip_archcheck-append gcc_select ld64 cctools
 license_noconflict  gmp mpfr ppl libmpc
 
-set major           [lindex [split ${version} .-] 0]
-
 platform darwin {
     configure.pre_args-append --build=${build_arch}-apple-darwin${os.major}
 
@@ -65,8 +74,6 @@ platform darwin {
 
 configure.dir       ${workpath}/build
 configure.cmd       ${worksrcpath}/configure
-
-set provides_libgcc 1
 
 # where to install the headers, should be unversioned for the GCC version that
 # provides port:libgcc and versioned for all other ports
@@ -161,12 +168,6 @@ compiler.blacklist-append {clang < 300}
 # "-stdlib" would be passed on to the bootstrap compiler if present
 configure.cxx_stdlib
 
-build.dir           ${configure.dir}
-build.target        bootstrap-lean
-use_parallel_build  yes
-
-destroot.target     install install-info-host
-
 # moved upwards from the "dylibs" variable in the port:libgcc post-destroot;
 # these are the libraries that are potential dependencies for other ports
 # and that are either installed by that port and not the
@@ -176,7 +177,7 @@ set standardLibs    {libgcc_ext.10.4.dylib libgcc_ext.10.5.dylib \
     libstdc++.6.dylib libobjc-gnu.4.dylib libgomp.1.dylib \
     libitm.1.dylib libssp.0.dylib libasan.0.dylib libatomic.1.dylib}
 
-if {${subport} eq "libgcc"} {
+if {${subport} eq "${libgcc_port}"} {
 
     conflicts       libgcc-devel
     long_description-append \
@@ -220,10 +221,12 @@ if {${subport} eq "libgcc"} {
             xinstall -m 755 -d ${destroot}${prefix}/include/gcc
             if {!${provides_libgcc} && [file exists ${gcc_headerdir}/c++]} {
                 # this dir should always exist unless port:gcc is installed +libcxx (temporarily)
-                ln -s ${prefix}/include/${name}/c++ ${destroot}${prefix}/include/gcc/c++
+                ln -s ${gcc_headerdir}/c++ ${destroot}${prefix}/include/gcc/c++
             } elseif {[file exists ${prefix}/include/${name}-stdinc/c++]} {
-                # this will apply until port:gcc has proper support for -stdlib=libc++
-                ln -s ${prefix}/include/${name}-stdinc/c++ ${destroot}${prefix}/include/gcc/c++
+                # port:gcc proper support for -stdlib=libc++ will include support
+                # for having GCC's C++ headers available in the expected location.
+                # Currently that is NOT possible.
+#                 ln -s ${prefix}/include/${name}-stdinc/c++ ${destroot}${prefix}/include/gcc/c++
             }
         }
     } else {
@@ -308,6 +311,9 @@ if {${subport} eq "libgcc"} {
 ### Main port
 
 variant with_libgcc conflicts universal description "Include the standard libraries instead of getting them from port:libgcc. For if you install from source." {}
+# the quick variant simplifies gcc patch development but also decreases the build time by a factor > 4
+variant quick description "Build ${name} without the usual 3-stage bootstrap.\
+    Probably safest with configure.compiler=macports-gcc-${major} but not when that compiler uses libc++!" {}
 
 depends_run-append          port:gcc_select
 if {[variant_isset with_libgcc]} {
@@ -319,7 +325,7 @@ set libcxx_versions         {{} 3.9 4.0 5.0}
 foreach cdv ${libcxx_versions} {
     set cv [join [split ${cdv} "."] ""]
     if {${cdv} eq {}} {
-        variant libcxx description "Build to use libc++ and the corresponding headers from Xcode" {}
+        variant libcxx description "Build to use libc++ and the corresponding headers from Xcode (experimental for Xcode <= 6)" {}
     } else {
         variant libcxx${cv} description "Build to use libc++ and the corresponding headers from port:clang-${cdv}" {}
     }
@@ -335,8 +341,16 @@ foreach cdv ${libcxx_versions} {
                     return -code error "port:${name} needs ${prefix}/bin/clang"
                 }
             }
+            # we need a clang installation anyway, use it for the compiler too
+            # (if the user used port select to that extent).
+            configure.args-replace \
+                                --with-as=/usr/bin/as \
+                                --with-as=${prefix}/bin/as
+            configure.env-append \
+                                AS_FOR_TARGET=/usr/bin/as \
+                                AS_FOR_TARGET=${prefix}/bin/as
         } else {
-            set libcxx_headers "[file dir [exec xcrun --find clang]]/../include/c++/v1"
+            set libcxx_headers  "[file dir [exec xcrun --find clang]]/../include/c++/v1"
             set clang_mp        "[exec xcrun --find clang]"
         }
         patchfiles-append   patch-use-libcxx.diff
@@ -349,14 +363,6 @@ foreach cdv ${libcxx_versions} {
         # the reason for the change proposed in https://lists.macports.org/pipermail/macports-dev/2017-August/036209.html
         # is moot when using libc++ ; reenable TLS support
         configure.args-delete   --disable-tls
-
-        # we need a clang installation anyway, use it for the compiler too
-        # (if the user used port select to that extent).
-        configure.args-replace  --with-as=/usr/bin/as \
-                                --with-as=${prefix}/bin/as
-        configure.env-append    AS_FOR_TARGET=/usr/bin/as \
-                                AS_FOR_TARGET=${prefix}/bin/as
-
 
         # GCC_IS_BUILDING_ITSELF: causes g++ to add a static libstdc++ just like it does when building with/for libstdc++
         # GCC_FORCE_LIBSTDCPP: forces the use of libstdc++ for the current build and ignores the default clang C++ header location
@@ -402,8 +408,8 @@ post-destroot {
                 }
             }
         }
-        # The C++ headerfiles should be installed by port:libgcc too
-        delete -force ${destroot}${prefix}/include/${name}/c++
+        # The C++ headerfiles are installed by port:libgcc too
+        delete -force ${destroot}${gcc_headerdir}/c++
     } else {
         file mkdir ${destroot}${prefix}/lib/libgcc
         foreach dylib ${standardLibs} {
@@ -461,7 +467,7 @@ post-destroot {
     }
     foreach cdv ${libcxx_versions} {
         set cv [join [split ${cdv} "."] ""]
-        if {[variant_isset libcxx${cv}] && [file exists ${destroot}${prefix}/include/${name}/c++]} {
+        if {[variant_isset libcxx${cv}] && [file exists ${destroot}${gcc_headerdir}/c++]} {
             # move the stdc++ headers out of the way
             # FIXME: needs to go when gcc supports -stdlib=libc++ !
             xinstall -m 755 -d ${destroot}${prefix}/include/${name}-stdinc
@@ -493,21 +499,33 @@ variant universal {
 }
 # the generated compiler doesn't accept -arch
 configure.env-append \
-    CPP="${configure.cc} -E" \
-    CXXCPP="${configure.cxx} -E"
-build.env-append \
-    CPP="${configure.cc} -E" \
-    CXXCPP="${configure.cxx} -E"
+                    CPP="${configure.cc} -E" \
+                    CXXCPP="${configure.cxx} -E"
+build.env-append    CPP="${configure.cc} -E" \
+                    CXXCPP="${configure.cxx} -E"
+
 configure.cc-append [get_canonical_archflags]
-configure.cc_archflags
 configure.cxx-append ${configure.cxx_archflags}
-configure.cxx_archflags
-configure.objc_archflags
-configure.ld_archflags
-configure.universal_cflags
-configure.universal_cxxflags
-configure.universal_ldflags
-configure.universal_args
+
+build.dir           ${configure.dir}
+if {[variant_exists quick] && [variant_isset quick]} {
+    configure.args-replace \
+                    --with-build-config=bootstrap-debug \
+                    --disable-bootstrap
+} else {
+    configure.cc_archflags
+    configure.cxx_archflags
+    configure.objc_archflags
+    configure.ld_archflags
+    configure.universal_cflags
+    configure.universal_cxxflags
+    configure.universal_ldflags
+    configure.universal_args
+    build.target    bootstrap-lean
+}
+use_parallel_build  yes
+
+destroot.target     install install-info-host
 
 livecheck.type      regex
 livecheck.url       http://ftp.gnu.org/gnu/gcc/
