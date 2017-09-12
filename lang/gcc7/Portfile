@@ -207,12 +207,16 @@ set standardLibs    {libgcc_ext.10.4.dylib libgcc_ext.10.5.dylib \
 if {${subport} eq "${libgcc_port}"} {
 
     conflicts       libgcc-devel
-    long_description-append \
-                    This port installs the standard runtime libraries, including libstdc++. \
-                    Users building from source can install port:${name}+with_libgcc \
-                    and port:${subport}+stub to avoid building everything twice.
 
-    variant stub conflicts universal description "Don't touch, used automatically when the main port:${name} is installed +with_libgcc" {}
+    if {![catch {set result [active_variants ${name} with_libgcc {}]}]} {
+        variant stub conflicts universal description "Don't touch, used automatically when the main port:${name} is installed +with_libgcc" {}
+        if {${result}} {
+            default_variants-append +stub
+        }
+    }
+
+    long_description-append \
+                    This port installs the standard runtime libraries, including libstdc++.
 
     # http://trac.macports.org/ticket/35770
     # http://trac.macports.org/ticket/38814
@@ -226,15 +230,14 @@ if {${subport} eq "${libgcc_port}"} {
     # version should continue to provide a subport for that and older gcc
     # versions.
 
-    if {![catch {set result [active_variants ${name} with_libgcc {}]}]} {
-        if {${result}} {
-            default_variants-append +stub
-        }
-    }
-    if {[variant_isset stub]} {
+    if {[variant_exists stub] && [variant_isset stub]} {
+        long_description-append \
+                    Users building from source can install port:${name}+with_libgcc \
+                    and port:${subport}+stub to avoid building everything twice.
         # reset the depspecs
         depends_lib
-        require_active_variants ${name} with_libgcc
+#         # this probably doesn't make sense, ${name} depends on us.
+#         require_active_variants ${name} with_libgcc
 
         use_configure   no
         installs_libs   no
@@ -253,7 +256,8 @@ if {${subport} eq "${libgcc_port}"} {
         }
     } else {
         depends_lib-delete path:lib/libgcc/libgcc_s.1.dylib:libgcc
-        require_active_variants ${name} "" with_libgcc
+#         # this probably doesn't make sense, ${name} depends on us.
+#         require_active_variants ${name} "" with_libgcc
 
         # port:libgcc builds the runtime libraries for installation in lib/libgcc
         configure.args-replace  --libdir=${prefix}/lib/gcc${ver3char} \
@@ -339,8 +343,24 @@ if {${subport} eq "${libgcc_port}"} {
 } else {
 ### Main port
 
-variant with_libgcc conflicts universal description "Include the standard libraries instead of getting them from port:libgcc. For if you install from source." {}
-# the quick variant simplifies gcc patch development but also decreases the build time by a factor > 4
+# check if we can support a +with_libgcc variant. That is only if and when neither the previous nor the next
+# version of this port is already installed with that variant.
+# The previous version is relevant in the port providing libgcc-devel (currently gcc8); older releases should
+# not provide a +with_libgcc variant in any case (currently that is gcc6 and earlier).
+# The next version is relevant in the current latest release version (currently gcc7)
+set previous_version_allows [catch {set result [active_variants gcc[expr ${major} - 1] with_libgcc {}]} err]
+ui_debug "previous gcc version +with_libgcc compatibility: ${previous_version_allows} ${err}"
+set next_version_allows [catch {set result [active_variants gcc[expr ${major} + 1] with_libgcc {}]} err]
+ui_debug "next gcc version +with_libgcc compatibility: ${next_version_allows} ${err}"
+
+if {${previous_version_allows} && ${next_version_allows}} {
+    variant with_libgcc conflicts universal description "Include the standard libraries instead of getting them from port:libgcc. For if you install from source." {}
+    long_description-append \
+                    Users building from source can install port:${name}+with_libgcc \
+                    and port:${subport}+stub to avoid building everything twice.
+}
+# the quick variant simplifies gcc patch development but also decreases the build time by a factor > 4. The
+# resulting compiler binaries appear to be about 1-2% slower.
 variant quick description "Build ${name} without the usual 3-stage bootstrap.\
     Probably safest with configure.compiler=macports-gcc-${major} but not when that compiler uses libc++!" {}
 
@@ -430,7 +450,7 @@ post-destroot {
         file rename ${file} ${newfile}
     }
 
-    if {![variant_isset with_libgcc]} {
+    if {![variant_exists with_libgcc] || ![variant_isset with_libgcc]} {
         foreach dylib ${standardLibs} {
             # Different OS versions (e.g. Leopard) or architectures (e.g. PPC) don't produce all the dylibs
             # https://trac.macports.org/ticket/40098
