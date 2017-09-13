@@ -538,24 +538,29 @@ if {![tbool QT53] && ![tbool qt5.no_LTO_variant]} {
     variant LTO description {Build with Link-Time Optimisation (LTO) (experimental)} {}
 }
 
-if {![info exists building_qt5] && [variant_exists LTO] && [variant_isset LTO]} {
-    configure.cflags-append     -flto
-    configure.cxxflags-append   -flto
-    configure.objcflags-append  -flto
-    configure.objcxxflags-append  -flto
-    # ${configure.optflags} is a list, and that can lead to strange effects
-    # in certain situations if we don't treat it as such here.
-    foreach opt ${configure.optflags} {
-        configure.ldflags-append ${opt}
+if {![info exists building_qt5]} {
+    if {[variant_exists LTO] && [variant_isset LTO]} {
+        configure.cflags-append         -flto
+        configure.cxxflags-append       -flto
+        configure.objcflags-append      -flto
+        configure.objcxxflags-append    -flto
+        # ${configure.optflags} is a list, and that can lead to strange effects
+        # in certain situations if we don't treat it as such here.
+        foreach opt ${configure.optflags} {
+            configure.ldflags-append ${opt}
+        }
+        configure.ldflags-append        -flto
+        # assume any compiler not clang will be gcc
+        if {![string match "*clang*" ${configure.compiler}]} {
+            configure.cflags-append     -fuse-linker-plugin -ffat-lto-objects
+            configure.cxxflags-append   -fuse-linker-plugin -ffat-lto-objects
+            configure.objcflags-append  -fuse-linker-plugin -ffat-lto-objects
+            configure.objcxxflags-append -fuse-linker-plugin -ffat-lto-objects
+            configure.ldflags-append    -fuse-linker-plugin
+        }
     }
-    configure.ldflags-append    -flto
-    # assume any compiler not clang will be gcc
-    if {![string match "*clang*" ${configure.compiler}]} {
-        configure.cflags-append         -fuse-linker-plugin -ffat-lto-objects
-        configure.cxxflags-append       -fuse-linker-plugin -ffat-lto-objects
-        configure.objcflags-append      -fuse-linker-plugin -ffat-lto-objects
-        configure.objcxxflags-append    -fuse-linker-plugin -ffat-lto-objects
-        configure.ldflags-append        -fuse-linker-plugin
+    platform linux {
+        configure.ldflags-append        -Wl,-rpath,${qt_libs_dir}
     }
 }
 
