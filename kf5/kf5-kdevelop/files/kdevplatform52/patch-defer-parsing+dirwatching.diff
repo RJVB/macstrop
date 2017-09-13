@@ -1,0 +1,296 @@
+diff --git kdevplatform/interfaces/iprojectcontroller.cpp kdevplatform/interfaces/iprojectcontroller.cpp
+index 9c22e80..ae1875c 100644
+--- kdevplatform/interfaces/iprojectcontroller.cpp
++++ kdevplatform/interfaces/iprojectcontroller.cpp
+@@ -42,5 +42,12 @@ bool IProjectController::parseAllProjectSources()
+     return group.readEntry( "Parse All Project Sources", true );    
+ }
+ 
++bool IProjectController::watchAllProjectDirectories()
++{
++    KConfigGroup group = ICore::self()->activeSession()->config()->group( "Project Manager" );
++    return group.readEntry( "Monitor All Project Directories", true );
++}
++
++
+ }
+ 
+diff --git kdevplatform/interfaces/iprojectcontroller.h kdevplatform/interfaces/iprojectcontroller.h
+index a740b7e..1436f15 100644
+--- kdevplatform/interfaces/iprojectcontroller.h
++++ kdevplatform/interfaces/iprojectcontroller.h
+@@ -117,6 +117,11 @@ public:
+      */
+     static bool parseAllProjectSources();
+ 
++    /**
++     * @returns whether project directories should be monitored for changes or not
++     */
++    virtual bool watchAllProjectDirectories();
++
+ public Q_SLOTS:
+     /**
+      * Tries finding a project-file for the given source-url and opens it.
+diff --git kdevplatform/project/abstractfilemanagerplugin.cpp kdevplatform/project/abstractfilemanagerplugin.cpp
+index 5ad558f..1588b42 100644
+--- kdevplatform/project/abstractfilemanagerplugin.cpp
++++ kdevplatform/project/abstractfilemanagerplugin.cpp
+@@ -117,7 +117,11 @@ void AbstractFileManagerPluginPrivate::projectClosing(IProject* project)
+         }
+         m_projectJobs.remove(project);
+     }
+-    delete m_watchers.take(project);
++    if (ICore::self()->projectController()->watchAllProjectDirectories()) {
++        if (m_watchers.contains(project)) {
++            delete m_watchers.take(project);
++        }
++    }
+     m_filters.remove(project);
+ }
+ 
+@@ -388,9 +392,12 @@ void AbstractFileManagerPluginPrivate::stopWatcher(ProjectFolderItem* folder)
+     if ( !folder->path().isLocalFile() ) {
+         return;
+     }
+-    Q_ASSERT(m_watchers.contains(folder->project()));
+     const QString path = folder->path().toLocalFile();
+-    m_watchers[folder->project()]->stopDirScan(path);
++    if (ICore::self()->projectController()->watchAllProjectDirectories()) {
++        if (m_watchers.contains(folder->project())) {
++            m_watchers[folder->project()]->stopDirScan(path);
++        }
++    }
+     m_stoppedFolders.append(path);
+ }
+ 
+@@ -399,9 +406,12 @@ void AbstractFileManagerPluginPrivate::continueWatcher(ProjectFolderItem* folder
+     if ( !folder->path().isLocalFile() ) {
+         return;
+     }
+-    Q_ASSERT(m_watchers.contains(folder->project()));
+     const QString path = folder->path().toLocalFile();
+-    m_watchers[folder->project()]->restartDirScan(path);
++    if (ICore::self()->projectController()->watchAllProjectDirectories()) {
++        if (m_watchers.contains(folder->project())) {
++            m_watchers[folder->project()]->restartDirScan(path);
++        }
++    }
+     const int idx = m_stoppedFolders.indexOf(path);
+     if (idx != -1) {
+         m_stoppedFolders.remove(idx);
+@@ -470,8 +480,16 @@ ProjectFolderItem *AbstractFileManagerPlugin::import( IProject *project )
+     emit folderAdded( projectRoot );
+     qCDebug(FILEMANAGER) << "imported new project" << project->name() << "at" << projectRoot->path();
+ 
++    d->m_filters.add(project);
++
++    return projectRoot;
++}
++
++bool AbstractFileManagerPlugin::createWatcher( IProject *project )
++{
+     ///TODO: check if this works for remote files when something gets changed through another KDE app
+-    if ( project->path().isLocalFile() ) {
++    if (ICore::self()->projectController()->watchAllProjectDirectories() && project->path().isLocalFile() ) {
++        qCWarning(FILEMANAGER) << "Project dir monitoring is enabled for project" << project->name();
+         d->m_watchers[project] = new KDirWatch( project );
+ 
+         connect(d->m_watchers[project], &KDirWatch::created,
+@@ -480,11 +498,9 @@ ProjectFolderItem *AbstractFileManagerPlugin::import( IProject *project )
+                 this, [&] (const QString& path_) { d->deleted(path_); });
+ 
+         d->m_watchers[project]->addDir(project->path().toLocalFile(), KDirWatch::WatchSubDirs | KDirWatch:: WatchFiles );
++        return true;
+     }
+-
+-    d->m_filters.add(project);
+-
+-    return projectRoot;
++    return false;
+ }
+ 
+ KJob* AbstractFileManagerPlugin::createImportJob(ProjectFolderItem* item)
+diff --git kdevplatform/project/abstractfilemanagerplugin.h kdevplatform/project/abstractfilemanagerplugin.h
+index c99e7e0..4667775 100644
+--- kdevplatform/project/abstractfilemanagerplugin.h
++++ kdevplatform/project/abstractfilemanagerplugin.h
+@@ -68,6 +68,8 @@ public:
+     bool reload(ProjectFolderItem* item) override;
+     KJob* createImportJob(ProjectFolderItem* item) override;
+ 
++    bool createWatcher( IProject *project );
++
+ protected:
+ //
+ // AbstractFileManagerPlugin interface
+diff --git kdevplatform/shell/projectcontroller.cpp kdevplatform/shell/projectcontroller.cpp
+index 2d19b63..ee2d527 100644
+--- kdevplatform/shell/projectcontroller.cpp
++++ kdevplatform/shell/projectcontroller.cpp
+@@ -35,6 +35,7 @@ Boston, MA 02110-1301, USA.
+ #include <QSet>
+ #include <QTemporaryFile>
+ #include <QVBoxLayout>
++#include <QElapsedTimer>
+ 
+ #include <KActionCollection>
+ #include <KConfigGroup>
+@@ -59,6 +60,7 @@ Boston, MA 02110-1301, USA.
+ #include <project/interfaces/iprojectfilemanager.h>
+ #include <project/interfaces/ibuildsystemmanager.h>
+ #include <project/interfaces/iprojectbuilder.h>
++#include <project/abstractfilemanagerplugin.h>
+ #include <project/projectchangesmodel.h>
+ #include <project/projectmodel.h>
+ #include <project/projectbuildsetmodel.h>
+@@ -86,6 +88,8 @@ Boston, MA 02110-1301, USA.
+ namespace KDevelop
+ {
+ 
++static QElapsedTimer m_timer;
++
+ class ProjectControllerPrivate
+ {
+ public:
+@@ -107,6 +111,8 @@ public:
+     bool m_cleaningUp; //Temporary flag enabled while destroying the project-controller
+     QPointer<ProjectChangesModel> m_changesModel;
+     QHash< IProject*, QPointer<KJob> > m_parseJobs; // parse jobs that add files from the project to the background parser.
++    QList<IProject*> m_finaliseProjectImports; // project dir watchers and/or parse jobs waiting to be started
++    QHash <IProject*, QElapsedTimer*> m_timers; // TEMPORARY: project load timers
+ 
+     explicit ProjectControllerPrivate( ProjectController* p )
+         : m_core(nullptr), model(nullptr), dialog(nullptr), q(p), buildset(nullptr), m_foundProjectFile(false), m_cleaningUp(false)
+@@ -311,6 +317,11 @@ public:
+             return;
+         }
+ 
++        if (!m_timer.isValid()) {
++            m_timer.start();
++            qCWarning(SHELL) << "Starting project import timer";
++        }
++
+         foreach( IProject* project, m_projects )
+         {
+             if ( url == project->projectFile().toUrl() )
+@@ -329,6 +340,11 @@ public:
+         m_core->pluginControllerInternal()->loadProjectPlugins();
+ 
+         Project* project = new Project();
++        // TEMPORARY: initialise project load timer
++        if (qEnvironmentVariableIsSet("KDEV_DONT_DEFER_PROJECT_PARSING")) {
++            m_timers[project] = new QElapsedTimer;
++            m_timers[project]->start();
++        }
+         QObject::connect(project, &Project::aboutToOpen,
+                          q, &ProjectController::projectAboutToBeOpened);
+         if ( !project->open( Path(url) ) )
+@@ -897,7 +913,42 @@ void ProjectController::projectImportingFinished( IProject* project )
+     d->m_currentlyOpening.removeAll(project->projectFile().toUrl());
+     emit projectOpened( project );
+ 
+-    reparseProject(project);
++    // don't call reparseProject immediately, defer until all currently opening
++    // projects have been imported. Parsing is done in the background but
++    // importing can block the UI so should be as fast as possible.
++    // TEMPORARY: deferFinalise
++    bool deferFinalise = !qEnvironmentVariableIsSet("KDEV_DONT_DEFER_PROJECT_PARSING");
++    if (d->m_currentlyOpening.isEmpty()) {
++        if (deferFinalise) {
++            qCInfo(SHELL) << "All projects imported in" << m_timer.restart() / 1000.0 << "seconds";
++            createProjectWatcher(project);
++            reparseProject(project);
++            foreach (const auto p, d->m_finaliseProjectImports) {
++                createProjectWatcher(p);
++                reparseProject(p);
++            }
++            qCInfo(SHELL) << "\tcreating dir watchers and/or starting parse jobs took an additional"
++                << m_timer.elapsed() / 1000.0 << "seconds";
++        }
++        d->m_finaliseProjectImports.clear();
++        m_timer.invalidate();
++    } else {
++        if (deferFinalise) {
++            d->m_finaliseProjectImports.append(project);
++        }
++    }
++    if (!deferFinalise) {
++        QElapsedTimer *timer = d->m_timers[project];
++        qCInfo(SHELL) << "Project" << project->name() << "imported in"
++            << timer->restart() / 1000.0 << "seconds";
++        createProjectWatcher(project);
++        reparseProject(project);
++        qCInfo(SHELL) << "\t" << project->name()
++            << ": creating dir watchers and/or starting parse jobs took an additional"
++            << timer->elapsed() / 1000.0 << "seconds";
++        delete timer;
++        d->m_timers[project] = 0;
++    }
+ }
+ 
+ // helper method for closeProject()
+@@ -1232,6 +1283,15 @@ QString ProjectController::mapSourceBuild( const QString& path_, bool reverse, b
+     return QString();
+ }
+ 
++void ProjectController::createProjectWatcher( IProject* project )
++{
++    KDevelop::AbstractFileManagerPlugin *manager = 
++        dynamic_cast<KDevelop::AbstractFileManagerPlugin*>(project->projectFileManager());
++    if (manager) {
++        manager->createWatcher(project);
++    }
++}
++
+ void ProjectController::reparseProject( IProject* project, bool forceUpdate )
+ {
+     if (auto job = d->m_parseJobs.value(project)) {
+diff --git kdevplatform/shell/projectcontroller.h kdevplatform/shell/projectcontroller.h
+index a6962d4..a99cc2d 100644
+--- kdevplatform/shell/projectcontroller.h
++++ kdevplatform/shell/projectcontroller.h
+@@ -98,6 +98,8 @@ public:
+ 
+     void fetchProjectFromUrl(const QUrl& repoUrl, IPlugin* vcsOrProviderPlugin);
+ 
++    void createProjectWatcher( IProject* project );
++
+ public Q_SLOTS:
+     Q_SCRIPTABLE void openProjectForUrl( const QString &sourceUrl ) { openProjectForUrl(QUrl(sourceUrl)); }
+     void openProjectForUrl( const QUrl &sourceUrl ) override;
+diff --git kdevplatform/shell/settings/projectconfig.kcfg kdevplatform/shell/settings/projectconfig.kcfg
+index 2a4f54a..c53c00e 100644
+--- kdevplatform/shell/settings/projectconfig.kcfg
++++ kdevplatform/shell/settings/projectconfig.kcfg
+@@ -23,5 +23,10 @@
+         <label>Save all open documents before building anything</label>
+         <whatsthis>If this option is set all open documents will be automatically saved before any build is started.</whatsthis>
+     </entry>
++    <entry name="watchAllProjectDirectories" key="Monitor All Project Directories" type="Bool" default="true">
++        <default>true</default>
++        <label>Monitor all directories of a project for changes</label>
++        <whatsthis>If this option is set, KDevelop will monitor all project directories for changes. This keeps the overview in the Projects toolview in sync with the directory on disk. It can also really slow down the import of very big projects and consume considerable resources.</whatsthis>
++    </entry>
+   </group>
+ </kcfg>
+diff --git kdevplatform/shell/settings/projectpreferences.ui kdevplatform/shell/settings/projectpreferences.ui
+index 126d8fb..618e360 100644
+--- kdevplatform/shell/settings/projectpreferences.ui
++++ kdevplatform/shell/settings/projectpreferences.ui
+@@ -62,6 +62,16 @@
+     </widget>
+    </item>
+    <item>
++    <widget class="QCheckBox" name="kcfg_watchAllProjectDirectories">
++     <property name="toolTip">
++      <string>Monitor all directories of a project for changes.</string>
++     </property>
++     <property name="text">
++      <string>Monitor all project directories for changes</string>
++     </property>
++    </widget>
++   </item>
++   <item>
+     <spacer name="verticalSpacer">
+      <property name="orientation">
+       <enum>Qt::Vertical</enum>

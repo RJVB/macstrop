@@ -1,0 +1,183 @@
+diff --git kdevplatform/language/duchain/duchainlock.cpp kdevplatform/language/duchain/duchainlock.cpp
+index 69313b0..b70e09b 100644
+--- kdevplatform/language/duchain/duchainlock.cpp
++++ kdevplatform/language/duchain/duchainlock.cpp
+@@ -98,6 +98,7 @@ bool DUChainLock::lockForRead(unsigned int timeout)
+       } else {
+         //Fail!
+         d->changeOwnReaderRecursion(-1);
++        qWarning() << Q_FUNC_INFO << "timed out after" << t.elapsed()/1000.0 << "seconds";
+         return false;
+       }
+     }
+@@ -121,7 +122,9 @@ bool DUChainLock::lockForWrite(uint timeout)
+   //It is not allowed to acquire a write-lock while holding read-lock
+ 
+   Q_ASSERT(d->ownReaderRecursion() == 0);
+-
++  if (d->ownReaderRecursion() != 0) {
++    return false;
++  }
+   if (d->m_writer.load() == QThread::currentThread()) {
+     //We already hold the write lock, just increase the recursion count and return
+     d->m_writerRecursion.fetchAndAddRelaxed(1);
+@@ -152,6 +155,7 @@ bool DUChainLock::lockForWrite(uint timeout)
+       QThread::usleep(uSleepTime);
+     } else {
+       //Fail!
++      qWarning() << Q_FUNC_INFO << "timed out after" << t.elapsed()/1000.0 << "seconds";
+       return false;
+     }
+   }
+@@ -184,6 +188,11 @@ DUChainReadLocker::DUChainReadLocker(DUChainLock* duChainLock, uint timeout)
+   , m_locked(false)
+   , m_timeout(timeout)
+ {
++  // 10-12 seconds is an eternity. Pick a random value in this range
++  // so if multiple candidates compete there's always 1 that waits the longest
++  if (!timeout) {
++    m_timeout = 10000 + 2000 * qrand() / RAND_MAX;
++  }
+   lock();
+ }
+ 
+@@ -227,6 +236,11 @@ DUChainWriteLocker::DUChainWriteLocker(DUChainLock* duChainLock, uint timeout)
+   , m_locked(false)
+   , m_timeout(timeout)
+ {
++  // 10-12 seconds is an eternity. Pick a random value in this range
++  // so if multiple candidates compete there's always 1 that waits the longest
++  if (!timeout) {
++    m_timeout = 10000 + 2000 * qrand() / RAND_MAX;
++  }
+   lock();
+ }
+ 
+diff --git kdevplatform/shell/filteredproblemstore.cpp kdevplatform/shell/filteredproblemstore.cpp
+index 38477b8..d1fb9ad 100644
+--- kdevplatform/shell/filteredproblemstore.cpp
++++ kdevplatform/shell/filteredproblemstore.cpp
+@@ -27,6 +27,8 @@
+ 
+ #include <KLocalizedString>
+ 
++#include <QDebug>
++
+ using namespace KDevelop;
+ 
+ namespace
+@@ -36,10 +38,14 @@ namespace
+ void addDiagnostics(ProblemStoreNode *node, const QVector<IProblem::Ptr> &diagnostics)
+ {
+     foreach (const IProblem::Ptr &ptr, diagnostics) {
+-        ProblemNode *child = new ProblemNode(node, ptr);
+-        node->addChild(child);
++        if (ptr.data()) {
++            ProblemNode *child = new ProblemNode(node, ptr);
++            node->addChild(child);
+ 
+-        addDiagnostics(child, ptr->diagnostics());
++            addDiagnostics(child, ptr->diagnostics());
++        } else {
++            qWarning() << Q_FUNC_INFO << "caught NULL ptr in" << diagnostics;
++        }
+     }
+ }
+ 
+diff --git kdevplatform/shell/textdocument.cpp kdevplatform/shell/textdocument.cpp
+index 8127d84..35e0f1d 100644
+--- kdevplatform/shell/textdocument.cpp
++++ kdevplatform/shell/textdocument.cpp
+@@ -262,7 +262,7 @@ bool TextDocument::isTextDocument() const
+     {
+         /// @todo Somehow it can happen that d->document is zero, which makes
+         /// code relying on "isTextDocument() == (bool)textDocument()" crash
+-        qCWarning(SHELL) << "Broken text-document: " << url();
++        qCDebug(SHELL) << "Broken text-document: " << url();
+         return false;
+     }
+ 
+diff --git kdevplatform/vcs/dvcs/dvcsjob.cpp kdevplatform/vcs/dvcs/dvcsjob.cpp
+index 3bacd59..8b409f2 100644
+--- kdevplatform/vcs/dvcs/dvcsjob.cpp
++++ kdevplatform/vcs/dvcs/dvcsjob.cpp
+@@ -154,6 +154,16 @@ QVariant DVcsJob::fetchResults()
+ void DVcsJob::start()
+ {
+     Q_ASSERT_X(d->status != JobRunning, "DVCSjob::start", "Another proccess was started using this job class");
++    if( d->status == JobRunning ) {
++        QString error = i18n( "Another process was started using this job class" );
++        d->model->appendLine(error);
++        setError( 255 );
++        setErrorText(error);
++        d->status = JobFailed;
++        emitResult();
++        qCWarning(VCS) << "DVCSjob::start:" << error;
++        return;
++    }
+ 
+     const QDir& workingdir = directory();
+     if( !workingdir.exists() ) {
+@@ -163,6 +173,7 @@ void DVcsJob::start()
+         setErrorText(error);
+         d->status = JobFailed;
+         emitResult();
++        qCWarning(VCS) << "DVCSjob::start:" << error;
+         return;
+     }
+     if( !workingdir.isAbsolute() ) {
+@@ -172,6 +183,7 @@ void DVcsJob::start()
+         setErrorText(error);
+         d->status = JobFailed;
+         emitResult();
++        qCWarning(VCS) << "DVCSjob::start:" << error;
+         return;
+     }
+ 
+@@ -189,6 +201,17 @@ void DVcsJob::start()
+     d->childproc->start();
+ 
+     d->model->appendLine(directory().path() + "> " + commandDisplay);
++
++    if (!d->childproc->waitForStarted(1000)) {
++        QString error = i18n("DVCSJob::start: %1 failed to start after 1s: state=%2 %3",
++            commandDisplay, d->childproc->state(), d->childproc->errorString());
++        d->model->appendLine(error);
++        // don't raise the error (emitResult) and don't change the job's status
++        // just print a warning.
++//         setError( 255 );
++//         setErrorText(error);
++        qCWarning(VCS) << error;
++    }
+ }
+ 
+ void DVcsJob::setCommunicationMode(KProcess::OutputChannelMode comm)
+@@ -208,9 +231,11 @@ void DVcsJob::slotProcessError( QProcess::ProcessError err )
+     setError(OutputJob::FailedShownError); //we don't want to trigger a message box
+ 
+     d->errorOutput = d->childproc->readAllStandardError();
++    QByteArray stdOut = d->childproc->readAllStandardOutput();
+ 
+     QString displayCommand = KShell::joinArgs(dvcsCommand());
+-    QString completeErrorText = i18n("Process '%1' exited with status %2\n%3", displayCommand, d->childproc->exitCode(), QString::fromLocal8Bit(d->errorOutput) );
++    QString completeErrorText = i18n("Process '%1' exited with status %2\n\"%3\"\n\"%4\"",
++        displayCommand, d->childproc->exitCode(), QString::fromLocal8Bit(stdOut), QString::fromLocal8Bit(d->errorOutput) );
+     setErrorText( completeErrorText );
+ 
+     QString errorValue;
+@@ -237,11 +262,11 @@ void DVcsJob::slotProcessError( QProcess::ProcessError err )
+         errorValue = QStringLiteral("UnknownError");
+         break;
+     }
+-    qCDebug(VCS) << "Found an error while running" << displayCommand << ":" << errorValue
++    qCWarning(VCS) << "Found an error while running" << displayCommand << ":" << errorValue
+                                                      << "Exit code is:" << d->childproc->exitCode();
+-    qCDebug(VCS) << "Error:" << completeErrorText;
+-    displayOutput(QString::fromLocal8Bit(d->errorOutput));
+-    d->model->appendLine(i18n("Command finished with error %1.", errorValue));
++    qCWarning(VCS) << "Error:" << completeErrorText;
++//     displayOutput(QString::fromLocal8Bit(d->errorOutput));
++    d->model->appendLine(i18n("%1 (%2).", completeErrorText, errorValue));
+ 
+     if(verbosity()==Silent) {
+         setVerbosity(Verbose);
