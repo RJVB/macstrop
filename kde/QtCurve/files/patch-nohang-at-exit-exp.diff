@@ -2,15 +2,49 @@ diff --git qt5/style/qtcurve_plugin.cpp qt5/style/qtcurve_plugin.cpp
 index ce363ac25deff50de852dc00583e14b04c8adb36..20152ad0a9745618cb3aca7bbe535aa36068c554 100644
 --- qt5/style/qtcurve_plugin.cpp
 +++ qt5/style/qtcurve_plugin.cpp
-@@ -129,6 +129,11 @@ StylePlugin::create(const QString &key)
+@@ -129,6 +129,12 @@ StylePlugin::create(const QString &key)
      if (key.toLower() == "qtcurve") {
          qtc = new Style;
          qtc->m_plugin = this;
-+        foreach (Style *that, m_styleInstances) {
-+            qtcWarn("severing DBus connections and signals from Style instance %p\n", that);
-+            that->disconnectDBus();
-+            that->disconnect();
-+        }
++        qtcInfo("Created new Style instance %p\n", qtc);
++        // keep track of all style instances we allocate, for instance
++        // for KLineEdit widgets which apparently insist on overriding
++        // certain things (cf. KLineEditStyle). We want to be able to
++        // delete those instances as properly as properly as early as
++        // possible during the global destruction phase.
          m_styleInstances << qtc;
      } else {
          qtc = nullptr;
+@@ -151,12 +157,15 @@ StylePlugin::~StylePlugin()
+     qtcInfo("Deleting QtCurve plugin (%p)\n", this);
+     if (!m_styleInstances.isEmpty()) {
+         qtcWarn("there remain(s) %d Style instance(s)\n", m_styleInstances.count());
+-        QList<Style*>::Iterator it = m_styleInstances.begin();
+-        while (it != m_styleInstances.end()) {
+-            Style *that = *it;
+-            it = m_styleInstances.erase(it);
++        foreach (Style *that, m_styleInstances) {
++            // don't let ~Style() touch m_styleInstances from here.
++            that->m_plugin = nullptr;
++            // each instance should already have disconnected from the D-Bus.
++            // It doesn't appear to be necessary to have it disconnect its signal
++            // receivers before this point.
+             delete that;
+         }
++        m_styleInstances.clear();
+     }
+     if (firstPlInstance == this) {
+         firstPlInstance = nullptr;
+diff --git qt5/style/qtcurve.cpp qt5/style/qtcurve.cpp
+index 1bf6e1d985d161fcebc62fe5e3da0692e01eee05..0dae6b80ecf5a9480ec7a2ecfb5de56b778c6b17 100644
+--- qt5/style/qtcurve.cpp
++++ qt5/style/qtcurve.cpp
+@@ -735,6 +735,8 @@ Style::~Style()
+ {
+     qtcInfo("Deleting style instance %p\n", this);
+     disconnectDBus();
++    // disconnect all receivers as early as seems reasonable.
++    disconnect();
+     if (m_plugin && m_plugin->m_styleInstances.contains(this)) {
+         m_plugin->m_styleInstances.removeAll(this);
+     }
