@@ -45,6 +45,9 @@ namespace eval compress_workdir {
     variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
 }
 
+options compress.build_dir
+default compress.build_dir {${build.dir}}
+
 platform darwin {
     # sadly we cannot rely on [file system <name>] to determine if we're on a
     # filesystem supporting HFS compression so we need to rely on the user.
@@ -63,13 +66,13 @@ platform darwin {
                 } else {
                     set compjobs ""
                 }
-                if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} ${build.dir} 2>&1"} result context]} {
+                if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} ${compress.build_dir} 2>&1"} result context]} {
                     ui_info "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
-                    if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${build.dir} 2>&1"} result context]} {
+                    if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compress.build_dir} 2>&1"} result context]} {
                         ui_error "Compression failed: ${result}, ${context}"
                     }
                 } else {
-                    ui_debug "Compressing ${build.dir}: ${result}"
+                    ui_debug "Compressing ${compress.build_dir}: ${result}"
                 }
             }
         }
