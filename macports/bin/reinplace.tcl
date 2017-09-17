@@ -100,8 +100,8 @@ set args $argv
 
         if {[catch {set tmpfile [mkstemp "${tempdir}/[file tail $file].sed.XXXXXXXX"]} error]} {
             global errorInfo
-            ui_debug "$errorInfo"
-            ui_error "reinplace: $error"
+            puts "$errorInfo"
+            puts "reinplace: $error"
             return -code error "reinplace failed"
         } else {
             # Extract the Tcl Channel number
@@ -114,7 +114,7 @@ set args $argv
         lappend cmdline $portutil::autoconf::sed_command
         if {$extended} {
             if {$portutil::autoconf::sed_ext_flag eq "N/A"} {
-                ui_debug "sed extended regexp not available"
+                puts "sed extended regexp not available"
                 return -code error "reinplace sed(1) too old"
             }
             lappend cmdline $portutil::autoconf::sed_ext_flag
@@ -126,12 +126,12 @@ set args $argv
         if {$locale ne ""} {
             set env(LC_CTYPE) $locale
         }
-        ui_info "$UI_PREFIX [format [msgcat::mc "Patching %s: %s"] [file tail $file] $pattern]"
-        ui_debug "Executing reinplace: $cmdline"
+        puts "$UI_PREFIX [format [msgcat::mc "Patching %s: %s"] [file tail $file] $pattern]"
+        puts "Executing reinplace: $cmdline"
         if {[catch {exec -ignorestderr -- {*}$cmdline} error]} {
             global errorInfo
-            ui_debug "$errorInfo"
-            ui_error "reinplace: $error"
+            puts "$errorInfo"
+            puts "reinplace: $error"
             file delete "$tmpfile"
             if {$locale ne ""} {
                 if {$oldlocale_exists} {
@@ -161,16 +161,16 @@ set args $argv
         # We need to overwrite this file
         if {[catch {file attributes $file -permissions u+w} error]} {
             global errorInfo
-            ui_debug "$errorInfo"
-            ui_error "reinplace: $error"
+            puts "$errorInfo"
+            puts "reinplace: $error"
             file delete "$tmpfile"
             return -code error "reinplace permissions failed"
         }
 
         if {[catch {file copy -force $tmpfile $file} error]} {
             global errorInfo
-            ui_debug "$errorInfo"
-            ui_error "reinplace: $error"
+            puts "$errorInfo"
+            puts "reinplace: $error"
             file delete "$tmpfile"
             return -code error "reinplace copy failed"
         }
