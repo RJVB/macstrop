@@ -139,6 +139,9 @@ proc cmake::module_path {} {
 # cmake.generator "Eclipse CDT4 - Ninja"
 # if maintaining the port means editing it using an IDE of choice.
 #
+# Ports can signal incompatibilities by setting cmake.make_generator_incompatible
+# or cmake.ninja_generator_incompatible before including this PortGroup.
+#
 default cmake.generator             {"CodeBlocks - Unix Makefiles"}
 # CMake generates Unix Makefiles that contain a special "fast" install target
 # which skips the whole "let's see if there's anything left to (re)build before
