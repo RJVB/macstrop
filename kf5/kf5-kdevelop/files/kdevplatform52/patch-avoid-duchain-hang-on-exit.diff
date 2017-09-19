@@ -1,0 +1,135 @@
+diff --git kdevplatform/language/duchain/duchain.cpp kdevplatform/language/duchain/duchain.cpp
+index 92c4794..c4edb68 100644
+--- kdevplatform/language/duchain/duchain.cpp
++++ kdevplatform/language/duchain/duchain.cpp
+@@ -710,7 +710,7 @@ public:
+       //Here we wait for all parsing-threads to stop their processing
+       foreach(const auto language, languages) {
+         if (lockFlag == TryLock) {
+-          if (!language->parseLock()->tryLockForWrite()) {
++          if (!language->parseLock() || !language->parseLock()->tryLockForWrite()) {
+             qCDebug(LANGUAGE) << "Aborting cleanup because language plugin is still parsing:" << language->name();
+             // some language is still parsing, don't interfere with the cleanup
+             foreach(auto* lock, locked) {
+@@ -1569,11 +1569,16 @@ static void finalCleanup()
+   qCDebug(LANGUAGE) << "doing final cleanup";
+ 
+   int cleaned = 0;
++  int passes = 0;
+   while((cleaned = globalItemRepositoryRegistry().finalCleanup())) {
++    passes += 1;
+     qCDebug(LANGUAGE) << "cleaned" << cleaned << "B";
+     if(cleaned < 1000) {
+       qCDebug(LANGUAGE) << "cleaned enough";
+       break;
++    } else if (passes >= 100) {
++      qCWarning(LANGUAGE) << "cleaned" << passes << "passes, last was" << cleaned << "B; that's enough";
++      break;
+     }
+   }
+   qCDebug(LANGUAGE) << "final cleanup ready";
+diff --git kdevplatform/serialization/itemrepository.h kdevplatform/serialization/itemrepository.h
+index d2fd349..f0be286 100644
+--- kdevplatform/serialization/itemrepository.h
++++ kdevplatform/serialization/itemrepository.h
+@@ -531,7 +531,7 @@ class Bucket {
+     }
+ 
+     template<class Repository>
+-    void deleteItem(unsigned short index, unsigned int hash, Repository& repository) {
++    bool deleteItem(unsigned short index, unsigned int hash, Repository& repository) {
+       ifDebugLostSpace( Q_ASSERT(!lostSpace()); )
+ 
+       m_lastUsed = 0;
+@@ -549,8 +549,23 @@ class Bucket {
+         currentIndex = followerIndex(currentIndex);
+         //If this assertion triggers, the deleted item was not registered under the given hash
+         Q_ASSERT(currentIndex);
++        if (!currentIndex) {
++          qWarning() << QStringLiteral("Bucket::deleteItem(%1,%2,%3)").arg(index).arg(hash).arg(repository.repositoryName())
++            << ": early return because currentIndex==0";
++          return false;
++        } else if (currentIndex == previousIndex) {
++          qWarning() << QStringLiteral("Bucket::deleteItem(%1,%2,%3)").arg(index).arg(hash).arg(repository.repositoryName())
++            << "early return because currentIndex==previousIndex==" << currentIndex;
++          return false;
++        }
+       }
+       Q_ASSERT(currentIndex == index);
++      if (currentIndex != index) {
++        qWarning() << QStringLiteral("Bucket::deleteItem(%1,%2,%3)").arg(index).arg(hash).arg(repository.repositoryName())
++          << "early return because currentIndex != index ("
++          << currentIndex << "!=" << index;
++        return false;
++      }
+ 
+       if(!previousIndex)
+         //The item was directly in the object map
+@@ -612,6 +627,7 @@ class Bucket {
+       }
+ #endif
+ //       Q_ASSERT(canAllocateItem(size));
++      return true;
+     }
+ 
+     ///@warning The returned item may be in write-protected memory, so never try doing a const_cast and changing some data
+@@ -664,9 +680,10 @@ class Bucket {
+     template<class Repository>
+     int finalCleanup(Repository& repository) {
+       int changed = 0;
++      bool dirty = m_dirty;
+ 
+-      while(m_dirty) {
+-        m_dirty = false;
++      while(dirty) {
++        dirty = false;
+ 
+         for(uint a = 0; a < ObjectMapSize; ++a) {
+           uint currentIndex = m_objectMap[a];
+@@ -678,15 +695,24 @@ class Bucket {
+ 
+             if(!ItemRequest::persistent(item)) {
+               changed += item->itemSize();
+-              deleteItem(currentIndex, item->hash(), repository);
+-              m_dirty = true; //Set to dirty so we re-iterate
+-              break;
++              if (deleteItem(currentIndex, item->hash(), repository)) {
++                dirty = true; //Set to dirty so we re-iterate
++                break;
++              } else {
++                qWarning() << "\tdidn't delete item of size" << item->itemSize();
++              }
+             }
+ 
++            uint prevIndex = currentIndex;
+             currentIndex = followerIndex(currentIndex);
++            if (currentIndex == prevIndex) {
++              qWarning() << Q_FUNC_INFO << "avoided deadloop in repository" << repository.repositoryName();
++              currentIndex = 0;
++            }
+           }
+         }
+       }
++      m_dirty = dirty;
+       return changed;
+     }
+ 
+@@ -941,13 +967,14 @@ class Bucket {
+ 
+     /// @param index the index of an item @return The index of the next item in the chain of items with a same local hash, or zero
+     inline unsigned short followerIndex(unsigned short index) const {
+-      Q_ASSERT(index >= 2);
+-      return *reinterpret_cast<unsigned short*>(m_data+(index-2));
++//       Q_ASSERT(index >= 2);
++      return (index >= 2) ? *reinterpret_cast<unsigned short*>(m_data+(index-2)) : 0;
+     }
+ 
+     void setFollowerIndex(unsigned short index, unsigned short follower) {
+-      Q_ASSERT(index >= 2);
+-      *reinterpret_cast<unsigned short*>(m_data+(index-2)) = follower;
++//       Q_ASSERT(index >= 2);
++      if (index >= 2)
++        *reinterpret_cast<unsigned short*>(m_data+(index-2)) = follower;
+     }
+     // Only returns the current value if the item is actually free
+     inline unsigned short freeSize(unsigned short index) const {
