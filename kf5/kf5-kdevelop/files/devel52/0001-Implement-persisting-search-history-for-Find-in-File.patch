@@ -1,0 +1,750 @@
+From 42eb6bb62c28923e5f6f4ff0cee3e8e6ee07bd2e Mon Sep 17 00:00:00 2001
+From: Christoph Roick <chrisito@gmx.de>
+Date: Sat, 1 Jul 2017 21:35:05 +0200
+Subject: [PATCH] Implement persisting search history for Find in Files
+
+Summary:
+Major Changes:
+- grep job settings are saved in the GrepDialog config sections
+- when starting a session, grep jobs with the recalled settings are started
+
+Minor Changes:
+- refresh button now restarts grep job for currently selected result
+- fix clearing of old entries beyond display limit in result view
+- disable refresh and clear buttons for empty result history
+- do not set up UI of GrepDialog when it stays hidden
+- keep track of all GrepDialogs for plugin unloading (fix)
+- fix saving of not yet inserted combo box entries
+
+Remark:
+To make sure all projects are loaded after startup (for searches
+in project files only), the number of loaded projects must match
+the number of projects to be loaded from the "General Options"
+config section.
+
+BUG: 380864
+BUG: 381754
+
+Test Plan:
+- start a session with several projects to be opened
+- use the "Find/Replace in Files" tool to search in files
+- restart the same session and observe how the old searches
+  are done after all projects have been loaded
+- use the refresh button to redo a selected search
+
+Reviewers: #kdevelop, apol
+
+Reviewed By: #kdevelop, apol
+
+Subscribers: apol, kdevelop-devel
+
+Differential Revision: https://phabricator.kde.org/D6262
+
+diff --git a/plugins/grepview/grepdialog.cpp b/plugins/grepview/grepdialog.cpp
+index 7f449ba157..3cf721e2d1 100644
+--- a/plugins/grepview/grepdialog.cpp
++++ b/plugins/grepview/grepdialog.cpp
+@@ -15,13 +15,16 @@
+ 
+ #include <algorithm>
+ 
++#include <QCloseEvent>
+ #include <QDialogButtonBox>
+ #include <QDir>
+ #include <QFileDialog>
+ #include <QLineEdit>
+ #include <QMenu>
+ #include <QPushButton>
++#include <QShowEvent>
+ #include <QStringList>
++#include <QTimer>
+ 
+ #include <KComboBox>
+ #include <KCompletion>
+@@ -107,14 +110,57 @@ inline QStringList excludepatterns() { return QStringList()
+ ///Separator used to separate search paths.
+ inline QString pathsSeparator() { return (QStringLiteral(";")); }
+ 
++///Returns the chosen directories or files (only the top directories, not subfiles)
++QList<QUrl> getDirectoryChoice(const QString& text)
++{
++    QList<QUrl> ret;
++    if (text == allOpenFilesString()) {
++        foreach(IDocument* doc, ICore::self()->documentController()->openDocuments())
++            ret << doc->url();
++    } else if (text == allOpenProjectsString()) {
++        foreach(IProject* project, ICore::self()->projectController()->projects())
++            ret << project->path().toUrl();
++    } else {
++        QStringList semicolonSeparatedFileList = text.split(pathsSeparator());
++        if (!semicolonSeparatedFileList.isEmpty() && QFileInfo::exists(semicolonSeparatedFileList[0])) {
++            // We use QFileInfo to make sure this is really a semicolon-separated file list, not a file containing
++            // a semicolon in the name.
++            foreach(const QString& file, semicolonSeparatedFileList)
++                ret << QUrl::fromLocalFile(file).adjusted(QUrl::StripTrailingSlash);
++        } else {
++            ret << QUrl::fromUserInput(text).adjusted(QUrl::StripTrailingSlash);
++        }
++    }
++    return ret;
++}
++
++///Check if all directories are part of a project
++bool directoriesInProject(const QString& dir)
++{
++    foreach (const QUrl& url, getDirectoryChoice(dir)) {
++        IProject *proj = ICore::self()->projectController()->findProjectForUrl(url);
++        if (!proj || !proj->path().toUrl().isLocalFile()) {
++           return false;
++        }
++    }
++
++    return true;
++}
++
+ ///Max number of items in paths combo box.
+ const int pathsMaxCount = 25;
+ }
+ 
+-GrepDialog::GrepDialog( GrepViewPlugin * plugin, QWidget *parent )
+-    : QDialog(parent), Ui::GrepWidget(), m_plugin( plugin )
++GrepDialog::GrepDialog(GrepViewPlugin *plugin, QWidget *parent, bool show)
++    : QDialog(parent), Ui::GrepWidget(), m_plugin(plugin), m_show(show)
+ {
+     setAttribute(Qt::WA_DeleteOnClose);
++
++    // if we don't intend on showing the dialog, we can skip all UI setup
++    if (!m_show) {
++        return;
++    }
++
+     setWindowTitle( i18n("Find/Replace in Files") );
+ 
+     setupUi(this);
+@@ -181,7 +227,6 @@ GrepDialog::GrepDialog( GrepViewPlugin * plugin, QWidget *parent )
+ 
+     directorySelector->setIcon(QIcon::fromTheme(QStringLiteral("document-open")));
+     connect(directorySelector, &QPushButton::clicked, this, &GrepDialog::selectDirectoryDialog );
+-    directoryChanged(directorySelector->text());
+ }
+ 
+ void GrepDialog::selectDirectoryDialog()
+@@ -263,34 +308,23 @@ QMenu* GrepDialog::createSyncButtonMenu()
+     return ret;
+ }
+ 
+-void GrepDialog::directoryChanged(const QString& dir)
++GrepDialog::~GrepDialog()
+ {
+-    QUrl currentUrl = QUrl::fromLocalFile(dir);
+-    if( !currentUrl.isValid() ) {
+-        m_settings.projectFilesOnly = false;
+-        return;
+-    }
+-
+-    bool projectAvailable = true;
+-
+-    foreach(const QUrl& url, getDirectoryChoice())
+-    {
+-        IProject *proj = ICore::self()->projectController()->findProjectForUrl( url );
+-        if( !proj || !proj->path().toUrl().isLocalFile() )
+-            projectAvailable = false;
+-    }
+-
+-    m_settings.projectFilesOnly =  projectAvailable;
+ }
+ 
+-GrepDialog::~GrepDialog()
++void GrepDialog::setVisible(bool visible)
+ {
++    QDialog::setVisible(visible && m_show);
+ }
+ 
+ void GrepDialog::closeEvent(QCloseEvent* closeEvent)
+ {
+     Q_UNUSED(closeEvent);
+ 
++    if (!m_show) {
++        return;
++    }
++
+     KConfigGroup cg = ICore::self()->activeSession()->config()->group( "GrepDialog" );
+     // memorize the last patterns and paths
+     cg.writeEntry("LastSearchItems", qCombo2StringList(patternCombo));
+@@ -331,13 +365,27 @@ GrepJobSettings GrepDialog::settings() const
+     return m_settings;
+ }
+ 
+-void GrepDialog::setSearchLocations(const QString &dir)
++void GrepDialog::historySearch(QList<GrepJobSettings> &settingsHistory)
+ {
+-    if(!dir.isEmpty()) {
+-        if(QDir::isAbsolutePath(dir))
+-        {
+-            static_cast<KUrlCompletion*>(searchPaths->completionObject())->setDir( QUrl::fromLocalFile(dir) );
+-        }
++    // clear the current settings history and pass it to a job list
++    m_historyJobSettings.clear();
++    m_historyJobSettings.swap(settingsHistory);
++
++    // check if anything is do be done and if all projects are loaded
++    if (!m_historyJobSettings.empty() && !checkProjectsOpened()) {
++        connect(KDevelop::ICore::self()->projectController(),
++                &KDevelop::IProjectController::projectOpened,
++                this, &GrepDialog::checkProjectsOpened);
++    }
++}
++
++void GrepDialog::setSearchLocations(const QString& dir)
++{
++    if (!dir.isEmpty()) {
++        if (m_show) {
++            if (QDir::isAbsolutePath(dir)) {
++                static_cast<KUrlCompletion*>(searchPaths->completionObject())->setDir( QUrl::fromLocalFile(dir) );
++            }
+ 
+             if (searchPaths->contains(dir)) {
+                 searchPaths->removeItem(searchPaths->findText(dir));
+@@ -349,8 +397,11 @@ void GrepDialog::setSearchLocations(const QString &dir)
+             if (searchPaths->count() > pathsMaxCount) {
+                 searchPaths->removeItem(searchPaths->count() - 1);
+             }
++        } else {
++            m_settings.searchPaths = dir;
++        }
+     }
+-    directoryChanged(dir);
++    m_settings.projectFilesOnly = directoriesInProject(dir);
+ }
+ 
+ void GrepDialog::patternComboEditTextChanged( const QString& text)
+@@ -358,56 +409,63 @@ void GrepDialog::patternComboEditTextChanged( const QString& text)
+     buttonBox->button(QDialogButtonBox::Ok)->setEnabled(!text.isEmpty());
+ }
+ 
+-QList< QUrl > GrepDialog::getDirectoryChoice() const
++bool GrepDialog::checkProjectsOpened()
+ {
+-    QList< QUrl > ret;
+-    QString text = searchPaths->currentText();
+-    if(text == allOpenFilesString())
+-    {
+-        foreach(IDocument* doc, ICore::self()->documentController()->openDocuments())
+-            ret << doc->url();
+-    }else if(text == allOpenProjectsString())
+-    {
+-        foreach(IProject* project, ICore::self()->projectController()->projects())
+-            ret << project->path().toUrl();
+-    }else{
+-        QStringList semicolonSeparatedFileList = text.split(pathsSeparator());
+-        if(!semicolonSeparatedFileList.isEmpty() && QFileInfo::exists(semicolonSeparatedFileList[0]))
+-        {
+-            // We use QFileInfo to make sure this is really a semicolon-separated file list, not a file containing
+-            // a semicolon in the name.
+-            foreach(const QString& file, semicolonSeparatedFileList)
+-                ret << QUrl::fromLocalFile(file).adjusted(QUrl::StripTrailingSlash);
+-        }else{
+-            ret << QUrl::fromUserInput(searchPaths->currentText()).adjusted(QUrl::StripTrailingSlash);
+-        }
++    // only proceed if all projects have been opened
++    if (KDevelop::ICore::self()->activeSession()->config()->group("General Options").readEntry("Open Projects", QList<QUrl>()).count() !=
++        KDevelop::ICore::self()->projectController()->projects().count())
++        return false;
++
++    foreach (IProject* p, KDevelop::ICore::self()->projectController()->projects()) {
++        if (!p->isReady())
++            return false;
++    }
++
++    // do the grep jobs one by one
++    connect(m_plugin, &GrepViewPlugin::grepJobFinished, this, &GrepDialog::nextHistory);
++    QTimer::singleShot(0, this, &GrepDialog::nextHistory);
++
++    return true;
++}
++
++void GrepDialog::nextHistory()
++{
++    if (!m_historyJobSettings.empty()) {
++        m_settings = m_historyJobSettings.takeFirst();
++        startSearch();
++    } else {
++        close();
+     }
+-    return ret;
+ }
+ 
+ bool GrepDialog::isPartOfChoice(QUrl url) const
+ {
+-    foreach(const QUrl& choice, getDirectoryChoice())
++    foreach(const QUrl& choice, getDirectoryChoice(m_settings.searchPaths)) {
+         if(choice.isParentOf(url) || choice == url)
+             return true;
++    }
+     return false;
+ }
+ 
+ void GrepDialog::startSearch()
+ {
+-    updateSettings();
++    // if m_show is false, all settings are fixed in m_settings
++    if (m_show)
++        updateSettings();
++
++    const QStringList include = GrepFindFilesThread::parseInclude(m_settings.files);
++    const QStringList exclude = GrepFindFilesThread::parseExclude(m_settings.exclude);
+ 
+     // search for unsaved documents
+     QList<IDocument*> unsavedFiles;
+-    QStringList include = GrepFindFilesThread::parseInclude(m_settings.files);
+-    QStringList exclude = GrepFindFilesThread::parseExclude(m_settings.exclude);
+-
+     foreach(IDocument* doc, ICore::self()->documentController()->openDocuments())
+     {
+         QUrl docUrl = doc->url();
+-        if(doc->state() != IDocument::Clean && isPartOfChoice(docUrl) &&
+-           QDir::match(include, docUrl.fileName()) && !QDir::match(exclude, docUrl.toLocalFile()))
+-        {
++        if (doc->state() != IDocument::Clean &&
++            isPartOfChoice(docUrl) &&
++            QDir::match(include, docUrl.fileName()) &&
++            !QDir::match(exclude, docUrl.toLocalFile())
++        ) {
+             unsavedFiles << doc;
+         }
+     }
+@@ -418,12 +476,11 @@ void GrepDialog::startSearch()
+         return;
+     }
+ 
+-    QList<QUrl> choice = getDirectoryChoice();
++    const QString descriptionOrUrl(m_settings.searchPaths);
++    QList<QUrl> choice = getDirectoryChoice(descriptionOrUrl);
++    QString description = descriptionOrUrl;
+ 
+     GrepJob* job = m_plugin->newGrepJob();
+-
+-    const QString descriptionOrUrl(searchPaths->currentText());
+-    QString description = descriptionOrUrl;
+     // Shorten the description
+     if(descriptionOrUrl != allOpenFilesString() && descriptionOrUrl != allOpenProjectsString()) {
+         auto prettyFileName = [](const QUrl& url) {
+@@ -439,7 +496,7 @@ void GrepDialog::startSearch()
+ 
+     GrepOutputView *toolView = (GrepOutputView*)ICore::self()->uiController()->
+                                findToolView(i18n("Find/Replace in Files"), m_plugin->toolViewFactory(), IUiController::CreateAndRaise);
+-    GrepOutputModel* outputModel = toolView->renewModel(m_settings.pattern, description);
++    GrepOutputModel* outputModel = toolView->renewModel(m_settings, description);
+ 
+     connect(job, &GrepJob::showErrorMessage,
+             toolView, &GrepOutputView::showErrorMessage);
+@@ -461,7 +518,9 @@ void GrepDialog::startSearch()
+ 
+     m_plugin->rememberSearchDirectory(descriptionOrUrl);
+ 
+-    close();
++    // if m_show is false, the dialog is closed somewhere else
++    if (m_show)
++        close();
+ }
+ 
+ void GrepDialog::updateSettings()
+@@ -479,5 +538,7 @@ void GrepDialog::updateSettings()
+     m_settings.replacementTemplate = replacementTemplateEdit->currentText();
+     m_settings.files = filesCombo->currentText();
+     m_settings.exclude = excludeCombo->currentText();
++
++    m_settings.searchPaths = searchPaths->currentText();
+ }
+ 
+diff --git a/plugins/grepview/grepdialog.h b/plugins/grepview/grepdialog.h
+index eed9c12450..ccd1cad999 100644
+--- a/plugins/grepview/grepdialog.h
++++ b/plugins/grepview/grepdialog.h
+@@ -27,13 +27,16 @@ class GrepDialog : public QDialog, private Ui::GrepWidget
+     Q_OBJECT
+ 
+ public:
+-    explicit GrepDialog( GrepViewPlugin * plugin, QWidget *parent=nullptr );
++    explicit GrepDialog(GrepViewPlugin *plugin, QWidget *parent = nullptr, bool show = true);
+     ~GrepDialog() override;
+ 
+     void setSettings(const GrepJobSettings &settings);
+     GrepJobSettings settings() const;
++    ///Rerun all grep jobs from a list of settings, called by GrepOutputView
++    void historySearch(QList<GrepJobSettings> &settingsHistory);
+ 
+ public Q_SLOTS:
++    ///Start a new search
+     void startSearch();
+ 
+     ///Sets directory(ies)/files to search in. Also it can be semicolon separated list of directories/files or one of special strings: allOpenFilesString, allOpenProjectsString
+@@ -42,29 +45,39 @@ public Q_SLOTS:
+ private Q_SLOTS:
+     void templateTypeComboActivated(int);
+     void patternComboEditTextChanged( const QString& );
+-    void directoryChanged(const QString &dir);
+     QMenu* createSyncButtonMenu();
+     void addUrlToMenu(QMenu* ret, const QUrl& url);
+     void addStringToMenu(QMenu* ret, const QString& string);
+     void synchronizeDirActionTriggered(bool);
+ 
++    ///Check if all projects have been loaded
++    bool checkProjectsOpened();
++    ///Call the next element in m_jobs_history or close the dialog if all jobs are done
++    void nextHistory();
++
+     ///Opens the dialog to select a directory to search in, and inserts it into Location(s) field.
+     void selectDirectoryDialog();
+ 
+ protected:
++    ///Prevent showing the dialog if m_show is false
++    void setVisible(bool visible) override;
+     void closeEvent(QCloseEvent* closeEvent) override;
+ 
+ private:
+-    // Returns the chosen directories or files (only the top directories, not subfiles)
+-    QList< QUrl > getDirectoryChoice() const;
+-    // Returns whether the given url is a subfile/subdirectory of one of the chosen directories/files
+-    // This is slow, so don't call it too often
++    ///Returns whether the given url is a subfile/subdirectory of one of the chosen directories/files
++    ///
++    ///This is slow, so don't call it too often
+     bool isPartOfChoice(QUrl url) const;
+-    // Checks what a user has entered into the dialog and saves the data in m_settings
++    ///Checks what a user has entered into the dialog and saves the data in m_settings
+     void updateSettings();
+ 
+     GrepViewPlugin * m_plugin;
++    ///Allow to show a dialog
++    const bool m_show;
++    ///Current setting
+     GrepJobSettings m_settings;
++    ///List of remaining grep job settings to be done
++    QList<GrepJobSettings> m_historyJobSettings;
+ };
+ 
+ 
+diff --git a/plugins/grepview/grepjob.h b/plugins/grepview/grepjob.h
+index 2a364677b5..a7dad6497b 100644
+--- a/plugins/grepview/grepjob.h
++++ b/plugins/grepview/grepjob.h
+@@ -48,6 +48,7 @@ struct GrepJobSettings
+     QString replacementTemplate;
+     QString files;
+     QString exclude;
++    QString searchPaths;
+ };
+ 
+ class GrepJob : public KJob, public KDevelop::IStatus
+diff --git a/plugins/grepview/grepoutputview.cpp b/plugins/grepview/grepoutputview.cpp
+index 87c1de59e4..4aec6f18ce 100644
+--- a/plugins/grepview/grepoutputview.cpp
++++ b/plugins/grepview/grepoutputview.cpp
+@@ -60,6 +60,7 @@ GrepOutputView::GrepOutputView(QWidget* parent, GrepViewPlugin* plugin)
+   , m_prev(nullptr)
+   , m_collapseAll(nullptr)
+   , m_expandAll(nullptr)
++  , m_refresh(nullptr)
+   , m_clearSearchHistory(nullptr)
+   , m_statusLabel(nullptr)
+   , m_plugin(plugin)
+@@ -80,8 +81,10 @@ GrepOutputView::GrepOutputView(QWidget* parent, GrepViewPlugin* plugin)
+     QAction *separator = new QAction(this);
+     separator->setSeparator(true);
+     QAction *newSearchAction = new QAction(QIcon::fromTheme(QStringLiteral("edit-find")), i18n("New &Search"), this);
++    m_refresh = new QAction(QIcon::fromTheme(QStringLiteral("view-refresh")), i18n("Refresh"), this);
++    m_refresh->setEnabled(false);
+     m_clearSearchHistory = new QAction(QIcon::fromTheme(QStringLiteral("edit-clear-list")), i18n("Clear Search History"), this);
+-    QAction *refreshAction = new QAction(QIcon::fromTheme(QStringLiteral("view-refresh")), i18n("Refresh"), this);
++    m_clearSearchHistory->setEnabled(false);
+ 
+     addAction(m_prev);
+     addAction(m_next);
+@@ -89,7 +92,7 @@ GrepOutputView::GrepOutputView(QWidget* parent, GrepViewPlugin* plugin)
+     addAction(m_expandAll);
+     addAction(separator);
+     addAction(newSearchAction);
+-    addAction(refreshAction);
++    addAction(m_refresh);
+     addAction(m_clearSearchHistory);
+ 
+     separator = new QAction(this);
+@@ -118,6 +121,7 @@ GrepOutputView::GrepOutputView(QWidget* parent, GrepViewPlugin* plugin)
+     connect(m_collapseAll, &QAction::triggered, this, &GrepOutputView::collapseAllItems);
+     connect(m_expandAll, &QAction::triggered, this, &GrepOutputView::expandAllItems);
+     connect(applyButton, &QPushButton::clicked,  this, &GrepOutputView::onApply);
++    connect(m_refresh, &QAction::triggered, this, &GrepOutputView::refresh);
+     connect(m_clearSearchHistory, &QAction::triggered, this, &GrepOutputView::clearSearchHistory);
+     KConfigGroup cg = ICore::self()->activeSession()->config()->group( "GrepDialog" );
+     replacementCombo->addItems( cg.readEntry("LastReplacementItems", QStringList()) );
+@@ -129,12 +133,32 @@ GrepOutputView::GrepOutputView(QWidget* parent, GrepViewPlugin* plugin)
+ 
+     connect(newSearchAction, &QAction::triggered, this, &GrepOutputView::showDialog);
+ 
+-    connect(refreshAction, &QAction::triggered, this, &GrepOutputView::refresh);
+-
+     resultsTreeView->header()->setStretchLastSection(true);
+ 
+     resultsTreeView->header()->setStretchLastSection(true);
+ 
++    // read Find/Replace settings history
++    QStringList s = cg.readEntry("LastSettings", QStringList());
++    while (!s.empty() && s.count() % 10 == 0) {
++        GrepJobSettings settings;
++        settings.projectFilesOnly = s.takeFirst().toUInt();
++        settings.caseSensitive = s.takeFirst().toUInt();
++        settings.regexp = s.takeFirst().toUInt();
++        settings.depth = s.takeFirst().toInt();
++        settings.pattern = s.takeFirst();
++        settings.searchTemplate = s.takeFirst();
++        settings.replacementTemplate = s.takeFirst();
++        settings.files = s.takeFirst();
++        settings.exclude = s.takeFirst();
++        settings.searchPaths = s.takeFirst();
++
++        m_settingsHistory << settings;
++    }
++
++    // rerun the grep jobs with settings from the history
++    GrepDialog* dlg = new GrepDialog(m_plugin, this, false);
++    dlg->historySearch(m_settingsHistory);
++
+     updateCheckable();
+ }
+ 
+@@ -152,18 +176,38 @@ GrepOutputView::~GrepOutputView()
+ {
+     KConfigGroup cg = ICore::self()->activeSession()->config()->group( "GrepDialog" );
+     cg.writeEntry("LastReplacementItems", qCombo2StringList(replacementCombo, true));
++    QStringList settingsStrings;
++    foreach (const GrepJobSettings & s, m_settingsHistory) {
++        settingsStrings << QStringList({
++            QString::number(s.projectFilesOnly),
++            QString::number(s.caseSensitive),
++            QString::number(s.regexp),
++            QString::number(s.depth),
++            s.pattern,
++            s.searchTemplate,
++            s.replacementTemplate,
++            s.files,
++            s.exclude,
++            s.searchPaths
++        });
++    }
++    cg.writeEntry("LastSettings", settingsStrings);
+     emit outputViewIsClosed();
+ }
+ 
+-GrepOutputModel* GrepOutputView::renewModel(const QString& name, const QString& description)
++GrepOutputModel* GrepOutputView::renewModel(const GrepJobSettings& settings, const QString& description)
+ {
+-    // Crear oldest model
+-    while(modelSelector->count() > GrepOutputView::HISTORY_SIZE) {
++    // clear oldest model
++    while(modelSelector->count() >= GrepOutputView::HISTORY_SIZE) {
+         QVariant var = modelSelector->itemData(GrepOutputView::HISTORY_SIZE - 1);
+         qvariant_cast<QObject*>(var)->deleteLater();
+         modelSelector->removeItem(GrepOutputView::HISTORY_SIZE - 1);
+     }
+ 
++    while(m_settingsHistory.count() >= GrepOutputView::HISTORY_SIZE) {
++        m_settingsHistory.removeFirst();
++    }
++
+     replacementCombo->clearEditText();
+ 
+     GrepOutputModel* newModel = new GrepOutputModel(resultsTreeView);
+@@ -179,11 +223,15 @@ GrepOutputModel* GrepOutputView::renewModel(const QString& name, const QString&
+     connect(m_plugin, &GrepViewPlugin::grepJobFinished, this, &GrepOutputView::updateScrollArea);
+ 
+     // appends new model to history
+-    const QString displayName = i18n("Search \"%1\" in %2 (at time %3)", name, description, QTime::currentTime().toString(QStringLiteral("hh:mm")));
++    const QString displayName = i18n("Search \"%1\" in %2 (at time %3)",
++                                     settings.pattern, description,
++                                     QTime::currentTime().toString(QStringLiteral("hh:mm")));
+     modelSelector->insertItem(0, displayName, qVariantFromValue<QObject*>(newModel));
+ 
+     modelSelector->setCurrentIndex(0);//setCurrentItem(displayName);
+ 
++    m_settingsHistory.append(settings);
++
+     updateCheckable();
+ 
+     return newModel;
+@@ -229,6 +277,8 @@ void GrepOutputView::changeModel(int index)
+ 
+     updateCheckable();
+     updateApplyState(model()->index(0, 0), model()->index(0, 0));
++    m_refresh->setEnabled(true);
++    m_clearSearchHistory->setEnabled(true);
+ }
+ 
+ void GrepOutputView::setMessage(const QString& msg, MessageType type)
+@@ -279,7 +329,19 @@ void GrepOutputView::showDialog()
+ 
+ void GrepOutputView::refresh()
+ {
+-    m_plugin->showDialog(true, QString(), false);
++    int index = modelSelector->currentIndex();
++    if (index >= 0) {
++        QVariant var = modelSelector->currentData();
++        qvariant_cast<QObject*>(var)->deleteLater();
++        modelSelector->removeItem(index);
++
++        QList<GrepJobSettings> refresh_history({
++            m_settingsHistory.takeAt(m_settingsHistory.count() - 1 - index)
++        });
++
++        GrepDialog* dlg = new GrepDialog(m_plugin, this, false);
++        dlg->historySearch(refresh_history);
++    }
+ }
+ 
+ void GrepOutputView::expandElements(const QModelIndex& index)
+@@ -374,7 +436,12 @@ void GrepOutputView::clearSearchHistory()
+         qvariant_cast<QObject*>(var)->deleteLater();
+         modelSelector->removeItem(0);
+     }
++
++    m_settingsHistory.clear();
++
+     applyButton->setEnabled(false);
++    m_refresh->setEnabled(false);
++    m_clearSearchHistory->setEnabled(false);
+     m_statusLabel->setText(QString());
+ }
+ 
+diff --git a/plugins/grepview/grepoutputview.h b/plugins/grepview/grepoutputview.h
+index a73aae94fe..f481ca253f 100644
+--- a/plugins/grepview/grepoutputview.h
++++ b/plugins/grepview/grepoutputview.h
+@@ -12,6 +12,8 @@
+ #ifndef KDEVPLATFORM_PLUGIN_GREPOUTPUTVIEW_H
+ #define KDEVPLATFORM_PLUGIN_GREPOUTPUTVIEW_H
+ 
++#include <QList>
++
+ #include <interfaces/iuicontroller.h>
+ #include <interfaces/itoolviewactionlistener.h>
+ 
+@@ -26,6 +28,7 @@ class QModelIndex;
+ 
+ class GrepViewPlugin;
+ class GrepOutputModel;
++struct GrepJobSettings;
+ 
+ class GrepOutputViewFactory: public KDevelop::IToolViewFactory
+ {
+@@ -58,7 +61,7 @@ public:
+      * Oldest models are deleted if needed.
+      * @return pointer to the new model
+      */
+-    GrepOutputModel* renewModel(const QString& name, const QString& description);
++    GrepOutputModel* renewModel(const GrepJobSettings& settings, const QString& description);
+     
+     void setMessage(const QString& msg, MessageType type = Information);
+ 
+@@ -78,10 +81,12 @@ private:
+     QAction* m_prev;
+     QAction* m_collapseAll;
+     QAction* m_expandAll;
++    QAction* m_refresh;
+     QAction* m_clearSearchHistory;
+     QLabel*  m_statusLabel;
+     GrepViewPlugin *m_plugin;
+-    
++    QList<GrepJobSettings> m_settingsHistory;
++
+ private Q_SLOTS:
+     void selectPreviousItem() override;
+     void selectNextItem() override;
+diff --git a/plugins/grepview/greputil.cpp b/plugins/grepview/greputil.cpp
+index e70556b76e..c034f00f88 100644
+--- a/plugins/grepview/greputil.cpp
++++ b/plugins/grepview/greputil.cpp
+@@ -47,12 +47,13 @@ QStringList qCombo2StringList( QComboBox* combo, bool allowEmpty )
+     if (!combo) {
+         return list;
+     }
+-    int skippedItem = -1;
+-    if (!combo->currentText().isEmpty() || allowEmpty) {
+-        list << combo->currentText();
++    QString currentText = combo->currentText();
++    int skippedItem = combo->currentIndex();
++    if (!currentText.isEmpty() || allowEmpty) {
++        list << currentText;
+     }
+-    if (combo->currentIndex() != -1 && !combo->itemText(combo->currentIndex()).isEmpty()) {
+-        skippedItem = combo->currentIndex();
++    if (skippedItem != -1 && currentText != combo->itemText(skippedItem)) {
++        skippedItem = -1;
+     }
+     for (int i = 0; i < std::min(MAX_LAST_SEARCH_ITEMS_COUNT, combo->count()); ++i) {
+         if (i != skippedItem && !combo->itemText(i).isEmpty()) {
+diff --git a/plugins/grepview/grepviewplugin.cpp b/plugins/grepview/grepviewplugin.cpp
+index 96fe2543b3..85d1de0706 100644
+--- a/plugins/grepview/grepviewplugin.cpp
++++ b/plugins/grepview/grepviewplugin.cpp
+@@ -106,9 +106,11 @@ GrepViewPlugin::~GrepViewPlugin()
+ 
+ void GrepViewPlugin::unload()
+ {
+-    if (m_currentDialog) {
+-        m_currentDialog->reject();
+-        m_currentDialog->deleteLater();
++    foreach (const QPointer<GrepDialog> &p, m_currentDialogs) {
++        if (p) {
++            p->reject();
++            p->deleteLater();
++        }
+     }
+ 
+     core()->uiController()->removeToolView(m_factory);
+@@ -163,8 +165,11 @@ KDevelop::ContextMenuExtension GrepViewPlugin::contextMenuExtension(KDevelop::Co
+ 
+ void GrepViewPlugin::showDialog(bool setLastUsed, QString pattern, bool show)
+ {
+-    GrepDialog* dlg = new GrepDialog( this, core()->uiController()->activeMainWindow() );
+-    m_currentDialog = dlg;
++    // check if dialog pointers are still valid, remove them otherwise
++    m_currentDialogs.removeAll(QPointer<GrepDialog>());
++
++    GrepDialog* dlg = new GrepDialog( this, core()->uiController()->activeMainWindow(), show );
++    m_currentDialogs << dlg;
+ 
+     GrepJobSettings dlgSettings = dlg->settings();
+     KDevelop::IDocument* doc = core()->documentController()->activeDocument();
+@@ -232,7 +237,7 @@ void GrepViewPlugin::jobFinished(KJob* job)
+ {
+     if(job == m_currentJob)
+     {
+-        emit grepJobFinished();
+         m_currentJob = nullptr;
++        emit grepJobFinished();
+     }
+ }
+diff --git a/plugins/grepview/grepviewplugin.h b/plugins/grepview/grepviewplugin.h
+index b82d02c50a..e25395dd2a 100644
+--- a/plugins/grepview/grepviewplugin.h
++++ b/plugins/grepview/grepviewplugin.h
+@@ -16,6 +16,7 @@
+ #include <interfaces/iplugin.h>
+ #include <interfaces/contextmenuextension.h>
+ 
++#include <QList>
+ #include <QPointer>
+ #include <QVariant>
+ 
+@@ -63,7 +64,7 @@ private Q_SLOTS:
+ 
+ private:
+     GrepJob *m_currentJob;
+-    QPointer<GrepDialog> m_currentDialog;
++    QList<QPointer<GrepDialog> > m_currentDialogs;
+     QString m_directory;
+     QString m_contextMenuDirectory;
+     GrepOutputViewFactory* m_factory;
+-- 
+2.13.1
+
