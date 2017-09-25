@@ -550,6 +550,14 @@ if {${kf5::includecounter} == 0} {
                                 xinstall -m 644 ${doc} ${workpath}/apidocs/
                             }
                         }
+                        if {[file exists ${build.dir}/${kf5.framework}-${version}/html/Makefile]} {
+                            system -W ${build.dir}/${kf5.framework}-${version}/html \
+                                "make > /dev/null"
+                            set docset ${build.dir}/${kf5.framework}-${version}/html/org.kde.${kf5.framework}-${version}.docset
+                            if {[file exists ${docset}]} {
+                                file rename ${docset} ${workpath}/apidocs
+                            }
+                        }
                         file delete -force ${build.dir}/${kf5.framework}-${version}
                     } else {
                         system -W ${build.dir} "kgenapidox --qhp --searchengine --api-searchbox \
@@ -578,6 +586,9 @@ if {${kf5::includecounter} == 0} {
 #                         if {[info procs qt5.register_qch_files] ne ""} {
 #                             qt5.register_qch_files ${kf5.docs_dir}/[file tail ${doc}]
 #                         }
+                    }
+                    foreach doc [glob -nocomplain ${workpath}/apidocs/*.docset] {
+                        file rename ${doc} ${destroot}${kf5.docs_dir}
                     }
                     if {[variant_exists chm] && [variant_isset chm]} {
                         foreach doc [glob -nocomplain ${workpath}/apidocs/*.chm] {
