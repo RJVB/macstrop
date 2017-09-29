@@ -44,49 +44,6 @@ index c99e7e0c2316bf24df76d303fdb599a8095193da..f2127cae7858250bbd690036d5586930
  Q_SIGNALS:
      void reloadedFileItem(KDevelop::ProjectFileItem* file);
      void reloadedFolderItem(KDevelop::ProjectFolderItem* folder);
-diff --git a/kdevplatform/project/helper.cpp b/kdevplatform/project/helper.cpp
-index 4bc71b53d85a62b5281e15843f59625a564c9da1..28ee7cc7b06ed3aaa2a0873058248f88d73cc25b 100644
---- a/kdevplatform/project/helper.cpp
-+++ b/kdevplatform/project/helper.cpp
-@@ -24,6 +24,8 @@
- #include <QApplication>
- #include <QDir>
- #include <QFileInfo>
-+#include <QStandardPaths>
-+#include <QProcess>
- 
- #include <KIO/CopyJob>
- #include <KIO/DeleteJob>
-@@ -219,6 +221,29 @@ bool KDevelop::copyPath(const KDevelop::IProject* project, const KDevelop::Path&
- Path KDevelop::proposedBuildFolder(const Path& sourceFolder)
- {
-     Path proposedBuildFolder;
-+    const QString customDirScript = QStandardPaths::findExecutable("kdevelop-custom-build-dir");
-+    if (!customDirScript.isEmpty()) {
-+        QProcess customDirHelper;
-+        customDirHelper.start(customDirScript, QStringList() << sourceFolder.path());
-+        if (customDirHelper.waitForFinished()) {
-+            const QString customDir = customDirHelper.readAllStandardOutput().trimmed();
-+            if (!customDir.isEmpty() && QDir(customDir).exists()) {
-+                return Path(customDir);
-+            } else {
-+                qWarning() << "Ignoring inexistent" << customDir << "returned by"
-+                    << customDirScript << "for source folder" << sourceFolder.path()
-+                    << "helper error:" << customDirHelper.readAllStandardError();
-+            }
-+        } else {
-+            qWarning() << "Custom build dir script" << customDirScript << "found but failed for source folder"
-+                << sourceFolder.path() << "output=" << customDirHelper.readAll();
-+        }
-+    }
-+    // check if the project is already configured for an out-of-source build:
-+    const QString oosBuildPath = sourceFolder.parent().path() + QStringLiteral("/build");
-+    if (QDir(oosBuildPath).exists()) {
-+        return proposedBuildFolder;
-+    }
-     if (sourceFolder.path().contains(QStringLiteral("/src/"))) {
-         const QString srcBuildPath = sourceFolder.path().replace(QStringLiteral("/src/"), QStringLiteral("/build/"));
-         Q_ASSERT(!srcBuildPath.isEmpty());
 diff --git a/kdevplatform/project/tests/CMakeLists.txt b/kdevplatform/project/tests/CMakeLists.txt
 index 74e5baada32fcc570f410e50c26bfc83a5066830..5a8d80cfe1a933bb839114cf7059152fc235adbd 100644
 --- a/kdevplatform/project/tests/CMakeLists.txt
@@ -106,10 +63,10 @@ index 74e5baada32fcc570f410e50c26bfc83a5066830..5a8d80cfe1a933bb839114cf7059152f
 +)
 diff --git a/kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp b/kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef653a0b9c83bb26dc8ec3031e856cd0980384d4
+index 0000000000000000000000000000000000000000..f752692929964c8b56357aebbfaa2ac6f651a81a
 --- /dev/null
 +++ b/kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,164 @@
 +/* This file is part of KDevelop
 +    Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>
 +
@@ -183,12 +140,16 @@ index 0000000000000000000000000000000000000000..ef653a0b9c83bb26dc8ec3031e856cd0
 +        if (!m_project) {
 +            return;
 +        }
++        m_projectNumber = s_count++;
++        qInfo() << "Starting import of project #" << m_projectNumber << "at" << m_project->path();
++        m_timer.start();
 +        auto root = m_manager->import(m_project);
++        int elapsed = m_timer.elapsed();
++        qInfo() << "\tcreating dirwatcher took"
++            << elapsed / 1000.0 << "seconds";
 +        auto import = m_manager->createImportJob(root);
 +        QObject::connect(import, &KJob::finished, this, &AFMPBenchmark::projectImportDone);
-+        m_projectNumber = s_count++;
-+        qInfo() << "Starting import of project #" << m_projectNumber << "at" << root->path();
-+        m_timer.start();
++        m_timer.restart();
 +        import->start();
 +    }
 +
@@ -258,19 +219,6 @@ index 0000000000000000000000000000000000000000..ef653a0b9c83bb26dc8ec3031e856cd0
 +                        }
 +                        QCoreApplication::instance()->quit();
 +                     });
-+        if (qEnvironmentVariableIsSet("BENCHMARK_ORIGINAL_DIRWATCHER")) {
-+            // benchmark the creation and deletion of the original dirwatcher:
-+            KDirWatch *watcher = new KDirWatch(benchmark->m_project);
-+            qInfo() << "Benchmarking KDirWatch for all of" << argv[i];
-+            benchmark->m_timer.start();
-+            watcher->addDir(benchmark->m_project->path().toLocalFile(), KDirWatch::WatchSubDirs | KDirWatch:: WatchFiles );
-+            int elapsed = benchmark->m_timer.elapsed();
-+            qInfo() << "\tfeeding the watcher:" << elapsed / 1000.0 << "seconds";
-+            benchmark->m_timer.restart();
-+            delete watcher;
-+            elapsed = benchmark->m_timer.elapsed();
-+            qInfo() << "\tdeleting the watcher:" << elapsed / 1000.0 << "seconds";
-+        }
 +    }
 +    for (auto benchmark : benchmarks) {
 +        benchmark->start();
