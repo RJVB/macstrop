@@ -1,0 +1,285 @@
+diff --git a/kdevplatform/project/abstractfilemanagerplugin.cpp b/kdevplatform/project/abstractfilemanagerplugin.cpp
+index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..1fac2946557ea246bb324a77a0976797a94e2219 100644
+--- a/kdevplatform/project/abstractfilemanagerplugin.cpp
++++ b/kdevplatform/project/abstractfilemanagerplugin.cpp
+@@ -661,6 +661,16 @@ KDirWatch* AbstractFileManagerPlugin::projectWatcher( IProject* project ) const
+     return d->m_watchers.value( project, nullptr );
+ }
+ 
++int AbstractFileManagerPlugin::watchedItems( IProject* project ) const
++{
++    return project->fileSet().size();
++}
++
++void AbstractFileManagerPlugin::projectClosing( IProject *project )
++{
++    d->projectClosing(project);
++}
++
+ //END Plugin
+ 
+ #include "moc_abstractfilemanagerplugin.cpp"
+diff --git a/kdevplatform/project/abstractfilemanagerplugin.h b/kdevplatform/project/abstractfilemanagerplugin.h
+index c99e7e0c2316bf24df76d303fdb599a8095193da..f2127cae7858250bbd690036d5586930b9b84256 100644
+--- a/kdevplatform/project/abstractfilemanagerplugin.h
++++ b/kdevplatform/project/abstractfilemanagerplugin.h
+@@ -103,6 +103,20 @@ protected:
+      */
+     KDirWatch* projectWatcher( IProject* project ) const;
+ 
++    /**
++     * @return the number of watched directories for the given @p project.
++     *
++     * Stock KDirWatch doesn't currently have a method to query the number of items it watches
++     * but it will be watching just about everything in the project so this returns the file+folder
++     * count as a reasonable approximation.
++     */
++    int watchedItems( IProject* project ) const;
++
++    /**
++     * tell the plugin that the given @p project is going to be closed.
++     */
++    void projectClosing( IProject *project );
++
+ Q_SIGNALS:
+     void reloadedFileItem(KDevelop::ProjectFileItem* file);
+     void reloadedFolderItem(KDevelop::ProjectFolderItem* folder);
+diff --git a/kdevplatform/project/helper.cpp b/kdevplatform/project/helper.cpp
+index 4bc71b53d85a62b5281e15843f59625a564c9da1..28ee7cc7b06ed3aaa2a0873058248f88d73cc25b 100644
+--- a/kdevplatform/project/helper.cpp
++++ b/kdevplatform/project/helper.cpp
+@@ -24,6 +24,8 @@
+ #include <QApplication>
+ #include <QDir>
+ #include <QFileInfo>
++#include <QStandardPaths>
++#include <QProcess>
+ 
+ #include <KIO/CopyJob>
+ #include <KIO/DeleteJob>
+@@ -219,6 +221,29 @@ bool KDevelop::copyPath(const KDevelop::IProject* project, const KDevelop::Path&
+ Path KDevelop::proposedBuildFolder(const Path& sourceFolder)
+ {
+     Path proposedBuildFolder;
++    const QString customDirScript = QStandardPaths::findExecutable("kdevelop-custom-build-dir");
++    if (!customDirScript.isEmpty()) {
++        QProcess customDirHelper;
++        customDirHelper.start(customDirScript, QStringList() << sourceFolder.path());
++        if (customDirHelper.waitForFinished()) {
++            const QString customDir = customDirHelper.readAllStandardOutput().trimmed();
++            if (!customDir.isEmpty() && QDir(customDir).exists()) {
++                return Path(customDir);
++            } else {
++                qWarning() << "Ignoring inexistent" << customDir << "returned by"
++                    << customDirScript << "for source folder" << sourceFolder.path()
++                    << "helper error:" << customDirHelper.readAllStandardError();
++            }
++        } else {
++            qWarning() << "Custom build dir script" << customDirScript << "found but failed for source folder"
++                << sourceFolder.path() << "output=" << customDirHelper.readAll();
++        }
++    }
++    // check if the project is already configured for an out-of-source build:
++    const QString oosBuildPath = sourceFolder.parent().path() + QStringLiteral("/build");
++    if (QDir(oosBuildPath).exists()) {
++        return proposedBuildFolder;
++    }
+     if (sourceFolder.path().contains(QStringLiteral("/src/"))) {
+         const QString srcBuildPath = sourceFolder.path().replace(QStringLiteral("/src/"), QStringLiteral("/build/"));
+         Q_ASSERT(!srcBuildPath.isEmpty());
+diff --git a/kdevplatform/project/tests/CMakeLists.txt b/kdevplatform/project/tests/CMakeLists.txt
+index 74e5baada32fcc570f410e50c26bfc83a5066830..5a8d80cfe1a933bb839114cf7059152fc235adbd 100644
+--- a/kdevplatform/project/tests/CMakeLists.txt
++++ b/kdevplatform/project/tests/CMakeLists.txt
+@@ -21,3 +21,12 @@ target_link_libraries(abstractfilemanagerpluginimporttest
+     KDev::Tests
+     Qt5::QuickWidgets
+ )
++
++add_executable(abstractfilemanagerpluginimportbenchmark
++    abstractfilemanagerpluginimportbenchmark.cpp
++)
++ecm_mark_nongui_executable(abstractfilemanagerpluginimportbenchmark)
++target_link_libraries(abstractfilemanagerpluginimportbenchmark
++    KDev::Project
++    KDev::Tests
++)
+diff --git a/kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp b/kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..ef653a0b9c83bb26dc8ec3031e856cd0980384d4
+--- /dev/null
++++ b/kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp
+@@ -0,0 +1,173 @@
++/* This file is part of KDevelop
++    Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>
++
++    This library is free software; you can redistribute it and/or
++    modify it under the terms of the GNU Library General Public
++    License as published by the Free Software Foundation; either
++    version 2 of the License, or (at your option) any later version.
++
++    This library is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++    Library General Public License for more details.
++
++    You should have received a copy of the GNU Library General Public License
++    along with this library; see the file COPYING.LIB.  If not, write to
++    the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++    Boston, MA 02110-1301, USA.
++*/
++
++#include <project/abstractfilemanagerplugin.h>
++#include <project/projectmodel.h>
++
++#include <tests/autotestshell.h>
++#include <tests/testcore.h>
++#include <tests/testproject.h>
++
++#include <util/path.h>
++
++#include <KJob>
++#include <KDirWatch>
++
++#include <QCoreApplication>
++#include <QList>
++#include <QFileInfo>
++#include <QElapsedTimer>
++#include <QMap>
++#include <QDebug>
++
++using namespace KDevelop;
++
++class TestFileManagerPlugin : public AbstractFileManagerPlugin
++{
++    Q_OBJECT
++public:
++    TestFileManagerPlugin(QObject* parent = nullptr)
++        : AbstractFileManagerPlugin({}, parent)
++    {}
++
++    using AbstractFileManagerPlugin::watchedItems;
++
++    using AbstractFileManagerPlugin::projectClosing;
++};
++
++class AFMPBenchmark : public QObject {
++    Q_OBJECT
++public:
++    AFMPBenchmark(TestFileManagerPlugin* manager, const QString& path, QObject* parent)
++        : QObject(parent)
++    {
++        if (QFileInfo(path).isDir()) {
++            m_manager = manager;
++            m_project = new TestProject(Path(path));
++        } else {
++            qWarning() << path << "is not a directory, ignoring";
++            m_project = nullptr;
++        }
++    }
++
++    void start()
++    {
++        if (!m_project) {
++            return;
++        }
++        auto root = m_manager->import(m_project);
++        auto import = m_manager->createImportJob(root);
++        QObject::connect(import, &KJob::finished, this, &AFMPBenchmark::projectImportDone);
++        m_projectNumber = s_count++;
++        qInfo() << "Starting import of project #" << m_projectNumber << "at" << root->path();
++        m_timer.start();
++        import->start();
++    }
++
++    void projectClosing()
++    {
++        m_timer.restart();
++        m_manager->projectClosing(m_project);
++        int elapsed = m_timer.elapsed();
++        qInfo() << "\tclosing project" << m_projectNumber << ":" << elapsed / 1000.0 << "seconds";
++    }
++
++    TestFileManagerPlugin* m_manager;
++    TestProject* m_project;
++    QElapsedTimer m_timer;
++    int m_projectNumber;
++
++    static int s_count;
++
++Q_SIGNALS:
++    void finished();
++
++private Q_SLOTS:
++    void projectImportDone(KJob* job)
++    {
++        Q_UNUSED(job);
++        int elapsed = m_timer.elapsed();
++        qInfo() << "imported project" << m_projectNumber
++            << "with" << m_project->fileSet().size()
++            << "files (watched:" << m_manager->watchedItems(m_project) << "):"
++            << elapsed / 1000.0 << "seconds";
++
++        s_count -= 1;
++        if (s_count <= 0) {
++            qInfo() << "Done.";
++            emit finished();
++        }
++    }
++
++};
++
++int AFMPBenchmark::s_count = 0;
++
++int main(int argc, char** argv)
++{
++    if (argc < 2) {
++        qWarning() << "Usage:" << argv[0] << "projectDir1 [...projectDirN]";
++        return 1;
++    }
++    QCoreApplication app(argc, argv);
++
++    AutoTestShell::init();
++    auto core = TestCore::initialize(Core::NoUi);
++    auto manager = new TestFileManagerPlugin(core);
++
++    const char *kdwMethod[] = {"FAM", "Inotify", "Stat", "QFSWatch"};
++    qInfo() << "KDirWatch backend:" << kdwMethod[KDirWatch().internalMethod()];
++
++    QList<AFMPBenchmark*> benchmarks;
++
++    for (int i = 1 ; i < argc ; ++i) {
++        const auto benchmark = new AFMPBenchmark(manager, QString::fromUtf8(argv[i]), core);
++        benchmarks << benchmark;
++        QObject::connect(benchmark, &AFMPBenchmark::finished,
++                     &app, [&benchmarks] {
++                        for (auto benchmark : benchmarks) {
++                            benchmark->projectClosing();
++                        }
++                        QCoreApplication::instance()->quit();
++                     });
++        if (qEnvironmentVariableIsSet("BENCHMARK_ORIGINAL_DIRWATCHER")) {
++            // benchmark the creation and deletion of the original dirwatcher:
++            KDirWatch *watcher = new KDirWatch(benchmark->m_project);
++            qInfo() << "Benchmarking KDirWatch for all of" << argv[i];
++            benchmark->m_timer.start();
++            watcher->addDir(benchmark->m_project->path().toLocalFile(), KDirWatch::WatchSubDirs | KDirWatch:: WatchFiles );
++            int elapsed = benchmark->m_timer.elapsed();
++            qInfo() << "\tfeeding the watcher:" << elapsed / 1000.0 << "seconds";
++            benchmark->m_timer.restart();
++            delete watcher;
++            elapsed = benchmark->m_timer.elapsed();
++            qInfo() << "\tdeleting the watcher:" << elapsed / 1000.0 << "seconds";
++        }
++    }
++    for (auto benchmark : benchmarks) {
++        benchmark->start();
++    }
++
++    if (benchmarks.first()->s_count > 0) {
++        return app.exec();
++    }
++    return 1;
++}
++
++#include "abstractfilemanagerpluginimportbenchmark.moc"
