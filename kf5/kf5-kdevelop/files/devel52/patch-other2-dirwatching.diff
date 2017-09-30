@@ -11,7 +11,7 @@ index c61e8de32e80c29a648766fe88c62b78f5561c36..d8b14d82407b1ec5a886d2fbd60dd77b
      interfaces/iprojectfilemanager.cpp
      interfaces/ibuildsystemmanager.cpp
 diff --git kdevplatform/project/abstractfilemanagerplugin.cpp kdevplatform/project/abstractfilemanagerplugin.cpp
-index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..ddc8b44dbf6499af7b1b114cc885528f3030d89e 100644
+index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..76a3970c69587291e2384abe5d02bfd4102c8c96 100644
 --- kdevplatform/project/abstractfilemanagerplugin.cpp
 +++ kdevplatform/project/abstractfilemanagerplugin.cpp
 @@ -1,3 +1,4 @@
@@ -55,20 +55,22 @@ index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..ddc8b44dbf6499af7b1b114cc885528f
      QHash<IProject*, QList<FileManagerListJob*> > m_projectJobs;
      QVector<QString> m_stoppedFolders;
      ProjectFilterManager m_filters;
-@@ -117,12 +122,24 @@ void AbstractFileManagerPluginPrivate::projectClosing(IProject* project)
+@@ -117,12 +122,26 @@ void AbstractFileManagerPluginPrivate::projectClosing(IProject* project)
          }
          m_projectJobs.remove(project);
      }
 +#ifdef TIME_IMPORT_JOB
 +    QElapsedTimer timer;
++    int watched;
 +    if (m_watchers.contains(project)) {
++        watched = m_watchers[project]->size();
 +        timer.start();
 +    }
 +#endif
      delete m_watchers.take(project);
 +#ifdef TIME_IMPORT_JOB
 +    if (timer.isValid()) {
-+        qCInfo(FILEMANAGER) << "Deleting dir watcher took" << timer.elapsed() / 1000.0 << "seconds for project" << project->name();
++        qCInfo(FILEMANAGER) << "Deleting" << watched << "entry dir watcher took" << timer.elapsed() / 1000.0 << "seconds for project" << project->name();
 +    }
 +#endif
      m_filters.remove(project);
@@ -80,17 +82,17 @@ index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..ddc8b44dbf6499af7b1b114cc885528f
      FileManagerListJob* listJob = new FileManagerListJob( item );
      m_projectJobs[ item->project() ] << listJob;
      qCDebug(FILEMANAGER) << "adding job" << listJob << item << item->path() << "for project" << item->project();
-@@ -133,6 +150,9 @@ KIO::Job* AbstractFileManagerPluginPrivate::eventuallyReadFolder(ProjectFolderIt
+@@ -133,6 +152,9 @@ KIO::Job* AbstractFileManagerPluginPrivate::eventuallyReadFolder(ProjectFolderIt
      q->connect( listJob, &FileManagerListJob::entries,
                  q, [&] (FileManagerListJob* job, ProjectFolderItem* baseItem, const KIO::UDSEntryList& entries) {
                      addJobItems(job, baseItem, entries); } );
 +    q->connect( listJob, &FileManagerListJob::watchDir,
-+                q, [&] (const QString& path) {
++                q, [this, item, watcher] (const QString& path) {
 +                    watcher->addDir(path); }, Qt::QueuedConnection );
  
      return listJob;
  }
-@@ -247,9 +267,9 @@ void AbstractFileManagerPluginPrivate::addJobItems(FileManagerListJob* job,
+@@ -247,9 +269,9 @@ void AbstractFileManagerPluginPrivate::addJobItems(FileManagerListJob* job,
      }
  }
  
@@ -102,7 +104,7 @@ index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..ddc8b44dbf6499af7b1b114cc885528f
      QFileInfo info(path_);
  
      ///FIXME: share memory with parent
-@@ -257,7 +277,7 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
+@@ -257,7 +279,7 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
      const IndexedString indexedPath(path.pathOrUrl());
      const IndexedString indexedParent(path.parent().pathOrUrl());
  
@@ -111,7 +113,7 @@ index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..ddc8b44dbf6499af7b1b114cc885528f
      while (it.hasNext()) {
          const auto p = it.next().key();
          if ( !p->projectItem()->model() ) {
-@@ -285,21 +305,6 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
+@@ -285,21 +307,6 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
              // also gets triggered for kate's backup files
              continue;
          }
@@ -133,7 +135,7 @@ index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..ddc8b44dbf6499af7b1b114cc885528f
      }
  }
  
-@@ -320,7 +325,7 @@ void AbstractFileManagerPluginPrivate::deleted(const QString& path_)
+@@ -320,7 +327,7 @@ void AbstractFileManagerPluginPrivate::deleted(const QString& path_)
      const Path path(QUrl::fromLocalFile(path_));
      const IndexedString indexed(path.pathOrUrl());
  
@@ -142,7 +144,7 @@ index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..ddc8b44dbf6499af7b1b114cc885528f
      while (it.hasNext()) {
          const auto p = it.next().key();
          if (path == p->path()) {
-@@ -436,6 +441,9 @@ void AbstractFileManagerPluginPrivate::removeFolder(ProjectFolderItem* folder)
+@@ -436,6 +443,9 @@ void AbstractFileManagerPluginPrivate::removeFolder(ProjectFolderItem* folder)
              job->removeSubDir(folder);
          }
      }
@@ -152,12 +154,12 @@ index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..ddc8b44dbf6499af7b1b114cc885528f
      folder->parent()->removeRow( folder->row() );
  }
  
-@@ -477,14 +485,14 @@ ProjectFolderItem *AbstractFileManagerPlugin::import( IProject *project )
+@@ -477,14 +487,14 @@ ProjectFolderItem *AbstractFileManagerPlugin::import( IProject *project )
  
      ///TODO: check if this works for remote files when something gets changed through another KDE app
      if ( project->path().isLocalFile() ) {
 -        d->m_watchers[project] = new KDirWatch( project );
-+        auto watcher = new ProjectWatcher(project);
++        auto watcher = new ProjectWatcher(project, &d->m_filters);
  
 -        connect(d->m_watchers[project], &KDirWatch::created,
 -                this, [&] (const QString& path_) { d->created(path_); });
@@ -173,7 +175,7 @@ index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..ddc8b44dbf6499af7b1b114cc885528f
      }
  
      d->m_filters.add(project);
-@@ -661,6 +669,19 @@ KDirWatch* AbstractFileManagerPlugin::projectWatcher( IProject* project ) const
+@@ -661,6 +671,19 @@ KDirWatch* AbstractFileManagerPlugin::projectWatcher( IProject* project ) const
      return d->m_watchers.value( project, nullptr );
  }
  
@@ -194,10 +196,18 @@ index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..ddc8b44dbf6499af7b1b114cc885528f
  
  #include "moc_abstractfilemanagerplugin.cpp"
 diff --git kdevplatform/project/abstractfilemanagerplugin.h kdevplatform/project/abstractfilemanagerplugin.h
-index c99e7e0c2316bf24df76d303fdb599a8095193da..1d9d555bc84f6d4e087e8c3453c6840c3a2e17ab 100644
+index c99e7e0c2316bf24df76d303fdb599a8095193da..395fc47e1767670bf674750d0aba54ee21c68bb0 100644
 --- kdevplatform/project/abstractfilemanagerplugin.h
 +++ kdevplatform/project/abstractfilemanagerplugin.h
-@@ -103,6 +103,16 @@ protected:
+@@ -34,6 +34,7 @@ class KDirWatch;
+ namespace KDevelop {
+ 
+ class AbstractFileManagerPluginPrivate;
++class ProjectController;
+ 
+ /**
+  * This class can be used as a common base for file managers.
+@@ -103,6 +104,16 @@ protected:
       */
      KDirWatch* projectWatcher( IProject* project ) const;
  
@@ -214,6 +224,15 @@ index c99e7e0c2316bf24df76d303fdb599a8095193da..1d9d555bc84f6d4e087e8c3453c6840c
  Q_SIGNALS:
      void reloadedFileItem(KDevelop::ProjectFileItem* file);
      void reloadedFolderItem(KDevelop::ProjectFolderItem* folder);
+@@ -118,6 +129,8 @@ Q_SIGNALS:
+ private:
+     const QScopedPointer<class AbstractFileManagerPluginPrivate> d;
+     friend class AbstractFileManagerPluginPrivate;
++public:
++    friend class ProjectController;
+ };
+ 
+ }
 diff --git kdevplatform/project/filemanagerlistjob.cpp kdevplatform/project/filemanagerlistjob.cpp
 index 06e1d69c70ba762cc476086794a79324871401f9..d45961230867b65d2ac4a7b009bb8a327cb380fe 100644
 --- kdevplatform/project/filemanagerlistjob.cpp
@@ -250,10 +269,10 @@ index 0d32c992c47ebc7d084a019badb64988f0be9ec0..02c051aa6262b3f8603521b158c40129
      void slotEntries(KIO::Job* job, const KIO::UDSEntryList& entriesIn );
 diff --git kdevplatform/project/projectwatcher.cpp kdevplatform/project/projectwatcher.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..0a03f7d1d621510e19f9230cbe37699bdcc1bfc7
+index 0000000000000000000000000000000000000000..429cefb303db6f51d7afb03056e940e06e270ce5
 --- /dev/null
 +++ kdevplatform/project/projectwatcher.cpp
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,57 @@
 +/***************************************************************************
 + *   This file is part of KDevelop                                         *
 + *   Copyright 2017 René Bertin <rjvbertin@gmail.com>                      *
@@ -275,19 +294,24 @@ index 0000000000000000000000000000000000000000..0a03f7d1d621510e19f9230cbe37699b
 + ***************************************************************************/
 +
 +#include "projectwatcher.h"
++#include "iproject.h"
++#include "projectfiltermanager.h"
++#include "path.h"
 +
 +#include <KDirWatch>
 +
 +using namespace KDevelop;
 +
-+KDevelop::ProjectWatcher::ProjectWatcher(QObject* parent)
-+    : KDirWatch(parent)
++KDevelop::ProjectWatcher::ProjectWatcher(IProject* project, ProjectFilterManager* filter)
++    : KDirWatch(project)
++    , m_project(project)
++    , m_filter(filter)
 +    , m_watchedCount(0)
 +{}
 +
 +void KDevelop::ProjectWatcher::addDir(const QString& path, WatchModes watchModes)
 +{
-+    if (!contains(path)) {
++    if (m_filter->isValid(Path(path), true, m_project) && !contains(path)) {
 +        KDirWatch::addDir(path, watchModes);
 +        m_watchedCount += 1;
 +    }
@@ -308,10 +332,10 @@ index 0000000000000000000000000000000000000000..0a03f7d1d621510e19f9230cbe37699b
 +
 diff --git kdevplatform/project/projectwatcher.h kdevplatform/project/projectwatcher.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..10b4050edda716cfadf9de99833a59cd0d68a7a9
+index 0000000000000000000000000000000000000000..6707cfc0348a955f593e33678247491588e62de3
 --- /dev/null
 +++ kdevplatform/project/projectwatcher.h
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,48 @@
 +/***************************************************************************
 + *   This file is part of KDevelop                                         *
 + *   Copyright 2017 René Bertin <rjvbertin@gmail.com>                      *
@@ -339,10 +363,13 @@ index 0000000000000000000000000000000000000000..10b4050edda716cfadf9de99833a59cd
 +
 +namespace KDevelop {
 +
++class IProject;
++class ProjectFilterManager;
++
 +class ProjectWatcher : public KDirWatch
 +{
 +public:
-+    explicit ProjectWatcher(QObject* parent = nullptr);
++    explicit ProjectWatcher(IProject* project, ProjectFilterManager* filter);
 +
 +    void addDir(const QString& path, WatchModes watchModes = WatchDirOnly);
 +    void removeDir(const QString& path);
@@ -350,6 +377,8 @@ index 0000000000000000000000000000000000000000..10b4050edda716cfadf9de99833a59cd
 +    int size() const;
 +
 +private:
++    IProject* m_project;
++    ProjectFilterManager* m_filter;
 +    int m_watchedCount;
 +};
 +

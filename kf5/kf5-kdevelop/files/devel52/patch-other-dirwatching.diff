@@ -55,18 +55,22 @@ index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..e74d4a9690ecb5d3c9fd62a4ceecfec6
      QHash<IProject*, QList<FileManagerListJob*> > m_projectJobs;
      QVector<QString> m_stoppedFolders;
      ProjectFilterManager m_filters;
-@@ -117,13 +122,23 @@ void AbstractFileManagerPluginPrivate::projectClosing(IProject* project)
+@@ -117,12 +122,26 @@ void AbstractFileManagerPluginPrivate::projectClosing(IProject* project)
          }
          m_projectJobs.remove(project);
      }
 +#ifdef TIME_IMPORT_JOB
 +    QElapsedTimer timer;
-+    timer.start();
++    int watched;
++    if (m_watchers.contains(project)) {
++        watched = m_watchers[project]->size();
++        timer.start();
++    }
 +#endif
      delete m_watchers.take(project);
 +#ifdef TIME_IMPORT_JOB
 +    if (timer.isValid()) {
-+        qCInfo(FILEMANAGER) << "Deleting dir watcher took" << timer.elapsed() / 1000.0 << "seconds for project" << project->name();
++        qCInfo(FILEMANAGER) << "Deleting" << watched << "entry dir watcher took" << timer.elapsed() / 1000.0 << "seconds for project" << project->name();
 +    }
 +#endif
      m_filters.remove(project);
@@ -74,12 +78,10 @@ index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..e74d4a9690ecb5d3c9fd62a4ceecfec6
  
  KIO::Job* AbstractFileManagerPluginPrivate::eventuallyReadFolder(ProjectFolderItem* item)
  {
--    FileManagerListJob* listJob = new FileManagerListJob( item );
 +    ProjectWatcher* watcher = m_watchers.value( item->project(), nullptr );
-+    FileManagerListJob* listJob = new FileManagerListJob( item, watcher );
+     FileManagerListJob* listJob = new FileManagerListJob( item );
      m_projectJobs[ item->project() ] << listJob;
      qCDebug(FILEMANAGER) << "adding job" << listJob << item << item->path() << "for project" << item->project();
- 
 @@ -247,9 +262,9 @@ void AbstractFileManagerPluginPrivate::addJobItems(FileManagerListJob* job,
      }
  }
@@ -183,19 +185,18 @@ index 09960eabfed72fae6454b5d555f7f52a3ee23ecf..e74d4a9690ecb5d3c9fd62a4ceecfec6
  
  #include "moc_abstractfilemanagerplugin.cpp"
 diff --git kdevplatform/project/abstractfilemanagerplugin.h kdevplatform/project/abstractfilemanagerplugin.h
-index c99e7e0c2316bf24df76d303fdb599a8095193da..62ac3d95daa7c8df41459764c220c08fa53c7a65 100644
+index c99e7e0c2316bf24df76d303fdb599a8095193da..395fc47e1767670bf674750d0aba54ee21c68bb0 100644
 --- kdevplatform/project/abstractfilemanagerplugin.h
 +++ kdevplatform/project/abstractfilemanagerplugin.h
-@@ -35,6 +35,8 @@ namespace KDevelop {
+@@ -34,6 +34,7 @@ class KDirWatch;
+ namespace KDevelop {
  
  class AbstractFileManagerPluginPrivate;
++class ProjectController;
  
-+class ProjectWatcher;
-+
  /**
   * This class can be used as a common base for file managers.
-  *
-@@ -103,6 +105,16 @@ protected:
+@@ -103,6 +104,16 @@ protected:
       */
      KDirWatch* projectWatcher( IProject* project ) const;
  
@@ -207,11 +208,20 @@ index c99e7e0c2316bf24df76d303fdb599a8095193da..62ac3d95daa7c8df41459764c220c08f
 +    /**
 +     * tell the plugin that the given @p project is going to be closed.
 +     */
-+    void projectClosing( IProject *project );
++    void projectClosing( IProject* project );
 +
  Q_SIGNALS:
      void reloadedFileItem(KDevelop::ProjectFileItem* file);
      void reloadedFolderItem(KDevelop::ProjectFolderItem* folder);
+@@ -118,6 +129,8 @@ Q_SIGNALS:
+ private:
+     const QScopedPointer<class AbstractFileManagerPluginPrivate> d;
+     friend class AbstractFileManagerPluginPrivate;
++public:
++    friend class ProjectController;
+ };
+ 
+ }
 diff --git kdevplatform/project/filemanagerlistjob.cpp kdevplatform/project/filemanagerlistjob.cpp
 index 06e1d69c70ba762cc476086794a79324871401f9..782996bf592cafeed3517af7d97017950d74302d 100644
 --- kdevplatform/project/filemanagerlistjob.cpp
@@ -283,7 +293,7 @@ index 0000000000000000000000000000000000000000..531b5141e014fc6d52db5426c01cdc43
 @@ -0,0 +1,58 @@
 +/***************************************************************************
 + *   This file is part of KDevelop                                         *
-+ *   Copyright 2017 RenÃ© Bertin <rjvbertin@gmail.com>                      *
++ *   Copyright 2017 René Bertin <rjvbertin@gmail.com>                      *
 + *                                                                         *
 + *   This program is free software; you can redistribute it and/or modify  *
 + *   it under the terms of the GNU Library General Public License as       *
@@ -347,7 +357,7 @@ index 0000000000000000000000000000000000000000..483c99b47eb4170abfedb3a9256a38ed
 @@ -0,0 +1,52 @@
 +/***************************************************************************
 + *   This file is part of KDevelop                                         *
-+ *   Copyright 2017 RenÃ© Bertin <rjvbertin@gmail.com>                      *
++ *   Copyright 2017 René Bertin <rjvbertin@gmail.com>                      *
 + *                                                                         *
 + *   This program is free software; you can redistribute it and/or modify  *
 + *   it under the terms of the GNU Library General Public License as       *
@@ -421,7 +431,7 @@ index 0000000000000000000000000000000000000000..09c5562e6330936a0eeacc09964439bc
 +++ kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp
 @@ -0,0 +1,177 @@
 +/* This file is part of KDevelop
-+    Copyright 2017 Renï¿½ J.V. Bertin <rjvbertin@gmail.com>
++    Copyright 2017 Ren? J.V. Bertin <rjvbertin@gmail.com>
 +
 +    This library is free software; you can redistribute it and/or
 +    modify it under the terms of the GNU Library General Public
