@@ -540,7 +540,7 @@ if {${kf5::includecounter} == 0} {
                             ${chmargs} \
                             --qtdoc-dir ${qt_docs_dir} --qhelpgenerator ${qt_bins_dir}/qhelpgenerator \
                             ${worksrcpath}"} result context]} {
-                            ui_msg "Failure generating documentation: ${result}"
+                            ui_warn "Failure generating documentation: ${result}"
                         }
                         # after creating the destination, copy all generated qch documentation to it
                         foreach doc [glob -nocomplain ${build.dir}/frameworks/*/qch/*.qch \
@@ -551,6 +551,7 @@ if {${kf5::includecounter} == 0} {
                             }
                         }
                         if {[file exists ${build.dir}/${kf5.framework}-${version}/html/Makefile]} {
+                            ui_debug "generating .docset version"
                             system -W ${build.dir}/${kf5.framework}-${version}/html \
                                 "make > /dev/null"
                             set docset ${build.dir}/${kf5.framework}-${version}/html/org.kde.${kf5.framework}-${version}.docset
