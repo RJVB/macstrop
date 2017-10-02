@@ -138,8 +138,7 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10} {
 # }
 
 ######### checks that should never trigger #########
-if {[file exists ${prefix}/libexec/qt5/plugins]
-        && [file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
+if {[file exists ${prefix}/libexec/qt5/plugins/platforms/libqcocoa.dylib]} {
     # Qt5 has been installed through port:qt5, which leads to certain incompatibilities
     # which do not need to be declared otherwise. The header Qt5 PortGroup has similar
     # checks and provisions, but since ports can also include us directly we have to
