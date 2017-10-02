@@ -169,7 +169,7 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10} {
     ui_debug "Qt5 is provided by port:qt5-kde"
     PortGroup           qt5-kde 1.0
     return
-} elseif {[file exists ${prefix}/libexec/qt5/plugins]
+} elseif {[file exists ${prefix}/libexec/qt5/plugins/platforms/libqcocoa.dylib]
         && [file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
     # qt5-qtbase is installed: Qt5 has been installed through a standard port:qt5 port
     # (checking if "plugins" is a directory is probably redundant)

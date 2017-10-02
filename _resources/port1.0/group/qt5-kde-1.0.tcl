@@ -82,7 +82,7 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10} {
     # we're in the right PortGroup, otherwise we'd need to
     # PortGroup           qt5-kde 1.0
     set qt5.using_kde   yes
-} elseif {[file exists ${prefix}/libexec/qt5/plugins]
+} elseif {[file exists ${prefix}/libexec/qt5/plugins/platforms/libqcocoa.dylib]
         && [file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
     # qt5-qtbase is installed: Qt5 has been installed through a standard port:qt5 port
     # (checking if "plugins" is a directory is probably redundant)
@@ -138,7 +138,8 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10} {
 # }
 
 ######### checks that should never trigger #########
-if {[file exists ${prefix}/libexec/qt5/plugins/platforms/libqcocoa.dylib]} {
+if {[file exists ${prefix}/libexec/qt5/plugins/platforms/libqcocoa.dylib]
+    && [file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
     # Qt5 has been installed through port:qt5, which leads to certain incompatibilities
     # which do not need to be declared otherwise. The header Qt5 PortGroup has similar
     # checks and provisions, but since ports can also include us directly we have to
