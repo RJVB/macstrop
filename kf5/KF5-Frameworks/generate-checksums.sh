@@ -3,6 +3,7 @@
 if [ "${prefix}" = "" ] ;then
     prefix=/opt/local
 fi
+export PATH="${prefix}/bin:${PATH}"
 
 version=5.38.0
 branch=${version%.0}
@@ -10,6 +11,7 @@ branch=${version%.0}
 METAPORT="KF5-Frameworks"
 PORTFILE=`port file ${METAPORT}`
 FRAMEWORKS="`grep '^[   ]*subport ' ${PORTFILE} | sed -e 's|subport \(.*\) {|\1|g'`"
+# echo "Framework list: ${FRAMEWORKS}" 1>&2
 MASTERSITE="http://download.kde.org/stable/frameworks/${branch}"
 MASTERSITEPA="${MASTERSITE}/portingAids"
 
