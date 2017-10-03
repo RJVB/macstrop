@@ -272,8 +272,12 @@ kf5::framework_dependency    khtml libKF5KHtml
 kf5::framework_dependency    kross libKF5KrossCore
 kf5::framework_dependency    krunner libKF5Runner
 kf5::framework_dependency    kwayland libKF5WaylandClient
+
+# QML frameworks, should be used as runtime deps:
 set kf5::kirigami_dep        path:${qt_qml_dir}/org/kde/kirigami/libkirigamiplugin.${kf5::libs_ext}:kf5-kirigami
 set kf5::kirigami2_dep       path:${qt_qml_dir}/org/kde/kirigami.2/libkirigamiplugin.${kf5::libs_ext}:kf5-kirigami2
+set kf5::qqc2desktopstyle_dep \
+                            path:${qt_qml_dir}/org/kde/qqc2desktopstyle/private/libqqc2desktopstyleplugin.${kf5::libs_ext}:kf5-qqc2-desktop-style
 
 # not a framework; use the procedure to define the path-style dependency
 kf5::framework_dependency    cli-tools libkdeinit5_kcmshell5 ""
