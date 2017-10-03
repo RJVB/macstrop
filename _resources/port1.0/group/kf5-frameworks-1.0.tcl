@@ -135,12 +135,15 @@ namespace eval kf5 {
                     if {[lsearch {"baloo" "kactivities" "kdbusaddons" "kded" "kdelibs4support-devel" "kglobalaccel" "kio"
                                     "kservice" "kwallet" "kwalletmanager" "plasma-framework"} ${name}] ne "-1"} {
                         if {!${kf5::dbus_start_warning_printed}} {
-                            notes-append "
-                                Don't forget that dbus needs to be started as the local\
-                                user (not with sudo) before any KDE programs will launch.
-                                To start it run the following command:
-                                 launchctl load -w /Library/LaunchAgents/org.freedesktop.dbus-session.plist
-                                "
+                            if {[catch {exec launchctl list org.freedesktop.dbus-session} result]} {
+                                ui_debug "org.freedesktop.dbus-session.plist wasn't loaded: ${result}"
+                                notes-append "
+                                    Don't forget that dbus needs to be started as the local\
+                                    user (not with sudo) before any KDE programs will launch.
+                                    To start it run the following command:
+                                     launchctl load -w /Library/LaunchAgents/org.freedesktop.dbus-session.plist
+                                    "
+                            }
                             set kf5::dbus_start_warning_printed yes
                         }
                     }
