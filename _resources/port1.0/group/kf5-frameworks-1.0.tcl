@@ -135,8 +135,8 @@ namespace eval kf5 {
                     if {[lsearch {"baloo" "kactivities" "kdbusaddons" "kded" "kdelibs4support-devel" "kglobalaccel" "kio"
                                     "kservice" "kwallet" "kwalletmanager" "plasma-framework"} ${name}] ne "-1"} {
                         if {!${kf5::dbus_start_warning_printed}} {
-                            if {[catch {exec launchctl list org.freedesktop.dbus-session} result]} {
-                                ui_debug "org.freedesktop.dbus-session.plist wasn't loaded: ${result}"
+                            if {[catch {exec ps -ax | fgrep dbus-daemon} result]} {
+                                ui_debug "dbus-daemon isn't running: ${result}"
                                 notes-append "
                                     Don't forget that dbus needs to be started as the local\
                                     user (not with sudo) before any KDE programs will launch.
