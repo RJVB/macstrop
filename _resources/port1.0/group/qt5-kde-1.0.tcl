@@ -450,7 +450,7 @@ proc qt5.active_version {} {
     if {[info exists building_qt5]} {
         set av ${version}
         return ${av}
-    } elseif {[file exists ${prefix}/bin/pkg-config/Qt5Core.pc]} {
+    } elseif {[file exists ${prefix}/bin/pkg-config]} {
         set av [exec ${prefix}/bin/pkg-config --modversion Qt5Core]
         return ${av}
     } else {
