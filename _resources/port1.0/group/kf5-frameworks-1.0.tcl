@@ -275,6 +275,7 @@ kf5::framework_dependency    khtml libKF5KHtml
 kf5::framework_dependency    kross libKF5KrossCore
 kf5::framework_dependency    krunner libKF5Runner
 kf5::framework_dependency    kwayland libKF5WaylandClient
+kf5::framework_dependency    kuserfeedback libKUserFeedbackCore
 
 # QML frameworks, should be used as runtime deps:
 set kf5::kirigami_dep        path:${qt_qml_dir}/org/kde/kirigami/libkirigamiplugin.${kf5::libs_ext}:kf5-kirigami
