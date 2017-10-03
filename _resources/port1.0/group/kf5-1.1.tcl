@@ -741,7 +741,7 @@ if {${kf5::includecounter} == 0} {
                 set bundlename ${wrappername}
             }
             if {${bundleexec} eq ""} {
-                set bundleexec ${bundlename}
+                set bundleexec [file tail ${bundlename}]
             }
         } else {
             global kf5.project qt_libs_dir

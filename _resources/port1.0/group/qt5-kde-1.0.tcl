@@ -739,7 +739,7 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
                 set bundlename ${wrappername}
             }
             if {${bundleexec} eq ""} {
-                set bundleexec ${bundlename}
+                set bundleexec [file tail ${bundlename}]
             }
             puts ${fd} "exec \"${appdir}/${bundlename}.app/Contents/MacOS/${bundleexec}\" \"\$\@\""
         } else {
