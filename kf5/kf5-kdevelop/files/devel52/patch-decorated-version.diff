@@ -1,32 +1,262 @@
 diff --git CMakeLists.txt CMakeLists.txt
-index 39e4297799..1c8cb193bb 100644
+index 39e4297799c0c59c120fae3266a1239875674364..4de58fb7e7c68faaf2ca59f47825477904546949 100644
 --- CMakeLists.txt
 +++ CMakeLists.txt
-@@ -1,5 +1,10 @@
- cmake_minimum_required(VERSION 3.0)
- project(KDevelop VERSION 5.1.80)
-+execute_process(
-+    COMMAND generate-patchversion.sh ${KDevelop_VERSION_MAJOR} ${KDevelop_VERSION_MINOR} ${KDevelop_VERSION_PATCH}
-+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-+    OUTPUT_VARIABLE KDevelop_VERSION_PATCH
-+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+@@ -31,6 +31,8 @@ include(CheckFunctionExists)
+ include(KDEInstallDirs)
+ include(KDECMakeSettings)
  
- # KDevelop SOVERSION
- # E.g. for KDevelop 5.2.0 => SOVERSION 52 (we only promise ABI compatibility between patch version updates)
-diff --git generate-patchversion.sh generate-patchversion.sh
-new file mode 100755
-index 0000000000..1f815d68fb
---- /dev/null
-+++ generate-patchversion.sh
-@@ -0,0 +1,11 @@
-+#!/bin/sh
-+# usage: generate-patchversion.sh MAJOR MINOR PATCH
++include(GetGitRevisionDescription)
 +
-+if [ -d .git ] ;then
-+    # obtain the tag-based full version string for the state currently checked out
-+    GITVERSION="`git describe --tags`"
-+    # output the amended patch version string
-+    echo "${GITVERSION}" | sed -e "s/v${1}\.${2}\.//g"
-+else
-+    echo $3
-+fi
+ set(QT_MIN_VERSION "5.5.0")
+ find_package(Qt5 ${QT_MIN_VERSION} CONFIG REQUIRED Widgets Concurrent Quick QuickWidgets)
+ if(BUILD_TESTING)
+@@ -119,6 +121,18 @@ else()
+ endif()
+ 
+ # create config-kdevelop.h
++git_describe(GIT_FULL_VERSION "--tags")
++if(GIT_FULL_VERSION)
++    # development build, i.e. from a git working copy.
++    # Presume `git describe --tags` always returns a string that is
++    # appropriate for use as a version string.
++    # Get rid of the leading 'v':
++    string(SUBSTRING "${GIT_FULL_VERSION}" 1 -1 KDevelop_FULL_VERSION)
++    message(STATUS "KDevelop_FULL_VERSION=${KDevelop_FULL_VERSION}")
++else()
++    # we're probably building from a release tarball
++    set(KDevelop_FULL_VERSION "${KDevelop_VERSION_MAJOR}.${KDevelop_VERSION_MINOR}.${KDevelop_VERSION_PATCH}")
++endif()
+ configure_file(config-kdevelop.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/config-kdevelop.h)
+ 
+ add_subdirectory(kdevplatform)
+diff --git app/main.cpp app/main.cpp
+index 4b6a8ba34e66cf66be3a9142a691e2ecc9a07bf1..4996ba73f265dccdb67eaf498257d648016cc415 100644
+--- app/main.cpp
++++ app/main.cpp
+@@ -358,7 +358,7 @@ int main( int argc, char *argv[] )
+     KLocalizedString::setApplicationDomain("kdevelop");
+ 
+     static const char description[] = I18N_NOOP( "The KDevelop Integrated Development Environment" );
+-    KAboutData aboutData( QStringLiteral("kdevelop"), i18n( "KDevelop" ), QByteArray(VERSION), i18n(description), KAboutLicense::GPL,
++    KAboutData aboutData( QStringLiteral("kdevelop"), i18n( "KDevelop" ), QByteArray(FULLVERSION), i18n(description), KAboutLicense::GPL,
+                           i18n("Copyright 1999-2017, The KDevelop developers"), QString(), QStringLiteral("https://www.kdevelop.org/"));
+     aboutData.setDesktopFileName(QStringLiteral("org.kde.kdevelop"));
+     aboutData.addAuthor( i18n("Kevin Funk"), i18n( "Co-maintainer, C++/Clang, QA, Windows Support" ), QStringLiteral("kfunk@kde.org") );
+@@ -375,7 +375,7 @@ int main( int argc, char *argv[] )
+     aboutData.addAuthor( i18n("Niko Sams"), i18n( "GDB integration, Webdevelopment Plugins" ), QStringLiteral("niko.sams@gmail.com") );
+ 
+     aboutData.addCredit( i18n("Matt Rogers"), QString(), QStringLiteral("mattr@kde.org"));
+-    aboutData.addCredit( i18n("Cédric Pasteur"), i18n("astyle and indent support"), QStringLiteral("cedric.pasteur@free.fr") );
++    aboutData.addCredit( i18n("C�dric Pasteur"), i18n("astyle and indent support"), QStringLiteral("cedric.pasteur@free.fr") );
+     aboutData.addCredit( i18n("Evgeniy Ivanov"), i18n("Distributed VCS, Git, Mercurial"), QStringLiteral("powerfox@kde.ru") );
+     // QTest integration is separate in playground currently.
+     //aboutData.addCredit( i18n("Manuel Breugelmanns"), i18n( "Veritas, QTest integration"), "mbr.nxi@gmail.com" );
+diff --git cmake/modules/GetGitRevisionDescription.cmake cmake/modules/GetGitRevisionDescription.cmake
+new file mode 100644
+index 0000000000000000000000000000000000000000..4068892b098e824de102fd363142a877e6d21533
+--- /dev/null
++++ cmake/modules/GetGitRevisionDescription.cmake
+@@ -0,0 +1,158 @@
++# - Returns a version string from Git
++#
++# These functions force a re-configure on each git commit so that you can
++# trust the values of the variables in your build system.
++#
++#  get_git_head_revision(<refspecvar> <hashvar> [<additional arguments to git describe> ...])
++#
++# Returns the refspec and sha hash of the current head revision
++#
++#  git_describe(<var> [<additional arguments to git describe> ...])
++#
++# Returns the results of git describe on the source tree, and adjusting
++# the output so that it tests false if an error occurs.
++#
++#  git_get_exact_tag(<var> [<additional arguments to git describe> ...])
++#
++# Returns the results of git describe --exact-match on the source tree,
++# and adjusting the output so that it tests false if there was no exact
++# matching tag.
++#
++# Requires CMake 2.6 or newer (uses the 'function' command)
++#
++# Original Author:
++# 2009-2010 Ryan Pavlik <rpavlik@iastate.edu> <abiryan@ryand.net>
++# http://academic.cleardefinition.com
++# Iowa State University HCI Graduate Program/VRAC
++#
++# Copyright Iowa State University 2009-2010.
++# Distributed under the Boost Software License, Version 1.0.
++# (See accompanying file LICENSE_1_0.txt or copy at
++# http://www.boost.org/LICENSE_1_0.txt)
++
++if(__get_git_revision_description)
++	return()
++endif()
++set(__get_git_revision_description YES)
++
++# We must run the following at "include" time, not at function call time,
++# to find the path to this module rather than the path to a calling list file
++get_filename_component(_gitdescmoddir ${CMAKE_CURRENT_LIST_FILE} PATH)
++
++function(get_git_head_revision _refspecvar _hashvar)
++	set(GIT_PARENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
++	set(GIT_DIR "${GIT_PARENT_DIR}/.git")
++	while(NOT EXISTS "${GIT_DIR}")	# .git dir not found, search parent directories
++		set(GIT_PREVIOUS_PARENT "${GIT_PARENT_DIR}")
++		get_filename_component(GIT_PARENT_DIR ${GIT_PARENT_DIR} PATH)
++		if(GIT_PARENT_DIR STREQUAL GIT_PREVIOUS_PARENT)
++			# We have reached the root directory, we are not in git
++			set(${_refspecvar} "GITDIR-NOTFOUND" PARENT_SCOPE)
++			set(${_hashvar} "GITDIR-NOTFOUND" PARENT_SCOPE)
++			return()
++		endif()
++		set(GIT_DIR "${GIT_PARENT_DIR}/.git")
++	endwhile()
++	# check if this is a submodule
++	if(NOT IS_DIRECTORY ${GIT_DIR})
++		file(READ ${GIT_DIR} submodule)
++		string(REGEX REPLACE "gitdir: (.*)\n$" "\\1" GIT_DIR_RELATIVE ${submodule})
++		get_filename_component(SUBMODULE_DIR ${GIT_DIR} PATH)
++		get_filename_component(GIT_DIR ${SUBMODULE_DIR}/${GIT_DIR_RELATIVE} ABSOLUTE)
++	endif()
++	set(GIT_DATA "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/git-data")
++	if(NOT EXISTS "${GIT_DATA}")
++		file(MAKE_DIRECTORY "${GIT_DATA}")
++	endif()
++
++	if(NOT EXISTS "${GIT_DIR}/HEAD")
++		return()
++	endif()
++	set(HEAD_FILE "${GIT_DATA}/HEAD")
++	configure_file("${GIT_DIR}/HEAD" "${HEAD_FILE}" COPYONLY)
++
++	configure_file("${_gitdescmoddir}/GetGitRevisionDescription.cmake.in"
++		"${GIT_DATA}/grabRef.cmake"
++		@ONLY)
++	include("${GIT_DATA}/grabRef.cmake")
++
++	set(${_refspecvar} "${HEAD_REF}" PARENT_SCOPE)
++	set(${_hashvar} "${HEAD_HASH}" PARENT_SCOPE)
++endfunction()
++
++function(git_describe _var)
++	if(NOT GIT_FOUND)
++		find_package(Git QUIET)
++	endif()
++	get_git_head_revision(refspec hash)
++	if(NOT GIT_FOUND)
++		set(${_var} "GIT-NOTFOUND" PARENT_SCOPE)
++		return()
++	endif()
++	if(NOT hash)
++		set(${_var} "HEAD-HASH-NOTFOUND" PARENT_SCOPE)
++		return()
++	endif()
++
++	# TODO sanitize
++	#if((${ARGN}" MATCHES "&&") OR
++	#	(ARGN MATCHES "||") OR
++	#	(ARGN MATCHES "\\;"))
++	#	message("Please report the following error to the project!")
++	#	message(FATAL_ERROR "Looks like someone's doing something nefarious with git_describe! Passed arguments ${ARGN}")
++	#endif()
++
++	#message(STATUS "Arguments to execute_process: ${ARGN}")
++
++	execute_process(COMMAND
++		"${GIT_EXECUTABLE}"
++		describe
++		${hash}
++		${ARGN}
++		WORKING_DIRECTORY
++		"${CMAKE_SOURCE_DIR}"
++		RESULT_VARIABLE
++		res
++		OUTPUT_VARIABLE
++		out
++		ERROR_QUIET
++		OUTPUT_STRIP_TRAILING_WHITESPACE)
++	if(NOT res EQUAL 0)
++        message(WARNING "\"${GIT_EXECUTABLE} describe ${hash} ${ARGN}\" failed with exit code ${res}, out=${out}")
++		set(out "${out}-${res}-NOTFOUND")
++	endif()
++
++	set(${_var} "${out}" PARENT_SCOPE)
++endfunction()
++
++function(get_git_branch _var)
++	if(NOT GIT_FOUND)
++		find_package(Git QUIET)
++	endif()
++	if(NOT GIT_FOUND)
++		set(${_var} "GIT-NOTFOUND" PARENT_SCOPE)
++		return()
++	endif()
++
++	execute_process(COMMAND
++		"${GIT_EXECUTABLE}"
++		symbolic-ref --short HEAD
++		WORKING_DIRECTORY
++		"${CMAKE_SOURCE_DIR}"
++		RESULT_VARIABLE
++		res
++		OUTPUT_VARIABLE
++		out
++		ERROR_QUIET
++		OUTPUT_STRIP_TRAILING_WHITESPACE)
++	if(NOT res EQUAL 0)
++		set(out "${out}-${res}-NOTFOUND")
++	endif()
++
++	set(${_var} "${out}" PARENT_SCOPE)
++endfunction()
++
++function(git_get_exact_tag _var)
++	git_describe(out --exact-match ${ARGN})
++	set(${_var} "${out}" PARENT_SCOPE)
++endfunction()
+diff --git cmake/modules/GetGitRevisionDescription.cmake.in cmake/modules/GetGitRevisionDescription.cmake.in
+new file mode 100644
+index 0000000000000000000000000000000000000000..888ce13aaba354f5d7d7946dd661963278dc8fc2
+--- /dev/null
++++ cmake/modules/GetGitRevisionDescription.cmake.in
+@@ -0,0 +1,38 @@
++# 
++# Internal file for GetGitRevisionDescription.cmake
++#
++# Requires CMake 2.6 or newer (uses the 'function' command)
++#
++# Original Author:
++# 2009-2010 Ryan Pavlik <rpavlik@iastate.edu> <abiryan@ryand.net>
++# http://academic.cleardefinition.com
++# Iowa State University HCI Graduate Program/VRAC
++#
++# Copyright Iowa State University 2009-2010.
++# Distributed under the Boost Software License, Version 1.0.
++# (See accompanying file LICENSE_1_0.txt or copy at
++# http://www.boost.org/LICENSE_1_0.txt)
++
++set(HEAD_HASH)
++
++file(READ "@HEAD_FILE@" HEAD_CONTENTS LIMIT 1024)
++
++string(STRIP "${HEAD_CONTENTS}" HEAD_CONTENTS)
++if(HEAD_CONTENTS MATCHES "ref")
++	# named branch
++	string(REPLACE "ref: " "" HEAD_REF "${HEAD_CONTENTS}")
++	if(EXISTS "@GIT_DIR@/${HEAD_REF}")
++		configure_file("@GIT_DIR@/${HEAD_REF}" "@GIT_DATA@/head-ref" COPYONLY)
++	elseif(EXISTS "@GIT_DIR@/logs/${HEAD_REF}")
++		configure_file("@GIT_DIR@/logs/${HEAD_REF}" "@GIT_DATA@/head-ref" COPYONLY)
++		set(HEAD_HASH "${HEAD_REF}")
++	endif()
++else()
++	# detached HEAD
++	configure_file("@GIT_DIR@/HEAD" "@GIT_DATA@/head-ref" COPYONLY)
++endif()
++
++if(NOT HEAD_HASH)
++	file(READ "@GIT_DATA@/head-ref" HEAD_HASH LIMIT 1024)
++	string(STRIP "${HEAD_HASH}" HEAD_HASH)
++endif()
