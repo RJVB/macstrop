@@ -1,8 +1,8 @@
-diff --git a/kdevplatform/documentation/CMakeLists.txt b/kdevplatform/documentation/CMakeLists.txt
+diff --git kdevplatform/documentation/CMakeLists.txt kdevplatform/documentation/CMakeLists.txt
 index 65b94149505b43d2f64041557284635a4c941d0a..732d8d80302f51fc82355d3bd60e5dd5016d9801 100644
---- a/kdevplatform/documentation/CMakeLists.txt
-+++ b/kdevplatform/documentation/CMakeLists.txt
-@@ -8,11 +8,15 @@ if(TARGET Qt5::WebEngineWidgets)
+--- kdevplatform/documentation/CMakeLists.txt
++++ kdevplatform/documentation/CMakeLists.txt
+@@ -8,11 +8,17 @@ if(TARGET Qt5::WebEngineWidgets)
          TYPE REQUIRED)
  else()
      find_package(Qt5WebKitWidgets CONFIG)
@@ -18,27 +18,29 @@ index 65b94149505b43d2f64041557284635a4c941d0a..732d8d80302f51fc82355d3bd60e5dd5
 +            TYPE REQUIRED)
 +        set(USE_QTWEBKIT 1)
 +    else()
-+        set(USE_QTEXTBROWSER 1)
++        # store KDEVELOP_USE_QTEXTBROWSER in the cache because it needs to be accessible
++        # to plugins/qthelp/CMakeLists.txt too. 
++        set(KDEVELOP_USE_QTEXTBROWSER 1 CACHE INTERNAL "Documentation will be rendered using QTextBrowser")
 +    endif()
  endif()
  
  set(KDevPlatformDocumentation_LIB_SRCS
-@@ -32,7 +36,10 @@ kdevplatform_add_library(KDevPlatformDocumentation SOURCES ${KDevPlatformDocumen
+@@ -32,7 +38,10 @@ kdevplatform_add_library(KDevPlatformDocumentation SOURCES ${KDevPlatformDocumen
  
  target_link_libraries(KDevPlatformDocumentation PUBLIC KDev::Interfaces PRIVATE KDev::Util)
  
 -if(USE_QTWEBKIT)
-+if(USE_QTEXTBROWSER)
++if(KDEVELOP_USE_QTEXTBROWSER)
 +    target_link_libraries(KDevPlatformDocumentation PRIVATE Qt5::Widgets)
 +    target_compile_definitions(KDevPlatformDocumentation PRIVATE -DUSE_QTEXTBROWSER)
 +elseif(USE_QTWEBKIT)
      target_link_libraries(KDevPlatformDocumentation PRIVATE Qt5::WebKitWidgets)
      target_compile_definitions(KDevPlatformDocumentation PRIVATE -DUSE_QTWEBKIT)
  else()
-diff --git a/kdevplatform/documentation/standarddocumentationview.cpp b/kdevplatform/documentation/standarddocumentationview.cpp
-index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357a84bb2ad 100644
---- a/kdevplatform/documentation/standarddocumentationview.cpp
-+++ b/kdevplatform/documentation/standarddocumentationview.cpp
+diff --git kdevplatform/documentation/standarddocumentationview.cpp kdevplatform/documentation/standarddocumentationview.cpp
+index 64680e5faaefb0c48f89997be1d9e9198d94e398..20d026ebcec516c114fc520be82b343d7e3a527f 100644
+--- kdevplatform/documentation/standarddocumentationview.cpp
++++ kdevplatform/documentation/standarddocumentationview.cpp
 @@ -32,7 +32,9 @@
  #include <QContextMenuEvent>
  #include <QMenu>
@@ -59,24 +61,90 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
  class StandardDocumentationPage : public QWebEnginePage
  {
  public:
-@@ -86,7 +88,15 @@ public:
+@@ -80,13 +82,81 @@ private:
+ };
+ #endif
+ 
++#ifdef USE_QTEXTBROWSER
++class HelpViewer : public QTextBrowser
++{
++    Q_OBJECT
++public:
++    HelpViewer(StandardDocumentationView* parent)
++        : QTextBrowser(parent)
++        , m_parent(parent)
++        , m_loadFinished(false)
++    {}
++
++    void setSource(const QUrl& url) override
++    {
++        m_loadFinished = false;
++        QTextBrowser::setSource(url);
++    }
++
++    void setUrlWithContent(const QUrl& url, const QByteArray& content)
++    {
++        m_requested = url;
++        m_content = content;
++    }
++
++    // adapted from Qt's assistant
++    QVariant loadResource(int type, const QUrl &name) override
++    {
++        if (type == QTextDocument::HtmlResource) {
++            if (name == m_requested) {
++                qCDebug(DOCUMENTATION) << "loadResource type" << type << "url" << name << "cached=" << m_requested;
++            } else {
++                m_loadFinished = false;
++                emit m_parent->linkClicked(name);
++            }
++        } else if (type != QTextDocument::StyleSheetResource) {
++            qCWarning(DOCUMENTATION) << "HelpViewer::loadResource called with unsupported type" << type << "name=" << name;
++        }
++        // always just return the cached content
++        return m_content;
++    }
++
++    StandardDocumentationView* m_parent;
++    QUrl m_requested;
++    QByteArray m_content;
++    bool m_loadFinished;
++
++Q_SIGNALS:
++    void loadFinished(const QUrl& url);
++
++public Q_SLOTS:
++    void setLoadFinished(bool ok)
++    {
++        m_loadFinished = ok;
++        emit loadFinished(source());
++    }
++};
++
++// void HelpViewer::setLoadFinished(bool ok)
++
++#endif
++
+ class KDevelop::StandardDocumentationViewPrivate
+ {
+ public:
      ZoomController* m_zoomController = nullptr;
      IDocumentation::Ptr m_doc;
  
 -#ifdef USE_QTWEBKIT
 +#ifdef USE_QTEXTBROWSER
-+    QTextBrowser *m_view = nullptr;
++    HelpViewer *m_view = nullptr;
 +    void init(StandardDocumentationView* parent)
 +    {
-+        m_view = new QTextBrowser(parent);
++        m_view = new HelpViewer(parent);
 +        m_view->setContextMenuPolicy(Qt::NoContextMenu);
-+        parent->connect(m_view, &QTextBrowser::sourceChanged, parent, &StandardDocumentationView::sourceChanged);
++        parent->connect(m_view, &HelpViewer::loadFinished, parent, &StandardDocumentationView::sourceChanged);
 +    }
 +#elif defined(USE_QTWEBKIT)
      QWebView *m_view = nullptr;
      void init(StandardDocumentationView* parent)
      {
-@@ -130,7 +140,8 @@ StandardDocumentationView::StandardDocumentationView(DocumentationFindWidget* fi
+@@ -130,7 +200,8 @@ StandardDocumentationView::StandardDocumentationView(DocumentationFindWidget* fi
      connect(findWidget, &DocumentationFindWidget::searchDataChanged, this, &StandardDocumentationView::searchIncremental);
      connect(findWidget, &DocumentationFindWidget::searchFinished, this, &StandardDocumentationView::finishSearch);
  
@@ -86,7 +154,7 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
      QFont sansSerifFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
      QFont monospaceFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
  
-@@ -176,7 +187,9 @@ KDevelop::StandardDocumentationView::~StandardDocumentationView() = default;
+@@ -176,7 +247,9 @@ KDevelop::StandardDocumentationView::~StandardDocumentationView() = default;
  
  void StandardDocumentationView::search ( const QString& text, DocumentationFindWidget::FindOptions options )
  {
@@ -97,7 +165,7 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
      typedef QWebPage WebkitThing;
  #else
      typedef QWebEnginePage WebkitThing;
-@@ -188,12 +201,18 @@ void StandardDocumentationView::search ( const QString& text, DocumentationFindW
+@@ -188,12 +261,18 @@ void StandardDocumentationView::search ( const QString& text, DocumentationFindW
      if(options & DocumentationFindWidget::MatchCase)
          ff |= WebkitThing::FindCaseSensitively;
  
@@ -117,7 +185,7 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
      typedef QWebPage WebkitThing;
  #else
      typedef QWebEnginePage WebkitThing;
-@@ -203,6 +222,9 @@ void StandardDocumentationView::searchIncremental(const QString& text, Documenta
+@@ -203,6 +282,9 @@ void StandardDocumentationView::searchIncremental(const QString& text, Documenta
      if (options & DocumentationFindWidget::MatchCase)
          findFlags |= WebkitThing::FindCaseSensitively;
  
@@ -127,7 +195,7 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
      // calling with changed text with added or removed chars at end will result in current
      // selection kept, if also matching new text
      // behaviour on changed case sensitivity though is advancing to next match even if current
-@@ -213,12 +235,17 @@ void StandardDocumentationView::searchIncremental(const QString& text, Documenta
+@@ -213,12 +295,17 @@ void StandardDocumentationView::searchIncremental(const QString& text, Documenta
      // casesensitivity, that global matches are not updated and the ones with non-matching casing
      // still active. no workaround so far.
      d->m_view->page()->findText(text, findFlags);
@@ -145,7 +213,7 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
  }
  
  void StandardDocumentationView::initZoom(const QString& configSubGroup)
-@@ -253,7 +280,9 @@ void StandardDocumentationView::update()
+@@ -253,7 +340,9 @@ void StandardDocumentationView::update()
  
  void KDevelop::StandardDocumentationView::setOverrideCss(const QUrl& url)
  {
@@ -156,7 +224,7 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
      d->m_view->settings()->setUserStyleSheetUrl(url);
  #else
      d->m_view->page()->runJavaScript(QLatin1String(
-@@ -269,7 +298,9 @@ void KDevelop::StandardDocumentationView::setOverrideCss(const QUrl& url)
+@@ -269,23 +358,33 @@ void KDevelop::StandardDocumentationView::setOverrideCss(const QUrl& url)
  
  void KDevelop::StandardDocumentationView::load(const QUrl& url)
  {
@@ -167,8 +235,17 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
      d->m_view->load(url);
  #else
      d->m_view->page()->load(url);
-@@ -278,14 +309,14 @@ void KDevelop::StandardDocumentationView::load(const QUrl& url)
+ #endif
+ }
  
++#ifdef USE_QTEXTBROWSER
++void KDevelop::StandardDocumentationView::load(const QUrl& url, const QByteArray& content)
++{
++    d->m_view->setUrlWithContent(url, content);
++    d->m_view->setSource(url);
++}
++#endif
++
  void KDevelop::StandardDocumentationView::setHtml(const QString& html)
  {
 -#ifdef USE_QTWEBKIT
@@ -184,7 +261,7 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
  class CustomSchemeHandler : public QWebEngineUrlSchemeHandler
  {
  public:
-@@ -306,7 +337,9 @@ private:
+@@ -306,7 +405,9 @@ private:
  
  void KDevelop::StandardDocumentationView::setNetworkAccessManager(QNetworkAccessManager* manager)
  {
@@ -195,7 +272,7 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
      d->m_view->page()->setNetworkAccessManager(manager);
  #else
      d->m_view->page()->profile()->installUrlSchemeHandler("qthelp", new CustomSchemeHandler(manager, this));
-@@ -315,7 +348,9 @@ void KDevelop::StandardDocumentationView::setNetworkAccessManager(QNetworkAccess
+@@ -315,7 +416,9 @@ void KDevelop::StandardDocumentationView::setNetworkAccessManager(QNetworkAccess
  
  void KDevelop::StandardDocumentationView::setDelegateLinks(bool delegate)
  {
@@ -206,7 +283,7 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
      d->m_view->page()->setLinkDelegationPolicy(delegate ? QWebPage::DelegateAllLinks : QWebPage::DontDelegateLinks);
  #else
      d->m_page->setLinkDelegating(delegate);
-@@ -324,6 +359,10 @@ void KDevelop::StandardDocumentationView::setDelegateLinks(bool delegate)
+@@ -324,6 +427,10 @@ void KDevelop::StandardDocumentationView::setDelegateLinks(bool delegate)
  
  QMenu* StandardDocumentationView::createStandardContextMenu()
  {
@@ -217,7 +294,7 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
      auto menu = new QMenu(this);
  #ifdef USE_QTWEBKIT
      typedef QWebPage WebkitThing;
-@@ -336,11 +375,12 @@ QMenu* StandardDocumentationView::createStandardContextMenu()
+@@ -336,11 +443,12 @@ QMenu* StandardDocumentationView::createStandardContextMenu()
          menu->addAction(copyAction);
      }
      return menu;
@@ -231,7 +308,7 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
      if (object == d->m_view) {
          // help QWebEngineView properly behave like expected as if Qt::NoContextMenu was set
          if (event->type() == QEvent::ContextMenu) {
-@@ -367,7 +407,20 @@ void StandardDocumentationView::contextMenuEvent(QContextMenuEvent* event)
+@@ -367,7 +475,20 @@ void StandardDocumentationView::contextMenuEvent(QContextMenuEvent* event)
  
  void StandardDocumentationView::updateZoomFactor(double zoomFactor)
  {
@@ -252,7 +329,7 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
  }
  
  void StandardDocumentationView::keyPressEvent(QKeyEvent* event)
-@@ -385,3 +438,8 @@ void StandardDocumentationView::wheelEvent(QWheelEvent* event)
+@@ -385,3 +506,10 @@ void StandardDocumentationView::wheelEvent(QWheelEvent* event)
      }
      QWidget::wheelEvent(event);
  }
@@ -261,11 +338,23 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..bdf7e5f6453519b529dd66396f9ef357
 +{
 +    emit linkClicked(url);
 +}
-diff --git a/kdevplatform/documentation/standarddocumentationview.h b/kdevplatform/documentation/standarddocumentationview.h
-index eb5505fb0b14de118e30200de9676d4e4121ee15..734a3bfe5c06e6da45df0b2ffbc7b7e8be465ac7 100644
---- a/kdevplatform/documentation/standarddocumentationview.h
-+++ b/kdevplatform/documentation/standarddocumentationview.h
-@@ -91,6 +91,8 @@ public Q_SLOTS:
++
++#include "standarddocumentationview.moc"
+diff --git kdevplatform/documentation/standarddocumentationview.h kdevplatform/documentation/standarddocumentationview.h
+index eb5505fb0b14de118e30200de9676d4e4121ee15..f0ea4b0d7148171148b4f57951ebd3271358077f 100644
+--- kdevplatform/documentation/standarddocumentationview.h
++++ kdevplatform/documentation/standarddocumentationview.h
+@@ -59,6 +59,9 @@ public:
+     void setOverrideCss(const QUrl &url);
+ 
+     void load(const QUrl &url);
++#ifdef USE_QTEXTBROWSER
++    void load(const QUrl &url, const QByteArray& content);
++#endif
+     void setHtml(const QString &html);
+     void setNetworkAccessManager(QNetworkAccessManager* manager);
+ 
+@@ -91,6 +94,8 @@ public Q_SLOTS:
  protected:
      void contextMenuEvent(QContextMenuEvent* event) override;
      bool eventFilter(QObject* object, QEvent* event) override;
@@ -274,7 +363,7 @@ index eb5505fb0b14de118e30200de9676d4e4121ee15..734a3bfe5c06e6da45df0b2ffbc7b7e8
  
  private Q_SLOTS:
      void updateZoomFactor(double zoomFactor);
-@@ -100,6 +102,7 @@ private:
+@@ -100,6 +105,7 @@ private:
      void wheelEvent(QWheelEvent* event) override;
  
      const QScopedPointer<class StandardDocumentationViewPrivate> d;
@@ -282,20 +371,38 @@ index eb5505fb0b14de118e30200de9676d4e4121ee15..734a3bfe5c06e6da45df0b2ffbc7b7e8
  };
  
  }
-diff --git a/plugins/qthelp/qthelpdocumentation.cpp b/plugins/qthelp/qthelpdocumentation.cpp
-index 19613339d01531b1f7716a9a8e0c2f212bdc856c..2d7f26fabe3082a39b2de0d808aa0eb1c1d55ed3 100644
---- a/plugins/qthelp/qthelpdocumentation.cpp
-+++ b/plugins/qthelp/qthelpdocumentation.cpp
-@@ -38,6 +38,8 @@
- #include "qthelpnetwork.h"
- #include "qthelpproviderabstract.h"
+diff --git plugins/qthelp/CMakeLists.txt plugins/qthelp/CMakeLists.txt
+index 5a8e6e2d1d3677fd590983d2144c10004fffa184..2c5ec0c905a72bfb02325f4eb6c3255aad6350bd 100644
+--- plugins/qthelp/CMakeLists.txt
++++ plugins/qthelp/CMakeLists.txt
+@@ -28,6 +28,11 @@ target_link_libraries(kdevqthelp
+     KF5::KCMUtils KF5::I18n KF5::KIOWidgets KF5::TextEditor KF5::IconThemes Qt5::Help KF5::NewStuff
+     KDev::Language KDev::Documentation KDev::Interfaces)
  
-+#define USE_QTEXTBROWSER
++if(KDEVELOP_USE_QTEXTBROWSER)
++    message(STATUS "QtHelp plugin will be built for rendering using QTextBrowser")
++    target_compile_definitions(kdevqthelp PRIVATE -DUSE_QTEXTBROWSER)
++endif()
 +
- using namespace KDevelop;
- 
- namespace {
-@@ -224,20 +226,30 @@ QString QtHelpDocumentation::description() const
+ if(BUILD_TESTING)
+     add_subdirectory(tests)
+ endif()
+diff --git plugins/qthelp/tests/CMakeLists.txt plugins/qthelp/tests/CMakeLists.txt
+index 06c751e8a2c254ba175e827fe9036fe635105d4c..2a60e0de2344aafdc040ec207ec0f861991aa7c6 100644
+--- plugins/qthelp/tests/CMakeLists.txt
++++ plugins/qthelp/tests/CMakeLists.txt
+@@ -24,3 +24,6 @@ ecm_add_test(${test_qthelpplugin_SRCS}
+     TEST_NAME test_qthelpplugin
+     LINK_LIBRARIES Qt5::Test KF5::NewStuff KF5::KIOWidgets KF5::TextEditor KF5::IconThemes Qt5::Help KDev::Tests KDev::Documentation
+ )
++if(KDEVELOP_USE_QTEXTBROWSER)
++    target_compile_definitions(test_qthelpplugin PRIVATE -DUSE_QTEXTBROWSER)
++endif()
+diff --git plugins/qthelp/qthelpdocumentation.cpp plugins/qthelp/qthelpdocumentation.cpp
+index 19613339d01531b1f7716a9a8e0c2f212bdc856c..5d29b8bcdfd17764845435219f82028344cdd584 100644
+--- plugins/qthelp/qthelpdocumentation.cpp
++++ plugins/qthelp/qthelpdocumentation.cpp
+@@ -224,20 +224,30 @@ QString QtHelpDocumentation::description() const
  
  void QtHelpDocumentation::setUserStyleSheet(StandardDocumentationView* view, const QUrl& url)
  {
@@ -326,30 +433,48 @@ index 19613339d01531b1f7716a9a8e0c2f212bdc856c..2d7f26fabe3082a39b2de0d808aa0eb1
  }
  
  QWidget* QtHelpDocumentation::documentationWidget(DocumentationFindWidget* findWidget, QWidget* parent)
-@@ -254,7 +266,12 @@ QWidget* QtHelpDocumentation::documentationWidget(DocumentationFindWidget* findW
+@@ -250,12 +260,18 @@ QWidget* QtHelpDocumentation::documentationWidget(DocumentationFindWidget* findW
+         view->setDelegateLinks(true);
+         view->setNetworkAccessManager(m_provider->networkAccess());
+         view->setContextMenuPolicy(Qt::CustomContextMenu);
+-        QObject::connect(view, &StandardDocumentationView::linkClicked, this, &QtHelpDocumentation::jumpedTo);
          connect(view, &StandardDocumentationView::customContextMenuRequested, this, &QtHelpDocumentation::viewContextMenuRequested);
  
          setUserStyleSheet(view, m_current.value());
 +#ifdef USE_QTEXTBROWSER
 +        QByteArray content = m_provider->engine()->fileData(m_current.value());
-+        view->setHtml(content);
++        view->load(m_current.value(), content);
 +#else
          view->load(m_current.value());
 +#endif
          lastView = view;
++        // jumpedTo can only be called safely now.
++        QObject::connect(view, &StandardDocumentationView::linkClicked, this, &QtHelpDocumentation::jumpedTo);
          return view;
      }
-@@ -292,7 +309,13 @@ void QtHelpDocumentation::jumpedTo(const QUrl& newUrl)
+ }
+@@ -292,7 +308,16 @@ void QtHelpDocumentation::jumpedTo(const QUrl& newUrl)
      Q_ASSERT(lastView);
      m_provider->jumpedTo(newUrl);
      setUserStyleSheet(lastView, newUrl);
 +#ifdef USE_QTEXTBROWSER
 +    QByteArray content = m_provider->engine()->fileData(newUrl);
-+    qWarning() << Q_FUNC_INFO << newUrl;
-+    lastView->setHtml(content);
++    if (!content.isEmpty()) {
++        lastView->load(newUrl, content);
++    } else {
++        qCWarning(QTHELP) << "cannot determine the content of the new url" << newUrl;
++    }
 +#else
      lastView->load(newUrl);
 +#endif
  }
  
  IDocumentationProvider* QtHelpDocumentation::provider() const
+@@ -309,6 +334,7 @@ QtHelpAlternativeLink::QtHelpAlternativeLink(const QString& name, const QtHelpDo
+ void QtHelpAlternativeLink::showUrl()
+ {
+     IDocumentation::Ptr newDoc(new QtHelpDocumentation(mName, mDoc->info(), mName));
++    qWarning() << Q_FUNC_INFO << "name" << mName << ":" << mDoc->info();
+     ICore::self()->documentationController()->showDocumentation(newDoc);
+ }
+ 
