@@ -1,5 +1,5 @@
 diff --git kdevplatform/documentation/CMakeLists.txt kdevplatform/documentation/CMakeLists.txt
-index 65b94149505b43d2f64041557284635a4c941d0a..732d8d80302f51fc82355d3bd60e5dd5016d9801 100644
+index 65b94149505b43d2f64041557284635a4c941d0a..83e41b405645010a09177afaa8522869b9903cc6 100644
 --- kdevplatform/documentation/CMakeLists.txt
 +++ kdevplatform/documentation/CMakeLists.txt
 @@ -1,5 +1,9 @@
@@ -54,10 +54,18 @@ index 65b94149505b43d2f64041557284635a4c941d0a..732d8d80302f51fc82355d3bd60e5dd5
      target_compile_definitions(KDevPlatformDocumentation PRIVATE -DUSE_QTWEBKIT)
  else()
 diff --git kdevplatform/documentation/standarddocumentationview.cpp kdevplatform/documentation/standarddocumentationview.cpp
-index 64680e5faaefb0c48f89997be1d9e9198d94e398..b10aea7abbd042c0e9257ff16c1066eee0a2814d 100644
+index 64680e5faaefb0c48f89997be1d9e9198d94e398..198b941b3d95fd0c373bb5bfd71f82664b767fe2 100644
 --- kdevplatform/documentation/standarddocumentationview.cpp
 +++ kdevplatform/documentation/standarddocumentationview.cpp
-@@ -20,6 +20,7 @@
+@@ -2,6 +2,7 @@
+  * This file is part of KDevelop
+  * Copyright 2010 Aleix Pol Gonzalez <aleixpol@kde.org>
+  * Copyright 2016 Igor Kushnir <igorkuo@gmail.com>
++ * Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU Library General Public License as
+@@ -20,6 +21,7 @@
   */
  
  #include "standarddocumentationview.h"
@@ -65,24 +73,91 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..b10aea7abbd042c0e9257ff16c1066ee
  #include "documentationfindwidget.h"
  #include "debug.h"
  
-@@ -32,6 +33,9 @@
+@@ -32,6 +34,115 @@
  #include <QContextMenuEvent>
  #include <QMenu>
  
-+#ifndef USE_QTEXTBROWSER
-+// the QTextBrowser implementation lives in standarddocumentationview_qtb.cpp
-+
- #ifdef USE_QTWEBKIT
- #include <QFontDatabase>
- #include <QWebView>
-@@ -385,3 +389,22 @@ void StandardDocumentationView::wheelEvent(QWheelEvent* event)
-     }
-     QWidget::wheelEvent(event);
- }
-+
-+#endif
++#include "standarddocumentationview_p.h"
 +
 +using namespace KDevelop;
++
++// common code shared with the QTextBrowser variant in standarddocumentationview_qtb.cpp
++
++StandardDocumentationView::StandardDocumentationView(DocumentationFindWidget* findWidget, QWidget* parent)
++    : QWidget(parent)
++    , d(new StandardDocumentationViewPrivate)
++{
++    auto mainLayout = new QVBoxLayout(this);
++    mainLayout->setMargin(0);
++    setLayout(mainLayout);
++
++    d->init(this);
++
++    findWidget->setEnabled(true);
++    connect(findWidget, &DocumentationFindWidget::searchRequested, this, &StandardDocumentationView::search);
++    connect(findWidget, &DocumentationFindWidget::searchDataChanged, this, &StandardDocumentationView::searchIncremental);
++    connect(findWidget, &DocumentationFindWidget::searchFinished, this, &StandardDocumentationView::finishSearch);
++}
++
++KDevelop::StandardDocumentationView::~StandardDocumentationView() = default;
++
++void StandardDocumentationView::initZoom(const QString& configSubGroup)
++{
++    Q_ASSERT_X(!d->m_zoomController, "StandardDocumentationView::initZoom", "Can not initZoom a second time.");
++
++    const KConfigGroup outerGroup(KSharedConfig::openConfig(), QStringLiteral("Documentation View"));
++    const KConfigGroup configGroup(&outerGroup, configSubGroup);
++    d->m_zoomController = new ZoomController(configGroup, this);
++    connect(d->m_zoomController, &ZoomController::factorChanged,
++            this, &StandardDocumentationView::updateZoomFactor);
++    updateZoomFactor(d->m_zoomController->factor());
++}
++
++void StandardDocumentationView::setDocumentation(const IDocumentation::Ptr& doc)
++{
++    if(d->m_doc)
++        disconnect(d->m_doc.data());
++    d->m_doc = doc;
++    update();
++    if(d->m_doc)
++        connect(d->m_doc.data(), &IDocumentation::descriptionChanged, this, &StandardDocumentationView::update);
++}
++
++void StandardDocumentationView::update()
++{
++    if(d->m_doc) {
++        setHtml(d->m_doc->description());
++    } else
++        qCDebug(DOCUMENTATION) << "calling StandardDocumentationView::update() on an uninitialized view";
++}
++
++void StandardDocumentationView::contextMenuEvent(QContextMenuEvent* event)
++{
++    auto menu = createStandardContextMenu();
++    if (menu->isEmpty()) {
++        delete menu;
++        return;
++    }
++
++    menu->setAttribute(Qt::WA_DeleteOnClose);
++    menu->exec(event->globalPos());
++}
++
++void StandardDocumentationView::keyPressEvent(QKeyEvent* event)
++{
++    if (d->m_zoomController && d->m_zoomController->handleKeyPressEvent(event)) {
++        return;
++    }
++    QWidget::keyPressEvent(event);
++}
++
++void StandardDocumentationView::wheelEvent(QWheelEvent* event)
++{
++    if (d->m_zoomController && d->m_zoomController->handleWheelEvent(event)) {
++        return;
++    }
++    QWidget::wheelEvent(event);
++}
 +
 +bool StandardDocumentationView::isUrlSchemeSupported(const QUrl& url)
 +{
@@ -97,9 +172,221 @@ index 64680e5faaefb0c48f89997be1d9e9198d94e398..b10aea7abbd042c0e9257ff16c1066ee
 +        || scheme == QLatin1String("about");
 +}
 +
++// default loadResource overload, currently used only by the QTextBrowser variant
++// see QTextBrowser::loadResource
++bool StandardDocumentationView::loadResource(int type, QUrl& url, QVariant& content)
++{
++    Q_UNUSED(type);
++    Q_UNUSED(url);
++    Q_UNUSED(content);
++    qCDebug(DOCUMENTATION) << "default loadResource() returns false";
++    return false;
++}
++
++#ifndef USE_QTEXTBROWSER
++// code specific to the QtWebKit/QtWebEngine variant
++
+ #ifdef USE_QTWEBKIT
+ #include <QFontDatabase>
+ #include <QWebView>
+@@ -48,10 +159,8 @@
+ #include <QWebEngineProfile>
+ #endif
+ 
+-using namespace KDevelop;
+-
+ #ifndef USE_QTWEBKIT
+-class StandardDocumentationPage : public QWebEnginePage
++class KDevelop::StandardDocumentationPage : public QWebEnginePage
+ {
+ public:
+     StandardDocumentationPage(QWebEngineProfile* profile, KDevelop::StandardDocumentationView* parent)
+@@ -80,61 +189,35 @@ private:
+ };
+ #endif
+ 
+-class KDevelop::StandardDocumentationViewPrivate
++void StandardDocumentationViewPrivate::init(StandardDocumentationView* parent)
+ {
+-public:
+-    ZoomController* m_zoomController = nullptr;
+-    IDocumentation::Ptr m_doc;
+-
++    m_parent = parent;
+ #ifdef USE_QTWEBKIT
+-    QWebView *m_view = nullptr;
+-    void init(StandardDocumentationView* parent)
+-    {
+-        m_view = new QWebView(parent);
+-        m_view->setContextMenuPolicy(Qt::NoContextMenu);
+-    }
++    m_view = new QWebView(parent);
++    m_view->setContextMenuPolicy(Qt::NoContextMenu);
+ #else
+-    QWebEngineView* m_view = nullptr;
+-    StandardDocumentationPage* m_page = nullptr;
+-
+-    void init(StandardDocumentationView* parent)
+-    {
+-        // not using the shared default profile here:
+-        // prevents conflicts with qthelp scheme handler being registered onto that single default profile
+-        // due to async deletion of old pages and their CustomSchemeHandler instance
+-        auto* profile = new QWebEngineProfile(parent);
+-        m_page = new StandardDocumentationPage(profile, parent);
+-        m_view = new QWebEngineView(parent);
+-        m_view->setPage(m_page);
+-        // workaround for Qt::NoContextMenu broken with QWebEngineView, contextmenu event is always eaten
+-        // see https://bugreports.qt.io/browse/QTBUG-62345
+-        // we have to enforce deferring of event ourselves
+-        m_view->installEventFilter(parent);
+-    }
++    // not using the shared default profile here:
++    // prevents conflicts with qthelp scheme handler being registered onto that single default profile
++    // due to async deletion of old pages and their CustomSchemeHandler instance
++    auto* profile = new QWebEngineProfile(parent);
++    m_page = new StandardDocumentationPage(profile, parent);
++    m_view = new QWebEngineView(parent);
++    m_view->setPage(m_page);
++    // workaround for Qt::NoContextMenu broken with QWebEngineView, contextmenu event is always eaten
++    // see https://bugreports.qt.io/browse/QTBUG-62345
++    // we have to enforce deferring of event ourselves
++    m_view->installEventFilter(parent);
+ #endif
+-};
++    parent->layout()->addWidget(m_view);
++}
+ 
+-StandardDocumentationView::StandardDocumentationView(DocumentationFindWidget* findWidget, QWidget* parent)
+-    : QWidget(parent)
+-    , d(new StandardDocumentationViewPrivate)
++void StandardDocumentationViewPrivate::setup()
+ {
+-    auto mainLayout = new QVBoxLayout(this);
+-    mainLayout->setMargin(0);
+-    setLayout(mainLayout);
+-
+-    d->init(this);
+-    layout()->addWidget(d->m_view);
+-
+-    findWidget->setEnabled(true);
+-    connect(findWidget, &DocumentationFindWidget::searchRequested, this, &StandardDocumentationView::search);
+-    connect(findWidget, &DocumentationFindWidget::searchDataChanged, this, &StandardDocumentationView::searchIncremental);
+-    connect(findWidget, &DocumentationFindWidget::searchFinished, this, &StandardDocumentationView::finishSearch);
+-
+ #ifdef USE_QTWEBKIT
+     QFont sansSerifFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+     QFont monospaceFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+ 
+-    QWebSettings* s = d->m_view->settings();
++    QWebSettings* s = m_view->settings();
+ 
+     s->setFontFamily(QWebSettings::StandardFont, sansSerifFont.family());
+     s->setFontFamily(QWebSettings::SerifFont, "Serif");
+@@ -159,21 +242,19 @@ StandardDocumentationView::StandardDocumentationView(DocumentationFindWidget* fi
+     // "flickering" and also to hide font size "jumping". Secondly, we reset position inside page
+     // after loading with using standard QWebFrame method scrollToAnchor().
+ 
+-    connect(d->m_view, &QWebView::loadStarted, d->m_view, [this]() {
+-        d->m_view->setUpdatesEnabled(false);
++    connect(m_view, &QWebView::loadStarted, m_view, [m_parent]() {
++        m_view->setUpdatesEnabled(false);
+     });
+ 
+-    connect(d->m_view, &QWebView::loadFinished, this, [this](bool) {
+-        if (d->m_view->url().isValid()) {
+-            d->m_view->page()->mainFrame()->scrollToAnchor(d->m_view->url().fragment());
++    connect(m_view, &QWebView::loadFinished, m_parent, [m_parent](bool) {
++        if (m_view->url().isValid()) {
++            m_view->page()->mainFrame()->scrollToAnchor(m_view->url().fragment());
+         }
+-        d->m_view->setUpdatesEnabled(true);
++        m_view->setUpdatesEnabled(true);
+     });
+ #endif
+ }
+ 
+-KDevelop::StandardDocumentationView::~StandardDocumentationView() = default;
+-
+ void StandardDocumentationView::search ( const QString& text, DocumentationFindWidget::FindOptions options )
+ {
+ #ifdef USE_QTWEBKIT
+@@ -221,36 +302,6 @@ void StandardDocumentationView::finishSearch()
+     d->m_view->page()->findText(QString());
+ }
+ 
+-void StandardDocumentationView::initZoom(const QString& configSubGroup)
+-{
+-    Q_ASSERT_X(!d->m_zoomController, "StandardDocumentationView::initZoom", "Can not initZoom a second time.");
+-
+-    const KConfigGroup outerGroup(KSharedConfig::openConfig(), QStringLiteral("Documentation View"));
+-    const KConfigGroup configGroup(&outerGroup, configSubGroup);
+-    d->m_zoomController = new ZoomController(configGroup, this);
+-    connect(d->m_zoomController, &ZoomController::factorChanged,
+-            this, &StandardDocumentationView::updateZoomFactor);
+-    updateZoomFactor(d->m_zoomController->factor());
+-}
+-
+-void StandardDocumentationView::setDocumentation(const IDocumentation::Ptr& doc)
+-{
+-    if(d->m_doc)
+-        disconnect(d->m_doc.data());
+-    d->m_doc = doc;
+-    update();
+-    if(d->m_doc)
+-        connect(d->m_doc.data(), &IDocumentation::descriptionChanged, this, &StandardDocumentationView::update);
+-}
+-
+-void StandardDocumentationView::update()
+-{
+-    if(d->m_doc) {
+-        setHtml(d->m_doc->description());
+-    } else
+-        qCDebug(DOCUMENTATION) << "calling StandardDocumentationView::update() on an uninitialized view";
+-}
+-
+ void KDevelop::StandardDocumentationView::setOverrideCss(const QUrl& url)
+ {
+ #ifdef USE_QTWEBKIT
+@@ -353,35 +404,11 @@ bool StandardDocumentationView::eventFilter(QObject* object, QEvent* event)
+     return QWidget::eventFilter(object, event);
+ }
+ 
+-void StandardDocumentationView::contextMenuEvent(QContextMenuEvent* event)
+-{
+-    auto menu = createStandardContextMenu();
+-    if (menu->isEmpty()) {
+-        delete menu;
+-        return;
+-    }
+-
+-    menu->setAttribute(Qt::WA_DeleteOnClose);
+-    menu->exec(event->globalPos());
+-}
+-
+ void StandardDocumentationView::updateZoomFactor(double zoomFactor)
+ {
+     d->m_view->setZoomFactor(zoomFactor);
+ }
+ 
+-void StandardDocumentationView::keyPressEvent(QKeyEvent* event)
+-{
+-    if (d->m_zoomController && d->m_zoomController->handleKeyPressEvent(event)) {
+-        return;
+-    }
+-    QWidget::keyPressEvent(event);
+-}
++#endif // !USE_QTEXTBROWSER
+ 
+-void StandardDocumentationView::wheelEvent(QWheelEvent* event)
+-{
+-    if (d->m_zoomController && d->m_zoomController->handleWheelEvent(event)) {
+-        return;
+-    }
+-    QWidget::wheelEvent(event);
+-}
 +#include "standarddocumentationview.moc"
 diff --git kdevplatform/documentation/standarddocumentationview.h kdevplatform/documentation/standarddocumentationview.h
-index eb5505fb0b14de118e30200de9676d4e4121ee15..cb6dfb6f33a3b0e024489dcc166e0d277f091e33 100644
+index eb5505fb0b14de118e30200de9676d4e4121ee15..ee296e4160e2772088002cbfbf48be4a2583ea42 100644
 --- kdevplatform/documentation/standarddocumentationview.h
 +++ kdevplatform/documentation/standarddocumentationview.h
 @@ -23,6 +23,7 @@
@@ -110,28 +397,24 @@ index eb5505fb0b14de118e30200de9676d4e4121ee15..cb6dfb6f33a3b0e024489dcc166e0d27
  #include "documentationexport.h"
  #include "documentationfindwidget.h"
  #include <interfaces/idocumentation.h>
-@@ -59,6 +60,39 @@ public:
+@@ -59,6 +60,35 @@ public:
      void setOverrideCss(const QUrl &url);
  
      void load(const QUrl &url);
 +#ifdef USE_QTEXTBROWSER
 +    /**
-+     * @brief callback method for QTextBrowser::loadResource(type,url)
-+     * 
-+     * @param that an instance of the class handling the request
++     * @brief delegate method for the QTextBrowser::loadResource(type,url)
++     * overload of the QTextBrowser backend. Override this method if your
++     * plugin can handle URLs that QTextBrowser cannot handle itself.
++     *
 +     * @param type the QTextDocument::ResourceType type of the address to load
-+     * @param url the address to be loaded; can be rewritten (resolved)
++     * @param url the address to be loaded; can be rewritten (e.g. with a resolved URL)
 +     * @param content return variable for the loaded content. @p content is
 +     * guaranteed to be invalid upon entry.
 +     * 
 +     * The function should return true if content was loaded successfully.
 +     */
-+    typedef bool (*LoadResourceCallback)(QPointer<QObject> that, int type, QUrl& url, QVariant& content);
-+    /**
-+     * @brief register a @p callback for QTextBrowser::loadResource(type,url)
-+     * and the @p instance that will be handling the request.
-+     */
-+    void registerLoadResourceCallback(QPointer<QObject> instance, const LoadResourceCallback callback);
++    virtual bool loadResource(int type, QUrl& url, QVariant& content);
 +
 +    /**
 +     * @brief load a page with the given content
@@ -150,7 +433,7 @@ index eb5505fb0b14de118e30200de9676d4e4121ee15..cb6dfb6f33a3b0e024489dcc166e0d27
      void setHtml(const QString &html);
      void setNetworkAccessManager(QNetworkAccessManager* manager);
  
-@@ -69,6 +103,11 @@ public:
+@@ -69,6 +99,11 @@ public:
  
      QMenu* createStandardContextMenu();
  
@@ -162,12 +445,81 @@ index eb5505fb0b14de118e30200de9676d4e4121ee15..cb6dfb6f33a3b0e024489dcc166e0d27
  Q_SIGNALS:
      void linkClicked(const QUrl &link);
  
+diff --git kdevplatform/documentation/standarddocumentationview_p.h kdevplatform/documentation/standarddocumentationview_p.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..a72abbf241a56a9d77d0e73e659f701182b93ba3
+--- /dev/null
++++ kdevplatform/documentation/standarddocumentationview_p.h
+@@ -0,0 +1,63 @@
++/*
++ * This file is part of KDevelop
++ * Copyright 2010 Aleix Pol Gonzalez <aleixpol@kde.org>
++ * Copyright 2016 Igor Kushnir <igorkuo@gmail.com>
++ * Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU Library General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public
++ * License along with this program; if not, write to the
++ * Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ */
++
++#ifndef KDEVPLATFORM_STANDARDDOCUMENTATIONVIEW_P_H
++#define KDEVPLATFORM_STANDARDDOCUMENTATIONVIEW_P_H
++
++class QWebView;
++class QWebEngineView;
++
++namespace KDevelop
++{
++
++class ZoomController;
++class IDocumentation;
++class StandardDocumentationView;
++
++class HelpViewer;
++class StandardDocumentationPage;
++
++class StandardDocumentationViewPrivate
++{
++public:
++    ZoomController* m_zoomController = nullptr;
++    IDocumentation::Ptr m_doc;
++    StandardDocumentationView* m_parent;
++
++#ifdef USE_QTEXTBROWSER
++    HelpViewer* m_view = nullptr;
++#elif defined(USE_QTWEBKIT)
++    QWebView* m_view = nullptr;
++#else
++    QWebEngineView* m_view = nullptr;
++    StandardDocumentationPage* m_page = nullptr;
++#endif
++
++    void init(StandardDocumentationView* parent);
++    void setup();
++};
++
++}
++
++#endif // KDEVPLATFORM_STANDARDDOCUMENTATIONVIEW_P_H
++
++
 diff --git kdevplatform/documentation/standarddocumentationview_qtb.cpp kdevplatform/documentation/standarddocumentationview_qtb.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..612700d82c9eb6ce9d06ec0b05edbc7712837b18
+index 0000000000000000000000000000000000000000..04090074afd0eaac986bc19e29c8b68037ebb5ad
 --- /dev/null
 +++ kdevplatform/documentation/standarddocumentationview_qtb.cpp
-@@ -0,0 +1,366 @@
+@@ -0,0 +1,277 @@
 +/*
 + * This file is part of KDevelop
 + * Copyright 2010 Aleix Pol Gonzalez <aleixpol@kde.org>
@@ -207,9 +559,11 @@ index 0000000000000000000000000000000000000000..612700d82c9eb6ce9d06ec0b05edbc77
 +
 +#include <QTextBrowser>
 +
++#include "standarddocumentationview_p.h"
++
 +using namespace KDevelop;
 +
-+class HelpViewer : public QTextBrowser
++class KDevelop::HelpViewer : public QTextBrowser
 +{
 +    Q_OBJECT
 +public:
@@ -219,8 +573,6 @@ index 0000000000000000000000000000000000000000..612700d82c9eb6ce9d06ec0b05edbc77
 +        , m_parent(parent)
 +        , m_loadFinished(false)
 +        , m_restoreTimer(0)
-+        , m_callbackInstance(0)
-+        , m_loadResourceCallback(0)
 +    {}
 +
 +    void setSource(const QUrl& url) override
@@ -276,13 +628,11 @@ index 0000000000000000000000000000000000000000..612700d82c9eb6ce9d06ec0b05edbc77
 +    QVariant loadResource(int type, const QUrl &name) override
 +    {
 +        // check if we have a callback and we're not loading a requested html url
-+        if (m_loadResourceCallback && !(type == QTextDocument::HtmlResource && name == m_requested)) {
++        if (!(type == QTextDocument::HtmlResource && name == m_requested)) {
 +            // the callback is invoked with a QVariant that's explicitly invalid
 +            QVariant newContent(QVariant::Invalid);
 +            auto resolvedUrl = name;
-+            if ((*m_loadResourceCallback)(m_callbackInstance, type, resolvedUrl, newContent)) {
-+                // should we do this here?
-+                // setUrlWithContent(resolvedUrl, newContent);
++            if (m_parent->loadResource(type, resolvedUrl, newContent)) {
 +                return newContent;
 +            }
 +        }
@@ -317,8 +667,6 @@ index 0000000000000000000000000000000000000000..612700d82c9eb6ce9d06ec0b05edbc77
 +    QByteArray m_content;
 +    bool m_loadFinished;
 +    int m_restoreTimer;
-+    QPointer<QObject> m_callbackInstance;
-+    StandardDocumentationView::LoadResourceCallback m_loadResourceCallback;
 +
 +Q_SIGNALS:
 +    void loadFinished(const QUrl& url);
@@ -334,39 +682,18 @@ index 0000000000000000000000000000000000000000..612700d82c9eb6ce9d06ec0b05edbc77
 +    }
 +};
 +
-+class KDevelop::StandardDocumentationViewPrivate
++void StandardDocumentationViewPrivate::init(StandardDocumentationView* parent)
 +{
-+public:
-+    ZoomController* m_zoomController = nullptr;
-+    IDocumentation::Ptr m_doc;
-+
-+    HelpViewer *m_view = nullptr;
-+    void init(StandardDocumentationView* parent)
-+    {
-+        m_view = new HelpViewer(parent);
-+        m_view->setContextMenuPolicy(Qt::NoContextMenu);
-+        parent->connect(m_view, &HelpViewer::loadFinished, parent, &StandardDocumentationView::linkClicked);
-+    }
-+};
-+
-+StandardDocumentationView::StandardDocumentationView(DocumentationFindWidget* findWidget, QWidget* parent)
-+    : QWidget(parent)
-+    , d(new StandardDocumentationViewPrivate)
-+{
-+    auto mainLayout = new QVBoxLayout(this);
-+    mainLayout->setMargin(0);
-+    setLayout(mainLayout);
-+
-+    d->init(this);
-+    layout()->addWidget(d->m_view);
-+
-+    findWidget->setEnabled(true);
-+    connect(findWidget, &DocumentationFindWidget::searchRequested, this, &StandardDocumentationView::search);
-+    connect(findWidget, &DocumentationFindWidget::searchDataChanged, this, &StandardDocumentationView::searchIncremental);
-+    connect(findWidget, &DocumentationFindWidget::searchFinished, this, &StandardDocumentationView::finishSearch);
++    m_parent = parent;
++    m_view = new HelpViewer(parent);
++    m_view->setContextMenuPolicy(Qt::NoContextMenu);
++    parent->connect(m_view, &HelpViewer::loadFinished, parent, &StandardDocumentationView::linkClicked);
++    parent->layout()->addWidget(m_view);
 +}
 +
-+KDevelop::StandardDocumentationView::~StandardDocumentationView() = default;
++void StandardDocumentationViewPrivate::setup()
++{
++}
 +
 +void StandardDocumentationView::search ( const QString& text, DocumentationFindWidget::FindOptions options )
 +{
@@ -398,36 +725,6 @@ index 0000000000000000000000000000000000000000..612700d82c9eb6ce9d06ec0b05edbc77
 +    d->m_view->find(QString());
 +}
 +
-+void StandardDocumentationView::initZoom(const QString& configSubGroup)
-+{
-+    Q_ASSERT_X(!d->m_zoomController, "StandardDocumentationView::initZoom", "Can not initZoom a second time.");
-+
-+    const KConfigGroup outerGroup(KSharedConfig::openConfig(), QStringLiteral("Documentation View"));
-+    const KConfigGroup configGroup(&outerGroup, configSubGroup);
-+    d->m_zoomController = new ZoomController(configGroup, this);
-+    connect(d->m_zoomController, &ZoomController::factorChanged,
-+            this, &StandardDocumentationView::updateZoomFactor);
-+    updateZoomFactor(d->m_zoomController->factor());
-+}
-+
-+void StandardDocumentationView::setDocumentation(const IDocumentation::Ptr& doc)
-+{
-+    if(d->m_doc)
-+        disconnect(d->m_doc.data());
-+    d->m_doc = doc;
-+    update();
-+    if(d->m_doc)
-+        connect(d->m_doc.data(), &IDocumentation::descriptionChanged, this, &StandardDocumentationView::update);
-+}
-+
-+void StandardDocumentationView::update()
-+{
-+    if(d->m_doc) {
-+        setHtml(d->m_doc->description());
-+    } else
-+        qCDebug(DOCUMENTATION) << "calling StandardDocumentationView::update() on an uninitialized view";
-+}
-+
 +void KDevelop::StandardDocumentationView::setOverrideCss(const QUrl& url)
 +{
 +    Q_UNUSED(url);
@@ -437,12 +734,6 @@ index 0000000000000000000000000000000000000000..612700d82c9eb6ce9d06ec0b05edbc77
 +void KDevelop::StandardDocumentationView::load(const QUrl& url)
 +{
 +    d->m_view->setSource(url);
-+}
-+
-+void KDevelop::StandardDocumentationView::registerLoadResourceCallback(QPointer<QObject> instance, const LoadResourceCallback callback)
-+{
-+    d->m_view->m_callbackInstance = instance;
-+    d->m_view->m_loadResourceCallback = callback;
 +}
 +
 +void KDevelop::StandardDocumentationView::load(const QUrl& url, const QByteArray& content)
@@ -491,18 +782,6 @@ index 0000000000000000000000000000000000000000..612700d82c9eb6ce9d06ec0b05edbc77
 +    return QWidget::eventFilter(object, event);
 +}
 +
-+void StandardDocumentationView::contextMenuEvent(QContextMenuEvent* event)
-+{
-+    auto menu = createStandardContextMenu();
-+    if (menu->isEmpty()) {
-+        delete menu;
-+        return;
-+    }
-+
-+    menu->setAttribute(Qt::WA_DeleteOnClose);
-+    menu->exec(event->globalPos());
-+}
-+
 +void StandardDocumentationView::updateZoomFactor(double zoomFactor)
 +{
 +    double fontSize = d->m_view->font().pointSizeF();
@@ -515,22 +794,6 @@ index 0000000000000000000000000000000000000000..612700d82c9eb6ce9d06ec0b05edbc77
 +    } else if (newSize != fontSize) {
 +        d->m_view->zoomOut(int(fontSize - newSize + 0.5));
 +    }
-+}
-+
-+void StandardDocumentationView::keyPressEvent(QKeyEvent* event)
-+{
-+    if (d->m_zoomController && d->m_zoomController->handleKeyPressEvent(event)) {
-+        return;
-+    }
-+    QWidget::keyPressEvent(event);
-+}
-+
-+void StandardDocumentationView::wheelEvent(QWheelEvent* event)
-+{
-+    if (d->m_zoomController && d->m_zoomController->handleWheelEvent(event)) {
-+        return;
-+    }
-+    QWidget::wheelEvent(event);
 +}
 +
 +#include "standarddocumentationview_qtb.moc"
@@ -562,7 +825,7 @@ index 06c751e8a2c254ba175e827fe9036fe635105d4c..2a60e0de2344aafdc040ec207ec0f861
 +    target_compile_definitions(test_qthelpplugin PRIVATE -DUSE_QTEXTBROWSER)
 +endif()
 diff --git plugins/qthelp/qthelpdocumentation.cpp plugins/qthelp/qthelpdocumentation.cpp
-index 19613339d01531b1f7716a9a8e0c2f212bdc856c..7320f58b8d6250d7ce977640956c10d28650a86f 100644
+index 19613339d01531b1f7716a9a8e0c2f212bdc856c..1da239d60186a4906e8135325cc39b54f5abfec9 100644
 --- plugins/qthelp/qthelpdocumentation.cpp
 +++ plugins/qthelp/qthelpdocumentation.cpp
 @@ -30,6 +30,10 @@
@@ -576,7 +839,26 @@ index 19613339d01531b1f7716a9a8e0c2f212bdc856c..7320f58b8d6250d7ce977640956c10d2
  #include <KLocalizedString>
  
  #include <interfaces/icore.h>
-@@ -224,20 +228,69 @@ QString QtHelpDocumentation::description() const
+@@ -98,6 +102,18 @@ int lastIndexOf(const QString &str, const QRegularExpression &re, int from, QReg
+ 
+ }
+ 
++class QtHelpDocumentationView : public StandardDocumentationView
++{
++public:
++    explicit QtHelpDocumentationView(DocumentationFindWidget* findWidget, QtHelpDocumentation* owner, QWidget* parent = nullptr )
++        : StandardDocumentationView(findWidget, parent)
++        , m_owner(owner)
++    {}
++    bool loadResource(int type, QUrl& url, QVariant& content) override;
++
++    QtHelpDocumentation* m_owner;
++};
++
+ QtHelpProviderAbstract* QtHelpDocumentation::s_provider=nullptr;
+ 
+ QtHelpDocumentation::QtHelpDocumentation(const QString& name, const QMap<QString, QUrl>& info)
+@@ -224,20 +240,62 @@ QString QtHelpDocumentation::description() const
  
  void QtHelpDocumentation::setUserStyleSheet(StandardDocumentationView* view, const QUrl& url)
  {
@@ -606,17 +888,20 @@ index 19613339d01531b1f7716a9a8e0c2f212bdc856c..7320f58b8d6250d7ce977640956c10d2
 +#endif
 +}
 +
-+bool QtHelpDocumentation::loadResourceCallback(int type, QUrl& url, QVariant& content)
++// adapted from Qt's Assistant
++bool QtHelpDocumentationView::loadResource(int type, QUrl& url, QVariant& content)
 +{
 +    if (type < 4 && StandardDocumentationView::isUrlSchemeSupported(url)) {
 +        QByteArray ba;
-+        const auto resolvedUrl = m_provider->engine()->findFile(url);
++        const auto resolvedUrl = m_owner->m_provider->engine()->findFile(url);
 +        if (resolvedUrl.isEmpty() || !StandardDocumentationView::isUrlSchemeSupported(resolvedUrl)) {
++            qCWarning(QTHELP) << "loadResource ignoring type" << type << "url" << url << "resolved=" << resolvedUrl;
 +            return false;
 +        }
-+        qCDebug(QTHELP) << "loadResourceCallback type" << type << "url" << url << "resolved=" << resolvedUrl;
++        qCDebug(QTHELP) << "loadResource type" << type << "url" << url << "resolved=" << resolvedUrl;
++        // update the return URL
 +        url = resolvedUrl;
-+        ba = m_provider->engine()->fileData(url);
++        ba = m_owner->m_provider->engine()->fileData(url);
 +        bool ret = true;
 +        if (url.toString().endsWith(QLatin1String(".svg"), Qt::CaseInsensitive)) {
 +            QImage image;
@@ -630,23 +915,19 @@ index 19613339d01531b1f7716a9a8e0c2f212bdc856c..7320f58b8d6250d7ce977640956c10d2
 +        if (!content.isValid()) {
 +            content = ba;
 +        }
-+        return true;
++        return content.isValid();
 +    }
 +    return false;
-+}
-+
-+bool QtHelpDocumentation::loadResourceCallback(QPointer<QObject> that, int type, QUrl& url, QVariant& content)
-+{
-+    if (that.isNull() || !that.data()) {
-+        return false;
-+    } else {
-+        QtHelpDocumentation *q = qobject_cast<QtHelpDocumentation*>(that);
-+        return q ? q->loadResourceCallback(type, url, content) : false;
-+    }
  }
  
  QWidget* QtHelpDocumentation::documentationWidget(DocumentationFindWidget* findWidget, QWidget* parent)
-@@ -250,12 +303,25 @@ QWidget* QtHelpDocumentation::documentationWidget(DocumentationFindWidget* findW
+@@ -245,17 +303,29 @@ QWidget* QtHelpDocumentation::documentationWidget(DocumentationFindWidget* findW
+     if(m_info.isEmpty()) { //QtHelp sometimes has empty info maps. e.g. availableaudioeffects i 4.5.2
+         return new QLabel(i18n("Could not find any documentation for '%1'", m_name), parent);
+     } else {
+-        StandardDocumentationView* view = new StandardDocumentationView(findWidget, parent);
++        QtHelpDocumentationView* view = new QtHelpDocumentationView(findWidget, this, parent);
+         view->initZoom(m_provider->name());
          view->setDelegateLinks(true);
          view->setNetworkAccessManager(m_provider->networkAccess());
          view->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -655,7 +936,6 @@ index 19613339d01531b1f7716a9a8e0c2f212bdc856c..7320f58b8d6250d7ce977640956c10d2
  
          setUserStyleSheet(view, m_current.value());
 +#ifdef USE_QTEXTBROWSER
-+        view->registerLoadResourceCallback(this, &QtHelpDocumentation::loadResourceCallback);
 +        const auto url = m_current.value();
 +        if (view->isUrlSchemeSupported(url)) {
 +            view->load(url, m_provider->engine()->fileData(url));
@@ -673,7 +953,7 @@ index 19613339d01531b1f7716a9a8e0c2f212bdc856c..7320f58b8d6250d7ce977640956c10d2
          return view;
      }
  }
-@@ -292,7 +358,27 @@ void QtHelpDocumentation::jumpedTo(const QUrl& newUrl)
+@@ -292,7 +362,27 @@ void QtHelpDocumentation::jumpedTo(const QUrl& newUrl)
      Q_ASSERT(lastView);
      m_provider->jumpedTo(newUrl);
      setUserStyleSheet(lastView, newUrl);
@@ -701,7 +981,7 @@ index 19613339d01531b1f7716a9a8e0c2f212bdc856c..7320f58b8d6250d7ce977640956c10d2
  }
  
  IDocumentationProvider* QtHelpDocumentation::provider() const
-@@ -309,6 +395,8 @@ QtHelpAlternativeLink::QtHelpAlternativeLink(const QString& name, const QtHelpDo
+@@ -309,6 +399,8 @@ QtHelpAlternativeLink::QtHelpAlternativeLink(const QString& name, const QtHelpDo
  void QtHelpAlternativeLink::showUrl()
  {
      IDocumentation::Ptr newDoc(new QtHelpDocumentation(mName, mDoc->info(), mName));
@@ -711,16 +991,24 @@ index 19613339d01531b1f7716a9a8e0c2f212bdc856c..7320f58b8d6250d7ce977640956c10d2
  }
  
 diff --git plugins/qthelp/qthelpdocumentation.h plugins/qthelp/qthelpdocumentation.h
-index e649bf79b864b20fe3afa58fcc4db54ef36f338e..dc68e9916147c0a8b94941207fd0216e073dab20 100644
+index e649bf79b864b20fe3afa58fcc4db54ef36f338e..f8bb419a7fef3c1ea47b2a79027813e79a45e69f 100644
 --- plugins/qthelp/qthelpdocumentation.h
 +++ plugins/qthelp/qthelpdocumentation.h
-@@ -47,6 +47,9 @@ class QtHelpDocumentation : public KDevelop::IDocumentation
+@@ -34,6 +34,8 @@ class QNetworkAccessManager;
+ class QtHelpProviderAbstract;
+ class QTemporaryFile;
  
-         QString description() const override;
- 
-+        bool loadResourceCallback(int type, QUrl& url, QVariant& content);
-+        static bool loadResourceCallback(QPointer<QObject> that, int type, QUrl& url, QVariant& content);
++class QtHelpDocumentationView;
 +
-         QWidget* documentationWidget(KDevelop::DocumentationFindWidget* findWidget, QWidget* parent) override;
+ class QtHelpDocumentation : public KDevelop::IDocumentation
+ {
+     Q_OBJECT
+@@ -71,6 +73,8 @@ class QtHelpDocumentation : public KDevelop::IDocumentation
  
-         KDevelop::IDocumentationProvider* provider() const override;
+         KDevelop::StandardDocumentationView* lastView;
+         QPointer<QTemporaryFile> m_lastStyleSheet;
++
++    friend class QtHelpDocumentationView;
+ };
+ 
+ class HomeDocumentation : public KDevelop::IDocumentation
