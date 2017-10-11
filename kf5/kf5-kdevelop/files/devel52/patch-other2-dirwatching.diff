@@ -363,9 +363,9 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a349f439f
 --- /dev/null
 +++ kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,173 @@
 +/* This file is part of KDevelop
-+    Copyright 2017 Ren� J.V. Bertin <rjvbertin@gmail.com>
++    Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>
 +
 +    This library is free software; you can redistribute it and/or
 +    modify it under the terms of the GNU Library General Public
@@ -407,22 +407,11 @@ index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a
 +
 +namespace KDevelop {
 +
-+class TestFileManagerPlugin : public AbstractFileManagerPlugin
-+{
-+    Q_OBJECT
-+public:
-+    TestFileManagerPlugin(QObject* parent = nullptr)
-+        : AbstractFileManagerPlugin({}, parent)
-+    {}
-+
-+    using AbstractFileManagerPlugin::projectClosing;
-+};
-+
 +class AFMPBenchmark : public QObject
 +{
 +    Q_OBJECT
 +public:
-+    AFMPBenchmark(TestFileManagerPlugin* manager, const QString& path, QObject* parent)
++    AFMPBenchmark(AbstractFileManagerPlugin* manager, const QString& path, QObject* parent)
 +        : QObject(parent)
 +    {
 +        m_manager = manager;
@@ -444,15 +433,7 @@ index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a
 +        import->start();
 +    }
 +
-+    void projectClosing()
-+    {
-+        m_timer.restart();
-+        m_manager->projectClosing(m_project);
-+        int elapsed = m_timer.elapsed();
-+        qInfo() << "\tclosing project" << m_projectNumber << ":" << elapsed / 1000.0 << "seconds";
-+    }
-+
-+    TestFileManagerPlugin* m_manager;
++    AbstractFileManagerPlugin* m_manager;
 +    TestProject* m_project;
 +    QElapsedTimer m_timer;
 +    int m_projectNumber;
@@ -467,11 +448,14 @@ index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a
 +    {
 +        Q_UNUSED(job);
 +        int elapsed = m_timer.elapsed();
++        // The number of items in the dirwatcher can be obtained as follows,
++        // provided dirs are added one by one and not with a recursive call
++        // to ProjectWatcher::addDir():
 +        ProjectWatcher* watcher = qobject_cast<ProjectWatcher*>(m_manager->projectWatcher(m_project));
 +        int watched = watcher ? watcher->size() : -1;
-+        qInfo() << "imported project" << m_projectNumber
-+            << "with" << m_project->fileSet().size()
-+            << "files (watched:" << watched << "):"
++        qInfo() << "imported project" << m_projectNumber << "with"
++            << m_project->fileSet().size() << "elements (files & folders) and"
++            << watched << "calls to KDirWatch::addDir() took"
 +            << elapsed / 1000.0 << "seconds";
 +
 +        s_numBenchmarksRunning -= 1;
@@ -492,10 +476,18 @@ index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a
 +        return 1;
 +    }
 +    QCoreApplication app(argc, argv);
++    // measure the total test time, this provides an indication
++    // of overhead and how well multiple projects are imported in parallel
++    // (= how different is the total time from the import time of the largest
++    // project). When testing a single project the difference between this
++    // value and total runtime will provide an estimate of the time required
++    // to destroy the dirwatcher.
++    QElapsedTimer runTimer;
++    runTimer.start();
 +
 +    AutoTestShell::init({"no plugins"});
 +    auto core = TestCore::initialize(Core::NoUi);
-+    auto manager = new TestFileManagerPlugin(core);
++    auto manager = new AbstractFileManagerPlugin({}, core);
 +
 +    const char *kdwMethod[] = {"FAM", "Inotify", "Stat", "QFSWatch"};
 +    qInfo() << "KDirWatch backend:" << kdwMethod[KDirWatch().internalMethod()];
@@ -508,11 +500,9 @@ index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a
 +            const auto benchmark = new AFMPBenchmark(manager, path, core);
 +            benchmarks << benchmark;
 +            QObject::connect(benchmark, &AFMPBenchmark::finished,
-+                             &app, [&benchmarks] {
-+                                for (auto benchmark : benchmarks) {
-+                                    benchmark->projectClosing();
-+                                }
-+                                qInfo() << "Done";
++                             &app, [&runTimer] {
++                                qInfo() << "Done in" << runTimer.elapsed() / 1000.0
++                                    << "seconds total (excluding dirwatcher destruction)";
 +                                QCoreApplication::instance()->quit();
 +                             });
 +            if (qEnvironmentVariableIsSet("BENCHMARK_ORIGINAL_DIRWATCHER")) {
@@ -536,6 +526,7 @@ index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a
 +        return 1;
 +    }
 +
++    qInfo() << "Benchmark set-up took" << runTimer.elapsed() / 1000.0 << "seconds";
 +    for (auto benchmark : benchmarks) {
 +        benchmark->start();
 +    }
