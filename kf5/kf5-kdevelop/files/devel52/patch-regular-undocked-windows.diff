@@ -1,8 +1,8 @@
 diff --git a/kdevplatform/sublime/idealdockwidget.cpp b/kdevplatform/sublime/idealdockwidget.cpp
-index 4f63ec150791ed562f8a291bddfbb3e67a68ce60..f0d6db18d2e6e2ae786eddc2f4cabe6adeae8db6 100644
+index 4f63ec150791ed562f8a291bddfbb3e67a68ce60..fc8bfff1026236c88b486f26aeaaaf68fba274b8 100644
 --- a/kdevplatform/sublime/idealdockwidget.cpp
 +++ b/kdevplatform/sublime/idealdockwidget.cpp
-@@ -37,14 +37,36 @@
+@@ -37,6 +37,9 @@
  #include <QToolBar>
  #include <QVBoxLayout>
  
@@ -11,66 +11,97 @@ index 4f63ec150791ed562f8a291bddfbb3e67a68ce60..f0d6db18d2e6e2ae786eddc2f4cabe6a
 +
  using namespace Sublime;
  
-+static void unfloat(IdealDockWidget* that, bool floating)
-+{
-+    if (floating && that && that->isVisible()) {
-+        qWarning() << "Unfloating dock widget" << that << that->widget();
-+//         that->setTitleBarWidget(0);
-+//         // remove unwanted flags
-+//         Qt::WindowFlags flags = that->windowFlags() & ~(Qt::Tool|Qt::FramelessWindowHint|Qt::X11BypassWindowManagerHint);
-+//         // set wanted flags
-+//         that->setWindowFlags(flags | Qt::Window | Qt::WindowMinMaxButtonsHint);
-+//         that->updateGeometry();
-+//         that->setVisible(true);
-+// //         auto w = that->widget();
-+// //         w->setParent(nullptr);
-+// //         w->setWindowFlags(Qt::Window);
-+// //         w->show();
-+    }
-+}
-+
  IdealDockWidget::IdealDockWidget(IdealController *controller, Sublime::MainWindow *parent)
-     : QDockWidget(parent),
+@@ -44,7 +47,9 @@ IdealDockWidget::IdealDockWidget(IdealController *controller, Sublime::MainWindo
        m_area(nullptr),
        m_view(nullptr),
        m_docking_area(Qt::NoDockWidgetArea),
 -      m_controller(controller)
 +      m_controller(controller),
-+      m_windowedWidget(nullptr)
++      m_floatingWidget(nullptr),
++      m_floatsAsStandalone(false)
  {
      setAutoFillBackground(true);
      setContextMenuPolicy(Qt::CustomContextMenu);
-@@ -61,6 +83,9 @@ IdealDockWidget::IdealDockWidget(IdealController *controller, Sublime::MainWindo
+@@ -61,6 +66,12 @@ IdealDockWidget::IdealDockWidget(IdealController *controller, Sublime::MainWindo
      setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
      // do not allow to move docks to the top dock area (no buttonbar there in our current UI)
      setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea | Qt::BottomDockWidgetArea);
 +
 +    connect(this, &QDockWidget::topLevelChanged, this, [this] (bool floating) {
-+        unfloat(this, floating); } );
++            if (floating && isVisible() && floatsAsStandalone()) {
++                QMetaObject::invokeMethod(this, "makeStandaloneWindow", Qt::QueuedConnection);
++            }
++        } );
  }
  
  IdealDockWidget::~IdealDockWidget()
-@@ -87,7 +112,30 @@ void IdealDockWidget::setDockWidgetArea(Qt::DockWidgetArea dockingArea)
+@@ -85,9 +96,76 @@ Qt::DockWidgetArea IdealDockWidget::dockWidgetArea() const
+ void IdealDockWidget::setDockWidgetArea(Qt::DockWidgetArea dockingArea)
+ { m_docking_area = dockingArea; }
  
++void IdealDockWidget::setFloating(bool floating)
++{
++    if (!m_floatsAsStandalone) {
++        QDockWidget::setFloating(floating);
++    } else {
++        if (floating) {
++            makeStandaloneWindow();
++        } else {
++            reDockWidget(false);
++        }
++    }
++}
++
++void IdealDockWidget::setFloatsAsStandalone(bool standalone)
++{
++    m_floatsAsStandalone = standalone;
++}
++
++bool IdealDockWidget::floatsAsStandalone()
++{
++    return m_floatsAsStandalone;
++}
++
  void IdealDockWidget::slotRemove()
  {
 -    m_area->removeToolView(m_view);
-+    if (m_windowedWidget) {
-+        setWidget(m_windowedWidget);
-+        m_windowedWidget = nullptr;
++    if (m_floatingWidget) {
++        setWidget(m_floatingWidget);
++        m_floatingWidget = nullptr;
 +    }
 +    if (m_area) {
 +        m_area->removeToolView(m_view);
 +    }
 +}
 +
++void IdealDockWidget::makeStandaloneWindow()
++{
++    if (!m_floatingWidget) {
++        if (!isFloating()) {
++            QDockWidget::setFloating(true);
++            m_area->raiseToolView(m_view);
++        }
++        if (auto w = widget()) {
++            // turn into top-level window
++            qCDebug(SUBLIME) << "reparenting" << this << "widget" << w << "away from" << w->parent();
++            m_floatingWidget = w;
++            w->setParent(nullptr);
++            w->setWindowFlags(Qt::Window);
++            w->show();
++            connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &IdealDockWidget::aboutToShutdown );
++            close();
++        }
++    }
++}
++
 +void IdealDockWidget::reDockWidget(bool signalClose)
 +{
-+    if (m_windowedWidget) {
-+        setWidget(m_windowedWidget);
-+        m_windowedWidget = nullptr;
++    if (m_floatingWidget) {
++        setWidget(m_floatingWidget);
++        m_floatingWidget = nullptr;
 +    }
-+    setFloating(false);
++    QDockWidget::setFloating(false);
 +    if (signalClose) {
 +        emit closeRequested();
 +    }
@@ -78,31 +109,39 @@ index 4f63ec150791ed562f8a291bddfbb3e67a68ce60..f0d6db18d2e6e2ae786eddc2f4cabe6a
 +
 +void IdealDockWidget::aboutToShutdown()
 +{
++    qCDebug(SUBLIME) << "Re-docking" << this << "before exit";
 +    reDockWidget(true);
  }
  
  void IdealDockWidget::contextMenuRequested(const QPoint &point)
-@@ -118,13 +166,16 @@ void IdealDockWidget::contextMenuRequested(const QPoint &point)
+@@ -118,13 +196,21 @@ void IdealDockWidget::contextMenuRequested(const QPoint &point)
      QAction *left = new QAction(i18nc("toolview position", "Left"), g);
      QAction *bottom = new QAction(i18nc("toolview position", "Bottom"), g);
      QAction *right = new QAction(i18nc("toolview position", "Right"), g);
 -    QAction *detach = new QAction(i18nc("toolview position", "Detached"), g);
-+    QAction *detach = new QAction(i18nc("toolview position", "Detached as floating window"), g);
++    QAction *detach = nullptr;
++    if (!floatsAsStandalone()) {
++        detach = new QAction(i18nc("toolview position", "Detached as floating window"), g);
++    }
 +    QAction *standalone = new QAction(i18nc("toolview position", "Detached as standalone window"), g);
  
 -    for (auto action : {left, bottom, right, detach}) {
+-        positionMenu->addAction(action);
+-        action->setCheckable(true);
 +    for (auto action : {left, bottom, right, detach, standalone}) {
-         positionMenu->addAction(action);
-         action->setCheckable(true);
++        if (action) {
++            positionMenu->addAction(action);
++            action->setCheckable(true);
++        }
      }
 -    if (isFloating()) {
-+    if (m_windowedWidget) {
++    if (m_floatingWidget) {
 +        standalone->setChecked(true);
-+    } else if (isFloating()) {
++    } else if (isFloating() && detach) {
          detach->setChecked(true);
      } else if (m_docking_area == Qt::BottomDockWidgetArea)
          bottom->setChecked(true);
-@@ -140,6 +191,7 @@ void IdealDockWidget::contextMenuRequested(const QPoint &point)
+@@ -140,6 +226,7 @@ void IdealDockWidget::contextMenuRequested(const QPoint &point)
      setShortcut->setToolTip(i18n("Use this shortcut to trigger visibility of the toolview."));
  
      menu.addSeparator();
@@ -110,35 +149,19 @@ index 4f63ec150791ed562f8a291bddfbb3e67a68ce60..f0d6db18d2e6e2ae786eddc2f4cabe6a
      QAction* remove = menu.addAction(QIcon::fromTheme(QStringLiteral("dialog-close")), i18n("Remove Toolview"));
  
      QAction* triggered = menu.exec(senderWidget->mapToGlobal(point));
-@@ -176,13 +228,34 @@ void IdealDockWidget::contextMenuRequested(const QPoint &point)
+@@ -176,13 +263,18 @@ void IdealDockWidget::contextMenuRequested(const QPoint &point)
  
              return;
          } else if ( triggered == detach ) {
 -            setFloating(true);
 -            m_area->raiseToolView(m_view);
-+            if (!m_windowedWidget && !isFloating()) {
++            if (!m_floatingWidget && !isFloating()) {
 +                setFloating(true);
 +                m_area->raiseToolView(m_view);
-+#ifdef Q_OS_MACOS
-+                unfloat(this, true);
-+#endif
 +            }
 +            return;
-+        } else if ( triggered == standalone && !m_windowedWidget) {
-+            if (!isFloating()) {
-+                setFloating(true);
-+                m_area->raiseToolView(m_view);
-+            }
-+            if (auto w = widget()) {
-+                // turn into top-level window
-+                qCWarning(SUBLIME) << "reparenting" << this << "->" << w << "away from" << w->parent();
-+                m_windowedWidget = w;
-+                w->setParent(nullptr);
-+                w->setWindowFlags(Qt::Window);
-+                w->show();
-+                connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &IdealDockWidget::aboutToShutdown );
-+                close();
-+            }
++        } else if ( triggered == standalone ) {
++            makeStandaloneWindow();
              return;
          }
  
@@ -148,7 +171,7 @@ index 4f63ec150791ed562f8a291bddfbb3e67a68ce60..f0d6db18d2e6e2ae786eddc2f4cabe6a
          }
  
          Sublime::Position pos;
-@@ -197,9 +270,11 @@ void IdealDockWidget::contextMenuRequested(const QPoint &point)
+@@ -197,9 +289,11 @@ void IdealDockWidget::contextMenuRequested(const QPoint &point)
  
          Area *area = m_area;
          View *view = m_view;
@@ -165,16 +188,28 @@ index 4f63ec150791ed562f8a291bddfbb3e67a68ce60..f0d6db18d2e6e2ae786eddc2f4cabe6a
      }
  }
 diff --git a/kdevplatform/sublime/idealdockwidget.h b/kdevplatform/sublime/idealdockwidget.h
-index 5842080b045e850c9ce8b9140f6e5e6ac07a5a32..6cf211cde64fbe6ac257f7df2989b8979c5cb4ca 100644
+index 5842080b045e850c9ce8b9140f6e5e6ac07a5a32..f0753e0e2c72e3f3cc2144357c410e7deb491292 100644
 --- a/kdevplatform/sublime/idealdockwidget.h
 +++ b/kdevplatform/sublime/idealdockwidget.h
-@@ -53,13 +53,17 @@ Q_SIGNALS:
+@@ -44,6 +44,10 @@ public:
+     Qt::DockWidgetArea dockWidgetArea() const;
+     void setDockWidgetArea(Qt::DockWidgetArea dockingArea);
+ 
++    void setFloating(bool floating);
++    void setFloatsAsStandalone(bool standalone);
++    bool floatsAsStandalone();
++
+ public Q_SLOTS:
+     /// The IdealToolButton also connects to this slot to show the same context menu.
+     void contextMenuRequested(const QPoint &point);
+@@ -53,13 +57,19 @@ Q_SIGNALS:
  
  private Q_SLOTS:
      void slotRemove();
 +    void aboutToShutdown();
  
  private:
++    Q_INVOKABLE void makeStandaloneWindow();
 +    void reDockWidget(bool signalClose);
 +
      Qt::Orientation m_orientation;
@@ -182,7 +217,8 @@ index 5842080b045e850c9ce8b9140f6e5e6ac07a5a32..6cf211cde64fbe6ac257f7df2989b897
      View *m_view;
      Qt::DockWidgetArea m_docking_area;
      IdealController *m_controller;
-+    QWidget *m_windowedWidget;
++    QWidget *m_floatingWidget;
++    bool m_floatsAsStandalone;
  };
  
  }
