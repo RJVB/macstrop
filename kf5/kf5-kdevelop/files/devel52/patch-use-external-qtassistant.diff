@@ -2,74 +2,52 @@ diff --git kdevplatform/interfaces/idocumentation.h kdevplatform/interfaces/idoc
 index 3add12403520ca1d65ebca7bb4df3be93d9b4ead..c03b3a1279ebf998de94b0718ef70d8d965a9896 100644
 --- kdevplatform/interfaces/idocumentation.h
 +++ kdevplatform/interfaces/idocumentation.h
-@@ -61,6 +61,8 @@ public:
+@@ -61,6 +61,13 @@ public:
  
      virtual IDocumentationProvider* provider() const = 0;
  
++    /** Documentation can override this method if it supports using an external browser.
++     * The method should trigger the external browser and return true in that case,
++     * or otherwise return false. When using an external browser the documentation
++     * toolview is not sollicited at all (i.e. it will not open nor be added to a toolbar).
++     */
 +    virtual bool viewInExternalBrowser() { return false; }
 +
  Q_SIGNALS:
      void descriptionChanged();
  };
-diff --git kdevplatform/documentation/documentationview.cpp kdevplatform/documentation/documentationview.cpp
-index 18e58c34be8a11c901f00976c0616d256bbfb226..180ececff5af9f57e71276ef1186833966a3f437 100644
---- kdevplatform/documentation/documentationview.cpp
-+++ kdevplatform/documentation/documentationview.cpp
-@@ -206,12 +247,17 @@ void DocumentationView::changedSelection(const QModelIndex& idx)
-     }
- }
- 
--void DocumentationView::showDocumentation(const IDocumentation::Ptr& doc)
-+bool DocumentationView::showDocumentation(const IDocumentation::Ptr& doc)
- {
-     qCDebug(DOCUMENTATION) << "showing" << doc->name();
- 
-     addHistory(doc);
--    updateView();
-+    if (!doc->viewInExternalBrowser()) {
-+        updateView();
-+        return true;
-+    } else {
-+        return false;
-+    }
- }
- 
- void DocumentationView::addHistory(const IDocumentation::Ptr& doc)
-diff --git kdevplatform/documentation/documentationview.h kdevplatform/documentation/documentationview.h
-index 8d69bb483cf5d01fb19aad196612523b1ecb3f30..9c50b34b12681e3971dfe247dc71196219040bda 100644
---- kdevplatform/documentation/documentationview.h
-+++ kdevplatform/documentation/documentationview.h
-@@ -41,7 +41,7 @@ class KDEVPLATFORMDOCUMENTATION_EXPORT DocumentationView : public QWidget
- public:
-     DocumentationView(QWidget* parent, ProvidersModel* m);
- 
--    void showDocumentation(const KDevelop::IDocumentation::Ptr& doc);
-+    bool showDocumentation(const KDevelop::IDocumentation::Ptr& doc);
- 
- public:
-     QList<QAction*> contextMenuActions() const;
 diff --git kdevplatform/shell/documentationcontroller.cpp kdevplatform/shell/documentationcontroller.cpp
 index 242e90911a200aa4b27aa7d82587ad83dfc17266..0ff82436e528f59edba0e9ae58407b3b67a76653 100644
 --- kdevplatform/shell/documentationcontroller.cpp
 +++ kdevplatform/shell/documentationcontroller.cpp
-@@ -222,7 +222,8 @@ QList< IDocumentationProvider* > DocumentationController::documentationProviders
+@@ -222,18 +222,20 @@ QList< IDocumentationProvider* > DocumentationController::documentationProviders
  
  void KDevelop::DocumentationController::showDocumentation(const IDocumentation::Ptr& doc)
  {
 -    QWidget* w = ICore::self()->uiController()->findToolView(i18n("Documentation"), m_factory, KDevelop::IUiController::CreateAndRaise);
-+    // let the toolview decide whether it needs to be raised once done
-+    QWidget* w = ICore::self()->uiController()->findToolView(i18n("Documentation"), m_factory, KDevelop::IUiController::Create);
-     if(!w) {
-         qCWarning(SHELL) << "Could not add documentation toolview";
-         return;
-@@ -233,7 +234,9 @@ void KDevelop::DocumentationController::showDocumentation(const IDocumentation::
-         qCWarning(SHELL) << "Could not cast toolview" << w << "to DocumentationView class!";
-         return;
+-    if(!w) {
+-        qCWarning(SHELL) << "Could not add documentation toolview";
+-        return;
+-    }
++    if (!doc->viewInExternalBrowser()) {
++        QWidget* w = ICore::self()->uiController()->findToolView(i18n("Documentation"), m_factory, KDevelop::IUiController::CreateAndRaise);
++        if(!w) {
++            qCWarning(SHELL) << "Could not add documentation toolview";
++            return;
++        }
+ 
+-    DocumentationView* view = dynamic_cast<DocumentationView*>(w);
+-    if( !view ) {
+-        qCWarning(SHELL) << "Could not cast toolview" << w << "to DocumentationView class!";
+-        return;
++        DocumentationView* view = dynamic_cast<DocumentationView*>(w);
++        if( !view ) {
++            qCWarning(SHELL) << "Could not cast toolview" << w << "to DocumentationView class!";
++            return;
++        }
++        view->showDocumentation(doc);
      }
 -    view->showDocumentation(doc);
-+    if (view->showDocumentation(doc)) {
-+        ICore::self()->uiController()->raiseToolView(view);
-+    }
  }
  
  void DocumentationController::changedDocumentationProviders()
@@ -316,6 +294,44 @@ index 9c76abd406..e78ae58de9 100644
  };
  
  #endif // QTHELPPLUGIN_H
+diff --git plugins/qthelp/qthelpdocumentation.h plugins/qthelp/qthelpdocumentation.h
+index e649bf79b864b20fe3afa58fcc4db54ef36f338e..158b3923690f7eaaf5b61449c65cd3e2372528ca 100644
+--- plugins/qthelp/qthelpdocumentation.h
++++ plugins/qthelp/qthelpdocumentation.h
+@@ -54,6 +56,8 @@ class QtHelpDocumentation : public KDevelop::IDocumentation
+ 
+         static QtHelpProviderAbstract* s_provider;
+ 
++        bool viewInExternalBrowser() override;
++
+     public Q_SLOTS:
+         void viewContextMenuRequested(const QPoint& pos);
+ 
+diff --git plugins/qthelp/qthelpdocumentation.cpp plugins/qthelp/qthelpdocumentation.cpp
+index 19613339d01531b1f7716a9a8e0c2f212bdc856c..4d744ffab2e23b5142db63b37bbc7787bc4c04ad 100644
+--- plugins/qthelp/qthelpdocumentation.cpp
++++ plugins/qthelp/qthelpdocumentation.cpp
+@@ -300,6 +494,20 @@ IDocumentationProvider* QtHelpDocumentation::provider() const
+     return m_provider;
+ }
+ 
++bool QtHelpDocumentation::viewInExternalBrowser()
++{
++    if (m_provider->useExternalViewer()) {
++        const QUrl url(m_current.value());
++        const QByteArray command = QByteArrayLiteral("setSource ")
++            + url.toString().toUtf8() + QByteArrayLiteral("\n");
++        m_provider->externalViewerCommand(command);
++        m_provider->externalViewerCommand("show contents\n");
++        m_provider->externalViewerCommand("syncContents\n");
++        return true;
++    }
++    return false;
++}
++
+ QtHelpAlternativeLink::QtHelpAlternativeLink(const QString& name, const QtHelpDocumentation* doc, QObject* parent)
+     : QAction(name, parent), mDoc(doc), mName(name)
+ {
 diff --git plugins/qthelp/qthelpproviderabstract.cpp plugins/qthelp/qthelpproviderabstract.cpp
 index f2cc413ef891fcabe295595816a8fe02c4f0488f..f1b201885b45a25f70c00882763e4ac65fe9744a 100644
 --- plugins/qthelp/qthelpproviderabstract.cpp
@@ -442,54 +458,30 @@ index f2cc413ef891fcabe295595816a8fe02c4f0488f..f1b201885b45a25f70c00882763e4ac6
  IDocumentation::Ptr QtHelpProviderAbstract::documentationForDeclaration(Declaration* dec) const
  {
      QtHelpDocumentation::s_provider = const_cast<QtHelpProviderAbstract*>(this);
-@@ -70,8 +160,22 @@ IDocumentation::Ptr QtHelpProviderAbstract::documentationForDeclaration(Declarat
-         if (!id.isEmpty()) {
-             QMap<QString, QUrl> links = m_engine.linksForIdentifier(id);
- 
--            if(!links.isEmpty())
-+            if (!links.isEmpty()) {
-+//                 if (externalViewer()) {
-+//                     QByteArray ba;
-+//                     const auto urls = links.values();
-+//                     foreach (const auto url, urls) {
-+//                         if (!url.isEmpty()) {
-+//                             ba.append("setSource " + url.toString().toUtf8() + "\n");
-+//                         }
-+//                     }
-+//                     qCDebug(QTHELP) << Q_FUNC_INFO << "Id=" << id << "links=" << links << "->" << ba;
-+//                     externalViewerCommand(ba);
-+//                     externalViewerCommand("show contents\n");
-+//                     externalViewerCommand("syncContents\n");
-+//                 }
-                 return IDocumentation::Ptr(new QtHelpDocumentation(id, links));
-+            }
-         }
-     }
- 
-@@ -88,7 +192,21 @@ IDocumentation::Ptr QtHelpProviderAbstract::documentationForIndex(const QModelIn
+@@ -88,7 +178,21 @@ IDocumentation::Ptr QtHelpProviderAbstract::documentationForIndex(const QModelIn
  {
      QtHelpDocumentation::s_provider = const_cast<QtHelpProviderAbstract*>(this);
      QString name=idx.data(Qt::DisplayRole).toString();
 -    return IDocumentation::Ptr(new QtHelpDocumentation(name, m_engine.indexModel()->linksForKeyword(name)));
 +    QMap<QString, QUrl> links = m_engine.indexModel()->linksForKeyword(name);
-+    if(!links.isEmpty() && externalViewer()) {
-+        QByteArray ba;
-+        const auto urls = links.values();
-+        foreach (const auto url, urls) {
-+            if (!url.isEmpty()) {
-+                ba.append("setSource " + url.toString().toUtf8() + "\n");
-+                ba.append(QLatin1String("show contents\n"));
-+            }
-+        }
-+        qCWarning(QTHELP) << Q_FUNC_INFO << "name=" << name << "->" << ba;
-+        externalViewerCommand(ba);
-+        externalViewerCommand("syncContents\n");
-+    }
++//     if(!links.isEmpty() && externalViewer()) {
++//         QByteArray ba;
++//         const auto urls = links.values();
++//         foreach (const auto url, urls) {
++//             if (!url.isEmpty()) {
++//                 ba.append("setSource " + url.toString().toUtf8() + "\n");
++//                 ba.append(QLatin1String("show contents\n"));
++//             }
++//         }
++//         qCWarning(QTHELP) << Q_FUNC_INFO << "name=" << name << "->" << ba;
++//         externalViewerCommand(ba);
++//         externalViewerCommand("syncContents\n");
++//     }
 +    return IDocumentation::Ptr(new QtHelpDocumentation(name, links));
  }
  
  void QtHelpProviderAbstract::jumpedTo(const QUrl& newUrl) const
-@@ -115,3 +233,5 @@ HelpNetworkAccessManager * QtHelpProviderAbstract::networkAccess() const
+@@ -115,3 +219,5 @@ HelpNetworkAccessManager * QtHelpProviderAbstract::networkAccess() const
  {
      return m_nam;
  }
