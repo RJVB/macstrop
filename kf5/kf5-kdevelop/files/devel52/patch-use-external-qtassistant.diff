@@ -51,8 +51,20 @@ index 242e90911a200aa4b27aa7d82587ad83dfc17266..0ff82436e528f59edba0e9ae58407b3b
  }
  
  void DocumentationController::changedDocumentationProviders()
+diff --git plugins/qthelp/CMakeLists.txt plugins/qthelp/CMakeLists.txt
+index 5a8e6e2d1d3677fd590983d2144c10004fffa184..47ab1a0d41658c4d3a6d69252c5068b0faa3e75b 100644
+--- plugins/qthelp/CMakeLists.txt
++++ plugins/qthelp/CMakeLists.txt
+@@ -10,6 +10,7 @@ set(kdevqthelp_SRCS
+     qthelpproviderabstract.cpp
+     qthelpprovider.cpp
+     qthelpdocumentation.cpp
++    qthelpexternalviewer.cpp
+     qthelpqtdoc.cpp
+     qthelp_config_shared.cpp
+     qthelpconfig.cpp # Configuration module for QtHelp plugin
 diff --git plugins/qthelp/qthelp_config_shared.cpp plugins/qthelp/qthelp_config_shared.cpp
-index 16fa12105e..4e4af92a37 100644
+index 16fa12105e24446255b81efe41fa4195ff02aafe..4e4af92a375e1e3eaef4e815ee9c4bfa777fac7c 100644
 --- plugins/qthelp/qthelp_config_shared.cpp
 +++ plugins/qthelp/qthelp_config_shared.cpp
 @@ -25,7 +25,7 @@
@@ -85,7 +97,7 @@ index 16fa12105e..4e4af92a37 100644
 +    cg.writeEntry("useExternalViewer", extViewer);
  }
 diff --git plugins/qthelp/qthelp_config_shared.h plugins/qthelp/qthelp_config_shared.h
-index dc3cd684ba..fbe11f25f8 100644
+index dc3cd684ba92d77c2a014c344ea9f85d86c13b29..fbe11f25f847634a7cd134d33db8d50caefd3401 100644
 --- plugins/qthelp/qthelp_config_shared.h
 +++ plugins/qthelp/qthelp_config_shared.h
 @@ -28,13 +28,17 @@ void qtHelpReadConfig(QStringList& iconList,
@@ -109,7 +121,7 @@ index dc3cd684ba..fbe11f25f8 100644
  
  #endif // QTHELP_CONFIG_SHARED_H
 diff --git plugins/qthelp/qthelpconfig.cpp plugins/qthelp/qthelpconfig.cpp
-index 10bc17df5c..7bd5160a0e 100644
+index 10bc17df5ce145f932fae1539943b75e62b41616..7bd5160a0eb41029dd7d2abee7730a2708e1b353 100644
 --- plugins/qthelp/qthelpconfig.cpp
 +++ plugins/qthelp/qthelpconfig.cpp
 @@ -119,6 +119,10 @@ QtHelpConfig::QtHelpConfig(QtHelpPlugin* plugin, QWidget *parent)
@@ -162,7 +174,7 @@ index 10bc17df5c..7bd5160a0e 100644
      emit changed();
  }
 diff --git plugins/qthelp/qthelpconfig.ui plugins/qthelp/qthelpconfig.ui
-index bc04f80754..b7e67df650 100644
+index bc04f8075468a618c08448d818c70734d67c3252..b7e67df6508947fa0b960364a4234c91357587ad 100644
 --- plugins/qthelp/qthelpconfig.ui
 +++ plugins/qthelp/qthelpconfig.ui
 @@ -48,14 +48,14 @@
@@ -236,11 +248,235 @@ index bc04f80754..b7e67df650 100644
   </customwidgets>
   <resources/>
   <connections/>
+diff --git plugins/qthelp/qthelpdocumentation.cpp plugins/qthelp/qthelpdocumentation.cpp
+index 19613339d01531b1f7716a9a8e0c2f212bdc856c..fd16d2f66bf9e29c99b8c066339db7c2b1e8f33f 100644
+--- plugins/qthelp/qthelpdocumentation.cpp
++++ plugins/qthelp/qthelpdocumentation.cpp
+@@ -37,6 +37,7 @@
+ #include <documentation/standarddocumentationview.h>
+ #include "qthelpnetwork.h"
+ #include "qthelpproviderabstract.h"
++#include "qthelpexternalviewer.h"
+ 
+ using namespace KDevelop;
+ 
+@@ -300,6 +301,20 @@ IDocumentationProvider* QtHelpDocumentation::provider() const
+     return m_provider;
+ }
+ 
++bool QtHelpDocumentation::viewInExternalBrowser()
++{
++    if (QtHelpExternalViewer::useExternalViewer()) {
++        const QUrl url(m_current.value());
++        const QByteArray command = QByteArrayLiteral("setSource ")
++            + url.toString().toUtf8() + QByteArrayLiteral("\n");
++        QtHelpExternalViewer::externalViewerCommand(command);
++        QtHelpExternalViewer::externalViewerCommand("show contents\n");
++        QtHelpExternalViewer::externalViewerCommand("syncContents\n");
++        return true;
++    }
++    return false;
++}
++
+ QtHelpAlternativeLink::QtHelpAlternativeLink(const QString& name, const QtHelpDocumentation* doc, QObject* parent)
+     : QAction(name, parent), mDoc(doc), mName(name)
+ {
+diff --git plugins/qthelp/qthelpdocumentation.h plugins/qthelp/qthelpdocumentation.h
+index e649bf79b864b20fe3afa58fcc4db54ef36f338e..ee6a377486ca281dc7fc8c942061cb0bf3ff2640 100644
+--- plugins/qthelp/qthelpdocumentation.h
++++ plugins/qthelp/qthelpdocumentation.h
+@@ -54,6 +54,8 @@ class QtHelpDocumentation : public KDevelop::IDocumentation
+ 
+         static QtHelpProviderAbstract* s_provider;
+ 
++        bool viewInExternalBrowser() override;
++
+     public Q_SLOTS:
+         void viewContextMenuRequested(const QPoint& pos);
+ 
+diff --git plugins/qthelp/qthelpexternalviewer.cpp plugins/qthelp/qthelpexternalviewer.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..b3c0ac133dd9a15e941236762b166387ab43d9a9
+--- /dev/null
++++ plugins/qthelp/qthelpexternalviewer.cpp
+@@ -0,0 +1,102 @@
++/*  This file is part of KDevelop
++    Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>
++
++    This library is free software; you can redistribute it and/or
++    modify it under the terms of the GNU Library General Public
++    License as published by the Free Software Foundation; either
++    version 2 of the License, or (at your option) any later version.
++
++    This library is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++    Library General Public License for more details.
++
++    You should have received a copy of the GNU Library General Public License
++    along with this library; see the file COPYING.LIB.  If not, write to
++    the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++    Boston, MA 02110-1301, USA.
++*/
++
++#include "qthelpexternalviewer.h"
++
++#include <QString>
++#include <QStandardPaths>
++#include <QProcess>
++#include <QApplication>
++
++#include "debug.h"
++
++using namespace KDevelop;
++
++QtHelpExternalViewer* QtHelpExternalViewer::s_externalViewerProcess = nullptr;
++bool QtHelpExternalViewer::s_useExternalViewer = false;
++
++QtHelpExternalViewer::QtHelpExternalViewer(QObject *parent)
++    : QProcess(parent)
++{
++    connect(this, static_cast<void(QtHelpExternalViewer::*)(int, QProcess::ExitStatus)>(&QtHelpExternalViewer::finished),
++            &QtHelpExternalViewer::externalViewerExit);
++}
++
++QtHelpExternalViewer::~QtHelpExternalViewer()
++{
++#ifdef Q_OS_UNIX
++    qint64 pid = processId();
++    if (pid > 0) {
++        QProcess* hup = new QProcess(this);
++        hup->startDetached(QString::fromLatin1("kill -1 %1").arg(pid));
++        hup->waitForFinished(500);
++    }
++    QProcess::waitForFinished(500);
++#else
++    terminate();
++#endif
++}
++
++void QtHelpExternalViewer::externalViewerExit(int exitCode, QProcess::ExitStatus exitStatus)
++{
++    if (this == s_externalViewerProcess) {
++        qCDebug(QTHELP) << "externalViewer" << this << "has exited with code"
++            << exitCode << "and status" << exitStatus;
++        deleteLater();
++        s_externalViewerProcess = Q_NULLPTR;
++    }
++}
++
++void QtHelpExternalViewer::setUseExternalViewer(const bool extViewer)
++{
++    s_useExternalViewer = extViewer;
++}
++
++QtHelpExternalViewer* QtHelpExternalViewer::instance()
++{
++    if (s_useExternalViewer && !s_externalViewerProcess) {
++        s_externalViewerProcess = new QtHelpExternalViewer(qApp);
++        QStringList args = {"-enableRemoteControl"};
++        s_externalViewerProcess->start(QStandardPaths::findExecutable(QLatin1String("kdevelop-qthelp-viewer")),
++            args, QIODevice::WriteOnly|QIODevice::Append);
++        if (!s_externalViewerProcess->waitForStarted()) {
++            s_externalViewerProcess->deleteLater();
++            s_externalViewerProcess = NULL;
++        }
++    }
++    return s_externalViewerProcess;
++}
++
++bool QtHelpExternalViewer::externalViewerCommand(const QByteArray& command)
++{
++    if (instance()) {
++        return s_externalViewerProcess->write(command) >= 0;
++    } else {
++        return false;
++    }
++}
++
++bool QtHelpExternalViewer::externalViewerCommand(const char* command)
++{
++    if (instance()) {
++        return s_externalViewerProcess->write(command) >= 0;
++    } else {
++        return false;
++    }
++}
+diff --git plugins/qthelp/qthelpexternalviewer.h plugins/qthelp/qthelpexternalviewer.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..a51812b26ebc67139f73fe10a73f62c83bcc47d2
+--- /dev/null
++++ plugins/qthelp/qthelpexternalviewer.h
+@@ -0,0 +1,56 @@
++/*  This file is part of KDevelop
++    Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>
++
++    This library is free software; you can redistribute it and/or
++    modify it under the terms of the GNU Library General Public
++    License as published by the Free Software Foundation; either
++    version 2 of the License, or (at your option) any later version.
++
++    This library is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++    Library General Public License for more details.
++
++    You should have received a copy of the GNU Library General Public License
++    along with this library; see the file COPYING.LIB.  If not, write to
++    the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++    Boston, MA 02110-1301, USA.
++*/
++
++#ifndef QTHELPEXTERNALVIEWER_H
++#define QTHELPEXTERNALVIEWER_H
++
++#include <QProcess>
++#include <QByteArray>
++#include <QObject>
++
++#include "debug.h"
++
++namespace KDevelop{
++
++// subclass QProcess so we can be our own exit watchdog
++class QtHelpExternalViewer : public QProcess
++{
++    Q_OBJECT
++public:
++    QtHelpExternalViewer(QObject* parent);
++    ~QtHelpExternalViewer();
++
++    static QtHelpExternalViewer* instance();
++
++    static bool externalViewerCommand(const QByteArray& command);
++    static bool externalViewerCommand(const char* command);
++    static void setUseExternalViewer(const bool extViewer);
++    static bool useExternalViewer() { return s_useExternalViewer; }
++
++public Q_SLOTS:
++    void externalViewerExit(int exitCode, QProcess::ExitStatus exitStatus);
++
++private:
++    static QtHelpExternalViewer* s_externalViewerProcess;
++    static bool s_useExternalViewer;
++};
++
++}
++
++#endif //QTHELPEXTERNALVIEWER_H
 diff --git plugins/qthelp/qthelpplugin.cpp plugins/qthelp/qthelpplugin.cpp
-index 02103b6a23..f71fd4eb0a 100644
+index 02103b6a23ff520c813fd9eaa2047652cbc10481..0e54f78ba9370301aa3f820529839f606adaa067 100644
 --- plugins/qthelp/qthelpplugin.cpp
 +++ plugins/qthelp/qthelpplugin.cpp
-@@ -39,6 +39,7 @@ QtHelpPlugin::QtHelpPlugin(QObject* parent, const QVariantList& args)
+@@ -26,6 +26,7 @@
+ #include <QDirIterator>
+ #include "qthelpprovider.h"
+ #include "qthelpqtdoc.h"
++#include "qthelpexternalviewer.h"
+ #include "qthelp_config_shared.h"
+ #include "debug.h"
+ #include "qthelpconfig.h"
+@@ -39,6 +40,7 @@ QtHelpPlugin::QtHelpPlugin(QObject* parent, const QVariantList& args)
      , m_qtHelpProviders()
      , m_qtDoc(new QtHelpQtDoc(this, QVariantList()))
      , m_loadSystemQtDoc(false)
@@ -248,7 +484,7 @@ index 02103b6a23..f71fd4eb0a 100644
  {
      Q_UNUSED(args);
      s_plugin = this;
-@@ -55,11 +56,12 @@ void QtHelpPlugin::readConfig()
+@@ -55,11 +57,12 @@ void QtHelpPlugin::readConfig()
  {
      QStringList iconList, nameList, pathList, ghnsList;
      QString searchDir;
@@ -258,11 +494,11 @@ index 02103b6a23..f71fd4eb0a 100644
      searchHelpDirectory(pathList, nameList, iconList, searchDir);
      loadQtHelpProvider(pathList, nameList, iconList);
      loadQtDocumentation(m_loadSystemQtDoc);
-+    m_qtDoc->setUseExternalViewer(m_useExternalViewer);
++    KDevelop::QtHelpExternalViewer::setUseExternalViewer(m_useExternalViewer);
  
      emit changedProvidersList();
  }
-@@ -159,6 +161,11 @@ bool QtHelpPlugin::isQtHelpQtDocLoaded() const
+@@ -159,6 +162,11 @@ bool QtHelpPlugin::isQtHelpQtDocLoaded() const
      return m_loadSystemQtDoc;
  }
  
@@ -275,7 +511,7 @@ index 02103b6a23..f71fd4eb0a 100644
  {
      return !m_qtDoc->qchFiles().isEmpty();
 diff --git plugins/qthelp/qthelpplugin.h plugins/qthelp/qthelpplugin.h
-index 9c76abd406..e78ae58de9 100644
+index 9c76abd40629a60649cdbe5ecb7ff7705d6a49f6..e78ae58de911b8409278775c610baf3d15ac4a64 100644
 --- plugins/qthelp/qthelpplugin.h
 +++ plugins/qthelp/qthelpplugin.h
 @@ -42,6 +42,7 @@ class QtHelpPlugin : public KDevelop::IPlugin, public KDevelop::IDocumentationPr
@@ -294,237 +530,20 @@ index 9c76abd406..e78ae58de9 100644
  };
  
  #endif // QTHELPPLUGIN_H
-diff --git plugins/qthelp/qthelpdocumentation.h plugins/qthelp/qthelpdocumentation.h
-index e649bf79b864b20fe3afa58fcc4db54ef36f338e..158b3923690f7eaaf5b61449c65cd3e2372528ca 100644
---- plugins/qthelp/qthelpdocumentation.h
-+++ plugins/qthelp/qthelpdocumentation.h
-@@ -54,6 +56,8 @@ class QtHelpDocumentation : public KDevelop::IDocumentation
- 
-         static QtHelpProviderAbstract* s_provider;
- 
-+        bool viewInExternalBrowser() override;
-+
-     public Q_SLOTS:
-         void viewContextMenuRequested(const QPoint& pos);
- 
-diff --git plugins/qthelp/qthelpdocumentation.cpp plugins/qthelp/qthelpdocumentation.cpp
-index 19613339d01531b1f7716a9a8e0c2f212bdc856c..4d744ffab2e23b5142db63b37bbc7787bc4c04ad 100644
---- plugins/qthelp/qthelpdocumentation.cpp
-+++ plugins/qthelp/qthelpdocumentation.cpp
-@@ -300,6 +494,20 @@ IDocumentationProvider* QtHelpDocumentation::provider() const
-     return m_provider;
- }
- 
-+bool QtHelpDocumentation::viewInExternalBrowser()
-+{
-+    if (m_provider->useExternalViewer()) {
-+        const QUrl url(m_current.value());
-+        const QByteArray command = QByteArrayLiteral("setSource ")
-+            + url.toString().toUtf8() + QByteArrayLiteral("\n");
-+        m_provider->externalViewerCommand(command);
-+        m_provider->externalViewerCommand("show contents\n");
-+        m_provider->externalViewerCommand("syncContents\n");
-+        return true;
-+    }
-+    return false;
-+}
-+
- QtHelpAlternativeLink::QtHelpAlternativeLink(const QString& name, const QtHelpDocumentation* doc, QObject* parent)
-     : QAction(name, parent), mDoc(doc), mName(name)
- {
-diff --git plugins/qthelp/qthelpproviderabstract.cpp plugins/qthelp/qthelpproviderabstract.cpp
-index f2cc413ef891fcabe295595816a8fe02c4f0488f..f1b201885b45a25f70c00882763e4ac65fe9744a 100644
---- plugins/qthelp/qthelpproviderabstract.cpp
-+++ plugins/qthelp/qthelpproviderabstract.cpp
-@@ -23,9 +23,14 @@
- 
- #include <QHelpIndexModel>
- #include <QHelpContentModel>
-+#include <QHelpSearchEngine>
- 
- #include <QStandardPaths>
- 
-+#include <QString>
-+#include <QProcess>
-+#include <QApplication>
-+
- #include <language/duchain/duchain.h>
- #include <language/duchain/declaration.h>
- #include <language/duchain/duchainlock.h>
-@@ -37,6 +42,48 @@
- 
- using namespace KDevelop;
- 
-+// subclass QProcess so we can be our own exit watchdog
-+class ExternalViewerProcess : public QProcess
-+{
-+    Q_OBJECT
-+public:
-+    ExternalViewerProcess(QObject* parent);
-+    ~ExternalViewerProcess()
-+    {
-+#ifdef Q_OS_UNIX
-+        qint64 pid = processId();
-+        if (pid > 0) {
-+            QProcess *hup = new QProcess(this);
-+            hup->startDetached(QString::fromLatin1("kill -1 %1").arg(pid));
-+            hup->waitForFinished(500);
-+        }
-+        QProcess::waitForFinished(500);
-+#endif
-+    }
-+public Q_SLOTS:
-+    void externalViewerExit(int exitCode, QProcess::ExitStatus exitStatus);
-+};
-+
-+ExternalViewerProcess* QtHelpProviderAbstract::m_externalViewerProcess = Q_NULLPTR;
-+bool QtHelpProviderAbstract::s_useExternalViewer = false;
-+
-+ExternalViewerProcess::ExternalViewerProcess(QObject *parent)
-+    : QProcess(parent)
-+{
-+    connect(this, static_cast<void(ExternalViewerProcess::*)(int, QProcess::ExitStatus)>(&ExternalViewerProcess::finished),
-+            &ExternalViewerProcess::externalViewerExit);
-+}
-+
-+void ExternalViewerProcess::externalViewerExit(int exitCode, QProcess::ExitStatus exitStatus)
-+{
-+    if (this == QtHelpProviderAbstract::m_externalViewerProcess) {
-+        qCDebug(QTHELP) << Q_FUNC_INFO << "externalViewer" << this << "has exited with code"
-+            << exitCode << "and status" << exitStatus;
-+        deleteLater();
-+        QtHelpProviderAbstract::m_externalViewerProcess = Q_NULLPTR;
-+    }
-+}
-+
- QtHelpProviderAbstract::QtHelpProviderAbstract(QObject *parent, const QString &collectionFileName, const QVariantList &args)
-     : QObject(parent)
-     , m_engine(QStandardPaths::writableLocation(QStandardPaths::DataLocation)+'/'+collectionFileName)
-@@ -46,13 +93,56 @@ QtHelpProviderAbstract::QtHelpProviderAbstract(QObject *parent, const QString &c
-     if( !m_engine.setupData() ) {
-         qCWarning(QTHELP) << "Couldn't setup QtHelp Collection file";
-     }
-+    s_useExternalViewer = false;
- }
- 
--
- QtHelpProviderAbstract::~QtHelpProviderAbstract()
- {
- }
- 
-+void QtHelpProviderAbstract::setUseExternalViewer(const bool extViewer)
-+{
-+    s_useExternalViewer = extViewer;
-+}
-+
-+ExternalViewerProcess* QtHelpProviderAbstract::externalViewer() const
-+{
-+    // turning off the use of an external help viewer shouldn't terminate
-+    // an already running viewer process, we just stop using it.
-+    if (!s_useExternalViewer) {
-+        return Q_NULLPTR;
-+    }
-+    if (!m_externalViewerProcess) {
-+        m_externalViewerProcess = new ExternalViewerProcess(qApp);
-+        QStringList args = {"-enableRemoteControl"};
-+        m_externalViewerProcess->start(QStandardPaths::findExecutable(QLatin1String("kdevelop-qthelp-viewer")),
-+            args, QIODevice::WriteOnly|QIODevice::Append);
-+        if (!m_externalViewerProcess->waitForStarted()) {
-+            m_externalViewerProcess->deleteLater();
-+            m_externalViewerProcess = NULL;
-+        }
-+    }
-+    return m_externalViewerProcess;
-+}
-+
-+bool QtHelpProviderAbstract::externalViewerCommand(const QByteArray& command) const
-+{
-+    if (externalViewer()) {
-+        return externalViewer()->write(command) >= 0;
-+    } else {
-+        return false;
-+    }
-+}
-+
-+bool QtHelpProviderAbstract::externalViewerCommand(const char* command) const
-+{
-+    if (externalViewer()) {
-+        return externalViewer()->write(command) >= 0;
-+    } else {
-+        return false;
-+    }
-+}
-+
- IDocumentation::Ptr QtHelpProviderAbstract::documentationForDeclaration(Declaration* dec) const
- {
-     QtHelpDocumentation::s_provider = const_cast<QtHelpProviderAbstract*>(this);
-@@ -88,7 +178,21 @@ IDocumentation::Ptr QtHelpProviderAbstract::documentationForIndex(const QModelIn
- {
-     QtHelpDocumentation::s_provider = const_cast<QtHelpProviderAbstract*>(this);
-     QString name=idx.data(Qt::DisplayRole).toString();
--    return IDocumentation::Ptr(new QtHelpDocumentation(name, m_engine.indexModel()->linksForKeyword(name)));
-+    QMap<QString, QUrl> links = m_engine.indexModel()->linksForKeyword(name);
-+//     if(!links.isEmpty() && externalViewer()) {
-+//         QByteArray ba;
-+//         const auto urls = links.values();
-+//         foreach (const auto url, urls) {
-+//             if (!url.isEmpty()) {
-+//                 ba.append("setSource " + url.toString().toUtf8() + "\n");
-+//                 ba.append(QLatin1String("show contents\n"));
-+//             }
-+//         }
-+//         qCWarning(QTHELP) << Q_FUNC_INFO << "name=" << name << "->" << ba;
-+//         externalViewerCommand(ba);
-+//         externalViewerCommand("syncContents\n");
-+//     }
-+    return IDocumentation::Ptr(new QtHelpDocumentation(name, links));
- }
- 
- void QtHelpProviderAbstract::jumpedTo(const QUrl& newUrl) const
-@@ -115,3 +219,5 @@ HelpNetworkAccessManager * QtHelpProviderAbstract::networkAccess() const
- {
-     return m_nam;
- }
-+
-+#include "qthelpproviderabstract.moc"
-diff --git plugins/qthelp/qthelpproviderabstract.h plugins/qthelp/qthelpproviderabstract.h
-index 10dad0b87c3ce76225ff88fa86f75f167cbaa80d..b38fe4335f73bbd1aefe14985473d8245f05cc72 100644
---- plugins/qthelp/qthelpproviderabstract.h
-+++ plugins/qthelp/qthelpproviderabstract.h
-@@ -29,6 +29,8 @@
- 
- class HelpNetworkAccessManager;
- 
-+class ExternalViewerProcess;
-+
- class QtHelpProviderAbstract : public QObject, public KDevelop::IDocumentationProvider
- {
-     Q_OBJECT
-@@ -46,6 +48,12 @@ public:
-     /// @return False in case we failed to load any documentation files, else true
-     bool isValid() const;
- 
-+    ExternalViewerProcess *externalViewer() const;
-+    bool externalViewerCommand(const QByteArray& command) const;
-+    bool externalViewerCommand(const char* command) const;
-+    void setUseExternalViewer(const bool extViewer);
-+    bool useExternalViewer() const { return s_useExternalViewer; }
-+
-     QHelpEngine* engine() { return &m_engine; }
- 
-     HelpNetworkAccessManager* networkAccess() const;
-@@ -56,6 +64,9 @@ Q_SIGNALS:
- protected:
-     QHelpEngine m_engine;
-     HelpNetworkAccessManager* const m_nam;
-+    static bool s_useExternalViewer;
-+    static ExternalViewerProcess* m_externalViewerProcess;
-+    friend class ExternalViewerProcess;
- };
- 
- #endif // QTHELPPROVIDERABSTRACT_H
+diff --git plugins/qthelp/tests/CMakeLists.txt plugins/qthelp/tests/CMakeLists.txt
+index 06c751e8a2c254ba175e827fe9036fe635105d4c..5882a408d7bad627ec55eb8a573f7e3e5166da1b 100644
+--- plugins/qthelp/tests/CMakeLists.txt
++++ plugins/qthelp/tests/CMakeLists.txt
+@@ -8,6 +8,7 @@ set(test_qthelpplugin_SRCS
+     ../qthelpproviderabstract.cpp
+     ../qthelpprovider.cpp
+     ../qthelpdocumentation.cpp
++    ../qthelpexternalviewer.cpp
+     ../qthelpqtdoc.cpp
+     ../qthelp_config_shared.cpp
+     ../qthelpconfig.cpp
 diff --git plugins/qthelp/tests/test_qthelpplugin.cpp plugins/qthelp/tests/test_qthelpplugin.cpp
-index bb47683da0..4d4a1feba8 100644
+index bb47683da08cf1b6ac5d13dd5d5b1fe83b9eebee..4d4a1feba892c6d35f126437a4a14d0eee7a841d 100644
 --- plugins/qthelp/tests/test_qthelpplugin.cpp
 +++ plugins/qthelp/tests/test_qthelpplugin.cpp
 @@ -58,7 +58,7 @@ void TestQtHelpPlugin::init()
