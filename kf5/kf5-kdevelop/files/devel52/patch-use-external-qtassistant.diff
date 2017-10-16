@@ -55,7 +55,7 @@ diff --git plugins/qthelp/CMakeLists.txt plugins/qthelp/CMakeLists.txt
 index 5a8e6e2d1d3677fd590983d2144c10004fffa184..615434b1527c700c5182784998ecf5f1480fb947 100644
 --- plugins/qthelp/CMakeLists.txt
 +++ plugins/qthelp/CMakeLists.txt
-@@ -10,6 +10,7 @@ set(kdevqthelp_SRCS
+@@ -10,12 +15,18 @@ set(kdevqthelp_SRCS
      qthelpproviderabstract.cpp
      qthelpprovider.cpp
      qthelpdocumentation.cpp
@@ -63,6 +63,27 @@ index 5a8e6e2d1d3677fd590983d2144c10004fffa184..615434b1527c700c5182784998ecf5f1
      qthelpqtdoc.cpp
      qthelp_config_shared.cpp
      qthelpconfig.cpp # Configuration module for QtHelp plugin
+     qthelpnetwork.cpp
+     ${kdevqthelp_LOG_SRCS}
+ )
++if(APPLE)
++    set(kdevqthelp_SRCS ${kdevqthelp_SRCS}
++        qthelpexternalassistant_mac.mm
++    )
++endif()
+ 
+ ki18n_wrap_ui(kdevqthelp_SRCS
+     qthelpconfig.ui
+@@ -27,6 +38,9 @@ kdevplatform_add_plugin(kdevqthelp JSON kdevqthelp.json SOURCES ${kdevqthelp_SRC
+ target_link_libraries(kdevqthelp
+     KF5::KCMUtils KF5::I18n KF5::KIOWidgets KF5::TextEditor KF5::IconThemes Qt5::Help KF5::NewStuff
+     KDev::Language KDev::Documentation KDev::Interfaces)
++if(APPLE)
++    target_link_libraries(kdevqthelp "-framework AppKit")
++endif()
+ 
+ if(BUILD_TESTING)
+     add_subdirectory(tests)
 diff --git plugins/qthelp/qthelp_config_shared.cpp plugins/qthelp/qthelp_config_shared.cpp
 index 16fa12105e24446255b81efe41fa4195ff02aafe..4e4af92a375e1e3eaef4e815ee9c4bfa777fac7c 100644
 --- plugins/qthelp/qthelp_config_shared.cpp
@@ -146,15 +167,15 @@ diff --git plugins/qthelp/qthelpconfig.cpp plugins/qthelp/qthelpconfig.cpp
 index 10bc17df5ce145f932fae1539943b75e62b41616..bb8c74229c64326b5c3b503812445c69c722f840 100644
 --- plugins/qthelp/qthelpconfig.cpp
 +++ plugins/qthelp/qthelpconfig.cpp
-@@ -26,6 +26,7 @@
- #include <QToolButton>
- #include <QHeaderView>
- #include <QPointer>
-+#include <QFileDialog>
+@@ -36,6 +36,7 @@
+ #include "qthelp_config_shared.h"
+ #include "debug.h"
+ #include "qthelpplugin.h"
++#include "qthelpexternalassistant.h"
  
- #include <KMessageBox>
- #include <KLocalizedString>
-@@ -119,6 +120,23 @@ QtHelpConfig::QtHelpConfig(QtHelpPlugin* plugin, QWidget *parent)
+ enum Column
+ {
+@@ -119,6 +120,27 @@ QtHelpConfig::QtHelpConfig(QtHelpPlugin* plugin, QWidget *parent)
      m_configWidget->qchSearchDir->setMode(KFile::Directory);
      connect(m_configWidget->qchSearchDir, &KUrlRequester::textChanged,
              this, &QtHelpConfig::changed);
@@ -165,20 +186,24 @@ index 10bc17df5ce145f932fae1539943b75e62b41616..bb8c74229c64326b5c3b503812445c69
 +    m_configWidget->externalViewerExecutable->setToolTip(
 +        i18n("The path to the Assistant copy to use as an external viewer,\n"
 +            "can also be a script calling the Assistant or any other\n"
-+            "application that understands the same remote control protocol."));
-+    m_configWidget->externalViewerExecutable->setPlaceholderText(
-+        i18n("path to Qt Assistant"));
++            "application that understands the same remote control protocol.\n"
++            "KDevelop will try to find the application when this is not set.\n"
++            "It is your responsibility to ensure that the viewer is configured\n"
++            "to use a qhc help collection matching KDevelop's collection!"));
++    QString currentExtViewer;
++    if (KDevelop::QtHelpExternalAssistant::hasExternalViewer(&currentExtViewer)) {
++        m_configWidget->externalViewerExecutable->setPlaceholderText(
++            i18n("path to Qt Assistant (%1)", currentExtViewer));
++    } else {
++        m_configWidget->externalViewerExecutable->setPlaceholderText(
++            i18n("path to Qt Assistant"));
++    }
 +    connect(m_configWidget->externalViewerExecutable, &KUrlRequester::textChanged,
 +            this, &QtHelpConfig::changed);
-+#ifdef Q_OS_MACOS
-+    // needed for selecting app bundles
-+    m_configWidget->externalViewerExecutable->setFileMode(
-+        m_configWidget->externalViewerExecutable->fileMode() | QFileDialog::Directory);
-+#endif
  
      // Set availability information for QtHelp
      m_configWidget->messageAvailabilityQtDocs->setCloseButtonVisible(false);
-@@ -128,6 +146,8 @@ QtHelpConfig::QtHelpConfig(QtHelpPlugin* plugin, QWidget *parent)
+@@ -128,6 +150,8 @@ QtHelpConfig::QtHelpConfig(QtHelpPlugin* plugin, QWidget *parent)
          m_configWidget->messageAvailabilityQtDocs->setText(
              i18n("The command \"qmake -query\" could not provide a path to a QtHelp file (QCH)."));
          m_configWidget->loadQtDocsCheckBox->setVisible(false);
@@ -187,7 +212,7 @@ index 10bc17df5ce145f932fae1539943b75e62b41616..bb8c74229c64326b5c3b503812445c69
      }
      reset();
  }
-@@ -154,8 +174,10 @@ void QtHelpConfig::apply()
+@@ -154,8 +178,10 @@ void QtHelpConfig::apply()
      }
      QString searchDir = m_configWidget->qchSearchDir->text();
      bool loadQtDoc = m_configWidget->loadQtDocsCheckBox->isChecked();
@@ -199,7 +224,7 @@ index 10bc17df5ce145f932fae1539943b75e62b41616..bb8c74229c64326b5c3b503812445c69
      static_cast<QtHelpPlugin*>(plugin())->readConfig();
  }
  
-@@ -166,7 +188,8 @@ void QtHelpConfig::reset()
+@@ -166,7 +192,8 @@ void QtHelpConfig::reset()
      QStringList iconList, nameList, pathList, ghnsList;
      QString searchDir;
      bool loadQtDoc;
@@ -209,7 +234,7 @@ index 10bc17df5ce145f932fae1539943b75e62b41616..bb8c74229c64326b5c3b503812445c69
  
      const int size = qMin(qMin(iconList.size(), nameList.size()), pathList.size());
      for(int i = 0; i < size; ++i) {
-@@ -175,6 +198,8 @@ void QtHelpConfig::reset()
+@@ -175,6 +202,8 @@ void QtHelpConfig::reset()
      }
      m_configWidget->qchSearchDir->setText(searchDir);
      m_configWidget->loadQtDocsCheckBox->setChecked(loadQtDoc);
@@ -375,9 +400,9 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..5d968428eb0fcb90f86af29d5f5be8f3de95a917
 --- /dev/null
 +++ plugins/qthelp/qthelpexternalassistant.cpp
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,148 @@
 +/*  This file is part of KDevelop
-+    Copyright 2017 Ren� J.V. Bertin <rjvbertin@gmail.com>
++    Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>
 +
 +    This library is free software; you can redistribute it and/or
 +    modify it under the terms of the GNU Library General Public
@@ -402,6 +427,7 @@ index 0000000000000000000000000000000000000000..5d968428eb0fcb90f86af29d5f5be8f3
 +#include <QStandardPaths>
 +#include <QProcess>
 +#include <QApplication>
++#include <QFileInfo>
 +
 +#include "debug.h"
 +
@@ -410,6 +436,7 @@ index 0000000000000000000000000000000000000000..5d968428eb0fcb90f86af29d5f5be8f3
 +QtHelpExternalAssistant* QtHelpExternalAssistant::s_instance = nullptr;
 +QProcess* QtHelpExternalAssistant::s_externalViewerProcess = nullptr;
 +bool QtHelpExternalAssistant::s_useExternalViewer = false;
++QString QtHelpExternalAssistant::s_externalViewerExecutable;
 +
 +QtHelpExternalAssistant::QtHelpExternalAssistant(QObject *parent)
 +    : QObject(parent)
@@ -454,16 +481,52 @@ index 0000000000000000000000000000000000000000..5d968428eb0fcb90f86af29d5f5be8f3
 +    s_useExternalViewer = extViewer;
 +}
 +
++void QtHelpExternalAssistant::setExternalViewerExecutable(QString& path)
++{
++    s_externalViewerExecutable = path;
++}
++
++#ifndef Q_OS_MACOS
++bool QtHelpExternalAssistant::hasExternalViewer(QString* path)
++{
++    bool ret = false;
++    if (!s_externalViewerExecutable.isEmpty()) {
++        QFileInfo info(s_externalViewerExecutable);
++        if (info.isExecutable()) {
++            ret = true;
++        } else {
++            qCWarning(QTHELP) << "External viewer" << s_externalViewerExecutable << "is not executable!";
++        }
++        // always return the configured executable path
++        if (path) {
++            *path = s_externalViewerExecutable;
++        }
++    } else if (path) {
++        // look for the application on the current path. The result is not cached so the
++        // lookup is performed only when we can return the result.
++        const QString assistant = QStandardPaths::findExecutable(QLatin1String("assistant"));
++        if (!assistant.isEmpty()) {
++            ret = true;
++            *path = assistant;
++            qCDebug(QTHELP) << "External viewer found at" << assistant;
++        } else {
++            qCWarning(QTHELP) << "External viewer not found!";
++        }
++    }
++    return ret;
++}
++#endif
++
 +QtHelpExternalAssistant* QtHelpExternalAssistant::instance()
 +{
-+    if (s_useExternalViewer && !s_externalViewerProcess) {
++    QString path;
++    if (hasExternalViewer(&path) && !s_externalViewerProcess) {
 +        s_instance = new QtHelpExternalAssistant(qApp);
 +        s_externalViewerProcess = new QProcess();
 +        connect(s_externalViewerProcess, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
 +                s_instance, &QtHelpExternalAssistant::externalViewerExit);
 +        QStringList args = {"-enableRemoteControl"};
-+        s_externalViewerProcess->start(QStandardPaths::findExecutable(QLatin1String("kdevelop-qthelp-viewer")),
-+            args, QIODevice::WriteOnly|QIODevice::Append);
++        s_externalViewerProcess->start(path, args, QIODevice::WriteOnly|QIODevice::Append);
 +        if (!s_externalViewerProcess->waitForStarted()) {
 +            s_externalViewerProcess->deleteLater();
 +            s_externalViewerProcess = nullptr;
@@ -491,7 +554,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..c39ad3dbb9bddb359e95cd4b6d8f89f678c6a7e5
 --- /dev/null
 +++ plugins/qthelp/qthelpexternalassistant.h
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,92 @@
 +/*  This file is part of KDevelop
 +    Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>
 +
@@ -557,6 +620,20 @@ index 0000000000000000000000000000000000000000..c39ad3dbb9bddb359e95cd4b6d8f89f6
 +    static void setUseExternalViewer(bool extViewer);
 +    static bool useExternalViewer() { return s_useExternalViewer; }
 +
++    /**
++     * @brief sets the @param path to the external viewer executable.
++     */
++    static void setExternalViewerExecutable(QString& path);
++    /**
++     * @brief checks if a valid external viewer executable has been
++     * configured; @returns true if this is the case and links can thus
++     * be opened in this viewer instead of in the embedded browser.
++     * 
++     * @param path can be used to obtain the configured path or the
++     * path to the Assistant copy found automatically.
++     */
++    static bool hasExternalViewer(QString* path = nullptr);
++
 +private Q_SLOTS:
 +    void externalViewerExit(int exitCode, QProcess::ExitStatus exitStatus);
 +
@@ -564,11 +641,105 @@ index 0000000000000000000000000000000000000000..c39ad3dbb9bddb359e95cd4b6d8f89f6
 +    static QtHelpExternalAssistant* s_instance;
 +    static QProcess* s_externalViewerProcess;
 +    static bool s_useExternalViewer;
++    static QString s_externalViewerExecutable;
 +};
 +
 +}
 +
 +#endif //QTHELPEXTERNALASSISTANT_H
+diff --git plugins/qthelp/qthelpexternalassistant_mac.mm plugins/qthelp/qthelpexternalassistant_mac.mm
+new file mode 100644
+index 0000000000000000000000000000000000000000..430dea23e11a1052098bb6a9bae3604f6799cb77
+--- /dev/null
++++ plugins/qthelp/qthelpexternalassistant_mac.mm
+@@ -0,0 +1,87 @@
++/*  This file is part of KDevelop
++    Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>
++
++    This library is free software; you can redistribute it and/or
++    modify it under the terms of the GNU Library General Public
++    License as published by the Free Software Foundation; either
++    version 2 of the License, or (at your option) any later version.
++
++    This library is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++    Library General Public License for more details.
++
++    You should have received a copy of the GNU Library General Public License
++    along with this library; see the file COPYING.LIB.  If not, write to
++    the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++    Boston, MA 02110-1301, USA.
++*/
++
++#include "qthelpexternalassistant.h"
++
++#include <QString>
++#include <QUrl>
++#include <QStandardPaths>
++#include <QFileInfo>
++
++#include <AppKit/AppKit.h>
++
++#include "debug.h"
++
++using namespace KDevelop;
++
++bool QtHelpExternalAssistant::hasExternalViewer(QString* path)
++{
++    bool ret = false;
++    QString execPath;
++    QFileInfo info;
++
++    if (!s_externalViewerExecutable.isEmpty()) {
++        execPath = s_externalViewerExecutable;
++        info = QFileInfo(execPath);
++        if (info.isBundle()) {
++            NSString* bundleExec = [[NSBundle bundleWithPath:s_externalViewerExecutable.toNSString()] executablePath];
++            if (bundleExec) {
++                execPath = QString::fromNSString(bundleExec);
++                info = QFileInfo(execPath);
++                qCDebug(QTHELP) << "Found bundle exec" << execPath << "for external viewer" << s_externalViewerExecutable;
++            } else {
++                qCWarning(QTHELP) << "Could not find the bundle exec for external viewer" << s_externalViewerExecutable;
++            }
++        }
++        if (info.isExecutable()) {
++            ret = true;
++        } else {
++            qCWarning(QTHELP) << "External viewer" << execPath << "is not executable!";
++        }
++        // always return the configured executable path
++        if (path) {
++            *path = execPath;
++        }
++    } else if (path) {
++        // look for the application on the current path. The result is not cached so the
++        // lookup is performed only when we can return the result.
++        // First try to find a regular executable, which the user could have created
++        // to invoke the right Assistant.app
++        const QString assistant = QStandardPaths::findExecutable(QLatin1String("assistant"));
++        if (!assistant.isEmpty()) {
++            ret = true;
++            *path = assistant;
++            qCDebug(QTHELP) << "External viewer found at" << assistant;
++        } else {
++            // fall back to finding whatever Assistant.app application might be available.
++            // There is no way to predict beyond "probably the same as last time".
++            NSString *assistantAppBundle = [[NSWorkspace sharedWorkspace] fullPathForApplication:@"Assistant.app"];
++            NSString* assistantExec = assistantAppBundle ? [[NSBundle bundleWithPath:assistantAppBundle] executablePath] : nullptr;
++            if (assistantExec) {
++                execPath = QString::fromNSString(assistantExec);
++                ret = true;
++                *path = execPath;
++                qCDebug(QTHELP) << "Found bundle exec" << execPath << "for Assistant.app" << QString::fromNSString(assistantAppBundle);
++            } else {
++                qCWarning(QTHELP) << "External viewer not found!";
++            }
++        }
++    }
++    return ret;
++}
 diff --git plugins/qthelp/qthelpplugin.cpp plugins/qthelp/qthelpplugin.cpp
 index 02103b6a23ff520c813fd9eaa2047652cbc10481..f4493ae0632e22618b5f5205970b31d488795afe 100644
 --- plugins/qthelp/qthelpplugin.cpp
@@ -590,7 +761,7 @@ index 02103b6a23ff520c813fd9eaa2047652cbc10481..f4493ae0632e22618b5f5205970b31d4
  {
      Q_UNUSED(args);
      s_plugin = this;
-@@ -55,11 +58,15 @@ void QtHelpPlugin::readConfig()
+@@ -55,11 +58,16 @@ void QtHelpPlugin::readConfig()
  {
      QStringList iconList, nameList, pathList, ghnsList;
      QString searchDir;
@@ -604,10 +775,11 @@ index 02103b6a23ff520c813fd9eaa2047652cbc10481..f4493ae0632e22618b5f5205970b31d4
 +    m_useExternalViewer = extViewer.useExtViewer;
 +    m_externalViewerExecutable = extViewer.extViewerExecutable;
 +    KDevelop::QtHelpExternalAssistant::setUseExternalViewer(m_useExternalViewer);
++    KDevelop::QtHelpExternalAssistant::setExternalViewerExecutable(m_externalViewerExecutable);
  
      emit changedProvidersList();
  }
-@@ -159,6 +166,11 @@ bool QtHelpPlugin::isQtHelpQtDocLoaded() const
+@@ -159,6 +167,11 @@ bool QtHelpPlugin::isQtHelpQtDocLoaded() const
      return m_loadSystemQtDoc;
  }
  
@@ -645,7 +817,7 @@ diff --git plugins/qthelp/tests/CMakeLists.txt plugins/qthelp/tests/CMakeLists.t
 index 06c751e8a2c254ba175e827fe9036fe635105d4c..18ec10580495c4b2c6a7954ed135f42c3bdea620 100644
 --- plugins/qthelp/tests/CMakeLists.txt
 +++ plugins/qthelp/tests/CMakeLists.txt
-@@ -8,6 +8,7 @@ set(test_qthelpplugin_SRCS
+@@ -8,12 +8,18 @@ set(test_qthelpplugin_SRCS
      ../qthelpproviderabstract.cpp
      ../qthelpprovider.cpp
      ../qthelpdocumentation.cpp
@@ -653,6 +825,24 @@ index 06c751e8a2c254ba175e827fe9036fe635105d4c..18ec10580495c4b2c6a7954ed135f42c
      ../qthelpqtdoc.cpp
      ../qthelp_config_shared.cpp
      ../qthelpconfig.cpp
+     ../qthelpnetwork.cpp
+     ${kdevqthelp_LOG_SRCS}
+ )
++if(APPLE)
++    set(test_qthelpplugin_SRCS ${test_qthelpplugin_SRCS}
++        ../qthelpexternalassistant_mac.mm
++    )
++endif()
+ ki18n_wrap_ui(test_qthelpplugin_SRCS
+    ../qthelpconfig.ui
+    ../qthelpconfigeditdialog.ui
+@@ -24,3 +30,6 @@ ecm_add_test(${test_qthelpplugin_SRCS}
+     TEST_NAME test_qthelpplugin
+     LINK_LIBRARIES Qt5::Test KF5::NewStuff KF5::KIOWidgets KF5::TextEditor KF5::IconThemes Qt5::Help KDev::Tests KDev::Documentation
+ )
++if(APPLE)
++    target_link_libraries(test_qthelpplugin "-framework AppKit")
++endif()
 diff --git plugins/qthelp/tests/test_qthelpplugin.cpp plugins/qthelp/tests/test_qthelpplugin.cpp
 index bb47683da08cf1b6ac5d13dd5d5b1fe83b9eebee..4d4a1feba892c6d35f126437a4a14d0eee7a841d 100644
 --- plugins/qthelp/tests/test_qthelpplugin.cpp
