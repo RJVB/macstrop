@@ -163,7 +163,7 @@ index c99e7e0c2316bf24df76d303fdb599a8095193da..20ef5adda2c36eba8dca8ddb6777c599
  namespace KDevelop {
  
  class AbstractFileManagerPluginPrivate;
-+class AFMPBenchmark;
++class AbstractFileManagerPluginImportBenchmark;
  
  /**
   * This class can be used as a common base for file managers.
@@ -172,7 +172,7 @@ index c99e7e0c2316bf24df76d303fdb599a8095193da..20ef5adda2c36eba8dca8ddb6777c599
      const QScopedPointer<class AbstractFileManagerPluginPrivate> d;
      friend class AbstractFileManagerPluginPrivate;
 +public:
-+    friend class AFMPBenchmark;
++    friend class AbstractFileManagerPluginImportBenchmark;
  };
  
  }
@@ -363,7 +363,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a349f439f
 --- /dev/null
 +++ kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,183 @@
 +/* This file is part of KDevelop
 +    Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>
 +
@@ -402,17 +402,19 @@ index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a
 +#include <QElapsedTimer>
 +#include <QMap>
 +#include <QDebug>
++#include <QTextStream>
 +
 +using namespace KDevelop;
 +
 +namespace KDevelop {
 +
-+class AFMPBenchmark : public QObject
++class AbstractFileManagerPluginImportBenchmark : public QObject
 +{
 +    Q_OBJECT
 +public:
-+    AFMPBenchmark(AbstractFileManagerPlugin* manager, const QString& path, QObject* parent)
++    AbstractFileManagerPluginImportBenchmark(AbstractFileManagerPlugin* manager, const QString& path, QObject* parent)
 +        : QObject(parent)
++        , m_out(stdout)
 +    {
 +        m_manager = manager;
 +        m_project = new TestProject(Path(path));
@@ -421,14 +423,16 @@ index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a
 +    void start()
 +    {
 +        m_projectNumber = s_numBenchmarksRunning++;
-+        qInfo() << "Starting import of project" << m_project->path();
++        m_out << "Starting import of project " << m_project->path().toLocalFile() << "\n";
++        m_out.flush();
 +        m_timer.start();
 +        auto root = m_manager->import(m_project);
 +        int elapsed = m_timer.elapsed();
-+        qInfo() << "\tcreating dirwatcher took"
-+            << elapsed / 1000.0 << "seconds";
++        m_out << "\tcreating dirwatcher took "
++            << elapsed / 1000.0 << " seconds\n";
++        m_out.flush();
 +        auto import = m_manager->createImportJob(root);
-+        QObject::connect(import, &KJob::finished, this, &AFMPBenchmark::projectImportDone);
++        QObject::connect(import, &KJob::finished, this, &AbstractFileManagerPluginImportBenchmark::projectImportDone);
 +        m_timer.restart();
 +        import->start();
 +    }
@@ -437,6 +441,7 @@ index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a
 +    TestProject* m_project;
 +    QElapsedTimer m_timer;
 +    int m_projectNumber;
++    QTextStream m_out;
 +
 +    static int s_numBenchmarksRunning;
 +
@@ -453,10 +458,11 @@ index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a
 +        // to ProjectWatcher::addDir():
 +        ProjectWatcher* watcher = qobject_cast<ProjectWatcher*>(m_manager->projectWatcher(m_project));
 +        int watched = watcher ? watcher->size() : -1;
-+        qInfo() << "imported project" << m_projectNumber << "with"
-+            << m_project->fileSet().size() << "elements (files & folders) and"
-+            << watched << "calls to KDirWatch::addDir() took"
-+            << elapsed / 1000.0 << "seconds";
++        m_out << "imported project " << m_projectNumber << " with "
++            << m_project->fileSet().size() << " elements and "
++            << watched << " calls to KDirWatch::addDir() took "
++            << elapsed / 1000.0 << " seconds\n";
++        m_out.flush();
 +
 +        s_numBenchmarksRunning -= 1;
 +        if (s_numBenchmarksRunning <= 0) {
@@ -466,7 +472,7 @@ index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a
 +
 +};
 +
-+int AFMPBenchmark::s_numBenchmarksRunning = 0;
++int AbstractFileManagerPluginImportBenchmark::s_numBenchmarksRunning = 0;
 +}
 +
 +int main(int argc, char** argv)
@@ -476,6 +482,7 @@ index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a
 +        return 1;
 +    }
 +    QCoreApplication app(argc, argv);
++    QTextStream qout(stdout);
 +    // measure the total test time, this provides an indication
 +    // of overhead and how well multiple projects are imported in parallel
 +    // (= how different is the total time from the import time of the largest
@@ -490,33 +497,35 @@ index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a
 +    auto manager = new AbstractFileManagerPlugin({}, core);
 +
 +    const char *kdwMethod[] = {"FAM", "Inotify", "Stat", "QFSWatch"};
-+    qInfo() << "KDirWatch backend:" << kdwMethod[KDirWatch().internalMethod()];
++    qout << "KDirWatch backend: " << kdwMethod[KDirWatch().internalMethod()] << "\n";
++    qout.flush();
 +
-+    QList<AFMPBenchmark*> benchmarks;
++    QList<AbstractFileManagerPluginImportBenchmark*> benchmarks;
 +
 +    for (int i = 1 ; i < argc ; ++i) {
 +        const QString path = QString::fromUtf8(argv[i]);
 +        if (QFileInfo(path).isDir()) {
-+            const auto benchmark = new AFMPBenchmark(manager, path, core);
++            const auto benchmark = new AbstractFileManagerPluginImportBenchmark(manager, path, core);
 +            benchmarks << benchmark;
-+            QObject::connect(benchmark, &AFMPBenchmark::finished,
-+                             &app, [&runTimer] {
-+                                qInfo() << "Done in" << runTimer.elapsed() / 1000.0
-+                                    << "seconds total (excluding dirwatcher destruction)";
++            QObject::connect(benchmark, &AbstractFileManagerPluginImportBenchmark::finished,
++                             &app, [&runTimer, &qout] {
++                                qout << "Done in " << runTimer.elapsed() / 1000.0
++                                    << " seconds total (excluding dirwatcher destruction)\n";
 +                                QCoreApplication::instance()->quit();
 +                             });
 +            if (qEnvironmentVariableIsSet("BENCHMARK_ORIGINAL_DIRWATCHER")) {
 +                // benchmark the creation and deletion of the original dirwatcher:
 +                KDirWatch *watcher = new KDirWatch(benchmark->m_project);
-+                qInfo() << "Benchmarking KDirWatch for all of" << argv[i];
++                qout << "Benchmarking KDirWatch for all of " << argv[i];
 +                benchmark->m_timer.start();
 +                watcher->addDir(benchmark->m_project->path().toLocalFile(), KDirWatch::WatchSubDirs | KDirWatch:: WatchFiles );
 +                int elapsed = benchmark->m_timer.elapsed();
-+                qInfo() << "\tfeeding the watcher:" << elapsed / 1000.0 << "seconds";
++                qout << "\tfeeding the watcher: " << elapsed / 1000.0 << " seconds\n";
 +                benchmark->m_timer.restart();
 +                delete watcher;
 +                elapsed = benchmark->m_timer.elapsed();
-+                qInfo() << "\tdeleting the watcher:" << elapsed / 1000.0 << "seconds";
++                qout << "\tdeleting the watcher: " << elapsed / 1000.0 << " seconds\n";
++                qout.flush();
 +            }
 +        }
 +    }
@@ -526,7 +535,8 @@ index 0000000000000000000000000000000000000000..b385108ac4365ac7a092914cef8be93a
 +        return 1;
 +    }
 +
-+    qInfo() << "Benchmark set-up took" << runTimer.elapsed() / 1000.0 << "seconds";
++    qout << "Benchmark set-up took " << runTimer.elapsed() / 1000.0 << " seconds\n";
++    qout.flush();
 +    for (auto benchmark : benchmarks) {
 +        benchmark->start();
 +    }
