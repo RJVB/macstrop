@@ -112,7 +112,7 @@ proc preserve_libraries {srcdir patternlist} {
                         set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
                         if {![file exists ${prevlib}] && ![file exists ${destroot}${l}]} {
                             ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
-                            if {${fd} != -1} {
+                            if {${fd} != -1 && [file type ${l}] ne "link"} {
                                 puts ${fd} "${l}"
                             }
                             set perms [file attributes ${l} -permissions]
