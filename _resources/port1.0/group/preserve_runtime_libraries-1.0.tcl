@@ -61,6 +61,16 @@ proc preserve_libraries {srcdir patternlist} {
             set prevdir "${preserve_runtime_library_dir}"
             xinstall -m 755 -d ${destroot}${srcdir}/${prevdir}
             ui_debug "preserve_libraries ${srcdir} ${patternlist}"
+            set fd -1
+            if {![catch {set installed [lindex [registry_active ${subport}] 0]}]} {
+                set cVersion [lindex $installed 1]
+                set cRevision [lindex $installed 2]
+                set cVariants [lindex $installed 3]
+                set tocFName "${destroot}${srcdir}/${prevdir}/${subport}-${cVersion}-${cRevision}-${cVariants}.toc"
+                if {![catch {set fd [open ${tocFName} "w"]} err]} {
+                    puts ${fd} "# Libraries saved from port: ${subport}@${cVersion}_${cRevision}+${cVariants}:"
+                }
+            }
             foreach pattern ${patternlist} {
                 # first handle the preserved backups that already exist
                 set existing_backups [glob -nocomplain ${srcdir}/${prevdir}/${pattern}]
@@ -77,6 +87,18 @@ proc preserve_libraries {srcdir patternlist} {
                         ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
                     }
                 }
+                foreach t [glob -nocomplain "${srcdir}/${prevdir}/${subport}-*.toc"] {
+                    set toc [file tail ${t}]
+                    set prevtoc [file join ${destroot}${srcdir}/${prevdir} ${toc}]
+                    if {![file exists ${prevtoc}]} {
+                        ui_debug "Preserving previous runtime shared library toc ${t}"
+                        set perms [file attributes ${t} -permissions]
+                        copy ${t} ${prevtoc}
+                        if {[file type ${prevtoc}] ne "link"} {
+                            file attributes ${prevtoc} -permissions ${perms}
+                        }
+                    }
+                }
                 # now we can do the libraries to backup from ${prefix}/lib (srcdir) itself
                 # any of those that are symlinks into ${prevdir} will be pruned because they
                 # have already been handled.
@@ -90,6 +112,9 @@ proc preserve_libraries {srcdir patternlist} {
                         set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
                         if {![file exists ${prevlib}] && ![file exists ${destroot}${l}]} {
                             ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
+                            if {${fd} != -1} {
+                                puts ${fd} "${l}"
+                            }
                             set perms [file attributes ${l} -permissions]
                             copy ${l} ${prevlib}
                             if {[file type ${prevlib}] ne "link"} {
@@ -105,6 +130,12 @@ proc preserve_libraries {srcdir patternlist} {
                     ui_info "preserve_libraries ${srcdir} \"${patternlist}\" preserved nothing for \"${pattern}\""
                     ui_info "\texisting backups found: \"${existing_backups}\""
                     ui_info "\tcurrent libraries: \"${current_libs}\""
+                }
+            }
+            if {${fd} != -1} {
+                close ${fd}
+                if {[file size ${tocFName}] <= 0} {
+                    file delete ${tocFName}
                 }
             }
         } else {
