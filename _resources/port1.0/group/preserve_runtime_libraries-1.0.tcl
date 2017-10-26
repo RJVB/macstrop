@@ -70,7 +70,6 @@ proc preserve_libraries {srcdir patternlist} {
                     puts ${fd} "# Libraries saved from port: ${subport}@${cVersion}_${cRevision}+${cVariants}:"
                     flush ${fd}
                     set tocStartSize [file size ${tocFName}]
-                    ui_msg "${tocStartSize}"
                 }
             }
             foreach pattern ${patternlist} {
