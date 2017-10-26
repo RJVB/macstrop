@@ -1,5 +1,4 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
-# $Id:$
 
 # Copyright (c) 2015 The MacPorts Project
 # Copyright (c) 2016 R.J.V. Bertin
@@ -69,6 +68,9 @@ proc preserve_libraries {srcdir patternlist} {
                 set tocFName "${destroot}${srcdir}/${prevdir}/${subport}-${cVersion}-${cRevision}-${cVariants}.toc"
                 if {![catch {set fd [open ${tocFName} "w"]} err]} {
                     puts ${fd} "# Libraries saved from port: ${subport}@${cVersion}_${cRevision}+${cVariants}:"
+                    flush ${fd}
+                    set tocStartSize [file size ${tocFName}]
+                    ui_msg "${tocStartSize}"
                 }
             }
             foreach pattern ${patternlist} {
@@ -134,7 +136,7 @@ proc preserve_libraries {srcdir patternlist} {
             }
             if {${fd} != -1} {
                 close ${fd}
-                if {[file size ${tocFName}] <= 0} {
+                if {[file size ${tocFName}] <= ${tocStartSize}} {
                     file delete ${tocFName}
                 }
             }
