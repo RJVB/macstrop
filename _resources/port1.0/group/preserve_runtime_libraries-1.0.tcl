@@ -46,6 +46,10 @@
 # Using a special repository makes it immediately clear which port a
 # legacy runtime belongs to; the symlink makes it easy to test whether
 # the copy is still used.
+#
+# Optionally, use `update_preserved_libraries [pattern]` to update the
+# dependency information of the preserved libraries among each others,
+# pointing them into the preservation directory.
 
 # Note that ports that depend on poppler via poppler-qt4-mac or
 # poppler-qt5-mac do not need this trick to avoid rebuilding.
@@ -86,6 +90,9 @@ proc preserve_libraries {srcdir patternlist} {
                             file attributes ${prevlib} -permissions ${perms}
                         }
                         ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
+                        if {${fd} != -1} {
+                            puts ${fd} "## ln -s [file join ${prevdir} [file tail ${l}]] ${srcdir}/${lib}"
+                        }
                     }
                 }
                 foreach t [glob -nocomplain "${srcdir}/${prevdir}/${subport}-*.toc"] {
@@ -115,6 +122,7 @@ proc preserve_libraries {srcdir patternlist} {
                             ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
                             if {${fd} != -1 && [file type ${l}] ne "link"} {
                                 puts ${fd} "${l}"
+                                puts ${fd} "# ln -s [file join ${prevdir} [file tail ${l}]] ${srcdir}/${lib}"
                             }
                             set perms [file attributes ${l} -permissions]
                             copy ${l} ${prevlib}
@@ -144,6 +152,91 @@ proc preserve_libraries {srcdir patternlist} {
         }
     } else {
         ui_debug "The preserve_runtime_libraries variant isn't set; ignoring the call to preserve_libraries"
+    }
+}
+
+platform linux {
+    proc update_preserved_libraries {{pattern ""}} {
+        global prefix subport destroot preserve_runtime_library_dir
+        if {[variant_isset preserve_runtime_libraries]} {
+            if {${pattern} eq ""} {
+                set pattern "*.so.*"
+            }
+            # when preserving multiple directories, make them depend on each other
+            # construct a dict that maps SO names to file names
+            foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${preserve_runtime_library_dir}/${pattern}] {
+                dict set sonames ${lib} soname [file tail [exec patchelf --print-soname ${lib}]]
+                dict set sonames ${lib} filename [file tail ${lib}]
+            }
+            # now make the preserved libraries depend on other preserved libraries.
+            foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${preserve_runtime_library_dir}/${pattern}] {
+                set lrpath [exec patchelf --print-rpath ${lib}]
+                # prepend the new installation path to the rpath
+                system "patchelf --set-rpath ${prefix}/lib/${preserve_runtime_library_dir}:${lrpath} ${lib}"
+                # update any dependencies on the other libraries installed by this port
+                dict for {id info} ${sonames} {
+                    dict with info {
+                        # store a fully resolved DT_NEEDED entry to the preserved library
+                        set sopath [file join ${prefix}/lib/${preserve_runtime_library_dir} ${soname}]
+                        if {[file exists ${sopath}] || [file exists [file join ${destroot} ${sopath}]]} {
+                            # but only if the file exists
+                            system "patchelf --replace-needed ${soname} ${sopath} ${lib}"
+                        }
+                    }
+                }
+            }
+        } else {
+            ui_debug "The preserve_runtime_libraries variant isn't set; ignoring the call to update_preserved_libraries"
+        }
+    }
+}
+
+platform darwin {
+    proc update_preserved_libraries {{pattern ""}} {
+        global prefix subport destroot preserve_runtime_library_dir
+        if {[variant_isset preserve_runtime_libraries]} {
+            if {${pattern} eq ""} {
+                set pattern {}
+                # construct a list of the current unique library IDs, mapping them to files
+                # (which are probably symlinks of the type libfoo.X.dylib -> libfoo.X.Y.dylib).
+                foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${preserve_runtime_library_dir}/*.dylib] {
+                    set soname [file tail [lindex [exec otool -D ${lib}] 1]]
+                    set lib [file join ${prefix}/lib/${preserve_runtime_library_dir} ${soname}]
+                    if {[file exists ${destroot}${lib}] && [lsearch ${pattern} ${lib}] eq -1} {
+                        lappend pattern ${lib}
+                    }
+                }
+                if {${pattern} eq {}} {
+                    ui_debug "update_preserved_libraries found no files matching the available library IDs"
+                    return
+                }
+            } else {
+                set pattern [glob -nocomplain ${destroot}${prefix}/lib/${preserve_runtime_library_dir}/${pattern}]
+            }
+            # when preserving multiple directories, make them depend on each other
+            # construct a dict that maps SO names to file names
+            foreach lib ${pattern} {
+                set otool [exec otool -D ${lib}]
+                dict set sonames ${lib} oldname [lindex ${otool} 1]
+                dict set sonames ${lib} newname [string map [list ${destroot} ""] ${lib}]
+            }
+            if {[info exists sonames]} {
+                ui_debug ${sonames}
+            }
+            # now make the preserved libraries depend on other preserved libraries.
+            foreach lib ${pattern} {
+                # set the ID to the new path
+                system "install_name_tool -id [string map [list ${destroot} ""] ${lib}] ${lib}"
+                # update any dependencies on the other libraries installed by this port
+                dict for {id info} ${sonames} {
+                    dict with info {
+                        system "install_name_tool -change ${oldname} ${newname} ${lib}"
+                    }
+                }
+            }
+        } else {
+            ui_debug "The preserve_runtime_libraries variant isn't set; ignoring the call to preserve_libraries"
+        }
     }
 }
 
