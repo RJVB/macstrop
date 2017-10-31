@@ -252,7 +252,7 @@ index 0000000000000000000000000000000000000000..429cefb303db6f51d7afb03056e940e0
 +
 +void KDevelop::ProjectWatcher::addDir(const QString& path, WatchModes watchModes)
 +{
-+    if (m_filter->isValid(Path(path), true, m_project) && !contains(path)) {
++    if (/*m_filter->isValid(Path(path), true, m_project) &&*/ !contains(path)) {
 +        KDirWatch::addDir(path, watchModes);
 +        m_watchedCount += 1;
 +    }
@@ -361,7 +361,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f2510caaf3ea
 --- /dev/null
 +++ kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp
-@@ -0,0 +1,177 @@
+@@ -0,0 +1,194 @@
 +/* This file is part of KDevelop
 +    Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>
 +
@@ -381,6 +381,10 @@ index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f251
 +    Boston, MA 02110-1301, USA.
 +*/
 +
++#include <interfaces/iplugin.h>
++#include <interfaces/icore.h>
++#include <interfaces/iplugincontroller.h>
++
 +#include <project/abstractfilemanagerplugin.h>
 +#include <project/projectmodel.h>
 +#include <project/projectwatcher.h>
@@ -388,13 +392,14 @@ index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f251
 +#include <tests/autotestshell.h>
 +#include <tests/testcore.h>
 +#include <tests/testproject.h>
++#include <tests/testplugincontroller.h>
 +
 +#include <util/path.h>
 +
 +#include <KJob>
 +#include <KDirWatch>
 +
-+#include <QCoreApplication>
++#include <QApplication>
 +#include <QList>
 +#include <QFileInfo>
 +#include <QElapsedTimer>
@@ -411,9 +416,10 @@ index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f251
 +    Q_OBJECT
 +public:
 +    AbstractFileManagerPluginImportBenchmark(AbstractFileManagerPlugin* manager, const QString& path,
-+                                             QObject* parent)
-+        : QObject(parent)
++                                             TestCore* core)
++        : QObject(core)
 +        , m_out(stdout)
++        , m_core(core)
 +    {
 +        m_manager = manager;
 +        m_project = new TestProject(Path(path));
@@ -423,6 +429,8 @@ index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f251
 +    {
 +        m_projectNumber = s_numBenchmarksRunning++;
 +        m_out << "Starting import of project " << m_project->path().toLocalFile() << endl;
++        // emulate the signal from the ProjectController to the ProjectFilterProvider(s):
++        emit m_core->projectController()->projectAboutToBeOpened(m_project);
 +        m_timer.start();
 +        auto root = m_manager->import(m_project);
 +        int elapsed = m_timer.elapsed();
@@ -440,6 +448,7 @@ index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f251
 +    QElapsedTimer m_timer;
 +    int m_projectNumber;
 +    QTextStream m_out;
++    TestCore* m_core;
 +
 +    static int s_numBenchmarksRunning;
 +
@@ -475,10 +484,10 @@ index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f251
 +int main(int argc, char** argv)
 +{
 +    if (argc < 2) {
-+        qWarning() << "Usage:" << argv[0] << "projectDir1 [...projectDirN]";
++        qWarning() << "Usage:" << argv[0] << "[--withFilters] projectDir1 [...projectDirN]";
 +        return 1;
 +    }
-+    QCoreApplication app(argc, argv);
++    QApplication app(argc, argv);
 +    QTextStream qout(stdout);
 +    // measure the total test time, this provides an indication
 +    // of overhead and how well multiple projects are imported in parallel
@@ -489,7 +498,15 @@ index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f251
 +    QElapsedTimer runTimer;
 +
 +    AutoTestShell::init({"no plugins"});
-+    auto core = TestCore::initialize(Core::NoUi);
++    bool withFilters = argc >= 2 && strcmp(argv[1], "--withFilters") == 0;
++    // The Project Filter plugin will not be available when TestCore::initialize()
++    // is called with Core::NoUI, which provides a simple mechanism to determine
++    // whether project filters will be applied or not.
++    auto core = TestCore::initialize(withFilters ? Core::Default : Core::NoUi);
++    // attempt to load the plugin; will succeed depending on the TestCore::initialize() call.
++    if (core->pluginController()->allPluginsForExtension(QStringLiteral("org.kdevelop.IProjectFilter")).size() < 1) {
++        qWarning() << "The project filter plugin was not loaded";
++    }
 +    auto manager = new AbstractFileManagerPlugin({}, core);
 +
 +    const char *kdwMethod[] = {"FAM", "Inotify", "Stat", "QFSWatch"};
@@ -497,7 +514,7 @@ index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f251
 +
 +    QList<AbstractFileManagerPluginImportBenchmark*> benchmarks;
 +
-+    for (int i = 1 ; i < argc ; ++i) {
++    for (int i = withFilters ? 2 : 1 ; i < argc ; ++i) {
 +        const QString path = QString::fromUtf8(argv[i]);
 +        if (QFileInfo(path).isDir()) {
 +            const auto benchmark = new AbstractFileManagerPluginImportBenchmark(manager, path, core);
