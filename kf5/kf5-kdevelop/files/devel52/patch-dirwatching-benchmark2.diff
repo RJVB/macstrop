@@ -123,7 +123,7 @@ index 0000000000000000000000000000000000000000..429cefb303db6f51d7afb03056e940e0
 +
 +void KDevelop::ProjectWatcher::addDir(const QString& path, WatchModes watchModes)
 +{
-+    if (m_filter->isValid(Path(path), true, m_project) && !contains(path)) {
++    if (/*m_filter->isValid(Path(path), true, m_project) &&*/ !contains(path)) {
 +        KDirWatch::addDir(path, watchModes);
 +        m_watchedCount += 1;
 +    }
@@ -229,10 +229,10 @@ index 74e5baada32fcc570f410e50c26bfc83a5066830..5a8d80cfe1a933bb839114cf7059152f
 +)
 diff --git a/kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp b/kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..62d51159cdf4a4918ade82f5fe4ffa43b230be88
+index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f2510caaf3ea
 --- /dev/null
 +++ b/kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,194 @@
 +/* This file is part of KDevelop
 +    Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>
 +
@@ -252,19 +252,25 @@ index 0000000000000000000000000000000000000000..62d51159cdf4a4918ade82f5fe4ffa43
 +    Boston, MA 02110-1301, USA.
 +*/
 +
++#include <interfaces/iplugin.h>
++#include <interfaces/icore.h>
++#include <interfaces/iplugincontroller.h>
++
 +#include <project/abstractfilemanagerplugin.h>
 +#include <project/projectmodel.h>
++#include <project/projectwatcher.h>
 +
 +#include <tests/autotestshell.h>
 +#include <tests/testcore.h>
 +#include <tests/testproject.h>
++#include <tests/testplugincontroller.h>
 +
 +#include <util/path.h>
 +
 +#include <KJob>
 +#include <KDirWatch>
 +
-+#include <QCoreApplication>
++#include <QApplication>
 +#include <QList>
 +#include <QFileInfo>
 +#include <QElapsedTimer>
@@ -281,9 +287,10 @@ index 0000000000000000000000000000000000000000..62d51159cdf4a4918ade82f5fe4ffa43
 +    Q_OBJECT
 +public:
 +    AbstractFileManagerPluginImportBenchmark(AbstractFileManagerPlugin* manager, const QString& path,
-+                                             QObject* parent)
-+        : QObject(parent)
++                                             TestCore* core)
++        : QObject(core)
 +        , m_out(stdout)
++        , m_core(core)
 +    {
 +        m_manager = manager;
 +        m_project = new TestProject(Path(path));
@@ -293,6 +300,8 @@ index 0000000000000000000000000000000000000000..62d51159cdf4a4918ade82f5fe4ffa43
 +    {
 +        m_projectNumber = s_numBenchmarksRunning++;
 +        m_out << "Starting import of project " << m_project->path().toLocalFile() << endl;
++        // emulate the signal from the ProjectController to the ProjectFilterProvider(s):
++        emit m_core->projectController()->projectAboutToBeOpened(m_project);
 +        m_timer.start();
 +        auto root = m_manager->import(m_project);
 +        int elapsed = m_timer.elapsed();
@@ -310,6 +319,7 @@ index 0000000000000000000000000000000000000000..62d51159cdf4a4918ade82f5fe4ffa43
 +    QElapsedTimer m_timer;
 +    int m_projectNumber;
 +    QTextStream m_out;
++    TestCore* m_core;
 +
 +    static int s_numBenchmarksRunning;
 +
@@ -321,8 +331,15 @@ index 0000000000000000000000000000000000000000..62d51159cdf4a4918ade82f5fe4ffa43
 +    {
 +        Q_UNUSED(job);
 +        int elapsed = m_timer.elapsed();
-+        m_out << "importing project " << m_projectNumber << " took "
-+            << elapsed / 1000.0 << " seconds" << endl;
++        // The number of items in the dirwatcher can be obtained as follows,
++        // provided dirs are added one by one and not with a recursive call
++        // to ProjectWatcher::addDir():
++        ProjectWatcher* watcher = qobject_cast<ProjectWatcher*>(m_manager->projectWatcher(m_project));
++        int watched = watcher ? watcher->size() : -1;
++        m_out << "importing " << m_project->fileSet().size()
++            << " items into project #" << m_projectNumber
++            << " with " << watched << " call(s) to KDirWatch::addDir()"
++            << " took " << elapsed / 1000.0 << " seconds" << endl;
 +
 +        s_numBenchmarksRunning -= 1;
 +        if (s_numBenchmarksRunning <= 0) {
@@ -338,10 +355,10 @@ index 0000000000000000000000000000000000000000..62d51159cdf4a4918ade82f5fe4ffa43
 +int main(int argc, char** argv)
 +{
 +    if (argc < 2) {
-+        qWarning() << "Usage:" << argv[0] << "projectDir1 [...projectDirN]";
++        qWarning() << "Usage:" << argv[0] << "[--withFilters] projectDir1 [...projectDirN]";
 +        return 1;
 +    }
-+    QCoreApplication app(argc, argv);
++    QApplication app(argc, argv);
 +    QTextStream qout(stdout);
 +    // measure the total test time, this provides an indication
 +    // of overhead and how well multiple projects are imported in parallel
@@ -352,7 +369,15 @@ index 0000000000000000000000000000000000000000..62d51159cdf4a4918ade82f5fe4ffa43
 +    QElapsedTimer runTimer;
 +
 +    AutoTestShell::init({"no plugins"});
-+    auto core = TestCore::initialize(Core::NoUi);
++    bool withFilters = argc >= 2 && strcmp(argv[1], "--withFilters") == 0;
++    // The Project Filter plugin will not be available when TestCore::initialize()
++    // is called with Core::NoUI, which provides a simple mechanism to determine
++    // whether project filters will be applied or not.
++    auto core = TestCore::initialize(withFilters ? Core::Default : Core::NoUi);
++    // attempt to load the plugin; will succeed depending on the TestCore::initialize() call.
++    if (core->pluginController()->allPluginsForExtension(QStringLiteral("org.kdevelop.IProjectFilter")).size() < 1) {
++        qWarning() << "The project filter plugin was not loaded";
++    }
 +    auto manager = new AbstractFileManagerPlugin({}, core);
 +
 +    const char *kdwMethod[] = {"FAM", "Inotify", "Stat", "QFSWatch"};
@@ -360,7 +385,7 @@ index 0000000000000000000000000000000000000000..62d51159cdf4a4918ade82f5fe4ffa43
 +
 +    QList<AbstractFileManagerPluginImportBenchmark*> benchmarks;
 +
-+    for (int i = 1 ; i < argc ; ++i) {
++    for (int i = withFilters ? 2 : 1 ; i < argc ; ++i) {
 +        const QString path = QString::fromUtf8(argv[i]);
 +        if (QFileInfo(path).isDir()) {
 +            const auto benchmark = new AbstractFileManagerPluginImportBenchmark(manager, path, core);
@@ -371,6 +396,20 @@ index 0000000000000000000000000000000000000000..62d51159cdf4a4918ade82f5fe4ffa43
 +                                    << " seconds total\n";
 +                                QCoreApplication::instance()->quit();
 +                             });
++            if (qEnvironmentVariableIsSet("BENCHMARK_ORIGINAL_DIRWATCHER")) {
++                // benchmark the creation and deletion of the original dirwatcher:
++                KDirWatch *watcher = new KDirWatch(benchmark->m_project);
++                qout << "Benchmarking KDirWatch for all of " << argv[i];
++                benchmark->m_timer.start();
++                watcher->addDir(benchmark->m_project->path().toLocalFile(), KDirWatch::WatchSubDirs | KDirWatch:: WatchFiles );
++                int elapsed = benchmark->m_timer.elapsed();
++                qout << "\tfeeding the watcher: " << elapsed / 1000.0 << " seconds\n";
++                benchmark->m_timer.restart();
++                delete watcher;
++                elapsed = benchmark->m_timer.elapsed();
++                qout << "\tdeleting the watcher: " << elapsed / 1000.0 << " seconds\n";
++                qout.flush();
++            }
 +        }
 +    }
 +
