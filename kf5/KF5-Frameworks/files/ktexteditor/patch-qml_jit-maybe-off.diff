@@ -11,144 +11,19 @@ index 88fa611778ee114c85f4b9c4a58649ffdb8b98d3..500037f592c20e707c64413809e6f764
              }
          }
      }
-diff --git src/script/katecommandlinescript.cpp src/script/katecommandlinescript.cpp
-index ee7fe78cf2b6e265ed2437321d77d6ce4a5df6f1..41a57786319476e7637752a08e14cfd0878055f4 100644
---- src/script/katecommandlinescript.cpp
-+++ src/script/katecommandlinescript.cpp
-@@ -55,6 +55,7 @@ bool KateCommandLineScript::callFunction(const QString &cmd, const QStringList a
-         errorMessage = i18n("Function '%1' not found in script: %2", cmd, url());
-         return false;
-     }
-+    V4JITDisabler maybeDisableQMLJITCompiler;
+diff --git src/utils/kateglobal.cpp src/utils/kateglobal.cpp
+index b5d56e3b51f2fcec74c42e7db98f17840ad9693f..f1b0c5582e410858a17026c41831979bbb24e174 100644
+--- src/utils/kateglobal.cpp
++++ src/utils/kateglobal.cpp
+@@ -99,6 +99,11 @@ KTextEditor::EditorPrivate::EditorPrivate(QPointer<KTextEditor::EditorPrivate> &
+     // remember this
+     staticInstance = this;
  
-     // add the arguments that we are going to pass to the function
-     QJSValueList arguments;
-@@ -123,6 +124,7 @@ bool KateCommandLineScript::help(KTextEditor::View *view, const QString &cmd, QS
-     if (!helpFunction.isCallable()) {
-         return false;
-     }
-+    V4JITDisabler maybeDisableQMLJITCompiler;
- 
-     // add the arguments that we are going to pass to the function
-     QJSValueList arguments;
-diff --git src/script/kateindentscript.cpp src/script/kateindentscript.cpp
-index 380bd45e7f7969c47db945283f5e60a11a881d2a..32f6302429919e258e1207ee03849258dd1e7481 100644
---- src/script/kateindentscript.cpp
-+++ src/script/kateindentscript.cpp
-@@ -69,6 +69,8 @@ QPair<int, int> KateIndentScript::indent(KTextEditor::ViewPrivate *view, const K
-     if (!indentFunction.isCallable()) {
-         return qMakePair(-2, -2);
-     }
-+    V4JITDisabler maybeDisableQMLJITCompiler;
-+
-     // add the arguments that we are going to pass to the function
-     QJSValueList arguments;
-     arguments << QJSValue(position.line());
-diff --git src/script/katescript.cpp src/script/katescript.cpp
-index 56d90013949855191b603c06cbc221d29cb9a0bf..d7c6184d3905aee421cbe33638dcc933c148b5c7 100644
---- src/script/katescript.cpp
-+++ src/script/katescript.cpp
-@@ -40,6 +40,43 @@
- 
- //END
- 
-+KateScript::V4JITDisabler::V4JITDisabler()
-+    : m_hasCache(false)
-+{
 +#if QT_VERSION < QT_VERSION_CHECK(5, 9, 1)
-+    if (qEnvironmentVariableIsSet("QV4_FORCE_INTERPRETER")) {
-+        m_cachedValue = qgetenv("QV4_FORCE_INTERPRETER");
-+        m_hasCache = true;
-+    }
-+    // disable the JIT for this call as it may trigger a bug in QML
-+    // that would crash the application. Crude but effective.
 +    qputenv("QV4_FORCE_INTERPRETER", QByteArrayLiteral("1"));
 +    qCDebug(LOG_KTE) << "QV4_FORCE_INTERPRETER set to" << qgetenv("QV4_FORCE_INTERPRETER");
 +#endif
-+}
 +
-+KateScript::V4JITDisabler::~V4JITDisabler()
-+{
-+#if QT_VERSION < QT_VERSION_CHECK(5, 9, 1)
-+    if (m_hasCache) {
-+        // restore
-+        qputenv("QV4_FORCE_INTERPRETER", m_cachedValue);
-+        qCWarning(LOG_KTE) << "QV4_FORCE_INTERPRETER reset to" << qgetenv("QV4_FORCE_INTERPRETER");
-+    } else {
-+        qunsetenv("QV4_FORCE_INTERPRETER");
-+        qCDebug(LOG_KTE) << "QV4_FORCE_INTERPRETER unset";
-+        if (!s_infoPrinted) {
-+            QTextStream info(stderr);
-+            info << i18n("Please disregard any warnings about JIT being disabled for QML; "
-+                "this applies only to KTextEditor scripts.\n");
-+            s_infoPrinted = true;
-+        }
-+    }
-+#endif
-+}
-+
-+bool KateScript::V4JITDisabler::s_infoPrinted = false;
-+
- KateScript::KateScript(const QString &urlOrScript, enum InputType inputType)
-     : m_loaded(false)
-     , m_loadSuccessful(false)
-@@ -118,6 +155,11 @@ bool KateScript::load()
-     m_loaded = true;
-     m_loadSuccessful = false; // here set to false, and at end of function to true
- 
-+    // disable the JIT for this call as it may trigger a bug in QML
-+    // that would crash the application. V4JITDisabler disables the JIT
-+    // in affected Qt versions, and restores it before exitting from this function.
-+    V4JITDisabler maybeDisableQMLJITCompiler;
-+
-     // read the script file into memory
-     QString source;
-     if (m_inputType == InputURL) {
-@@ -202,6 +244,7 @@ QJSValue KateScript::evaluate(const QString& program, const FieldMap& env)
-         qWarning() << "load of script failed:" << program;
-         return QJSValue();
-     }
-+    V4JITDisabler maybeDisableQMLJITCompiler;
- 
-     // Wrap the arguments in a function to avoid poluting the global object
-     QString programWithContext = QStringLiteral("function(") +
-diff --git src/script/katescript.h src/script/katescript.h
-index a9679a5e9f2441c06cbc77a870b0c3319ac9c508..e7ffdc78a4b62aa9950ee17923bf5390e712246e 100644
---- src/script/katescript.h
-+++ src/script/katescript.h
-@@ -188,6 +188,23 @@ public:
-     /** Return the general header */
-     KateScriptHeader &generalHeader();
- 
-+    /**
-+     * Helper class to disable the JIT during its scope. Kate's scripts have been known
-+     * to trigger a bug in JIT-compiled QML that would crash the application.
-+     * Creating a V4JITDisabler instance disables the JIT in affected Qt versions, and
-+     * restores the setting before going out of scope.
-+     */
-+    class V4JITDisabler
-+    {
-+    public:
-+        V4JITDisabler();
-+        ~V4JITDisabler();
-+    private:
-+        QByteArray m_cachedValue;
-+        bool m_hasCache;
-+        static bool s_infoPrinted;
-+    };
-+
- protected:
-     /** Checks for exception and gives feedback on the console. */
-     bool hasException(const QJSValue &object, const QString &file);
-diff --git src/script/katescripthelpers.cpp src/script/katescripthelpers.cpp
-index a24bf48c24e0f8a30fefdb8245baea74a6346924..c298451178823653956b408de6add9e77bebb2f0 100644
---- src/script/katescripthelpers.cpp
-+++ src/script/katescripthelpers.cpp
-@@ -116,6 +116,7 @@ void ScriptHelper::require(const QString &file)
- {
-     QStringList files;
-     files << file;
-+    KateScript::V4JITDisabler maybeDisableQMLJITCompiler;
-     /**
-      * just search for all given scripts and eval them
-      */
+     // init libgit2, we require at least 0.22 which has this function!
+ #if LIBGIT2_FOUND
+     git_libgit2_init();
