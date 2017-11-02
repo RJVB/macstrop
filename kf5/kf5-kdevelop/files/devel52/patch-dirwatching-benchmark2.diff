@@ -1,3 +1,25 @@
+diff --git a/kdevplatform/shell/projectcontroller.h b/kdevplatform/shell/projectcontroller.h
+index a6962d44e0d83e862a2ea0645e34386567c3a13a..8c93ea1255201916325431db3bb2419f35be7eba 100644
+--- a/kdevplatform/shell/projectcontroller.h
++++ b/kdevplatform/shell/projectcontroller.h
+@@ -46,6 +46,8 @@ class Context;
+ class ContextMenuExtension;
+ class IPlugin;
+ 
++class AbstractFileManagerPluginImportBenchmark;
++
+ class KDEVPLATFORMSHELL_EXPORT IProjectDialogProvider : public QObject
+ {
+ Q_OBJECT
+@@ -161,6 +163,8 @@ private:
+ private:
+     const QScopedPointer<class ProjectControllerPrivate> d;
+     friend class ProjectControllerPrivate;
++public:
++    friend class AbstractFileManagerPluginImportBenchmark;
+ };
+ 
+ class ProjectDialogProvider : public IProjectDialogProvider
 diff --git a/kdevplatform/project/CMakeLists.txt b/kdevplatform/project/CMakeLists.txt
 index c61e8de32e80c29a648766fe88c62b78f5561c36..8fdf6df3a6a18ad2867be8a0d06dd631d6884a5b 100644
 --- a/kdevplatform/project/CMakeLists.txt
@@ -232,7 +254,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f2510caaf3ea
 --- /dev/null
 +++ b/kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,198 @@
 +/* This file is part of KDevelop
 +    Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>
 +
@@ -259,6 +281,8 @@ index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f251
 +#include <project/abstractfilemanagerplugin.h>
 +#include <project/projectmodel.h>
 +#include <project/projectwatcher.h>
++
++#include <shell/projectcontroller.h>
 +
 +#include <tests/autotestshell.h>
 +#include <tests/testcore.h>
@@ -300,8 +324,16 @@ index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f251
 +    {
 +        m_projectNumber = s_numBenchmarksRunning++;
 +        m_out << "Starting import of project " << m_project->path().toLocalFile() << endl;
-+        // emulate the signal from the ProjectController to the ProjectFilterProvider(s):
-+        emit m_core->projectController()->projectAboutToBeOpened(m_project);
++        ProjectController *projectController = qobject_cast<ProjectController*>(m_core->projectController());
++        if (projectController) {
++            projectController->addProject(m_project);
++        } else {
++            // warn that something apparently changed and attempt to activate
++            // the Project Filter by sending the appropriate signal directly.
++            qWarning() << "not a ProjectController instance:" << m_core->projectController();
++            qWarning() << "emulating the class to set up the Project Filter";
++            emit m_core->projectController()->projectAboutToBeOpened(m_project);
++        }
 +        m_timer.start();
 +        auto root = m_manager->import(m_project);
 +        int elapsed = m_timer.elapsed();
@@ -355,7 +387,7 @@ index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f251
 +int main(int argc, char** argv)
 +{
 +    if (argc < 2) {
-+        qWarning() << "Usage:" << argv[0] << "[--withFilters] projectDir1 [...projectDirN]";
++        qWarning() << "Usage:" << argv[0] << "projectDir1 [...projectDirN]";
 +        return 1;
 +    }
 +    QApplication app(argc, argv);
@@ -369,15 +401,9 @@ index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f251
 +    QElapsedTimer runTimer;
 +
 +    AutoTestShell::init({"no plugins"});
-+    bool withFilters = argc >= 2 && strcmp(argv[1], "--withFilters") == 0;
-+    // The Project Filter plugin will not be available when TestCore::initialize()
-+    // is called with Core::NoUI, which provides a simple mechanism to determine
-+    // whether project filters will be applied or not.
-+    auto core = TestCore::initialize(withFilters ? Core::Default : Core::NoUi);
-+    // attempt to load the plugin; will succeed depending on the TestCore::initialize() call.
-+    if (core->pluginController()->allPluginsForExtension(QStringLiteral("org.kdevelop.IProjectFilter")).size() < 1) {
-+        qWarning() << "The project filter plugin was not loaded";
-+    }
++    auto core = TestCore::initialize();
++    // attempt to load the "Project Filter" plugin;
++    core->pluginController()->allPluginsForExtension(QStringLiteral("org.kdevelop.IProjectFilter"));
 +    auto manager = new AbstractFileManagerPlugin({}, core);
 +
 +    const char *kdwMethod[] = {"FAM", "Inotify", "Stat", "QFSWatch"};
@@ -385,7 +411,7 @@ index 0000000000000000000000000000000000000000..ec78f1805b2bb1ceb97661ef5ef6f251
 +
 +    QList<AbstractFileManagerPluginImportBenchmark*> benchmarks;
 +
-+    for (int i = withFilters ? 2 : 1 ; i < argc ; ++i) {
++    for (int i = 1 ; i < argc ; ++i) {
 +        const QString path = QString::fromUtf8(argv[i]);
 +        if (QFileInfo(path).isDir()) {
 +            const auto benchmark = new AbstractFileManagerPluginImportBenchmark(manager, path, core);
