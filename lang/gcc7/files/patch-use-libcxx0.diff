@@ -1,41 +1,25 @@
 diff --git gcc/incpath.c
 --- gcc/orig.incpath.c	2017-02-20 12:38:16.000000000 +0100
 +++ gcc/incpath.c	2017-05-11 19:02:37.000000000 +0200
-@@ -129,6 +129,10 @@
+@@ -129,6 +129,13 @@
    int relocated = cpp_relocated ();
    size_t len;
  
-+  if (cxx_stdinc == 2)
++  if (cxx_stdinc)
 +    {
-+      add_path (xstrdup ("@LLVMHEADERPATH@"), SYSTEM, true, false);
++      if (!getenv("LIBCPP_INCLUDE_PATH") && !getenv("GCC_FORCE_LIBSTDCPP"))
++        {
++          add_path (xstrdup ("@LLVMHEADERPATH@"), SYSTEM, true, false);
++        }
 +    }
    if (iprefix && (len = cpp_GCC_INCLUDE_DIR_len) != 0)
      {
        /* Look for directories that start with the standard prefix.
-@@ -136,7 +140,7 @@
- 	 IPREFIX and search them first.  */
-       for (p = cpp_include_defaults; p->fname; p++)
- 	{
--	  if (!p->cplusplus || cxx_stdinc)
-+	  if (!p->cplusplus || cxx_stdinc == 1)
- 	    {
- 	      /* Should we be translating sysrooted dirs too?  Assume
- 		 that iprefix and sysroot are mutually exclusive, for
-@@ -167,7 +171,7 @@
- 
-   for (p = cpp_include_defaults; p->fname; p++)
-     {
--      if (!p->cplusplus || cxx_stdinc)
-+      if (!p->cplusplus || cxx_stdinc == 1)
- 	{
- 	  char *str;
- 
-@@ -474,6 +478,9 @@
+@@ -474,6 +481,8 @@
    /* CPATH and language-dependent environment variables may add to the
       include chain.  */
    add_env_var_paths ("CPATH", BRACKET);
-+  /* cxx_stdinc is no longer a bool but also indicates which C++ headers to include */
-+  if (stdinc && cxx_stdinc == 2)
++  if (stdinc && cxx_stdinc && !getenv("GCC_FORCE_LIBSTDCPP"))
 +    add_env_var_paths ("LIBCPP_INCLUDE_PATH", SYSTEM);
    add_env_var_paths (lang_env_vars[idx], SYSTEM);
  
@@ -73,13 +57,12 @@ diff --git gcc/cp/g++spec.c
  #ifndef LIBSTDCXX_STATIC
  #define LIBSTDCXX_STATIC NULL
  #endif
-@@ -65,7 +78,14 @@
+@@ -65,7 +78,13 @@
    /* If nonzero, the user gave us the `-p' or `-pg' flag.  */
    int saw_profile_flag = 0;
  
 -  /* What do with libstdc++:
-+#if defined(MAC_OS_X_VERSION_MIN_REQUIRED) && defined(MAC_OS_X_VERSION_10_9) && MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_9
-+	/* TODO the configure script should determine whether the targetted host uses libc++ */
++#if defined(MAC_OS_X_VERSION_MIN_REQUIRED) && MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_9
 +  int use_libcxx = 1;
 +#else
 +  int use_libcxx = 0;
@@ -89,7 +72,7 @@ diff --git gcc/cp/g++spec.c
       -1 means we should not link in libstdc++
       0  means we should link in libstdc++ if it is needed
       1  means libstdc++ is needed and should be linked in.
-@@ -141,6 +161,14 @@
+@@ -141,6 +160,14 @@
  	  library = -1;
  	  break;
  
@@ -104,16 +87,7 @@ diff --git gcc/cp/g++spec.c
  	case OPT_l:
  	  if (strcmp (arg, MATH_LIBRARY) == 0)
  	    {
-@@ -331,7 +359,7 @@
-       j++;
-     }
- 
--  /* Add `-lstdc++' if we haven't already done so.  */
-+  /* Add `-lstdc++' or -lc++ if we haven't already done so.  */
-   if (library > 0)
-     {
- #ifdef HAVE_LD_STATIC_DYNAMIC
-@@ -342,19 +370,44 @@
+@@ -342,15 +369,34 @@
  	  j++;
  	}
  #endif
@@ -124,53 +98,38 @@ diff --git gcc/cp/g++spec.c
 -      j++;
 -      /* Add target-dependent static library, if necessary.  */
 -      if ((static_link || library > 1) && LIBSTDCXX_STATIC != NULL)
--	{
--	  generate_option (OPT_l, LIBSTDCXX_STATIC, 1,
--			   CL_DRIVER, &new_decoded_options[j]);
--	  added_libraries++;
--	  j++;
--	}
-+		if (use_libcxx)
-+			{
-+				generate_option (OPT_l, LIBCXX, 1,
-+					  CL_DRIVER, &new_decoded_options[j]);
-+				added_libraries++;
-+				j++;
-+				/* add -lc++abi */
-+				generate_option (OPT_l, LIBCXXABI, 1,
-+					  CL_DRIVER, &new_decoded_options[j]);
-+				added_libraries++;
-+				j++;
-+#if defined(MAC_OS_X_VERSION_MIN_REQUIRED) && (!defined(MAC_OS_X_VERSION_10_12) || MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_12)
-+				/* the system libc++ doesn't have the C++14 sized new/delete operators;
-+					 get them from libsup++. This is a bit of a hack but libc++ supports
-+					 it.
-+					 TODO: use a proper configure-time check to determine if this is required. */
-+				generate_option (OPT_l, LIBSUPCXX, 1,
-+					  CL_DRIVER, &new_decoded_options[j]);
-+				added_libraries++;
-+				j++;
-+#endif
-+			}
-+		else
-+			{
-+				generate_option (OPT_l,
-+					  saw_profile_flag ? LIBSTDCXX_PROFILE : LIBSTDCXX, 1,
-+					  CL_DRIVER, &new_decoded_options[j]);
-+				added_libraries++;
-+				j++;
-+				 /* Add target-dependent static library, if necessary.  */
-+				 if ((static_link || library > 1) && (LIBSTDCXX_STATIC != NULL))
-+				{
-+				  generate_option (OPT_l, LIBSTDCXX_STATIC, 1,
-+						   CL_DRIVER, &new_decoded_options[j]);
-+				  added_libraries++;
-+				  j++;
-+				}
-+			}
- #ifdef HAVE_LD_STATIC_DYNAMIC
-       if (library > 1 && !static_link)
++   /* NOT checking for the existence of LIBCXXABI and LIBSUPCXX on purpose */
++	 if (getenv ("GCC_FORCE_LIBSTDCPP")) {
++		 fprintf(stderr, "GCC_FORCE_LIBSTDCPP - using -l%s instead of -l%s -l%s -l%s\n",
++                 (saw_profile_flag ? LIBSTDCXX_PROFILE : LIBSTDCXX), LIBCXX, LIBCXXABI, LIBSUPCXX);
++		 generate_option (OPT_l,
++				  saw_profile_flag ? LIBSTDCXX_PROFILE : LIBSTDCXX, 1,
++				  CL_DRIVER, &new_decoded_options[j]);
++		 added_libraries++;
++		 j++;
++	 } else {
++		 generate_option (OPT_l, LIBCXX, 1,
++				  CL_DRIVER, &new_decoded_options[j]);
++		 added_libraries++;
++		 j++;
++		 /* add -lc++abi and -lsupc++ */
++		 generate_option (OPT_l, LIBCXXABI, 1,
++				  CL_DRIVER, &new_decoded_options[j]);
++		 added_libraries++;
++		 j++;
++		 generate_option (OPT_l, LIBSUPCXX, 1,
++				  CL_DRIVER, &new_decoded_options[j]);
++		 added_libraries++;
++		 j++;
++	 }
++	 /* Add target-dependent static library, if necessary.  */
++	 if ((static_link || library > 1) && (LIBSTDCXX_STATIC != NULL || getenv("GCC_IS_BUILDING_ITSELF")))
  	{
+-	  generate_option (OPT_l, LIBSTDCXX_STATIC, 1,
++	  generate_option (OPT_l, LIBSTDCXX_STATIC ? LIBSTDCXX_STATIC : LIBSTDCXX, 1,
+ 			   CL_DRIVER, &new_decoded_options[j]);
+ 	  added_libraries++;
+ 	  j++;
 diff --git gcc/c-family/c.opt
 --- gcc/c-family/orig.c.opt	2017-03-31 16:24:27.000000000 +0200
 +++ gcc/c-family/c.opt	2017-10-31 11:31:59.000000000 +0100
