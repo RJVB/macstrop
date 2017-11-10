@@ -76,6 +76,7 @@ if {[tbool just_want_qt5_version_info]} {
 
 # first, check if port:qt5-kde or a port:qt5-kde-devel is installed, or if we're on Mac OS X 10.6
 # NB: the qt5-kde-devel ports may never exist officially in MacPorts but is used locally by KF5 port maintainers!
+# NB2 : ${prefix} isn't set by portindex but registry_active can be used!!
 if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10} {
     # Qt5 has been installed through port:qt5-kde or port:qt5-kde-devel
     ui_debug "Qt5 is provided by port:qt5-kde"
