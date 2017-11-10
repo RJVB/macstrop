@@ -50,7 +50,8 @@ return
 # Also use qt5-kde if we're on 10.6 because qt5-kde provides a fallback to Qt 5.3.2 on that OS version
 # NB : ${prefix} isn't set by portindex but registry_active can be used!!
 if {([file exists ${prefix}/include/qt5/QtCore/QtCore]
-        && ![info exists qt5.prefer_default]) || ${os.major} == 10} {
+        && ![info exists qt5.prefer_default]) || ${os.major} == 10
+        || ([catch {registry_active "qt5-kde"}] == 0 || [catch {registry_active "qt5-kde-devel"}] == 0) } {
     # Qt5 has been installed through port:qt5-kde and is not the be reinstalled the other way
     ui_debug "Qt5 is provided by port:qt5-kde"
     PortGroup   qt5-kde 1.0
