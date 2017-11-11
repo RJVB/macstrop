@@ -168,7 +168,7 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10
         || ([catch {registry_active "qt5-kde"}] == 0 || [catch {registry_active "qt5-kde-devel"}] == 0) } {
     # Qt5 has been installed through port:qt5-kde or port:qt5-kde-devel or we're on 10.6
     # transfer control to qt5-kde-1.0.tcl
-    ui_warn "Qt5 is provided by port:qt5-kde"
+    ui_debug "Qt5 is provided by port:qt5-kde"
     PortGroup           qt5-kde 1.0
     return
 } elseif {[file exists ${prefix}/libexec/qt5/plugins/platforms/libqcocoa.dylib]
