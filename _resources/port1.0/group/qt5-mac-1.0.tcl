@@ -166,39 +166,56 @@ if {[tbool just_want_qt5_version_info]} {
 # NB2 : ${prefix} isn't set by portindex but registry_active can be used!!
 if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10
         || ([catch {registry_active "qt5-kde"}] == 0 || [catch {registry_active "qt5-kde-devel"}] == 0) } {
-    # Qt5 has been installed through port:qt5-kde or port:qt5-kde-devel or we're on 10.6
-    # transfer control to qt5-kde-1.0.tcl
-    ui_debug "Qt5 is provided by port:qt5-kde"
-    PortGroup           qt5-kde 1.0
-    return
+    set qt5PGname "qt5-kde"
 } elseif {[file exists ${prefix}/libexec/qt5/plugins/platforms/libqcocoa.dylib]
         && [file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
     # qt5-qtbase is installed: Qt5 has been installed through a standard port:qt5 port
     # (checking if "plugins" is a directory is probably redundant)
     # We're already in the correct PortGroup
-    if {[variant_isset qt5kde] || ([info exists qt5.prefer_kde] && [info exists building_qt5])} {
-        if {[variant_isset qt5kde]} {
-            ui_error "You cannot install ports with the +qt5kde variant when port:qt5 or one of its subports installed!"
-        } else {
-            # user tries to install say qt5-kde-qtwebkit against qt5-qtbase etc.
-            ui_error "You cannot install a Qt5-KDE port with port:qt5 or one of its subports installed!"
-        }
-        # print the error but only raise it when attempting to fetch or configure the port.
-        pre-fetch {
-            return -code error "Deactivate the conflicting port:qt5 port(s) first!"
-        }
-        pre-configure {
-            return -code error "Deactivate the conflicting port:qt5 port(s) first!"
-        }
-    }
+    set qt5PGname "qt5"
 } elseif {[info exists qt5.prefer_kde] || [variant_isset qt5kde]} {
     # The calling port has indicated a preference and no Qt5 port is installed already
     # transfer control to qt5-kde-1.0.tcl
-    ui_debug "Qt5 will be provided by port:qt5-kde, by request"
-    PortGroup           qt5-kde 1.0
-    return
+    ui_debug "port:qt5-kde has been request explicitly"
+    set qt5PGname "qt5-kde"
 } else {
-    # default situation: we're already in the correct PortGroup
+    set qt5PGname "qt5"
+}
+
+if {[tbool just_want_qt5_variables]} {
+    ui_debug "just_want_qt5_variables is set, we need to use the Qt5 PG"
+    set qt5PGname "qt5"
+} elseif {[tbool building_qt5] && ![tbool qt5.prefer_kde]} {
+    ui_debug "building port:qt5-qtbase, we need to use the Qt5 PG"
+    set qt5PGname "qt5"
+}
+
+switch -exact ${qt5PGname} {
+    qt5-kde {
+        # Qt5 has been installed through port:qt5-kde or port:qt5-kde-devel or we're on 10.6
+        # transfer control to qt5-kde-1.0.tcl
+        ui_debug "Qt5 is provided by port:qt5-kde"
+        PortGroup           qt5-kde 1.0
+        return
+    }
+    default {
+        # default situation: we're already in the correct PortGroup, unless:
+        if {[variant_isset qt5kde] || ([info exists qt5.prefer_kde] && [info exists building_qt5])} {
+            if {[variant_isset qt5kde]} {
+                ui_error "You cannot install ports with the +qt5kde variant when port:qt5 or one of its subports installed!"
+            } else {
+                # user tries to install say qt5-kde-qtwebkit against qt5-qtbase etc.
+                ui_error "You cannot install a Qt5-KDE port with port:qt5 or one of its subports installed!"
+            }
+            # print the error but only raise it when attempting to fetch or configure the port.
+            pre-fetch {
+                return -code error "Deactivate the conflicting port:qt5 port(s) first!"
+            }
+            pre-configure {
+                return -code error "Deactivate the conflicting port:qt5 port(s) first!"
+            }
+        }
+    }
 }
 
 if {[info exists qt5.prefer_kde]} {
