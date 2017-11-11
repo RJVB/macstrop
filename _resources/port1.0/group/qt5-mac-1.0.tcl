@@ -176,7 +176,7 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10
 } elseif {[info exists qt5.prefer_kde] || [variant_isset qt5kde]} {
     # The calling port has indicated a preference and no Qt5 port is installed already
     # transfer control to qt5-kde-1.0.tcl
-    ui_debug "port:qt5-kde has been request explicitly"
+    ui_debug "port:qt5-kde has been requested explicitly"
     set qt5PGname "qt5-kde"
 } else {
     set qt5PGname "qt5"
@@ -188,6 +188,9 @@ if {[tbool just_want_qt5_variables]} {
 } elseif {[tbool building_qt5] && ![tbool qt5.prefer_kde]} {
     ui_debug "building port:qt5-qtbase, we need to use the Qt5 PG"
     set qt5PGname "qt5"
+} elseif {[tbool qt5.prefer_default]} {
+    ui_debug "qt5.prefer_default is set, we will use the Qt5 PG"
+    set qt5PGname "qt5"
 }
 
 switch -exact ${qt5PGname} {
@@ -195,7 +198,7 @@ switch -exact ${qt5PGname} {
         # Qt5 has been installed through port:qt5-kde or port:qt5-kde-devel or we're on 10.6
         # transfer control to qt5-kde-1.0.tcl
         ui_debug "Qt5 is provided by port:qt5-kde"
-        PortGroup           qt5-kde 1.0
+        PortGroup           ${qt5PGname} 1.0
         return
     }
     default {

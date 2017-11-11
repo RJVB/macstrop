@@ -77,6 +77,9 @@ if {[tbool just_want_qt5_version_info]} {
 # first, check if port:qt5-kde or a port:qt5-kde-devel is installed, or if we're on Mac OS X 10.6
 # NB: the qt5-kde-devel ports may never exist officially in MacPorts but is used locally by KF5 port maintainers!
 # NB2 : ${prefix} isn't set by portindex but registry_active can be used!!
+# NB3 : this is a simpler variant of the equivalent block in qt5-1.0.tcl and qt5-mac-1.0.tcl;
+# it can be because we have strict(er) control over who includes this, and the tests are redundant
+# if we come here via one of the aforementioned PortGroup files.
 if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10
         || ([catch {registry_active "qt5-kde"}] == 0 || [catch {registry_active "qt5-kde-devel"}] == 0) } {
     # Qt5 has been installed through port:qt5-kde or port:qt5-kde-devel
