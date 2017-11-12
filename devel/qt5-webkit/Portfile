@@ -6,8 +6,9 @@ PortGroup           cmake 1.1
 PortGroup           github 1.0
 
 set module          qtwebkit
-set versiontag      5.212.0-alpha2
-github.setup        annulen webkit ${module}-5.212.0-alpha2
+set targetversion   5.212.0
+set versiontag      ${targetversion}-alpha2
+github.setup        annulen webkit ${module}-${versiontag}
 github.tarball_from releases
 name                qt5-webkit
 # set a numeric version for "5.212.0-alpha2"
@@ -126,9 +127,9 @@ patchfiles-append       patch-upstream-20171112.diff
 patchfiles-append       patch-allow-osx109.diff
 # make sure we use not only the ICU headerfiles from MacPorts, but also the library!
 patchfiles-append       patch-use-icu.diff
-# we'll want to generate .pkg files
-# (NB: if those don't work, just provide copies in ${filespath})
-patchfiles-append       patch-generate-pkgconfigs.diff
+# # we'll want to generate .pkg files
+# # (NB: if those don't work, just provide copies in ${filespath})
+# patchfiles-append       patch-generate-pkgconfigs.diff
 # set the framework compatibility version to the same value as used
 # by the Qt version against which we're building. The default 5.0.0
 # version will be rejected by any app that was linked to a more recent
@@ -193,7 +194,11 @@ if {[variant_isset minimal]} {
     }
 }
 
+configure.pre_args-delete \
+                        -DCMAKE_INSTALL_NAME_DIR="${cmake.install_prefix}/lib"
+
 configure.args-append   -DKDE_INSTALL_INCLUDEDIR=${qt_includes_dir} \
+                        -DBIN_INSTALL_DIR=${qt_bins_dir} \
                         -DCOMPATIBILITY_VERSION="${branch}.0"
 
 if {${os.platform} eq "darwin"} {
@@ -207,9 +212,13 @@ if {${os.platform} eq "darwin"} {
         }
     }
 
+    configure.pre_args-append \
+                        -DCMAKE_INSTALL_NAME_DIR="${qt_frameworks_dir}"
     configure.args-append \
                         -DLIB_INSTALL_DIR=${qt_frameworks_dir}
 } else {
+    configure.pre_args-append \
+                        -DCMAKE_INSTALL_NAME_DIR="${qt_libs_dir}"
     configure.args-append \
                         -DLIB_INSTALL_DIR=${qt_libs_dir} \
                         -DUSE_LD_GOLD=OFF
@@ -234,10 +243,53 @@ if {${os.major} == 13} {
 
 post-destroot {
     if {[tbool qt5.using_kde]} {
-#         system "install_name_tool -id ${qt_frameworks_dir}/QtWebKit.framework/Versions/5/QtWebKit ${destroot}${qt_frameworks_dir}/QtWebKit.framework/Versions/5/QtWebKit"
-#         system "install_name_tool -id ${qt_frameworks_dir}/QtWebKitWidgets.framework/Versions/5/QtWebKitWidgets ${destroot}${qt_frameworks_dir}/QtWebKit.framework/Versions/5/QtWebKitWidgets"
-#         system "install_name_tool -change ${prefix}/lib/QtWebKit.framework/Versions/5/QtWebKit ${qt_frameworks_dir}/QtWebKit.framework/Versions/5/QtWebKit ${destroot}${qt_frameworks_dir}/QtWebKit.framework/Versions/5/QtWebKitWidgets"
-        file rename ${destroot}${qt_frameworks_dir}/cmake ${destroot}${prefix}/lib/
+        if {[info exists qt_cmake_module_dir]} {
+            ui_info "fixing and moving the CMake files into ${qt_cmake_module_dir}"
+            if {[file exists ${destroot}${qt_frameworks_dir}/cmake]} {
+                set srcdir ${qt_frameworks_dir}
+                # replace the *_install_prefix path with the correct path, but "take a detour" through ${qt_dir}
+                # as an extra insurance and to show the expected Qt install location in case cmake ever finds
+                # a .cmake script that doesn't below to this Qt5 port.
+                set sedcmd "s|/../../../../|/../../../${qt_dir_rel}/|g"
+            } else {
+                set srcdir ${qt_libs_dir}
+                set sedcmd "s|/../../../../../|/../../../${qt_dir_rel}/../../|g"
+            }
+            xinstall -v -m 755 -d ${destroot}${qt_cmake_module_dir}
+            foreach d [glob -tails -nocomplain -directory ${destroot}${srcdir}/cmake *] {
+                xinstall -m 755 -d ${destroot}${qt_cmake_module_dir}/${d}
+                foreach f [glob -nocomplain -directory ${destroot}${srcdir}/cmake/${d} *.cmake] {
+                    # ${qt_frameworks_dir} is  ${qt_dir}/Library/Frameworks while
+                    # ${qt_libs_dir}       is  ${qt_dir}/lib
+                    # unless modified, cmake files will point to a directory that is too high in the directory hierarchy
+                    reinplace ${sedcmd} ${f}
+                    file rename ${f} ${destroot}${qt_cmake_module_dir}/${d}/
+                }
+            }
+        }
+        file delete -force ${destroot}${qt_frameworks_dir}/QtWebKit.framework/Versions/5/Headers
+        file delete -force ${destroot}${qt_frameworks_dir}/QtWebKitWidgets.framework/Versions/5/Headers
+        file rename ${destroot}${qt_includes_dir}/QtWebKit ${destroot}${qt_frameworks_dir}/QtWebKit.framework/Versions/5/Headers/
+        file rename ${destroot}${qt_includes_dir}/QtWebKitWidgets ${destroot}${qt_frameworks_dir}/QtWebKitWidgets.framework/Versions/5/Headers/
+        ln -s ${qt_frameworks_dir}/QtWebKit.framework/Versions/5/Headers ${destroot}${qt_includes_dir}/QtWebKit
+        ln -s ${qt_frameworks_dir}/QtWebKitWidgets.framework/Versions/5/Headers ${destroot}${qt_includes_dir}/QtWebKitWidgets
+    }
+    if {${os.platform} eq "darwin"} {
+        xinstall -m 755 -d ${destroot}${qt_pkg_config_dir}
+        xinstall -m 755 ${filespath}/Qt5WebKit.pc ${destroot}${qt_pkg_config_dir}
+        xinstall -m 755 ${filespath}/Qt5WebKitWidgets.pc ${destroot}${qt_pkg_config_dir}
+        reinplace "s|@PREFIX@|${prefix}|g" \
+                     ${destroot}${qt_pkg_config_dir}/Qt5WebKit.pc \
+                     ${destroot}${qt_pkg_config_dir}/Qt5WebKitWidgets.pc
+        reinplace "s|@FRAMEWORKSDIR@|${qt_frameworks_dir}|g" \
+                     ${destroot}${qt_pkg_config_dir}/Qt5WebKit.pc \
+                     ${destroot}${qt_pkg_config_dir}/Qt5WebKitWidgets.pc
+        reinplace "s|@INCLUDESDIR@|${qt_includes_dir}|g" \
+                     ${destroot}${qt_pkg_config_dir}/Qt5WebKit.pc \
+                     ${destroot}${qt_pkg_config_dir}/Qt5WebKitWidgets.pc
+        reinplace "s|@VERSION@|${targetversion}|g" \
+                     ${destroot}${qt_pkg_config_dir}/Qt5WebKit.pc \
+                     ${destroot}${qt_pkg_config_dir}/Qt5WebKitWidgets.pc
     }
 }
 
