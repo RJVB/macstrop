@@ -72,6 +72,15 @@ proc qt5_port_conflicts {components} {
     }
     return ${cnfls}
 }
+proc qt5.active_version {} {
+    global prefix
+    if {[file exists ${prefix}/bin/pkg-config]} {
+        set av [exec ${prefix}/bin/pkg-config --modversion Qt5Core]
+        return ${av}
+    } else {
+        return 0.0.0
+    }
+}
 
 conflicts-append        [qt5_port_conflicts qtwebkit]
 
@@ -107,12 +116,24 @@ if {![variant_isset minimal]} {
 
 patch.pre_args          -Np1
 
-patchfiles-append       patch-allow-osx109.diff \
-                        patch-use-icu.diff
+# make some modifications for OS X 10.9
+patchfiles-append       patch-allow-osx109.diff
+# make sure we use not only the ICU headerfiles from MacPorts, but also the library!
+patchfiles-append       patch-use-icu.diff
+# we'll want to generate .pkg files
+# (NB: if those don't work, just provide copies in ${filespath})
+patchfiles-append       patch-generate-pkgconfigs.diff
+# set the framework compatibility version to the same value as used
+# by the Qt version against which we're building. The default 5.0.0
+# version will be rejected by any app that was linked to a more recent
+# Qt version.
+patchfiles-append       patch-set-compatversion.diff
 
 if {[info proc cmake.save_configure_cmd] ne ""} {
     cmake.save_configure_cmd "log too"
 }
+
+set branch              [join [lrange [split [qt5.active_version] .] 0 1] .]
 
 configure.args-append   -DENABLE_API_TESTS=OFF \
                         -DENABLE_PRINT_SUPPORT=ON \
@@ -152,27 +173,45 @@ if {[variant_isset minimal]} {
     configure.args-replace \
                         -DUSE_QT_MULTIMEDIA=ON \
                         -DUSE_QT_MULTIMEDIA=OFF
-    
 }
 
-if {[variant_exists qt5kde] && [variant_isset qt5kde]} {
-    variant x11 description {build the X11 target} {}
-    if {[variant_isset x11]} {
-        configure.args-append \
+configure.args-append   -DKDE_INSTALL_INCLUDEDIR=${qt_includes_dir} \
+                        -DCOMPATIBILITY_VERSION="${branch}.0"
+
+platform darwin {
+    if {[variant_exists qt5kde] && [variant_isset qt5kde]} {
+        variant x11 description {build the X11 target} {}
+        if {[variant_isset x11]} {
+            configure.args-append \
                         -DENABLE_X11_TARGET=ON
-        depends_lib-append \
+            depends_lib-append \
                         path:${qt_frameworks_dir}/QtX11Extras.framework/QtX11Extras:qt5-kde-x11
+        }
     }
+
+    configure.args-append \
+                        -DLIB_INSTALL_DIR=${qt_frameworks_dir}
+}
+platform linux {
+    configure.args-append \
+                        -DLIB_INSTALL_DIR=${qt_libs_dir}
 }
 
-configure.args-append   -DCMAKE_MACOSX_RPATH=ON
+# platform darwin 13 {
+#     set macosx_deployment_target 10.10
+#     if {[catch {configure.sdkroot [exec xcrun --show-sdk-path -sdk macosx10.10]} result]} {
+#         ui_error "The SDK macosx10.10 is required on Mac OS X 10.9: ${result}"
+#         return -code error "Missing 10.10 SDK"
+#     } else {
+#         ui_debug "Using SDK macosx10.10 (${configure.sdkroot}): ${result}"
+#     }
+# }
 
-platform darwin 13 {
-    set macosx_deployment_target 10.10
-    if {[catch {configure.sdkroot [exec xcrun --show-sdk-path -sdk macosx10.10]} result]} {
-        ui_error "The SDK macosx10.10 is required on Mac OS X 10.9: ${result}"
-        return -code error "Missing 10.10 SDK"
-    } else {
-        ui_debug "Using SDK macosx10.10 (${configure.sdkroot}): ${result}"
+post-destroot {
+    if {[tbool qt5.using_kde]} {
+        system "install_name_tool -id ${qt_frameworks_dir}/QtWebKit.framework/Versions/5/QtWebKit ${destroot}${qt_frameworks_dir}/QtWebKit.framework/Versions/5/QtWebKit"
+        system "install_name_tool -id ${qt_frameworks_dir}/QtWebKitWidgets.framework/Versions/5/QtWebKitWidgets ${destroot}${qt_frameworks_dir}/QtWebKit.framework/Versions/5/QtWebKitWidgets"
+        system "install_name_tool -change ${prefix}/lib/QtWebKit.framework/Versions/5/QtWebKit ${qt_frameworks_dir}/QtWebKit.framework/Versions/5/QtWebKit ${destroot}${qt_frameworks_dir}/QtWebKit.framework/Versions/5/QtWebKitWidgets"
+        file rename ${destroot}${qt_frameworks_dir}/cmake ${destroot}${prefix}/lib/
     }
 }
