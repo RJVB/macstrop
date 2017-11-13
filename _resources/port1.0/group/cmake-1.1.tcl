@@ -253,7 +253,7 @@ proc cmake::ccaching {} {
 configure.ccache    no
 # surprising but intended behaviour that's impossible to work around more gracefully:
 if {[tbool configure.ccache]} {
-    ui_error "Please don't use configure.ccache=yes on the commandline for port:${subport}"
+    ui_error "Please don't use configure.ccache=yes on the commandline for port:${subport}, use configureccache=yes or cmake.ccache=yes"
     return -code error "invalid invocation (port:${subport})"
 }
 
@@ -327,9 +327,9 @@ pre-configure {
     # the concerned Release build type so that configure.optflags
     # gets honored (Debug used by the +debug variant does not set
     # optimisation flags by default).
-    # NB: more recent CMake versions (>=3?) no longer take the env. variables into
-    # account, and thus require explicit use of ${configure.c*flags} below:
-    # Using a custom BUILD_TYPE we can simply append to the env. variables,
+    # We use a custom BUILD_TYPE (MacPorts) so we can simply append all desired
+    # arguments to the CFLAGS and CXXFLAGS env. variables, which will be used
+    # to set CMAKE_C_FLAGS and CMAKE_CXX_FLAGS, and those will control the build.
     if {![variant_isset debug]} {
         configure.cflags-append     -DNDEBUG
         configure.cxxflags-append   -DNDEBUG
@@ -354,8 +354,8 @@ pre-configure {
     }
 
     configure.pre_args-prepend "-G \"[join ${cmake.generator}]\""
-    # CMake doesn't like --enable-debug, so remove it unconditionally.
-    configure.args-delete --enable-debug
+    # undo a counterproductive action from the debug PG:
+    configure.args-delete -DCMAKE_BUILD_TYPE=debugFull
     if {[tbool cmake.ccache]} {
         ui_info "        (using ccache)"
     }
@@ -499,10 +499,4 @@ variant debug description "Enable debug binaries" {
     configure.ldflags-append        ${cmake::debugopts}
     # try to ensure that info won't get stripped
     configure.args-append           -DCMAKE_STRIP:FILEPATH=/bin/echo
-}
-
-# cmake doesn't like --enable-debug, so in case a portfile sets
-# --enable-debug (regardless of variant) we remove it
-if {[string first "--enable-debug" ${configure.args}] > -1} {
-    configure.args-delete     --enable-debug
 }
