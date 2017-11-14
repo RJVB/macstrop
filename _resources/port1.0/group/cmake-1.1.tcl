@@ -2,7 +2,7 @@
 #
 # Copyright (c) 2009 Orville Bennett <illogical1 at gmail.com>
 # Copyright (c) 2010-2015 The MacPorts Project
-# Copyright (c) 2015, 2016 R.J.V. Bertin
+# Copyright (c) 2015-2017 R.J.V. Bertin
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -48,8 +48,7 @@ options                             cmake.build_dir \
                                     cmake.module_path \
                                     cmake_share_module_dir \
                                     cmake.out_of_source \
-                                    cmake.set_osx_architectures \
-                                    cmake.ccache
+                                    cmake.set_osx_architectures
 
 # make out-of-source builds the default (finally)
 default cmake.out_of_source         {yes}
@@ -72,9 +71,6 @@ default cmake.build_type            {MacPorts}
 
 # cmake-based ports may want to modify the install prefix
 default cmake.install_prefix        {${prefix}}
-
-# we support ccache via our own cache variable (which incompatible projects can turn off).
-default cmake.ccache                [tbool configure.ccache]
 
 # minimal/initial value for the install rpath:
 default cmake.install_rpath         {${prefix}/lib}
@@ -237,24 +233,21 @@ default configure.dir {[cmake::build_dir]}
 default build.dir {${configure.dir}}
 default build.post_args {VERBOSE=ON}
 
+# cache the configure.ccache variable (it will be overridden in the pre-configure step)
+set cmake::ccache_cache ${configure.ccache}
+
 # tell CMake to use ccache via the CMAKE_<LANG>_COMPILER_LAUNCHER variable
 # and unset the global configure.ccache option which is not compatible
 # with CMake.
 # See https://stackoverflow.com/questions/1815688/how-to-use-ccache-with-cmake
 proc cmake::ccaching {} {
-    global cmake.ccache prefix
-    if {[tbool cmake.ccache] && [file exists ${prefix}/bin/ccache]} {
+    global prefix
+    namespace upvar ::cmake ccache_cache cccache
+    if {${cccache} && [file exists ${prefix}/bin/ccache]} {
         return [list \
             -DCMAKE_C_COMPILER_LAUNCHER=${prefix}/bin/ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=${prefix}/bin/ccache]
     }
-}
-
-configure.ccache    no
-# surprising but intended behaviour that's impossible to work around more gracefully:
-if {[tbool configure.ccache]} {
-    ui_error "Please don't use configure.ccache=yes on the commandline for port:${subport}, use configureccache=yes or cmake.ccache=yes"
-    return -code error "invalid invocation (port:${subport})"
 }
 
 configure.cmd       ${prefix}/bin/cmake
@@ -356,12 +349,27 @@ pre-configure {
     configure.pre_args-prepend "-G \"[join ${cmake.generator}]\""
     # undo a counterproductive action from the debug PG:
     configure.args-delete -DCMAKE_BUILD_TYPE=debugFull
-    if {[tbool cmake.ccache]} {
+
+    # The configure.ccache variable has been cached so we can restore it in the post-configure
+    # (pre-configure and post-configure are always run in a single `port` invocation.)
+    configure.ccache        no
+    # surprising but intended behaviour that's impossible to work around more gracefully:
+    # overriding configure.ccache fails if the user set it directly from the commandline
+    if {[tbool configure.ccache]} {
+        ui_error "Please don't use configure.ccache=yes on the commandline for port:${subport}, use configureccache=yes"
+        return -code error "invalid invocation (port:${subport})"
+    }
+    if {${cmake::ccache_cache}} {
         ui_info "        (using ccache)"
     }
 }
 
 post-configure {
+    # restore configure.ccache:
+    if {[info exists cmake::ccache_cache]} {
+        configure.ccache    ${cmake::ccache_cache}
+        ui_debug "configure.ccache restored to ${cmake::ccache_cache}"
+    }
     # either compile_commands.json was created because of -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
     # in which case touch'ing it won't change anything. Or else it wasn't created, in which case
     # we'll create a file that corresponds, i.e. containing an empty json array.
