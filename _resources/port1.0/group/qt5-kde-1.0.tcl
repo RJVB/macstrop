@@ -786,7 +786,8 @@ platform linux {
         qtwebview       path:libexec/${qt_name}/lib/libQt5WebView.${qt_libs_ext} \
     ]
 }
-set qt5::component2pathspec(assistant) path:${qt_bins_dir}/assistant
+set qt5::component2pathspec(assistant)  path:${qt_bins_dir}/assistant
+set qt5::component2pathspec(webkit)     $qt5::component2pathspec(qtwebkit)
 
 # a procedure for declaring dependencies on Qt5 components, which will expand them
 # into the appropriate subports for the Qt5 flavour installed
@@ -808,6 +809,7 @@ proc qt5::depends_component_p {deptype args} {
     ui_debug "qt5::depends_component_p, deptype=${deptype} args=$args"
     foreach comp $args {
         set done true
+        set portname "${qt5::pprefix}-${comp}"
         switch ${comp} {
             "qt5" {
                 if {${is_qt5kde} == 1} {
@@ -819,6 +821,11 @@ proc qt5::depends_component_p {deptype args} {
                 } else {
                     ${deptype}-append port:${qt5::pprefix}
                 }
+            }
+            "webkit" {
+                # this refers to the new version-agnostic port:qt5-webkit
+                set portname "qt5-${comp}"
+                set done false
             }
             "qtwebkit" -
             "qtwebengine" -
@@ -834,9 +841,9 @@ proc qt5::depends_component_p {deptype args} {
             }
         }
         if {!${done}} {
-            set portname "${qt5::pprefix}-${comp}"
             if {[info exists qt5::component2pathspec] && [info exists qt5::component2pathspec(${comp})]} {
                 # an explicit dependency pattern was given, e.g. path:foo
+                ui_info "component ${comp} -> port ${portname} and depspec $qt5::component2pathspec(${comp})"
                 ${deptype}-append "$qt5::component2pathspec(${comp}):${portname}"
             } else {
                 ${deptype}-append port:${portname}
