@@ -843,7 +843,7 @@ proc qt5::depends_component_p {deptype args} {
         if {!${done}} {
             if {[info exists qt5::component2pathspec] && [info exists qt5::component2pathspec(${comp})]} {
                 # an explicit dependency pattern was given, e.g. path:foo
-                ui_info "component ${comp} -> port ${portname} and depspec $qt5::component2pathspec(${comp})"
+                ui_debug "component ${comp} -> port ${portname} and depspec $qt5::component2pathspec(${comp})"
                 ${deptype}-append "$qt5::component2pathspec(${comp}):${portname}"
             } else {
                 ${deptype}-append port:${portname}
