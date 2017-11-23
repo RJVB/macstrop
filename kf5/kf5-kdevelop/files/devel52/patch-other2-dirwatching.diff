@@ -11,7 +11,7 @@ index c61e8de32e80c29a648766fe88c62b78f5561c36..d8b14d82407b1ec5a886d2fbd60dd77b
      interfaces/iprojectfilemanager.cpp
      interfaces/ibuildsystemmanager.cpp
 diff --git kdevplatform/project/abstractfilemanagerplugin.cpp kdevplatform/project/abstractfilemanagerplugin.cpp
-index 0f43c7ec55b9e2ea1120b2f6d86c314b5a3dd044..8a46d6dc51f29dc6713e1d2d441205ec75ae3399 100644
+index 3e7d24f1375db81a9befc27bc13348851d14d43d..73cfbf420d4112b0546e3e5402ba6887f4fee147 100644
 --- kdevplatform/project/abstractfilemanagerplugin.cpp
 +++ kdevplatform/project/abstractfilemanagerplugin.cpp
 @@ -1,3 +1,4 @@
@@ -67,7 +67,7 @@ index 0f43c7ec55b9e2ea1120b2f6d86c314b5a3dd044..8a46d6dc51f29dc6713e1d2d441205ec
                  q, [&] (FileManagerListJob* job, ProjectFolderItem* baseItem, const KIO::UDSEntryList& entries) {
                      addJobItems(job, baseItem, entries); } );
 +    q->connect( listJob, &FileManagerListJob::watchDir,
-+                q, [item, watcher] (const QString& path) {
++                watcher, [watcher] (const QString& path) {
 +                    watcher->addDir(path); }/*, Qt::QueuedConnection*/ );
  
      return listJob;
@@ -141,7 +141,7 @@ index 0f43c7ec55b9e2ea1120b2f6d86c314b5a3dd044..8a46d6dc51f29dc6713e1d2d441205ec
      ///TODO: check if this works for remote files when something gets changed through another KDE app
      if ( project->path().isLocalFile() ) {
 -        auto watcher = new KDirWatch( project );
-+        auto watcher = new ProjectWatcher(project, &d->m_filters);
++        auto watcher = new ProjectWatcher(project);
  
 -        // set up the signal handling
 -        connect(watcher, &KDirWatch::created,
@@ -156,7 +156,7 @@ index 0f43c7ec55b9e2ea1120b2f6d86c314b5a3dd044..8a46d6dc51f29dc6713e1d2d441205ec
      }
  
 diff --git kdevplatform/project/abstractfilemanagerplugin.h kdevplatform/project/abstractfilemanagerplugin.h
-index c99e7e0c2316bf24df76d303fdb599a8095193da..20ef5adda2c36eba8dca8ddb6777c599eacec690 100644
+index c99e7e0c2316bf24df76d303fdb599a8095193da..0bb9e9a3c899505fd1e06235b31f619407a94b26 100644
 --- kdevplatform/project/abstractfilemanagerplugin.h
 +++ kdevplatform/project/abstractfilemanagerplugin.h
 @@ -34,6 +34,7 @@ class KDirWatch;
@@ -177,10 +177,10 @@ index c99e7e0c2316bf24df76d303fdb599a8095193da..20ef5adda2c36eba8dca8ddb6777c599
  
  }
 diff --git kdevplatform/project/filemanagerlistjob.cpp kdevplatform/project/filemanagerlistjob.cpp
-index 06e1d69c70ba762cc476086794a79324871401f9..d45961230867b65d2ac4a7b009bb8a327cb380fe 100644
+index 06e1d69c70ba762cc476086794a79324871401f9..49acb3e620ba88a70b40f41b23fd9eb6a4565eca 100644
 --- kdevplatform/project/filemanagerlistjob.cpp
 +++ kdevplatform/project/filemanagerlistjob.cpp
-@@ -95,6 +97,8 @@ void FileManagerListJob::startNextJob()
+@@ -95,6 +95,8 @@ void FileManagerListJob::startNextJob()
              if (m_aborted) {
                  return;
              }
@@ -203,10 +203,10 @@ index 0d32c992c47ebc7d084a019badb64988f0be9ec0..02c051aa6262b3f8603521b158c40129
      void slotEntries(KIO::Job* job, const KIO::UDSEntryList& entriesIn );
 diff --git kdevplatform/project/projectwatcher.cpp kdevplatform/project/projectwatcher.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..2de78ec7b943a22890683942cfd9f9db6ff22242
+index 0000000000000000000000000000000000000000..dffe06c108ab97c5c2b5e1da69a1bd9ab7374334
 --- /dev/null
 +++ kdevplatform/project/projectwatcher.cpp
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,63 @@
 +/***************************************************************************
 + *   This file is part of KDevelop                                         *
 + *   Copyright 2017 René Bertin <rjvbertin@gmail.com>                      *
@@ -232,20 +232,26 @@ index 0000000000000000000000000000000000000000..2de78ec7b943a22890683942cfd9f9db
 +#include "projectfiltermanager.h"
 +#include "path.h"
 +
++#include <QApplication>
++
 +#include <KDirWatch>
 +
 +using namespace KDevelop;
 +
-+KDevelop::ProjectWatcher::ProjectWatcher(IProject* project, ProjectFilterManager* filter)
++KDevelop::ProjectWatcher::ProjectWatcher(IProject* project)
 +    : KDirWatch(project)
-+    , m_project(project)
-+    , m_filter(filter)
 +    , m_watchedCount(0)
-+{}
++{
++    if (QCoreApplication::instance()) {
++        // stop monitoring project directories when the IDE is about to quit
++        // This should prevent rare crashes on exit like BUG 387232
++        connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &KDirWatch::stopScan);
++    }
++}
 +
 +void KDevelop::ProjectWatcher::addDir(const QString& path, WatchModes watchModes)
 +{
-+    if (/*m_filter->isValid(Path(path), true, m_project) &&*/ !contains(path)) {
++    if (!contains(path)) {
 +        KDirWatch::addDir(path, watchModes);
 +        m_watchedCount += 1;
 +    }
@@ -266,10 +272,10 @@ index 0000000000000000000000000000000000000000..2de78ec7b943a22890683942cfd9f9db
 +
 diff --git kdevplatform/project/projectwatcher.h kdevplatform/project/projectwatcher.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..74d4d4b9359d9dcad5bfb5080d0f4dece425a9ae
+index 0000000000000000000000000000000000000000..580b8b93e81facf6bf50c71ebf537b19662ab0cf
 --- /dev/null
 +++ kdevplatform/project/projectwatcher.h
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,58 @@
 +/***************************************************************************
 + *   This file is part of KDevelop                                         *
 + *   Copyright 2017 René Bertin <rjvbertin@gmail.com>                      *
@@ -307,14 +313,12 @@ index 0000000000000000000000000000000000000000..74d4d4b9359d9dcad5bfb5080d0f4dec
 +    Q_OBJECT
 +public:
 +    /**
-+     * Create a dirwatcher for @p project based on KDirWatch and
-+     * enhanced with support for the project @p filter.
++     * Create a dirwatcher for @p project based on KDirWatch.
 +     */
-+    explicit ProjectWatcher(IProject* project, ProjectFilterManager* filter);
++    explicit ProjectWatcher(IProject* );
 +
 +    /**
-+     * Add directory @p path to the project dirwatcher if it is not
-+     * rejected by the project filter.
++     * Add directory @p path to the project dirwatcher.
 +     */
 +    void addDir(const QString& path, WatchModes watchModes = WatchDirOnly);
 +    void removeDir(const QString& path);
@@ -325,8 +329,6 @@ index 0000000000000000000000000000000000000000..74d4d4b9359d9dcad5bfb5080d0f4dec
 +    int size() const;
 +
 +private:
-+    IProject* m_project;
-+    ProjectFilterManager* m_filter;
 +    int m_watchedCount;
 +};
 +
