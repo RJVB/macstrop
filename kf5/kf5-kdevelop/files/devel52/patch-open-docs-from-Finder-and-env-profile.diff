@@ -172,6 +172,14 @@ diff --git app/main.cpp app/main.cpp
 index 646625b78c..e1f07f8462 100644
 --- app/main.cpp
 +++ app/main.cpp
+@@ -64,6 +65,7 @@
+ #include <interfaces/iproject.h>
+ #include <interfaces/launchconfigurationtype.h>
+ #include <util/path.h>
++#include <util/environmentprofilelist.h>
+ #include <debug.h>
+ 
+ #include "kdevideextension.h"
 @@ -73,11 +73,15 @@
  
  #include <iostream>
@@ -185,11 +193,11 @@ index 646625b78c..e1f07f8462 100644
  #endif
  
  using namespace KDevelop;
-+struct UrlInfo;
++class UrlInfo;
  
  namespace {
  
-@@ -110,15 +114,21 @@ class KDevelopApplication:
+@@ -110,16 +116,39 @@ class KDevelopApplication:
      public QApplication
  #endif
  {
@@ -209,9 +217,27 @@ index 646625b78c..e1f07f8462 100644
              Q_UNUSED(GUIenabled);
 +#endif
              connect(this, &QGuiApplication::saveStateRequest, this, &KDevelopApplication::saveState);
++
++            const KDevelop::EnvironmentProfileList environmentProfiles(KSharedConfig::openConfig());
++            const QString envProfileName = environmentProfiles.defaultProfileName();
++            QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
++            auto userEnv = environmentProfiles.variables(envProfileName);
++            expandVariables(userEnv, environment);
++            qCDebug(APP) << "Setting default environment profile:" << envProfileName;
++            mergeEnvironment(userEnv);
++        }
++
++        template< typename T >
++        void mergeEnvironment(const T& src)
++        {
++            for( typename T::const_iterator it = src.begin(); it != src.end(); ++it ) {
++                qCDebug(APP) << "setenv" << it.key() << it.value();
++                qputenv( it.key().toLatin1(), it.value().toLatin1() );
++            }
          }
  
-@@ -158,6 +168,16 @@ public Q_SLOTS:
+ #if KDEVELOP_SINGLE_APP
+@@ -158,6 +187,16 @@ public Q_SLOTS:
      {
          openFiles({UrlInfo(file)});
      }
@@ -228,7 +254,7 @@ index 646625b78c..e1f07f8462 100644
  #endif
  
  private Q_SLOTS:
-@@ -174,6 +194,12 @@ private Q_SLOTS:
+@@ -174,6 +213,12 @@ private Q_SLOTS:
              sm.setRestartCommand({QCoreApplication::applicationFilePath(), "-session", x11SessionId, "-s", kdevelopSessionId});
          }
      }
@@ -241,7 +267,7 @@ index 646625b78c..e1f07f8462 100644
  };
  
  /// Tries to find a session identified by @p data in @p sessions.
-@@ -244,7 +270,7 @@ static int openProjectInRunningInstance(const QVector<UrlInfo>& paths, qint64 pi
+@@ -244,7 +289,7 @@ static int openProjectInRunningInstance(const QVector<UrlInfo>& paths, qint64 pi
  
  /// Gets the PID of a running KDevelop instance, eventually asking the user if there is more than one.
  /// Returns -1 in case there are no running sessions.
@@ -250,7 +276,7 @@ index 646625b78c..e1f07f8462 100644
  {
      SessionInfos candidates;
      foreach( const KDevelop::SessionInfo& si, KDevelop::SessionController::availableSessionInfos() ) {
-@@ -264,6 +290,9 @@ static qint64 getRunningSessionPid()
+@@ -264,6 +309,9 @@ static qint64 getRunningSessionPid()
          const QString title = i18n("Select the session to open the document in");
          sessionUuid = KDevelop::SessionController::showSessionChooserDialog(title, true);
      }
@@ -260,7 +286,7 @@ index 646625b78c..e1f07f8462 100644
      return KDevelop::SessionController::sessionRunInfo(sessionUuid).holderPid;
  }
  
-@@ -301,6 +330,74 @@ static qint64 findSessionPid(const QString &sessionId)
+@@ -301,6 +349,74 @@ static qint64 findSessionPid(const QString &sessionId)
      return sessionInfo.holderPid;
  }
  
@@ -335,7 +361,7 @@ index 646625b78c..e1f07f8462 100644
  int main( int argc, char *argv[] )
  {
      QElapsedTimer timer;
-@@ -326,7 +423,7 @@ int main( int argc, char *argv[] )
+@@ -326,7 +442,7 @@ int main( int argc, char *argv[] )
  
      QCoreApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
  
@@ -344,7 +370,7 @@ index 646625b78c..e1f07f8462 100644
      CFBundleRef mainBundle = CFBundleGetMainBundle();
      if (mainBundle) {
          // get the application's Info Dictionary. For app bundles this would live in the bundle's Info.plist,
-@@ -504,6 +601,8 @@ int main( int argc, char *argv[] )
+@@ -504,6 +626,8 @@ int main( int argc, char *argv[] )
          return 0;
      }
  
@@ -353,7 +379,7 @@ index 646625b78c..e1f07f8462 100644
      // Handle extra arguments, which stand for files to open
      QVector<UrlInfo> initialFiles;
      QVector<UrlInfo> initialDirectories;
-@@ -529,7 +628,7 @@ int main( int argc, char *argv[] )
+@@ -529,7 +653,7 @@ int main( int argc, char *argv[] )
  #else
          qint64 pid = -1;
          if (parser.isSet(QStringLiteral("open-session"))) {
@@ -362,7 +388,7 @@ index 646625b78c..e1f07f8462 100644
              if (session.isEmpty()) {
                  return 1;
              } else if (KDevelop::SessionController::isSessionRunning(session)) {
-@@ -547,7 +646,6 @@ int main( int argc, char *argv[] )
+@@ -547,7 +671,6 @@ int main( int argc, char *argv[] )
      }
  
      // if empty, restart kdevelop with last active session, see SessionController::defaultSessionId
@@ -370,7 +396,7 @@ index 646625b78c..e1f07f8462 100644
  
      uint nRunningSessions = 0;
      foreach(const KDevelop::SessionInfo& si, availableSessionInfos)
-@@ -590,12 +688,18 @@ int main( int argc, char *argv[] )
+@@ -590,12 +713,18 @@ int main( int argc, char *argv[] )
          }
      }
  
@@ -390,7 +416,7 @@ index 646625b78c..e1f07f8462 100644
      }
  
      if ( parser.isSet(QStringLiteral("debug")) ) {
-@@ -684,12 +788,37 @@ int main( int argc, char *argv[] )
+@@ -684,12 +813,37 @@ int main( int argc, char *argv[] )
  
      KDevIDEExtension::init();
  
@@ -428,7 +454,7 @@ index 646625b78c..e1f07f8462 100644
      Core* core = Core::self();
      if (!QProcessEnvironment::systemEnvironment().contains(QStringLiteral("KDEV_DISABLE_WELCOMEPAGE"))) {
          core->pluginController()->loadPlugin(QStringLiteral("KDevWelcomePage"));
-@@ -792,3 +921,5 @@ int main( int argc, char *argv[] )
+@@ -792,3 +946,5 @@ int main( int argc, char *argv[] )
  
      return app.exec();
  }
