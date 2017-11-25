@@ -11,7 +11,7 @@ index c61e8de32e80c29a648766fe88c62b78f5561c36..d8b14d82407b1ec5a886d2fbd60dd77b
      interfaces/iprojectfilemanager.cpp
      interfaces/ibuildsystemmanager.cpp
 diff --git kdevplatform/project/abstractfilemanagerplugin.cpp kdevplatform/project/abstractfilemanagerplugin.cpp
-index 3e7d24f1375db81a9befc27bc13348851d14d43d..1bc3d6a958a16957b002ab3f6bf94c7ead6972a5 100644
+index 3e7d24f1375db81a9befc27bc13348851d14d43d..b45359eb55f69e9d1c565f6e89730496c1835f72 100644
 --- kdevplatform/project/abstractfilemanagerplugin.cpp
 +++ kdevplatform/project/abstractfilemanagerplugin.cpp
 @@ -1,3 +1,4 @@
@@ -79,7 +79,7 @@ index 3e7d24f1375db81a9befc27bc13348851d14d43d..1bc3d6a958a16957b002ab3f6bf94c7e
      FileManagerListJob* listJob = new FileManagerListJob( item );
      m_projectJobs[ item->project() ] << listJob;
      qCDebug(FILEMANAGER) << "adding job" << listJob << item << item->path() << "for project" << item->project();
-@@ -147,6 +157,17 @@ KIO::Job* AbstractFileManagerPluginPrivate::eventuallyReadFolder(ProjectFolderIt
+@@ -147,6 +157,40 @@ KIO::Job* AbstractFileManagerPluginPrivate::eventuallyReadFolder(ProjectFolderIt
      q->connect( listJob, &FileManagerListJob::entries,
                  q, [&] (FileManagerListJob* job, ProjectFolderItem* baseItem, const KIO::UDSEntryList& entries) {
                      addJobItems(job, baseItem, entries); } );
@@ -89,15 +89,38 @@ index 3e7d24f1375db81a9befc27bc13348851d14d43d..1bc3d6a958a16957b002ab3f6bf94c7e
 +                    watcher->addDir(path); } );
 +    }
 +
-+    foreach (const auto job, m_projectJobs[item->project()]) {
-+        if (job->itemQueue().contains(item)) {
-+            qCWarning(FILEMANAGER) << "job" << job << "already queues reload of" << item->path() << "for project" << item->project();
++    // walk the list backwards, checking for duplicates and aborting
++    // any previously started jobs loading the same directory.
++    const auto jobList = QList<FileManagerListJob*>(m_projectJobs[item->project()]);
++    auto jobListIt = jobList.constEnd();
++    auto jobListHead = jobList.constBegin();
++    while (jobListIt != jobListHead) {
++        auto job = *(--jobListIt);
++        if (listJob != job) {
++            if (job->baseItem() == item) {
++                qCDebug(FILEMANAGER) << listJob << "aborting old job" << job << "for" << item->path() << "for project" << item->project();
++                job->abort();
++                m_projectJobs[item->project()].removeOne(job);
++                // we don't do anything about jobs for a parent dir queuing a reload of this dir
++                // so we can just as well cut the search here.
++                break;
++            } else if (job->itemQueue().contains(item)) {
++                qCWarning(FILEMANAGER) << listJob << "old job" << job << "already queues reload of" << item->path() << "for project" << item->project();
++            }
 +        }
 +    }
++    q->connect( listJob, &FileManagerListJob::result,
++                q, [&] (KJob* job) {
++                    FileManagerListJob* gmlJob = qobject_cast<FileManagerListJob*>(job);
++                    if (gmlJob) {
++                        qCDebug(FILEMANAGER) << "Job done for item" << gmlJob->baseItem()->path() << gmlJob;
++                    } else {
++                        qCWarning(FILEMANAGER) << "Job done:" << job;
++                    } } );
  
      return listJob;
  }
-@@ -257,9 +278,13 @@ void AbstractFileManagerPluginPrivate::addJobItems(FileManagerListJob* job,
+@@ -257,9 +301,13 @@ void AbstractFileManagerPluginPrivate::addJobItems(FileManagerListJob* job,
      }
  }
  
@@ -113,7 +136,7 @@ index 3e7d24f1375db81a9befc27bc13348851d14d43d..1bc3d6a958a16957b002ab3f6bf94c7e
      QFileInfo info(path_);
  
      ///FIXME: share memory with parent
-@@ -267,7 +292,7 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
+@@ -267,7 +315,7 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
      const IndexedString indexedPath(path.pathOrUrl());
      const IndexedString indexedParent(path.parent().pathOrUrl());
  
@@ -122,7 +145,7 @@ index 3e7d24f1375db81a9befc27bc13348851d14d43d..1bc3d6a958a16957b002ab3f6bf94c7e
      while (it.hasNext()) {
          const auto p = it.next().key();
          if ( !p->projectItem()->model() ) {
-@@ -295,18 +320,20 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
+@@ -295,18 +343,20 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
              // also gets triggered for kate's backup files
              continue;
          }
@@ -155,7 +178,7 @@ index 3e7d24f1375db81a9befc27bc13348851d14d43d..1bc3d6a958a16957b002ab3f6bf94c7e
                  }
              }
          }
-@@ -330,7 +357,7 @@ void AbstractFileManagerPluginPrivate::deleted(const QString& path_)
+@@ -330,7 +380,7 @@ void AbstractFileManagerPluginPrivate::deleted(const QString& path_)
      const Path path(QUrl::fromLocalFile(path_));
      const IndexedString indexed(path.pathOrUrl());
  
@@ -164,7 +187,7 @@ index 3e7d24f1375db81a9befc27bc13348851d14d43d..1bc3d6a958a16957b002ab3f6bf94c7e
      while (it.hasNext()) {
          const auto p = it.next().key();
          if (path == p->path()) {
-@@ -446,6 +473,11 @@ void AbstractFileManagerPluginPrivate::removeFolder(ProjectFolderItem* folder)
+@@ -446,6 +496,11 @@ void AbstractFileManagerPluginPrivate::removeFolder(ProjectFolderItem* folder)
              job->removeSubDir(folder);
          }
      }
@@ -176,7 +199,7 @@ index 3e7d24f1375db81a9befc27bc13348851d14d43d..1bc3d6a958a16957b002ab3f6bf94c7e
      folder->parent()->removeRow( folder->row() );
  }
  
-@@ -487,14 +519,19 @@ ProjectFolderItem *AbstractFileManagerPlugin::import( IProject *project )
+@@ -487,14 +542,19 @@ ProjectFolderItem *AbstractFileManagerPlugin::import( IProject *project )
  
      ///TODO: check if this works for remote files when something gets changed through another KDE app
      if ( project->path().isLocalFile() ) {
@@ -223,18 +246,20 @@ index c99e7e0c2316bf24df76d303fdb599a8095193da..0bb9e9a3c899505fd1e06235b31f6194
  
  }
 diff --git kdevplatform/project/filemanagerlistjob.cpp kdevplatform/project/filemanagerlistjob.cpp
-index 06e1d69c70ba762cc476086794a79324871401f9..8aa0e074edce55b54274fc9fc179c9688c94cf17 100644
+index 06e1d69c70ba762cc476086794a79324871401f9..081e4ad7ca012c5664635887a9102aaa323702d6 100644
 --- kdevplatform/project/filemanagerlistjob.cpp
 +++ kdevplatform/project/filemanagerlistjob.cpp
-@@ -32,6 +32,7 @@ using namespace KDevelop;
+@@ -31,7 +31,8 @@
+ using namespace KDevelop;
  
  FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
-     : KIO::Job(), m_item(item), m_aborted(false)
+-    : KIO::Job(), m_item(item), m_aborted(false)
++    : KIO::Job(), m_item(item), m_baseItem(item), m_aborted(false)
 +    , m_emitWatchDir(!qEnvironmentVariableIsSet("KDEV_PROJECT_INTREE_DIRWATCHING_MODE"))
  {
      qRegisterMetaType<KIO::UDSEntryList>("KIO::UDSEntryList");
      qRegisterMetaType<KIO::Job*>();
-@@ -54,6 +55,11 @@ ProjectFolderItem* FileManagerListJob::item() const
+@@ -54,6 +55,16 @@ ProjectFolderItem* FileManagerListJob::item() const
      return m_item;
  }
  
@@ -243,10 +268,15 @@ index 06e1d69c70ba762cc476086794a79324871401f9..8aa0e074edce55b54274fc9fc179c968
 +    return m_listQueue;
 +}
 +
++ProjectFolderItem* FileManagerListJob::baseItem() const
++{
++    return m_baseItem;
++}
++
  void FileManagerListJob::addSubDir( ProjectFolderItem* item )
  {
      Q_ASSERT(!m_listQueue.contains(item));
-@@ -95,6 +101,10 @@ void FileManagerListJob::startNextJob()
+@@ -95,6 +106,10 @@ void FileManagerListJob::startNextJob()
              if (m_aborted) {
                  return;
              }
@@ -257,19 +287,34 @@ index 06e1d69c70ba762cc476086794a79324871401f9..8aa0e074edce55b54274fc9fc179c968
              KIO::UDSEntryList results;
              std::transform(entries.begin(), entries.end(), std::back_inserter(results), [] (const QFileInfo& info) -> KIO::UDSEntry {
                  KIO::UDSEntry entry;
+@@ -164,8 +179,13 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
+ void FileManagerListJob::abort()
+ {
+     m_aborted = true;
++    m_listQueue.clear();
+ 
+     bool killed = kill();
++    m_killCount += 1;
++    if (!killed) {
++        qCWarning(PROJECT) << "failed to kill" << this << "kill count=" << m_killCount;
++    }
+     Q_ASSERT(killed);
+     Q_UNUSED(killed);
+ }
 diff --git kdevplatform/project/filemanagerlistjob.h kdevplatform/project/filemanagerlistjob.h
-index 0d32c992c47ebc7d084a019badb64988f0be9ec0..61c992b8ae7a9ad960fd6b0e2197ba3873e5b47a 100644
+index 0d32c992c47ebc7d084a019badb64988f0be9ec0..20eee45a70983dd209fdb5f1366300cc929dc8c8 100644
 --- kdevplatform/project/filemanagerlistjob.h
 +++ kdevplatform/project/filemanagerlistjob.h
-@@ -41,6 +41,7 @@ class FileManagerListJob : public KIO::Job
+@@ -41,6 +41,8 @@ class FileManagerListJob : public KIO::Job
  public:
      explicit FileManagerListJob(ProjectFolderItem* item);
      ProjectFolderItem* item() const;
 +    QQueue<ProjectFolderItem*> itemQueue() const;
++    ProjectFolderItem* baseItem() const;
  
      void addSubDir(ProjectFolderItem* item);
      void removeSubDir(ProjectFolderItem* item);
-@@ -52,6 +53,7 @@ Q_SIGNALS:
+@@ -52,6 +54,7 @@ Q_SIGNALS:
      void entries(FileManagerListJob* job, ProjectFolderItem* baseItem,
                   const KIO::UDSEntryList& entries);
      void nextJob();
@@ -277,11 +322,21 @@ index 0d32c992c47ebc7d084a019badb64988f0be9ec0..61c992b8ae7a9ad960fd6b0e2197ba38
  
  private Q_SLOTS:
      void slotEntries(KIO::Job* job, const KIO::UDSEntryList& entriesIn );
-@@ -73,6 +75,7 @@ private:
+@@ -64,6 +67,8 @@ private:
+     QQueue<ProjectFolderItem*> m_listQueue;
+     /// current base dir
+     ProjectFolderItem* m_item;
++    /// entrypoint
++    ProjectFolderItem* m_baseItem;
+     KIO::UDSEntryList entryList;
+     // kill does not delete the job instantaniously
+     QAtomicInt m_aborted;
+@@ -73,6 +78,8 @@ private:
      QElapsedTimer m_subTimer;
      qint64 m_subWaited = 0;
  #endif
 +    bool m_emitWatchDir;
++    int m_killCount = 0;
  };
  
  }
