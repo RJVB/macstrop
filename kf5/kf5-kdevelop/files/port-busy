@@ -1,0 +1,154 @@
+#!/usr/bin/env port-tclsh
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+#
+# check if a port command is busy (= the port's state file is locked)
+#
+# 2017 R.J.V. Bertin
+
+set SCRIPTVERSION 0.1
+
+array set portsSeen {}
+
+proc printUsage {} {
+    puts "Usage: $::argv0 \[-dV\] \[-t macports-tcl-path\] port-name\[s\]"
+    puts "  -h    This help"
+    puts "  -d    some debug output"
+    puts "  -v    verbose mode"
+    puts "  -V    show version and MacPorts version being used"
+    puts ""
+    puts "port-name\[s\] is the name of a port(s) to check"
+}
+
+
+# Begin
+
+package require Tclx
+package require macports
+package require Pextlib 1.0
+
+set macportsTclPath /Library/Tcl
+set showVersion 0
+set _WD_port {}
+
+array set ui_options        {}
+array set global_options    {}
+array set global_variations {}
+set ui_options(ports_debug) no
+set ui_options(ports_verbose) no
+
+while {[string index [lindex $::argv 0] 0] == "-" } {
+    switch [string range [lindex $::argv 0] 1 end] {
+        h {
+            printUsage
+            exit 0
+        }
+        d {
+            set ui_options(ports_debug) yes
+            # debug implies verbose
+            set ui_options(ports_verbose) yes
+        }
+        v {
+            set ui_options(ports_verbose) yes
+        }
+        t {
+            if {[llength $::argv] < 2} {
+                puts "-t needs a path"
+                printUsage
+                exit 2
+            }
+            set macportsTclPath [lindex $::argv 1]
+            set ::argv [lrange $::argv 1 end]
+        }
+        V {
+            set showVersion 1
+        }
+        default {
+            puts "Unknown option [lindex $::argv 0]"
+            printUsage
+            exit 2
+        }
+    }
+    set ::argv [lrange $::argv 1 end]
+}
+
+proc port_workdir {portname} {
+    # Operations on the port's directory and Portfile
+    global env boot_env current_portdir
+
+    set status 0
+
+    array unset portinfo
+
+    # Verify the portname, getting portinfo to map to a porturl
+    if {[catch {set res [mportlookup $portname]} result]} {
+        ui_debug $::errorInfo
+        ui_error "lookup of portname $portname failed: $result"
+        return ""
+    }
+    if {[llength $res] < 2} {
+        ui_error "Port $portname not found"
+        return ""
+    }
+    array set portinfo [lindex $res 1]
+    set porturl $portinfo(porturl)
+    set portname $portinfo(name)
+
+
+    # Calculate portdir, porturl, and portfile from initial porturl
+    set portdir [file normalize [macports::getportdir $porturl]]
+    set porturl "file://${portdir}";    # Rebuild url so it's fully qualified
+    set portfile "${portdir}/Portfile"
+    # output the path to the port's work directory
+    set workpath [macports::getportworkpath_from_portdir $portdir $portname]
+    if {[file exists $workpath]} {
+        return $workpath
+    } else {
+        return ""
+    }
+}
+
+if {[catch {mportinit ui_options global_options global_variations} result]} {
+    puts $::errorInfo
+        fatal "Failed to initialise MacPorts, $result"
+}
+
+if {$showVersion} {
+    puts "Version $SCRIPTVERSION"
+    puts "MacPorts version [macports::version]"
+    exit 0
+}
+
+if {[llength $::argv] == 0} {
+    puts "Error: missing port-name"
+    printUsage
+    exit 2
+}
+
+foreach portName $::argv {
+    global ui_info ui_error
+    set pWD ""
+    set OK 0
+    if {${_WD_port} ne ${portName}} {
+        set _WD_port ${portName}
+        set pWD [port_workdir ${portName}]
+        set stateFile "${pWD}/.macports.${portName}.state"
+        if {${pWD} ne "" && [file exists "${stateFile}"]} {
+            set fd [open $stateFile a+]
+            if {[catch {adv-flock $fd -exclusive -noblock} result]} {
+                if {$result eq "EAGAIN"} {
+                    close ${fd}
+                    puts "port:${portName} is busy (${stateFile} locked)"
+#                     return -code error "Port ${portName} is busy"
+                    exit 1
+                } elseif {$result ne "EOPNOTSUPP"} {
+                    ui_error "$result trying to obtain lock on $stateFile"
+                } else {
+                    ui_info "port:${portName} is idle"
+                }
+            } else {
+                ui_info "port:${portName} is idle"
+            }
+            close ${fd}
+        }
+    }
+}
