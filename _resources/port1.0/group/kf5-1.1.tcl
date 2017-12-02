@@ -279,49 +279,6 @@ if {${kf5::includecounter} == 0} {
         }
     }
 
-    namespace eval kf5 {
-        variable libs_ext
-    }
-    if {${os.platform} eq "darwin"} {
-        set kf5.libs_dir    ${prefix}/lib
-        set kf5::libs_ext   dylib
-    } elseif {${os.platform} eq "linux"} {
-        set kf5.libs_dir    ${prefix}/lib/${build_arch}-linux-gnu
-        set kf5::libs_ext   so
-    }
-
-#     if {![info exists kf5.framework] && ![info exists kf5.portingAid]} {
-#         # explicitly define certain headers and libraries, to avoid
-#         # conflicts with those installed into system paths by the user.
-#         # These are mostly remnants from the KDE4 PortGroup and are being
-#         # pruned little by little when it becomes clear they're no longer needed.
-#         configure.args-append \
-#                             -DDOCBOOKXSL_DIR=${prefix}/share/xsl/docbook-xsl \
-#                             -DGETTEXT_INCLUDE_DIR=${prefix}/include \
-#                             -DGETTEXT_LIBRARY=${prefix}/lib/libgettextlib.${kf5::libs_ext} \
-#                             -DGIF_INCLUDE_DIR=${prefix}/include \
-#                             -DGIF_LIBRARY=${prefix}/lib/libgif.${kf5::libs_ext} \
-#                             -DJASPER_INCLUDE_DIR=${prefix}/include \
-#                             -DJASPER_LIBRARY=${prefix}/lib/libjasper.${kf5::libs_ext} \
-#                             -DJPEG_INCLUDE_DIR=${prefix}/include \
-#                             -DJPEG_LIBRARY=${prefix}/lib/libjpeg.${kf5::libs_ext} \
-#                             -DLBER_LIBRARIES=${prefix}/lib/liblber.${kf5::libs_ext} \
-#                             -DLDAP_INCLUDE_DIR=${prefix}/include \
-#                             -DLDAP_LIBRARIES=${prefix}/lib/libldap.${kf5::libs_ext} \
-#                             -DLIBEXSLT_INCLUDE_DIR=${prefix}/include \
-#                             -DLIBEXSLT_LIBRARIES=${prefix}/lib/libexslt.${kf5::libs_ext} \
-#                             -DLIBICALSS_LIBRARY=${prefix}/lib/libicalss.${kf5::libs_ext} \
-#                             -DLIBICAL_INCLUDE_DIRS=${prefix}/include \
-#                             -DLIBICAL_LIBRARY=${prefix}/lib/libical.${kf5::libs_ext} \
-#                             -DLIBINTL_INCLUDE_DIR=${prefix}/include \
-#                             -DLIBINTL_LIBRARY=${prefix}/lib/libintl.${kf5::libs_ext} \
-#                             -DLIBXML2_INCLUDE_DIR=${prefix}/include/libxml2 \
-#                             -DLIBXML2_LIBRARIES=${prefix}/lib/libxml2.${kf5::libs_ext} \
-#                             -DLIBXML2_XMLLINT_EXECUTABLE=${prefix}/bin/xmllint \
-#                             -DLIBXSLT_INCLUDE_DIR=${prefix}/include \
-#                             -DLIBXSLT_LIBRARIES=${prefix}/lib/libxslt.${kf5::libs_ext}
-#     }
-
     post-fetch {
         if {[file exists ${worksrcpath}/examples] && [file isdirectory ${worksrcpath}/examples] && ![variant_exists examples]} {
             ui_msg "This port could provide a +examples variant"

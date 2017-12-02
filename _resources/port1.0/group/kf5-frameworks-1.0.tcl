@@ -65,13 +65,22 @@ namespace eval kf5 {
 
     # internal and (hopefully) rarely used stuff is put in the KF5 namespace
 
+    variable libs_ext
+
     variable pyversion       2.7
     variable pybranch        [join [lrange [split ${pyversion} .] 0 1] ""]
+
     if {${os.platform} eq "darwin"} {
+        set kf5.libs_dir    ${prefix}/lib
+        set kf5::libs_ext   dylib
+
         # this should probably become under control of a variant
         variable pythondep   port:python27
         variable pylibdir    ${frameworks_dir}/Python.framework/Versions/${pyversion}/lib/python${pyversion}
     } elseif {${os.platform} eq "linux"} {
+        set kf5.libs_dir    ${prefix}/lib/${build_arch}-linux-gnu
+        set kf5::libs_ext   so
+
         # for personal use: don't add a python dependency.
         variable pythondep   bin:python:python27
     }
