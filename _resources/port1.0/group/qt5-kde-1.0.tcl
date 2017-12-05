@@ -58,11 +58,11 @@
 # define all available port:qt5* versions
 global available_qt5_versions
 set available_qt5_versions {
-    qt5
-    qt57
-    qt56
-    qt55
-    qt53
+    qt5  {qt5-kde  5.8}
+    qt57 {qt57-kde 5.7}
+    qt56 {qt56-kde 5.6}
+    qt55 {qt55-kde 5.5}
+    qt53 {qt53-kde 5.3}
 }
 
 if {[tbool just_want_qt5_version_info]} {
