@@ -1,0 +1,336 @@
+diff --git qt5/style/qtcurve.cpp qt5/style/qtcurve.cpp
+index 9937de7577190ff473162ad059c668a43c33dedf..73fe156b1dee9e83af13a8514e17b6a444986739 100644
+--- qt5/style/qtcurve.cpp
++++ qt5/style/qtcurve.cpp
+@@ -337,6 +337,7 @@ static void parseWindowLine(const QString &line, QList<int> &data)
+ 
+ Style::Style() :
+     m_dbHelper(new DBusHelper()),
++    m_fntHelper(new FontHelper()),
+     m_popupMenuCols(0L),
+     m_sliderCols(0L),
+     m_defBtnCols(0L),
+@@ -770,6 +771,7 @@ Style::~Style()
+         m_plugin->m_styleInstances.removeAll(this);
+     }
+     freeColors();
++    delete m_fntHelper;
+     delete m_dbHelper;
+ }
+ 
+diff --git qt5/style/qtcurve.h qt5/style/qtcurve.h
+index 85894810a5f7de021f58942a46ff162d6dcc8b87..3c395c22151a6f875523bdb9e3fe4f949c26e529 100644
+--- qt5/style/qtcurve.h
++++ qt5/style/qtcurve.h
+@@ -524,6 +524,8 @@ private:
+ private:
+     class DBusHelper;
+     DBusHelper *m_dbHelper;
++    class FontHelper;
++    FontHelper *m_fntHelper;
+ 
+     mutable Options opts;
+     QColor m_highlightCols[TOTAL_SHADES + 1],
+diff --git qt5/style/qtcurve_api.cpp qt5/style/qtcurve_api.cpp
+index f67771cebc3a156842e5c7491e46d10c116fc2ed..56129ec0c4cfa5c8643c9540f8b7bc65d8744e54 100644
+--- qt5/style/qtcurve_api.cpp
++++ qt5/style/qtcurve_api.cpp
+@@ -23,6 +23,7 @@
+ #include <qtcurve-utils/qtprops.h>
+ 
+ #include "qtcurve_p.h"
++#include "qtcurve_helpers.h"
+ #include "argbhelper.h"
+ #include "utils.h"
+ #include "shortcuthandler.h"
+@@ -65,6 +66,7 @@
+ #include <QTextStream>
+ #include <QFileDialog>
+ #include <QToolBox>
++#include <QFontDatabase>
+ 
+ #include <QDebug>
+ 
+@@ -85,6 +87,73 @@
+ 
+ namespace QtCurve {
+ 
++static const char *constBoldProperty = "qtc-set-bold";
++
++Style::FontHelper::FontHelper()
++    : m_fntDB(new QFontDatabase())
++{}
++
++Style::FontHelper::~FontHelper()
++{
++    delete m_fntDB;
++}
++
++QFont Style::FontHelper::fontStripStyleName(const QFont &f) const
++{
++    const QString &styleName = f.styleName();
++    if (styleName.isEmpty()) {
++        // we can simply return the input font
++        return f;
++    } else {
++        // if there is a mismatch between styleString and styleName,
++        // the font probably had a style name set directly
++        // instead of receiving it e.g. via the FontDialog.
++        // Do a look up to get a consistent QFont instance to work with.
++        QFont g = (m_fntDB->styleString(f) != styleName) ?
++            m_fntDB->font(f.family(), styleName, f.pointSize())
++            : QFont(f.family(), f.pointSize(), f.weight());
++        if (auto s = f.pixelSize() > 0) {
++            g.setPixelSize(s);
++        }
++        g.setStyleHint(f.styleHint(), f.styleStrategy());
++        g.setStyle(f.style());
++        if (f.underline()) {
++            g.setUnderline(true);
++        }
++        if (f.strikeOut()) {
++            g.setStrikeOut(true);
++        }
++        if (f.fixedPitch()) {
++            g.setFixedPitch(true);
++        }
++        return g;
++    }
++}
++
++void Style::FontHelper::setBold(QWidget *widget)
++{
++    QVariant prop(widget->property(constBoldProperty));
++    if (!prop.isValid() || !prop.toBool()) {
++        QFont font = fontStripStyleName(widget->font());
++        if (!font.bold()) {
++            font.setBold(true);
++            widget->setFont(font);
++            widget->setProperty(constBoldProperty, true);
++        }
++    }
++}
++
++void Style::FontHelper::unSetBold(QWidget *widget)
++{
++    QVariant prop(widget->property(constBoldProperty));
++    if (prop.isValid() && prop.toBool()) {
++        QFont font = fontStripStyleName(widget->font());
++        font.setBold(false);
++        widget->setFont(font);
++        widget->setProperty(constBoldProperty, false);
++    }
++}
++
+ void
+ Style::polish(QApplication *app)
+ {
+@@ -537,7 +606,7 @@ void Style::polish(QWidget *widget)
+         }
+ 
+         if (opts.boldProgress)
+-            setBold(widget);
++            m_fntHelper->setBold(widget);
+         widget->installEventFilter(this);
+     } else if (qobject_cast<QMenuBar*>(widget)) {
+         if (BLEND_TITLEBAR || opts.menubarHiding & HIDE_KWIN ||
+@@ -871,7 +940,7 @@ void Style::unpolish(QWidget *widget)
+             widget->setAttribute(Qt::WA_OpaquePaintEvent, false);
+     } else if (qobject_cast<QProgressBar*>(widget)) {
+         if(opts.boldProgress)
+-            unSetBold(widget);
++            m_fntHelper->unSetBold(widget);
+         m_progressBars.remove((QProgressBar *)widget);
+     } else if (qobject_cast<QMenuBar*>(widget)) {
+         widget->setAttribute(Qt::WA_Hover, false);
+@@ -908,7 +977,7 @@ void Style::unpolish(QWidget *widget)
+         delete ((QDockWidget *)widget)->titleBarWidget();
+         ((QDockWidget*)widget)->setTitleBarWidget(0L);
+     } else if (opts.boldProgress && "CE_CapacityBar"==widget->objectName()) {
+-        unSetBold(widget);
++        m_fntHelper->unSetBold(widget);
+     }
+ 
+     if (widget->inherits("QTipLabel") && !qtcIsFlat(opts.tooltipAppearance)) {
+@@ -1948,7 +2017,7 @@ Style::styleHint(StyleHint hint, const QStyleOption *option,
+         if (hint >= SH_CustomBase && widget) {
+             if (widget->objectName() == "CE_CapacityBar") {
+                 if (opts.boldProgress) {
+-                    setBold(const_cast<QWidget*>(widget));
++                    m_fntHelper->setBold(const_cast<QWidget*>(widget));
+                 }
+                 return CE_QtC_KCapacityBar;
+             }
+@@ -3072,7 +3141,7 @@ Style::drawControl(ControlElement element, const QStyleOption *option,
+ 
+                 if (!menuItem->text.isEmpty()) {
+                     int textAlignment;
+-                    QFont font(menuItem->font);
++                    QFont font = m_fntHelper->fontStripStyleName(menuItem->font);
+                     QRect textRect;
+                     if (opts.buttonStyleMenuSections) {
+                         QStyleOption opt;
+@@ -3279,7 +3348,7 @@ Style::drawControl(ControlElement element, const QStyleOption *option,
+                     s = s.left(t);
+                 }
+ 
+-                QFont font(menuItem->font);
++                QFont font = m_fntHelper->fontStripStyleName(menuItem->font);
+ 
+                 if (menuItem->menuItemType == QStyleOptionMenuItem::DefaultItem)
+                     font.setBold(true);
+@@ -4433,7 +4502,7 @@ Style::drawControl(ControlElement element, const QStyleOption *option,
+ 
+             if (selected && styleHint(QStyle::SH_ToolBox_SelectedPageTitleBold, tb, widget))
+             {
+-                QFont f(painter->font());
++                QFont f = m_fntHelper->fontStripStyleName(painter->font());
+                 f.setBold(true);
+                 painter->setFont(f);
+             }
+@@ -4736,7 +4805,7 @@ void Style::drawComplexControl(ComplexControl control, const QStyleOptionComplex
+                         drawFadedLine(painter, QRect(r.x()+3, r.y()+r.height()-1, r.width()-7, 1),
+                                       popupMenuCols(option)[MENU_SEP_SHADE], true, true, true);
+ #endif
+-                    QFont font(toolbutton->font);
++                    QFont font = m_fntHelper->fontStripStyleName(toolbutton->font);
+ 
+                     font.setBold(true);
+                     painter->setFont(font);
+@@ -4996,7 +5065,7 @@ void Style::drawComplexControl(ComplexControl control, const QStyleOptionComplex
+ 
+                 if(opts.gbLabel&GB_LBL_BOLD)
+                 {
+-                    QFont font(painter->font());
++                    QFont font = m_fntHelper->fontStripStyleName(painter->font());
+ 
+                     font.setBold(true);
+                     painter->save();
+@@ -5483,7 +5552,7 @@ void Style::drawComplexControl(ComplexControl control, const QStyleOptionComplex
+                                        : captionRect);
+ 
+ #ifndef QTC_QT5_ENABLE_KDE
+-                QFont         font(painter->font());
++                QFont         font = m_fntHelper->fontStripStyleName(painter->font());
+                 font.setBold(true);
+                 painter->setFont(font);
+ #else
+@@ -6343,7 +6412,7 @@ QSize Style::sizeFromContents(ContentsType type, const QStyleOption *option, con
+ 
+             if (!opts.buttonStyleMenuSections && QStyleOptionMenuItem::Separator == mi->menuItemType && !mi->text.isEmpty())
+             {
+-                QFont fontBold = mi->font;
++                QFont fontBold = m_fntHelper->fontStripStyleName(mi->font);
+                 fontBold.setBold(true);
+                 QFontMetrics fmBold(fontBold);
+                 // _set_ w, it will have been initialised to something inappropriately small
+@@ -6357,8 +6426,8 @@ QSize Style::sizeFromContents(ContentsType type, const QStyleOption *option, con
+             {
+                 // adjust the font and add the difference in size.
+                 // it would be better if the font could be adjusted in the initStyleOption qmenu func!!
+-                QFontMetrics fm(mi->font);
+-                QFont fontBold = mi->font;
++                QFont fontBold = m_fntHelper->fontStripStyleName(mi->font);
++                QFontMetrics fm(fontBold);
+                 fontBold.setBold(true);
+                 QFontMetrics fmBold(fontBold);
+                 w += fmBold.width(mi->text) - fm.width(mi->text);
+@@ -6952,7 +7021,7 @@ QRect Style::subControlRect(ComplexControl control, const QStyleOptionComplex *o
+     case CC_GroupBox:
+         if (oneOf(subControl, SC_GroupBoxCheckBox, SC_GroupBoxLabel))
+             if (auto groupBox = styleOptCast<QStyleOptionGroupBox>(option)) {
+-                QFont font = widget ? widget->font() : QApplication::font();
++                QFont font = m_fntHelper->fontStripStyleName(widget ? widget->font() : QApplication::font());
+                 font.setBold(opts.gbLabel & GB_LBL_BOLD);
+                 QFontMetrics fontMetrics(font);
+                 int h = fontMetrics.height();
+diff --git qt5/style/qtcurve_helpers.h qt5/style/qtcurve_helpers.h
+index 202a1a627019f7e9c3009ba54077de33185d1019..96f5c90237e3456e3584a4b90fad365f1a78aaa5 100644
+--- qt5/style/qtcurve_helpers.h
++++ qt5/style/qtcurve_helpers.h
+@@ -26,6 +26,7 @@
+ #include <qtcurve.h>
+ 
+ class QDBusInterface;
++class QFontDatabase;
+ 
+ namespace QtCurve {
+ 
+@@ -39,6 +40,18 @@ public:
+     bool m_dbusConnected;
+ };
+ 
++class Style::FontHelper {
++public:
++    FontHelper();
++    ~FontHelper();
++
++    QFont fontStripStyleName(const QFont &f) const;
++    void setBold(QWidget *widget);
++    void unSetBold(QWidget *widget);
++
++    QFontDatabase *m_fntDB;
++};
++
+ }
+ 
+ #endif // __QTCURVE_P_P_H__
+diff --git qt5/style/qtcurve_p.h qt5/style/qtcurve_p.h
+index d4b2d9091e6de43bbe44a618507713df5b049509..f5940849a1740334e3a92c56b09ecb4d5b8077c9 100644
+--- qt5/style/qtcurve_p.h
++++ qt5/style/qtcurve_p.h
+@@ -225,8 +225,6 @@ toHint(int sc)
+     }
+ }
+ 
+-void setBold(QWidget *widget);
+-void unSetBold(QWidget *widget);
+ QWidget *scrollViewFrame(QWidget *widget);
+ 
+ class QtCurveDockWidgetTitleBar: public QWidget {
+diff --git qt5/style/qtcurve_utils.cpp qt5/style/qtcurve_utils.cpp
+index 057d4f156da6b60f9ea3051cef746b20b64f4ce2..0f8383755515390126de45c0a2f44cf60f3cfb5d 100644
+--- qt5/style/qtcurve_utils.cpp
++++ qt5/style/qtcurve_utils.cpp
+@@ -61,8 +61,6 @@
+ 
+ namespace QtCurve {
+ 
+-static const char *constBoldProperty = "qtc-set-bold";
+-
+ bool
+ blendOOMenuHighlight(const QPalette &pal, const QColor &highlight)
+ {
+@@ -144,32 +142,6 @@ void setSbProp(QWidget *w)
+     }
+ }
+ 
+-void
+-setBold(QWidget *widget)
+-{
+-    QVariant prop(widget->property(constBoldProperty));
+-    if (!prop.isValid() || !prop.toBool()) {
+-        QFont font(widget->font());
+-        if (!font.bold()) {
+-            font.setBold(true);
+-            widget->setFont(font);
+-            widget->setProperty(constBoldProperty, true);
+-        }
+-    }
+-}
+-
+-void
+-unSetBold(QWidget *widget)
+-{
+-    QVariant prop(widget->property(constBoldProperty));
+-    if (prop.isValid() && prop.toBool()) {
+-        QFont font(widget->font());
+-        font.setBold(false);
+-        widget->setFont(font);
+-        widget->setProperty(constBoldProperty, false);
+-    }
+-}
+-
+ QWidget*
+ scrollViewFrame(QWidget *widget)
+ {

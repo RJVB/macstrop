@@ -1,21 +1,253 @@
+diff --git qt5/style/qtcurve.cpp qt5/style/qtcurve.cpp
+index 1bf6e1d985d161fcebc62fe5e3da0692e01eee05..9937de7577190ff473162ad059c668a43c33dedf 100644
+--- qt5/style/qtcurve.cpp
++++ qt5/style/qtcurve.cpp
+@@ -21,6 +21,7 @@
+  *****************************************************************************/
+ 
+ #include "qtcurve_p.h"
++#include "qtcurve_helpers.h"
+ #include "qtcurve_plugin.h"
+ #include <qtcurve-utils/qtprops.h>
+ 
+@@ -101,6 +102,20 @@
+ 
+ namespace QtCurve {
+ 
++Style::DBusHelper::DBusHelper()
++    : m_dBus(0)
++    , m_dbusConnected(false)
++{}
++
++Style::DBusHelper::~DBusHelper()
++{
++    if (m_dBus) {
++        m_dBus->disconnect();
++        m_dBus->deleteLater();
++        m_dBus = 0;
++    }
++}
++
+ static inline void setPainterPen(QPainter *p, const QColor &col, const qreal width=1.0)
+ {
+     p->setPen(QPen(col, width));
+@@ -321,6 +336,7 @@ static void parseWindowLine(const QString &line, QList<int> &data)
+ #endif
+ 
+ Style::Style() :
++    m_dbHelper(new DBusHelper()),
+     m_popupMenuCols(0L),
+     m_sliderCols(0L),
+     m_defBtnCols(0L),
+@@ -343,13 +359,11 @@ Style::Style() :
+     m_progressBarAnimateTimer(0),
+     m_animateStep(0),
+     m_titlebarHeight(0),
+-    m_dBus(0),
+     m_shadowHelper(new ShadowHelper(this)),
+     m_sViewSBar(0L),
+     m_windowManager(new WindowManager(this)),
+     m_blurHelper(new BlurHelper(this)),
+-    m_shortcutHandler(new ShortcutHandler(this)),
+-    m_dbusConnected(false)
++    m_shortcutHandler(new ShortcutHandler(this))
+ {
+     const char *env = getenv(QTCURVE_PREVIEW_CONFIG);
+ #ifdef QTC_QT5_ENABLE_KDE
+@@ -394,6 +408,23 @@ void Style::init(bool initial)
+ #ifdef QTC_QT5_ENABLE_KDE
+             connect(KWindowSystem::self(), &KWindowSystem::compositingChanged, this, &Style::compositingToggled);
+ #endif
++            // prepare the cleanup handler
++            if (QCoreApplication::instance()) {
++                std::call_once(m_dbHelper->m_aboutToQuitInit, [this] {
++                    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, [this] () {
++                            // disconnect from the session DBus. We're no longer interested in the
++                            // information it might send when the app we're serving is shutting down.
++                            disconnectDBus();
++                            // Stop listening to select signals. We shouldn't stop emitting signals
++                            // (like QObject::destroyed) but we can reduce the likelihood that pending
++                            // signals will be sent to us post-mortem.
++#ifdef QTC_QT5_ENABLE_KDE
++                            disconnect(KWindowSystem::self(), &KWindowSystem::compositingChanged,
++                                       this, &Style::compositingToggled);
++#endif
++                        } );
++                } );
++            }
+         }
+     }
+ 
+@@ -663,14 +694,11 @@ void Style::init(bool initial)
+ 
+ void Style::connectDBus()
+ {
+-    if (m_dbusConnected)
++    if (m_dbHelper->m_dbusConnected)
+         return;
+     auto bus = QDBusConnection::sessionBus();
+     if (bus.isConnected()) {
+-        m_dbusConnected = true;
+-        if (QCoreApplication::instance()) {
+-            connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &Style::disconnectDBus);
+-        }
++        m_dbHelper->m_dbusConnected = true;
+         bus.connect(QString(), "/KGlobalSettings", "org.kde.KGlobalSettings",
+                     "notifyChange", this, SLOT(kdeGlobalSettingsChange(int, int)));
+ #ifndef QTC_QT5_ENABLE_KDE
+@@ -699,12 +727,15 @@ void Style::connectDBus()
+ 
+ void Style::disconnectDBus()
+ {
+-    if (!m_dbusConnected)
++    if (!m_dbHelper->m_dbusConnected)
+         return;
+-    m_dbusConnected = false;
+     auto bus = QDBusConnection::sessionBus();
++    if (!bus.isConnected())
++        return;
++    m_dbHelper->m_dbusConnected = false;
+     if (getenv("QTCURVE_DEBUG")) {
+         qWarning() << Q_FUNC_INFO << this << "Disconnecting from" << bus.name() << "/" << bus.baseService();
++        dumpObjectInfo();
+     }
+     bus.disconnect(QString(), "/KGlobalSettings", "org.kde.KGlobalSettings",
+                    "notifyChange",
+@@ -739,9 +770,7 @@ Style::~Style()
+         m_plugin->m_styleInstances.removeAll(this);
+     }
+     freeColors();
+-    if (m_dBus) {
+-        delete m_dBus;
+-    }
++    delete m_dbHelper;
+ }
+ 
+ void Style::freeColor(QSet<QColor *> &freedColors, QColor **cols)
+@@ -4467,10 +4496,10 @@ void Style::emitMenuSize(QWidget *w, unsigned short size, bool force)
+         if (oldSize != size) {
+             w->setProperty(constMenuSizeProperty, size);
+             qtcX11SetMenubarSize(wid, size);
+-            if(!m_dBus)
+-                m_dBus = new QDBusInterface("org.kde.kwin", "/QtCurve",
++            if(!m_dbHelper->m_dBus)
++                m_dbHelper->m_dBus = new QDBusInterface("org.kde.kwin", "/QtCurve",
+                                              "org.kde.QtCurve");
+-            m_dBus->call(QDBus::NoBlock, "menuBarSize",
++            m_dbHelper->m_dBus->call(QDBus::NoBlock, "menuBarSize",
+                           (unsigned int)wid, (int)size);
+         }
+     }
+@@ -4479,10 +4508,10 @@ void Style::emitMenuSize(QWidget *w, unsigned short size, bool force)
+ void Style::emitStatusBarState(QStatusBar *sb)
+ {
+     if (opts.statusbarHiding & HIDE_KWIN) {
+-        if (!m_dBus)
+-            m_dBus = new QDBusInterface("org.kde.kwin", "/QtCurve",
++        if (!m_dbHelper->m_dBus)
++            m_dbHelper->m_dBus = new QDBusInterface("org.kde.kwin", "/QtCurve",
+                                         "org.kde.QtCurve");
+-        m_dBus->call(QDBus::NoBlock, "statusBarState",
++        m_dbHelper->m_dBus->call(QDBus::NoBlock, "statusBarState",
+                      (unsigned int)qtcGetWid(sb->window()),
+                      sb->isVisible());
+     }
+diff --git qt5/style/qtcurve.h qt5/style/qtcurve.h
+index 56960a59a300ef9a69037b3dd5d1406c1ddd457c..85894810a5f7de021f58942a46ff162d6dcc8b87 100644
+--- qt5/style/qtcurve.h
++++ qt5/style/qtcurve.h
+@@ -522,6 +522,9 @@ private:
+                                       const QWidget *widget) const;
+ 
+ private:
++    class DBusHelper;
++    DBusHelper *m_dbHelper;
++
+     mutable Options opts;
+     QColor m_highlightCols[TOTAL_SHADES + 1],
+         m_backgroundCols[TOTAL_SHADES + 1],
+@@ -564,14 +567,12 @@ private:
+     mutable QList<int> m_mdiButtons[2]; // 0=left, 1=right
+     mutable int m_titlebarHeight;
+ 
+-    QDBusInterface *m_dBus;
+     ShadowHelper *m_shadowHelper;
+     mutable QScrollBar *m_sViewSBar;
+     mutable QMap<QWidget*, QSet<QWidget*> > m_sViewContainers;
+     WindowManager *m_windowManager;
+     BlurHelper *m_blurHelper;
+     ShortcutHandler *m_shortcutHandler;
+-    bool m_dbusConnected;
+ #ifdef QTC_QT5_ENABLE_KDE
+     KSharedConfigPtr m_configFile;
+     KSharedConfigPtr m_kdeGlobals;
+diff --git qt5/style/qtcurve_helpers.h qt5/style/qtcurve_helpers.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..202a1a627019f7e9c3009ba54077de33185d1019
+--- /dev/null
++++ qt5/style/qtcurve_helpers.h
+@@ -0,0 +1,44 @@
++/*****************************************************************************
++ *   Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>                   *
++ *                                                                           *
++ *   This program is free software; you can redistribute it and/or modify    *
++ *   it under the terms of the GNU Lesser General Public License as          *
++ *   published by the Free Software Foundation; either version 2.1 of the    *
++ *   License, or (at your option) version 3, or any later version accepted   *
++ *   by the membership of KDE e.V. (or its successor approved by the         *
++ *   membership of KDE e.V.), which shall act as a proxy defined in          *
++ *   Section 6 of version 3 of the license.                                  *
++ *                                                                           *
++ *   This program is distributed in the hope that it will be useful,         *
++ *   but WITHOUT ANY WARRANTY; without even the implied warranty of          *
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU       *
++ *   Lesser General Public License for more details.                         *
++ *                                                                           *
++ *   You should have received a copy of the GNU Lesser General Public        *
++ *   License along with this library. If not,                                *
++ *   see <http://www.gnu.org/licenses/>.                                     *
++ *****************************************************************************/
++
++#ifndef __QTCURVE_P_P_H__
++#define __QTCURVE_P_P_H__
++
++#include <mutex>
++#include <qtcurve.h>
++
++class QDBusInterface;
++
++namespace QtCurve {
++
++class Style::DBusHelper {
++public:
++    DBusHelper();
++    ~DBusHelper();
++
++    std::once_flag m_aboutToQuitInit;
++    QDBusInterface *m_dBus;
++    bool m_dbusConnected;
++};
++
++}
++
++#endif // __QTCURVE_P_P_H__
 diff --git qt5/style/qtcurve_plugin.cpp qt5/style/qtcurve_plugin.cpp
-index ce363ac25deff50de852dc00583e14b04c8adb36..20152ad0a9745618cb3aca7bbe535aa36068c554 100644
+index ce363ac25deff50de852dc00583e14b04c8adb36..481fffcaeca5cdc25c195d248f24466db64f7344 100644
 --- qt5/style/qtcurve_plugin.cpp
 +++ qt5/style/qtcurve_plugin.cpp
-@@ -129,6 +129,12 @@ StylePlugin::create(const QString &key)
+@@ -129,6 +129,11 @@ StylePlugin::create(const QString &key)
      if (key.toLower() == "qtcurve") {
          qtc = new Style;
          qtc->m_plugin = this;
-+        qtcInfo("Created new Style instance %p\n", qtc);
 +        // keep track of all style instances we allocate, for instance
 +        // for KLineEdit widgets which apparently insist on overriding
 +        // certain things (cf. KLineEditStyle). We want to be able to
-+        // delete those instances as properly as properly as early as
++        // delete those instances as properly and as early as
 +        // possible during the global destruction phase.
          m_styleInstances << qtc;
      } else {
          qtc = nullptr;
-@@ -151,12 +157,15 @@ StylePlugin::~StylePlugin()
+@@ -151,12 +156,14 @@ StylePlugin::~StylePlugin()
      qtcInfo("Deleting QtCurve plugin (%p)\n", this);
      if (!m_styleInstances.isEmpty()) {
          qtcWarn("there remain(s) %d Style instance(s)\n", m_styleInstances.count());
@@ -26,25 +258,11 @@ index ce363ac25deff50de852dc00583e14b04c8adb36..20152ad0a9745618cb3aca7bbe535aa3
 +        foreach (Style *that, m_styleInstances) {
 +            // don't let ~Style() touch m_styleInstances from here.
 +            that->m_plugin = nullptr;
-+            // each instance should already have disconnected from the D-Bus.
-+            // It doesn't appear to be necessary to have it disconnect its signal
-+            // receivers before this point.
++            // each instance should already have disconnected from the D-Bus
++            // and disconnected from receiving select signals.
              delete that;
          }
 +        m_styleInstances.clear();
      }
      if (firstPlInstance == this) {
          firstPlInstance = nullptr;
-diff --git qt5/style/qtcurve.cpp qt5/style/qtcurve.cpp
-index 1bf6e1d985d161fcebc62fe5e3da0692e01eee05..0dae6b80ecf5a9480ec7a2ecfb5de56b778c6b17 100644
---- qt5/style/qtcurve.cpp
-+++ qt5/style/qtcurve.cpp
-@@ -735,6 +735,8 @@ Style::~Style()
- {
-     qtcInfo("Deleting style instance %p\n", this);
-     disconnectDBus();
-+    // disconnect all receivers as early as seems reasonable.
-+    disconnect();
-     if (m_plugin && m_plugin->m_styleInstances.contains(this)) {
-         m_plugin->m_styleInstances.removeAll(this);
-     }
