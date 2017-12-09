@@ -71,15 +71,13 @@ namespace eval kf5 {
     variable pybranch        [join [lrange [split ${pyversion} .] 0 1] ""]
 
     if {${os.platform} eq "darwin"} {
-        set kf5.libs_dir    ${prefix}/lib
-        set kf5::libs_ext   dylib
+        set libs_ext   dylib
 
         # this should probably become under control of a variant
         variable pythondep   port:python27
         variable pylibdir    ${frameworks_dir}/Python.framework/Versions/${pyversion}/lib/python${pyversion}
     } elseif {${os.platform} eq "linux"} {
-        set kf5.libs_dir    ${prefix}/lib/${build_arch}-linux-gnu
-        set kf5::libs_ext   so
+        set libs_ext   so
 
         # for personal use: don't add a python dependency.
         variable pythondep   bin:python:python27
@@ -176,6 +174,13 @@ namespace eval kf5 {
         configure.args-append \
                         -DPYTHON_EXECUTABLE=${prefix}/bin/python${kf5::pyversion}
     }
+}
+
+# public variables:
+if {${os.platform} eq "darwin"} {
+    set kf5.libs_dir    ${prefix}/lib
+} elseif {${os.platform} eq "linux"} {
+    set kf5.libs_dir    ${prefix}/lib/${build_arch}-linux-gnu
 }
 
 proc kf5.depends_frameworks {first args} {
