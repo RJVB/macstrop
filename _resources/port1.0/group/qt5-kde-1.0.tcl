@@ -59,9 +59,9 @@
 global available_qt5_versions
 set available_qt5_versions {
     qt5  {qt5-kde  5.8}
-    qt57 {qt57-kde 5.7}
+    qt58 {qt58-kde 5.8}
     qt56 {qt56-kde 5.6}
-    qt55 {qt55-kde 5.5}
+    qt54 {qt54-kde 5.4}
     qt53 {qt53-kde 5.3}
 }
 
