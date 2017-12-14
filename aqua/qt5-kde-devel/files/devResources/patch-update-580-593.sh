@@ -6,6 +6,7 @@
 # topic branch corresponding to stock/upstream
 
 PDIR=/opt/local/site-ports/aqua/qt5-kde-devel/files
+HERE="`dirname $0`"
 
 # we skip fix-qstandardpaths-headerspri.patch because the qtbase git repo doesn't have headers.pri
 PATCHES="patch-machtest.diff \
@@ -21,7 +22,6 @@ PATCHES="patch-machtest.diff \
     patch-qtpaths-all-locations.diff \
     patch-qtpaths-qspmode.diff \
     patch-missing-autoreleasepools.diff \
-    patch-retain-foreign-nsviews.diff \
     patch-enable-qgenericunixthemes.diff \
     patch-enable-qgenericunixservices.diff \
     patch-enable-fontconfig.diff \
@@ -88,12 +88,15 @@ function contains {
     return $ret
 }
 
+QT59x=qt593
+UPDDIR=${QT59x}
+
 for F in $PATCHES ;do
      # nb: don't put `contains` inside []!
 #     if `contains "${DONEPATCHES}" "${F}"` ;then
     if [ ! -e ".pc/${F}" ] ;then
-        if [ -f ${PDIR}/qt593/${F} ] ;then
-            PF=${PDIR}/qt593/${F} 
+        if [ -f ${PDIR}/${QT59x}/${F} ] ;then
+            PF=${PDIR}/${QT59x}/${F} 
         elif [ -f ${PDIR}/qt580/${F} ] ;then
             PF=${PDIR}/qt580/${F} 
         elif [ -f ${PDIR}/qt571/${F} ] ;then
@@ -108,13 +111,15 @@ for F in $PATCHES ;do
         if [ $? != 0 ] ;then
             echo "Done: ${DONEPATCHES}"
             echo "FAILED: ${PF}"
-            echo "Should become: ${PDIR}/qt593/${F}"
+            echo "Should become: ${PDIR}/${UPDDIR}/${F}"
             exit 1
         fi
         DONEPATCHES="${DONEPATCHES} ${F}"
         git add qtbase qtconnectivity qttools
         git-diff > .pc/${F}
         git commit -m "${PF}" qtbase qtconnectivity qttools
+        echo "Comparing old and new patches;"
+        echo "Consider doing cp -pv ${HERE}/.pc/${F} ${PDIR}/${UPDDIR}/${F}"
         xxdiff -D .pc/${F} ${PF}
     fi
 done
