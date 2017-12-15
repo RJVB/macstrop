@@ -9,6 +9,7 @@ PDIR=/opt/local/site-ports/aqua/qt5-kde-devel/files
 HERE="`dirname $0`"
 
 # we skip fix-qstandardpaths-headerspri.patch because the qtbase git repo doesn't have headers.pri
+# obsolete:     patch-silence-setscreen-warning.diff (after silence-qpixmap-warnings.diff)
 PATCHES="patch-machtest.diff \
     patch-tst_benchlibcallgrind.diff \
     patch-shared.diff \
@@ -41,7 +42,6 @@ PATCHES="patch-machtest.diff \
     patch-fix-build-when-system-freetype-is-detected.diff \
     patch-freetype-gamma-cocoa.diff \
     patch-silence-qpixmap-warnings.diff \
-    patch-silence-setscreen-warning.diff \
     patch-restore-pc-files.diff \
     patch-fix-dbus-crash-at-exit.diff \
     patch-qtconn-for-10.12.diff \
@@ -119,7 +119,7 @@ for F in $PATCHES ;do
         git-diff > .pc/${F}
         git commit -m "${PF}" qtbase qtconnectivity qttools
         echo "Comparing old and new patches;"
-        echo "Consider doing cp -pv ${HERE}/.pc/${F} ${PDIR}/${UPDDIR}/${F}"
+        echo "Consider doing cp -pv ${PWD}/.pc/${F} ${PDIR}/${UPDDIR}/${F}"
         xxdiff -D .pc/${F} ${PF}
     fi
 done
