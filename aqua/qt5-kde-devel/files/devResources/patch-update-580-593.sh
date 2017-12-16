@@ -6,10 +6,20 @@
 # topic branch corresponding to stock/upstream
 
 PDIR=/opt/local/site-ports/aqua/qt5-kde-devel/files
-HERE="`dirname $0`"
+HERE="`pwd`"
+if [ "$1" != "" -a -d "$1" ] ;then
+    cd $1
+    echo "working in `pwd` ($1)"
+fi
 
 # we skip fix-qstandardpaths-headerspri.patch because the qtbase git repo doesn't have headers.pri
 # obsolete:     patch-silence-setscreen-warning.diff (after silence-qpixmap-warnings.diff)
+# obsolete:    patch-keyboard-mapping.diff (after patch-cmake-warn-compile_features.diff)
+# obsolete:    patch-define-qtnoexceptions.diff (after patch-firstObject-109)
+# obsolete:    patch-qttools-qthelp-warnings.diff (after patch-enable-vnc-qpa.diff)
+# obsolete:    patch-no-native-crossbuilds.diff (after patch-handle-null-corefonts.diff)
+# obsolete:    patch-install-headeronly-frameworks.diff (after patch-handle-null-corefonts.diff)
+# obsolete:    patch-ibus-fix2.diff (after patch-ibus-fix.diff)
 PATCHES="patch-machtest.diff \
     patch-tst_benchlibcallgrind.diff \
     patch-shared.diff \
@@ -47,20 +57,14 @@ PATCHES="patch-machtest.diff \
     patch-qtconn-for-10.12.diff \
     patch-qttools-skip-assistant.diff \
     patch-cmake-warn-compile_features.diff \
-    patch-keyboard-mapping.diff \
     patch-no-pulseaudio+gstreamer.diff \
-    patch-readable-selected-tab.diff \
+    patch-readable-selected-tab-109.diff \
     patch-keyboard-support-menukey.diff \
     patch-use-openssl-mp.diff \
-    patch-firstObject.diff \
-    patch-define-qtnoexceptions.diff \
+    patch-firstObject-109.diff \
     patch-enable-vnc-qpa.diff \
-    patch-qttools-qthelp-warnings.diff \
     patch-handle-null-corefonts.diff \
-    patch-no-native-crossbuilds.diff \
-    patch-install-headeronly-frameworks.diff \
     patch-ibus-fix.diff \
-    patch-ibus-fix2.diff \
     patch-wdate-time.diff \
     patch-toolchainprf.diff \
     patch-configurejsons.diff \
@@ -115,9 +119,9 @@ for F in $PATCHES ;do
             exit 1
         fi
         DONEPATCHES="${DONEPATCHES} ${F}"
-        git add qtbase qtconnectivity qttools
+        git add qtbase qtconnectivity qttools qtmultimedia
         git-diff > .pc/${F}
-        git commit -m "${PF}" qtbase qtconnectivity qttools
+        git commit -m "${PF}" qtbase qtconnectivity qttools qtmultimedia
         echo "Comparing old and new patches;"
         echo "Consider doing cp -pv ${PWD}/.pc/${F} ${PDIR}/${UPDDIR}/${F}"
         xxdiff -D .pc/${F} ${PF}
