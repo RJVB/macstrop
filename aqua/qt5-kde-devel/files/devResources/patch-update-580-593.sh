@@ -20,6 +20,7 @@ fi
 # obsolete:    patch-no-native-crossbuilds.diff (after patch-handle-null-corefonts.diff)
 # obsolete:    patch-install-headeronly-frameworks.diff (after patch-handle-null-corefonts.diff)
 # obsolete:    patch-ibus-fix2.diff (after patch-ibus-fix.diff)
+# obsolete:    patch-reintroduce-configsummary.diff (after patch-configurejsons.diff)
 PATCHES="patch-machtest.diff \
     patch-tst_benchlibcallgrind.diff \
     patch-shared.diff \
@@ -68,7 +69,6 @@ PATCHES="patch-machtest.diff \
     patch-wdate-time.diff \
     patch-toolchainprf.diff \
     patch-configurejsons.diff \
-    patch-reintroduce-configsummary.diff \
     patch-designer-show-menubar-on-xcb.diff \
     patch-to-build-xcb.diff \
     patch-xcb-XOpenGL-full.diff \
@@ -77,6 +77,17 @@ PATCHES="patch-machtest.diff \
     patch-enable-dumpObjectInfo.diff \
     deactivate-menurole-heuristics.patch \
     debug-negative-qtimerint.patch"
+
+# New patches copied from port:kf5-osx-integration
+# or related to running on 10.9
+PATCHES="${PATCHES} \
+    patch-backport-corelib-io-109.diff \
+    patch-fix-qtMacWindow-WIP.diff \
+    patch-macstyle-checks-if-cocoa.diff \
+    patch-macstyle-build-on-109.diff \
+    patch-osxint-col+font-dialog-fix.diff \
+    patch-qcocoa-build-on-109.diff \
+    patch-qcocoa-add-aqua-themehint.diff"
 
 DONEPATCHES=""
 
