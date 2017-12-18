@@ -12,8 +12,8 @@ if [ "$1" != "" -a -d "$1" ] ;then
     echo "working in `pwd` ($1)"
 fi
 
-# we skip fix-qstandardpaths-headerspri.patch because the qtbase git repo doesn't have headers.pri
-# obsolete:     patch-silence-setscreen-warning.diff (after silence-qpixmap-warnings.diff)
+# obsolete:    patch-retain-foreign-nsviews.diff
+# obsolete:    patch-silence-setscreen-warning.diff (after silence-qpixmap-warnings.diff)
 # obsolete:    patch-keyboard-mapping.diff (after patch-cmake-warn-compile_features.diff)
 # obsolete:    patch-define-qtnoexceptions.diff (after patch-firstObject-109)
 # obsolete:    patch-qttools-qthelp-warnings.diff (after patch-enable-vnc-qpa.diff)
@@ -76,7 +76,11 @@ PATCHES="patch-machtest.diff \
     patch-clangconf.diff \
     patch-enable-dumpObjectInfo.diff \
     deactivate-menurole-heuristics.patch \
-    debug-negative-qtimerint.patch"
+    debug-negative-qtimerint.patch \
+    remove_icon_from_example.patch \
+    remove_google_adsense.patch \
+    patch-assistant-with-qtwebkit.diff \
+    patch-assistant-without-qtwebkit.diff"
 
 # New patches copied from port:kf5-osx-integration
 # or related to running on 10.9
