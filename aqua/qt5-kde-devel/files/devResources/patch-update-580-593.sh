@@ -82,16 +82,18 @@ PATCHES="patch-machtest.diff \
     patch-assistant-with-qtwebkit.diff \
     patch-assistant-without-qtwebkit.diff"
 
-# New patches copied from port:kf5-osx-integration
+# New patches (most copied from port:kf5-osx-integration)
 # or related to running on 10.9
 PATCHES="${PATCHES} \
     patch-backport-corelib-109.diff \
     patch-fix-qtMacWindow-WIP.diff \
     patch-macstyle-checks-if-cocoa.diff \
     patch-macstyle-build-on-109.diff \
-    patch-osxint-col+font-dialog-fix.diff \
+    patch-col+font-dialog-fix.diff \
     patch-qcocoa-build-on-109.diff \
-    patch-qcocoa-add-aqua-themehint.diff"
+    patch-qcocoa-add-aqua-themehint.diff \
+    patch-disable-bearer-109.diff \
+    patch-xcb-use-qgenunixfontdb.diff"
 
 DONEPATCHES=""
 
