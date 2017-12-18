@@ -85,7 +85,7 @@ PATCHES="patch-machtest.diff \
 # New patches copied from port:kf5-osx-integration
 # or related to running on 10.9
 PATCHES="${PATCHES} \
-    patch-backport-corelib-io-109.diff \
+    patch-backport-corelib-109.diff \
     patch-fix-qtMacWindow-WIP.diff \
     patch-macstyle-checks-if-cocoa.diff \
     patch-macstyle-build-on-109.diff \
