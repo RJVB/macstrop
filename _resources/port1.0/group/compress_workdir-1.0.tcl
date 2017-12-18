@@ -59,7 +59,7 @@ platform darwin {
         }
 
         post-build {
-            if {[file exists ${prefix}/bin/afsctool]} {
+            if {[file exists ${prefix}/bin/afsctool] && [file exists ${compress.build_dir}]} {
                 ui_msg "--->  Compressing the build directory ..."
                 if {${use_parallel_build}} {
                     set compjobs "-J${build.jobs}"
