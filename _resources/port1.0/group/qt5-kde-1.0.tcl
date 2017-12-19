@@ -488,6 +488,8 @@ if {![info exist building_qt5] || [vercmp ${version} 5.8.0] >= 0} {
 }
 if {![info exist building_qt5] || [vercmp ${version} 5.9.0] >= 0} {
     lappend qt5.kde_stubports qtremoteobjects
+    # qt3d is moved to its own subport; remove it from the stubports list:
+    set qt5.kde_stubports [lsearch -all -inline -not -exact ${qt5.kde_stubports} qt3d]
 }
 
 global qt5_dependency
