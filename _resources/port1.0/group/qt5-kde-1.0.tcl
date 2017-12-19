@@ -484,7 +484,10 @@ if {![info exist building_qt5] || [vercmp ${version} 5.7.0] >= 0} {
     set qt5.kde_stubports [lsearch -all -inline -not -exact ${qt5.kde_stubports} qttranslations]
 }
 if {![info exist building_qt5] || [vercmp ${version} 5.8.0] >= 0} {
-    lappend qt5.kde_stubports qtnetworkauth qtspeech
+    lappend qt5.kde_stubports qtdoc qtnetworkauth qtspeech
+}
+if {![info exist building_qt5] || [vercmp ${version} 5.9.0] >= 0} {
+    lappend qt5.kde_stubports qtremoteobjects
 }
 
 global qt5_dependency
@@ -830,7 +833,7 @@ proc qt5::depends_component_p {deptype args} {
             "qtwebkit" -
             "qtwebengine" -
             "qtwebview" {
-                # these components are never stub subports
+                # these components are never stub subports (or possibly so, in the case of QtWebKit)
                 set done false
             }
             default {
