@@ -95,7 +95,8 @@ PATCHES="${PATCHES} \
     patch-disable-bearer-109.diff \
     patch-xcb-use-qgenunixfontdb.diff \
     patch-mkspecs.diff \
-    patch-no-app_ext-only-109.diff"
+    patch-no-app_ext-only-109.diff \
+    patch-xcb-fontgamma.diff"
 
 DONEPATCHES=""
 
