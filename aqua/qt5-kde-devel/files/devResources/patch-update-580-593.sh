@@ -93,7 +93,9 @@ PATCHES="${PATCHES} \
     patch-qcocoa-build-on-109.diff \
     patch-qcocoa-add-aqua-themehint.diff \
     patch-disable-bearer-109.diff \
-    patch-xcb-use-qgenunixfontdb.diff"
+    patch-xcb-use-qgenunixfontdb.diff \
+    patch-mkspecs.diff \
+    patch-no-app_ext-only-109.diff"
 
 DONEPATCHES=""
 
