@@ -178,45 +178,45 @@ pre-configure {
             if { ${configure.cxx_stdlib} ne "libc++" } {
                 # override C++ flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
                 #    so value of ${configure.cxx_stdlib} can always be used
-                puts ${cache} QMAKE_CXXFLAGS-=-stdlib=libc++
-                puts ${cache} QMAKE_LFLAGS-=-stdlib=libc++
-                puts ${cache} QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}
-                puts ${cache} QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
+                puts ${qt5::cache} QMAKE_CXXFLAGS-=-stdlib=libc++
+                puts ${qt5::cache} QMAKE_LFLAGS-=-stdlib=libc++
+                puts ${qt5::cache} QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}
+                puts ${qt5::cache} QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
             }
             if {${qmake5_cxx11_flags} ne ""} {
-                puts ${cache} QMAKE_CXXFLAGS+="${qmake5_cxx11_flags}"
+                puts ${qt5::cache} QMAKE_CXXFLAGS+="${qmake5_cxx11_flags}"
             }
         } elseif { [vercmp ${qt5::qt_version} 5.5.0] == 0 } {
 
             # always use the same standard library
-            puts ${cache} QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}
-            puts ${cache} QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
+            puts ${qt5::cache} QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}
+            puts ${qt5::cache} QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
 
             # override C++ flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
             #    so value of ${configure.cxx_stdlib} can always be used
             if { ${configure.cxx_stdlib} ne "libc++" } {
-                puts ${cache} QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++
-                puts ${cache} QMAKE_LFLAGS_CXX11-=-stdlib=libc++
-                puts ${cache} QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
-                puts ${cache} QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
+                puts ${qt5::cache} QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++
+                puts ${qt5::cache} QMAKE_LFLAGS_CXX11-=-stdlib=libc++
+                puts ${qt5::cache} QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
+                puts ${qt5::cache} QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
             }
             if {${qmake5_cxx11_flags} ne ""} {
-                puts ${cache} QMAKE_CXXFLAGS_CXX11+="${qmake5_cxx11_flags}"
+                puts ${qt5::cache} QMAKE_CXXFLAGS_CXX11+="${qmake5_cxx11_flags}"
             }
         } else {
             # always use the same standard library
-            puts ${cache} QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}
-            puts ${cache} QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
+            puts ${qt5::cache} QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}
+            puts ${qt5::cache} QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
             if {${qmake5_cxx11_flags} ne ""} {
-                puts ${cache} QMAKE_CXXFLAGS+="${qmake5_cxx11_flags}"
+                puts ${qt5::cache} QMAKE_CXXFLAGS+="${qmake5_cxx11_flags}"
             }
         }
     }
     if {${qmake5_cxx_flags} ne "" } {
-        puts ${cache} QMAKE_CXXFLAGS+="${qmake5_cxx_flags}"
+        puts ${qt5::cache} QMAKE_CXXFLAGS+="${qmake5_cxx_flags}"
     }
     if {${qmake5_l_flags} ne "" } {
-        puts ${cache} QMAKE_LFLAGS+="${qmake5_l_flags}"
+        puts ${qt5::cache} QMAKE_LFLAGS+="${qmake5_l_flags}"
     }
 
     # no debug+release build support in qt5-kde
