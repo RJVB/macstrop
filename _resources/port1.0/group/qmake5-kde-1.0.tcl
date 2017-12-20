@@ -74,7 +74,11 @@ if {![info exists qt5.add_spec]} {
                                 --disable-dependency-tracking
 }
 options qt5.rewind_qmake_cache
-default qt5.rewind_qmake_cache yes
+default qt5.rewind_qmake_cache  yes
+
+options qt5.unset_cflags qt5.unset_cxxflags
+default qt5.unset_cflags        {}
+default qt5.unset_cxxflags      {}
 
 ### using port:qt5-kde
 # we use a somewhat simpler qmake cookbook, which doesn't require the magic related
@@ -155,6 +159,12 @@ pre-configure {
         puts ${qt5::cache} "QMAKE_LINK_SHLIB=${configure.cxx}"
     }
     # add our compiler options
+    if {${qt5.unset_cflags} ne {}} {
+        puts ${qt5::cache} "QMAKE_CFLAGS-=${qt5.unset_cflags}"
+    }
+    if {${qt5.unset_cxxflags} ne {}} {
+        puts ${qt5::cache} "QMAKE_CXXFLAGS-=${qt5.unset_cxxflags}"
+    }
     puts ${qt5::cache} "QMAKE_CFLAGS+=${configure.cflags}"
     puts ${qt5::cache} "QMAKE_CXXFLAGS+=${configure.cxxflags}"
 
