@@ -897,7 +897,9 @@ post-activate {
     if {[file exists ${qchdir}] && [file isdirectory ${qchdir}] && [file exists ${qhcdir}] && [file isdirectory ${qhcdir}]} {
         set qhcpfile MP-qthelp-collection.qhcp
         set qhcfile [file tail ${qt5::qch_collection_file}]
-        if {(${subport} eq "qt5-kde-assistant") || (${subport} eq "qt5-kde-devel-assistant")} {
+        if {(${subport} eq "qt5-kde-assistant") || (${subport} eq "qt5-kde-devel-assistant") \
+                || (${subport} eq "qt5-assistant") || (${subport} eq "qt5-assistant-devel")} \
+        {
             # always regenerate when (re)installing the Qt Assistant
             set needs_generate yes
         } elseif {[file exists "${qhcdir}/${qhcfile}"]} {
