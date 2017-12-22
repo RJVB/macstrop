@@ -1,6 +1,7 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
 
 # Copyright (c) 2015 The MacPorts Project
+# Copyright (c) 2017 RJVB
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -39,8 +40,10 @@ namespace eval dev {
     set archdir ${prefix}/var/devcontent
 }
 
-options devport_content
-default devport_content ""
+options devport_content devport_description devport_long_description
+default devport_content             ""
+default devport_description         {"Development headers and libraries for ${name}"}
+default devport_long_description    {"${long_description}\nThis installs the development headers and libraries."}
 
 # create the online devport content archive
 proc create_devport_content_archive {} {
@@ -97,12 +100,12 @@ proc unpack_devport_content {} {
 }
 
 proc create_devport {dependency} {
-    global name long_description
+    global name devport_description devport_long_description
     subport ${name}-dev {
-        description     "Development headers and libraries for ${name}"
+        description     [join ${devport_description}]
+        long_description [join ${devport_long_description}]
         depends_lib-append \
                         ${dependency}
-        long_description ${long_description}\nThis installs the development headers and libraries.
         installs_libs   yes
         supported_archs noarch
         distfiles
