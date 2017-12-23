@@ -1,7 +1,8 @@
 TEMPLATE      = subdirs
 CONFIG += no_docs_target
 
-SUBDIRS = qt3d/examples \
+SUBDIRS = \
+    qt3d/examples \
     qtbase/examples \
     qtcanvas3d/examples \
     qtcharts/examples \
