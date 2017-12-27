@@ -1,0 +1,430 @@
+diff --git a/Source/WebCore/PlatformQt.cmake b/Source/WebCore/PlatformQt.cmake
+index f0e68cf9e025..d237a83a6757 100644
+--- a/Source/WebCore/PlatformQt.cmake
++++ b/Source/WebCore/PlatformQt.cmake
+@@ -2,6 +2,10 @@ include(platform/ImageDecoders.cmake)
+ include(platform/Linux.cmake)
+ include(platform/TextureMapper.cmake)
+ 
++if (JPEG_DEFINITIONS)
++    add_definitions(${JPEG_DEFINITIONS})
++endif ()
++
+ list(APPEND WebCore_INCLUDE_DIRECTORIES
+     "${DERIVED_SOURCES_JAVASCRIPTCORE_DIR}"
+     "${DERIVED_SOURCES_JAVASCRIPTCORE_DIR}/inspector"
+diff --git a/Source/WebCore/page/qt/EventHandlerQt.cpp b/Source/WebCore/page/qt/EventHandlerQt.cpp
+index 240ea75eb747..b717b1f54d03 100644
+--- a/Source/WebCore/page/qt/EventHandlerQt.cpp
++++ b/Source/WebCore/page/qt/EventHandlerQt.cpp
+@@ -49,6 +49,7 @@
+ #include "PlatformWheelEvent.h"
+ #include "RenderWidget.h"
+ #include "Scrollbar.h"
++#include <QCoreApplication>
+ 
+ namespace WebCore {
+ 
+@@ -123,7 +124,14 @@ bool EventHandler::passMouseReleaseEventToSubframe(MouseEventWithHitTestResults&
+ unsigned EventHandler::accessKeyModifiers()
+ {
+ #if OS(DARWIN)
+-    return PlatformEvent::CtrlKey | PlatformEvent::AltKey;
++    // On macOS, the ControlModifier value corresponds
++    // to the Command keys on the keyboard,
++    // and the MetaModifier value corresponds to the Control keys.
++    // See http://doc.qt.io/qt-5/qt.html#KeyboardModifier-enum
++    if (UNLIKELY(QCoreApplication::testAttribute(Qt::AA_MacDontSwapCtrlAndMeta)))
++        return PlatformEvent::CtrlKey | PlatformEvent::AltKey;
++    else
++        return PlatformEvent::MetaKey | PlatformEvent::AltKey;
+ #else
+     return PlatformEvent::AltKey;
+ #endif
+diff --git a/Source/WebCore/platform/graphics/texmap/TextureMapperImageBuffer.cpp b/Source/WebCore/platform/graphics/texmap/TextureMapperImageBuffer.cpp
+index 48130eba4d18..b8b605805881 100644
+--- a/Source/WebCore/platform/graphics/texmap/TextureMapperImageBuffer.cpp
++++ b/Source/WebCore/platform/graphics/texmap/TextureMapperImageBuffer.cpp
+@@ -114,14 +114,70 @@ void TextureMapperImageBuffer::drawSolidColor(const FloatRect& rect, const Trans
+     context->restore();
+ }
+ 
+-void TextureMapperImageBuffer::drawBorder(const Color&, float /* borderWidth */, const FloatRect&, const TransformationMatrix&)
++void TextureMapperImageBuffer::drawBorder(const Color& color, float borderWidth , const FloatRect& rect, const TransformationMatrix& matrix)
+ {
+-    notImplemented();
++#if PLATFORM(QT)
++    GraphicsContext* context = currentContext();
++    if (!context)
++        return;
++
++    context->save();
++    context->setCompositeOperation(isInMaskMode() ? CompositeDestinationIn : CompositeSourceOver);
++#if ENABLE(3D_TRANSFORMS)
++    context->concat3DTransform(matrix);
++#else
++    context->concatCTM(matrix.toAffineTransform());
++#endif
++
++    QPainter& painter = *context->platformContext();
++    painter.setBrush(Qt::NoBrush);
++    QPen newPen(color);
++    newPen.setWidthF(borderWidth);
++    painter.setPen(newPen);
++    painter.drawRect(rect);
++
++    context->restore();
++#endif
+ }
+ 
+-void TextureMapperImageBuffer::drawNumber(int /* number */, const Color&, const FloatPoint&, const TransformationMatrix&)
++void TextureMapperImageBuffer::drawNumber(int number, const Color& color, const FloatPoint& targetPoint, const TransformationMatrix& matrix)
+ {
+-    notImplemented();
++#if PLATFORM(QT)
++    GraphicsContext* context = currentContext();
++    if (!context)
++        return;
++
++    context->save();
++    context->setCompositeOperation(isInMaskMode() ? CompositeDestinationIn : CompositeSourceOver);
++#if ENABLE(3D_TRANSFORMS)
++    context->concat3DTransform(matrix);
++#else
++    context->concatCTM(matrix.toAffineTransform());
++#endif
++
++    // Partially duplicates TextureMapperGL::drawNumber
++    int pointSize = 8;
++    QString counterString = QString::number(number);
++
++    QFont font(QString::fromLatin1("Monospace"), pointSize, QFont::Bold);
++    font.setStyleHint(QFont::TypeWriter);
++
++    QFontMetrics fontMetrics(font);
++    int width = fontMetrics.width(counterString) + 4;
++    int height = fontMetrics.height();
++
++    IntSize size(width, height);
++    IntRect sourceRect(IntPoint::zero(), size);
++
++    QPainter& painter = *context->platformContext();
++    painter.translate(targetPoint);
++    painter.fillRect(sourceRect, color);
++    painter.setFont(font);
++    painter.setPen(Qt::white);
++    painter.drawText(2, height * 0.85, counterString);
++
++    context->restore();
++#endif
+ }
+ 
+ PassRefPtr<BitmapTexture> BitmapTextureImageBuffer::applyFilters(TextureMapper&, const FilterOperations& filters)
+diff --git a/Source/WebCore/platform/network/qt/DNSQt.cpp b/Source/WebCore/platform/network/qt/DNSQt.cpp
+index b12cbaa09232..4559d17a08f4 100644
+--- a/Source/WebCore/platform/network/qt/DNSQt.cpp
++++ b/Source/WebCore/platform/network/qt/DNSQt.cpp
+@@ -24,6 +24,7 @@
+ #include <QHostInfo>
+ #include <QObject>
+ #include <QString>
++#include <wtf/NeverDestroyed.h>
+ #include <wtf/text/WTFString.h>
+ 
+ namespace WebCore {
+@@ -34,7 +35,7 @@ class DnsPrefetchHelper : public QObject {
+     DnsPrefetchHelper() : QObject() { }
+ 
+ public Q_SLOTS:
+-    void lookup(QString hostname)
++    void lookup(const String& hostname)
+     {
+         if (hostname.isEmpty()) {
+             DNSResolveQueue::singleton().decrementRequestCount();
+@@ -71,8 +72,8 @@ void DNSResolveQueue::updateIsUsingProxy()
+ // This is called by the platform-independent DNSResolveQueue.
+ void DNSResolveQueue::platformResolve(const String& hostname)
+ {
+-    static DnsPrefetchHelper dnsPrefetchHelper;
+-    dnsPrefetchHelper.lookup(QString(hostname));
++    static NeverDestroyed<DnsPrefetchHelper> dnsPrefetchHelper;
++    dnsPrefetchHelper.get().lookup(hostname);
+ }
+ 
+ } // namespace
+diff --git a/Source/WebCore/platform/network/qt/ResourceRequestQt.cpp b/Source/WebCore/platform/network/qt/ResourceRequestQt.cpp
+index b7f9447bcb0f..c54a8115bca6 100644
+--- a/Source/WebCore/platform/network/qt/ResourceRequestQt.cpp
++++ b/Source/WebCore/platform/network/qt/ResourceRequestQt.cpp
+@@ -27,6 +27,18 @@
+ #include <QNetworkRequest>
+ #include <QUrl>
+ 
++// HTTP/2 is implemented since Qt 5.8, but QTBUG-64359 makes it unusable in browser
++#if QT_VERSION >= QT_VERSION_CHECK(5, 9, 4)
++#define USE_HTTP2 1
++#endif
++
++// HTTP2AllowedAttribute enforces HTTP/2 instead of negotiating, see QTBUG-61397
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++#define HTTP2_IS_BUGGY_WITHOUT_HTTPS 1
++#else
++#define HTTP2_IS_BUGGY_WITHOUT_HTTPS 0
++#endif
++
+ namespace WebCore {
+ 
+ // The limit can be found in qhttpnetworkconnection.cpp.
+@@ -57,15 +69,19 @@ static inline QByteArray stringToByteArray(const String& string)
+ QNetworkRequest ResourceRequest::toNetworkRequest(NetworkingContext *context) const
+ {
+     QNetworkRequest request;
+-    QUrl newurl = toQUrl(url());
+-    request.setUrl(newurl);
++    const URL& originalUrl = url();
++    request.setUrl(toQUrl(originalUrl));
+     request.setOriginatingObject(context ? context->originatingObject() : 0);
+ 
+-#if QT_VERSION >= QT_VERSION_CHECK(5, 8, 0)
+-    // HTTP2AllowedAttribute enforces HTTP/2 instead of negotiating, see QTBUG-61397
+-    if (newurl.scheme().toLower() == QLatin1String("https"))
+-        request.setAttribute(QNetworkRequest::HTTP2AllowedAttribute, true);
++#if USE(HTTP2)
++#if HTTP2_IS_BUGGY_WITHOUT_HTTPS
++    if (originalUrl.protocolIs("https"))
+ #endif
++    {
++        request.setAttribute(QNetworkRequest::HTTP2AllowedAttribute, true);
++    }
++#endif // USE(HTTP2)
++
+ 
+     const HTTPHeaderMap &headers = httpHeaderFields();
+     for (HTTPHeaderMap::const_iterator it = headers.begin(), end = headers.end();
+diff --git a/Source/WebCore/platform/qt/EventLoopQt.cpp b/Source/WebCore/platform/qt/EventLoopQt.cpp
+index 39bb54c53730..c0ca31ec5a2e 100644
+--- a/Source/WebCore/platform/qt/EventLoopQt.cpp
++++ b/Source/WebCore/platform/qt/EventLoopQt.cpp
+@@ -26,7 +26,7 @@ namespace WebCore {
+ 
+ void EventLoop::cycle()
+ {
+-    QCoreApplication::processEvents();
++    QCoreApplication::processEvents(QEventLoop::WaitForMoreEvents);
+ }
+ 
+ } // namespace WebCore
+diff --git a/Source/WebCore/platform/qt/PlatformKeyboardEventQt.cpp b/Source/WebCore/platform/qt/PlatformKeyboardEventQt.cpp
+index a0e67e49461d..2e667e2da944 100644
+--- a/Source/WebCore/platform/qt/PlatformKeyboardEventQt.cpp
++++ b/Source/WebCore/platform/qt/PlatformKeyboardEventQt.cpp
+@@ -808,6 +808,7 @@ static bool isVirtualKeyCodeRepresentingCharacter(int code)
+     }
+ }
+ 
++template<bool unmodified>
+ static String keyTextForKeyEvent(const QKeyEvent* event)
+ {
+     switch (event->key()) {
+@@ -820,6 +821,53 @@ static String keyTextForKeyEvent(const QKeyEvent* event)
+     case Qt::Key_Enter:
+         if (event->text().isNull())
+             return ASCIILiteral("\r");
++        break;
++
++// Workaround for broken accesskey when QKeyEvent has modifier, see QTBUG-64891
++#define MAKE_TEXT_FOR_KEY(QtKey, Character) \
++    case Qt::Key_##QtKey: \
++        if (unmodified && event->text().isNull()) \
++            return ASCIILiteral(#Character); \
++        break;
++
++    MAKE_TEXT_FOR_KEY(0, 0);
++    MAKE_TEXT_FOR_KEY(1, 1);
++    MAKE_TEXT_FOR_KEY(2, 2);
++    MAKE_TEXT_FOR_KEY(3, 3);
++    MAKE_TEXT_FOR_KEY(4, 4);
++    MAKE_TEXT_FOR_KEY(5, 5);
++    MAKE_TEXT_FOR_KEY(6, 6);
++    MAKE_TEXT_FOR_KEY(7, 7);
++    MAKE_TEXT_FOR_KEY(8, 8);
++    MAKE_TEXT_FOR_KEY(9, 9);
++    MAKE_TEXT_FOR_KEY(A, a);
++    MAKE_TEXT_FOR_KEY(B, b);
++    MAKE_TEXT_FOR_KEY(C, c);
++    MAKE_TEXT_FOR_KEY(D, d);
++    MAKE_TEXT_FOR_KEY(E, e);
++    MAKE_TEXT_FOR_KEY(F, f);
++    MAKE_TEXT_FOR_KEY(G, g);
++    MAKE_TEXT_FOR_KEY(H, h);
++    MAKE_TEXT_FOR_KEY(I, i);
++    MAKE_TEXT_FOR_KEY(J, j);
++    MAKE_TEXT_FOR_KEY(K, k);
++    MAKE_TEXT_FOR_KEY(L, l);
++    MAKE_TEXT_FOR_KEY(M, m);
++    MAKE_TEXT_FOR_KEY(N, n);
++    MAKE_TEXT_FOR_KEY(O, o);
++    MAKE_TEXT_FOR_KEY(P, p);
++    MAKE_TEXT_FOR_KEY(Q, q);
++    MAKE_TEXT_FOR_KEY(R, r);
++    MAKE_TEXT_FOR_KEY(S, s);
++    MAKE_TEXT_FOR_KEY(T, t);
++    MAKE_TEXT_FOR_KEY(U, u);
++    MAKE_TEXT_FOR_KEY(V, v);
++    MAKE_TEXT_FOR_KEY(W, w);
++    MAKE_TEXT_FOR_KEY(X, x);
++    MAKE_TEXT_FOR_KEY(Y, y);
++    MAKE_TEXT_FOR_KEY(Z, z);
++
++#undef MAKE_TEXT_FOR_KEY
+     }
+     return event->text();
+ }
+@@ -840,8 +888,8 @@ PlatformKeyboardEvent::PlatformKeyboardEvent(QKeyEvent* event, bool useNativeVir
+         m_modifiers |= MetaKey;
+ 
+     m_useNativeVirtualKeyAsDOMKey = useNativeVirtualKeyAsDOMKey;
+-    m_text = keyTextForKeyEvent(event);
+-    m_unmodifiedText = m_text; // FIXME: not correct
++    m_text = keyTextForKeyEvent<false>(event);
++    m_unmodifiedText = keyTextForKeyEvent<true>(event);
+     m_keyIdentifier = keyIdentifierForQtKeyCode(event->key());
+     m_autoRepeat = event->isAutoRepeat();
+     m_isKeypad = (state & Qt::KeypadModifier);
+diff --git a/Source/WebKit/PlatformQt.cmake b/Source/WebKit/PlatformQt.cmake
+index f0e4acf8a5a6..cf5f36700405 100644
+--- a/Source/WebKit/PlatformQt.cmake
++++ b/Source/WebKit/PlatformQt.cmake
+@@ -473,7 +473,7 @@ if (QT_STATIC_BUILD)
+     set(WEBKITWIDGETS_PKGCONGIG_DEPS "${WEBKITWIDGETS_PKGCONGIG_DEPS} Qt5PrintSupport")
+     set(WEBKITWIDGETS_PRI_DEPS "${WEBKITWIDGETS_PRI_DEPS} printsupport")
+     set(EXTRA_LIBS_NAMES WebCore JavaScriptCore WTF)
+-    append_lib_names_to_list(EXTRA_LIBS_NAMES ${LIBXML2_LIBRARIES} ${SQLITE_LIBRARIES} ${ZLIB_LIBRARIES})
++    append_lib_names_to_list(EXTRA_LIBS_NAMES ${LIBXML2_LIBRARIES} ${SQLITE_LIBRARIES} ${ZLIB_LIBRARIES} ${JPEG_LIBRARIES} ${PNG_LIBRARIES})
+     if (NOT USE_SYSTEM_MALLOC)
+         list(APPEND EXTRA_LIBS_NAMES bmalloc)
+     endif ()
+diff --git a/Source/cmake/OptionsQt.cmake b/Source/cmake/OptionsQt.cmake
+index de180ee56f77..cbdaa192bde9 100644
+--- a/Source/cmake/OptionsQt.cmake
++++ b/Source/cmake/OptionsQt.cmake
+@@ -132,7 +132,15 @@ WEBKIT_OPTION_BEGIN()
+ 
+ if (APPLE)
+     option(MACOS_FORCE_SYSTEM_XML_LIBRARIES "Use system installation of libxml2 and libxslt on macOS" ON)
++    option(MACOS_USE_SYSTEM_ICU "Use system installation of ICU on macOS" ON)
++    option(USE_UNIX_DOMAIN_SOCKETS "Use Unix domain sockets instead of native IPC code on macOS" OFF)
++    option(USE_APPSTORE_COMPLIANT_CODE "Avoid using private macOS APIs which are not allowed on App Store (experimental)" OFF)
+     set(MACOS_BUILD_FRAMEWORKS ON) # TODO: Make it an option
++
++    if (USE_APPSTORE_COMPLIANT_CODE)
++        set(MACOS_USE_SYSTEM_ICU OFF)
++        set(USE_UNIX_DOMAIN_SOCKETS ON)
++    endif ()
+ endif ()
+ 
+ if (WIN32 OR APPLE)
+@@ -388,6 +396,7 @@ if (SQLITE3_SOURCE_DIR)
+     add_library(qtsqlite STATIC ${SQLITE_SOURCE_FILE})
+     target_compile_definitions(qtsqlite PUBLIC -DSQLITE_CORE -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_OMIT_COMPLETE)
+     WEBKIT_SET_EXTRA_COMPILER_FLAGS(qtsqlite)
++    QT_ADD_EXTRA_WEBKIT_TARGET_EXPORT(qtsqlite)
+     set(SQLITE_LIBRARIES qtsqlite)
+     set(SQLITE_FOUND 1)
+ else ()
+@@ -400,6 +409,19 @@ if (NOT QT_BUNDLED_JPEG)
+     find_package(JPEG REQUIRED)
+ else ()
+     set(JPEG_FOUND 1)
++    # As of Qt 5.10, libjpeg-turbo shipped as a part of Qt requires using a few macro definitions
++    # WARNING: Keep in sync with libjpeg.pri
++    # FIXME: Change Qt so we can avoid this
++    include(CheckTypeSize)
++    check_type_size(size_t _SIZEOF_SIZE_T)
++    set(JPEG_DEFINITIONS
++        -DC_ARITH_CODING_SUPPORTED=1
++        -DD_ARITH_CODING_SUPPORTED=1
++        -DBITS_IN_JSAMPLE=8
++        -DJPEG_LIB_VERSION=80
++        -DSIZEOF_SIZE_T=${_SIZEOF_SIZE_T}
++    )
++    unset(_SIZEOF_SIZE_T)
+ endif ()
+ 
+ if (NOT QT_BUNDLED_PNG)
+@@ -414,15 +436,19 @@ else ()
+     set(ZLIB_FOUND 1)
+ endif ()
+ 
+-if (NOT APPLE)
+-    find_package(ICU REQUIRED)
+-else ()
++if (MACOS_USE_SYSTEM_ICU)
++    # Use system ICU library and bundled headers
+     set(ICU_INCLUDE_DIRS
+         "${WEBCORE_DIR}/icu"
+         "${JAVASCRIPTCORE_DIR}/icu"
+         "${WTF_DIR}/icu"
+     )
+     set(ICU_LIBRARIES libicucore.dylib)
++else ()
++    find_package(ICU REQUIRED)
++endif ()
++
++if (APPLE)
+     find_library(COREFOUNDATION_LIBRARY CoreFoundation)
+     if (QT_STATIC_BUILD)
+         find_library(CARBON_LIBRARY Carbon)
+@@ -507,7 +533,7 @@ endif ()
+ 
+ # Mach ports and Unix sockets are currently used by WK2, but their USE() values
+ # affect building WorkQueue
+-if (APPLE)
++if (APPLE AND NOT USE_UNIX_DOMAIN_SOCKETS)
+     SET_AND_EXPOSE_TO_BUILD(USE_MACH_PORTS 1) # Qt-specific
+ elseif (UNIX)
+     SET_AND_EXPOSE_TO_BUILD(USE_UNIX_DOMAIN_SOCKETS 1)
+diff --git a/Source/cmake/WebKitFeatures.cmake b/Source/cmake/WebKitFeatures.cmake
+index 57915dfc26fc..d76b29fd8dac 100644
+--- a/Source/cmake/WebKitFeatures.cmake
++++ b/Source/cmake/WebKitFeatures.cmake
+@@ -101,7 +101,7 @@ macro(WEBKIT_OPTION_BEGIN)
+     WEBKIT_OPTION_DEFINE(ENABLE_DFG_JIT "Toggle data flow graph JIT tier" PRIVATE ON)
+     WEBKIT_OPTION_DEFINE(ENABLE_DOM4_EVENTS_CONSTRUCTOR "Toggle DOM4 Events constructors" PRIVATE OFF)
+     WEBKIT_OPTION_DEFINE(ENABLE_DOWNLOAD_ATTRIBUTE "Toggle download attribute support" PRIVATE OFF)
+-    WEBKIT_OPTION_DEFINE(ENABLE_DRAG_SUPPORT "Toggle Drag Support" PRIVATE OFF)
++    WEBKIT_OPTION_DEFINE(ENABLE_DRAG_SUPPORT "Toggle support of drag actions (including selection of text with mouse)" PRIVATE OFF)
+     WEBKIT_OPTION_DEFINE(ENABLE_ENCRYPTED_MEDIA "Toggle EME support" PRIVATE OFF)
+     WEBKIT_OPTION_DEFINE(ENABLE_ENCRYPTED_MEDIA_V2 "Support EME v2" PRIVATE OFF)
+     WEBKIT_OPTION_DEFINE(ENABLE_ES6_ARROWFUNCTION_SYNTAX "Toggle ES6 arrow function syntax support" PRIVATE ON)
+diff --git a/Tools/qmake/mkspecs/features/functions.prf b/Tools/qmake/mkspecs/features/functions.prf
+index 3699d6b71794..e3f42cec4837 100644
+--- a/Tools/qmake/mkspecs/features/functions.prf
++++ b/Tools/qmake/mkspecs/features/functions.prf
+@@ -65,6 +65,8 @@ defineTest(isPlatformSupported) {
+         skipBuild("Using cmake version $$cmake_version, but at least cmake 2.8.12 is required to build QtWebKit.")
+     }
+ 
++    intel_icc: skipBuild("Building QtWebKit with ICC is not supported.")
++
+     win32 {
+         winrt {
+             skipBuild("WinRT is not supported.")
+diff --git a/Tools/qmake/projects/run_cmake.pro b/Tools/qmake/projects/run_cmake.pro
+index b15bd9266f2f..74579c57e2f4 100644
+--- a/Tools/qmake/projects/run_cmake.pro
++++ b/Tools/qmake/projects/run_cmake.pro
+@@ -39,8 +39,12 @@ build_pass|!debug_and_release {
+     !qtConfig(system-jpeg):exists($$QTBASE_DIR) {
+         CMAKE_CONFIG += \
+             QT_BUNDLED_JPEG=1 \
+-            JPEG_INCLUDE_DIR=$$QTBASE_DIR/src/3rdparty/libjpeg \
+             JPEG_LIBRARIES=$$staticLibPath(qtjpeg)
++
++        exists($$QTBASE_DIR/src/3rdparty/libjpeg/src/jpeglib.h): \
++            CMAKE_CONFIG += JPEG_INCLUDE_DIR=$$QTBASE_DIR/src/3rdparty/libjpeg/src
++        else: \
++            CMAKE_CONFIG += JPEG_INCLUDE_DIR=$$QTBASE_DIR/src/3rdparty/libjpeg
+     }
+ 
+     !qtConfig(system-png):qtConfig(png):exists($$QTBASE_DIR) {
