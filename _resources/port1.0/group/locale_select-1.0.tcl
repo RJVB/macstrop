@@ -38,9 +38,17 @@
 # a template is provided in `port dir K5rameworks` .
 variant langselect description "prune translations from ${prefix}/share/locale, leaving only those\
                                 specified in ${prefix}/etc/macports/locales.tcl" {}
+
+# optional directory holding Qt translations (.qm) (fully specified)
+options langselect_qm_dir langselect_qm_basename
+default langselect_qm_dir       {}
+default langselect_qm_basename  {}
+
 if {[variant_isset langselect]} {
     post-destroot {
-        if {[file exists ${prefix}/etc/macports/locales.tcl] && [file exists ${destroot}${prefix}/share/locale]} {
+        if {[file exists ${prefix}/etc/macports/locales.tcl] &&
+            ([file exists ${destroot}${prefix}/share/locale] || [file exists [join ${langselect_qm_dir}]])
+        } {
             if {[catch {source "${prefix}/etc/macports/locales.tcl"} err]} {
                 ui_error "Error reading ${prefix}/etc/macports/locales.tcl: $err"
                 return -code error "Error reading ${prefix}/etc/macports/locales.tcl"
@@ -54,6 +62,21 @@ if {[variant_isset langselect]} {
                     file delete -force ${l}
                 } else {
                     ui_debug "won't delete ${l} (${lang})"
+                }
+            }
+            if {[file exists [join ${langselect_qm_dir}]]} {
+                set lsqmdir [join ${langselect_qm_dir}]
+                foreach l [glob -nocomplain ${lsqmdir}/*.qm] {
+                    set lang [file rootname [file tail ${l}]]
+                    if {${langselect_qm_basename} ne {}} {
+                        set lang [string map [list "${langselect_qm_basename}_" ""] ${lang}]
+                    }
+                    if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
+                        ui_info "rm ${l}"
+                        file delete -force ${l}
+                    } else {
+                        ui_debug "won't delete ${l} (${lang})"
+                    }
                 }
             }
         }
