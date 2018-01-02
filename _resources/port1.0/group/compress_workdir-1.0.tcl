@@ -73,6 +73,12 @@ platform darwin {
                     }
                 } else {
                     ui_debug "Compressing ${compress.build_dir}: ${result}"
+                    if {[tbool configure.ccache]} {
+                        ui_msg "--->  Compressing the ccache directory ..."
+                        if {![catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} ${ccache_dir} 2>&1"} result context]} {
+                            ui_debug "Compressing ${ccache_dir}: ${result}"
+                        }
+                    }
                 }
             }
         }
