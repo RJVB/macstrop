@@ -2,6 +2,49 @@
 
 PortSystem          1.0
 PortGroup           qt5 1.0
+
+# the name of the main port:
+name                qt5-webkit
+# the version provided by the main port:
+set mainPortVersion 5.211.92.68
+
+# a convenience procedure to register conflicts among the different Qt5 ports:
+# for instance: [qt5_port_conflicts {qtbase x11}]
+# adapted from port:qt5-kde
+proc qt5_port_conflicts {components} {
+    global available_qt5_versions available_qt_versions name
+    set cnfls {}
+    if {![info exists available_qt5_versions]} {
+        ui_debug "set available_qt5_versions [array get available_qt_versions]"
+        set available_qt5_versions [array get available_qt_versions]
+    }
+    foreach suffix {"" "-devel"} {
+        foreach comp ${components} {
+            foreach {v info} ${available_qt5_versions} {
+                if {"${v}-${comp}" ne "${name}"} {
+                    if {${comp} ne "" && ${comp} ne "qtbase"} {
+                        set cnfls [lappend cnfls ${v}-${comp}]
+                        set cnfls [lappend cnfls ${v}-kde${suffix}-${comp}]
+                    } else {
+                        set cnfls [lappend cnfls ${v}-qtbase]
+                        set cnfls [lappend cnfls ${v}-kde${suffix}]
+                    }
+                }
+            }
+        }
+    }
+    return ${cnfls}
+}
+
+patch.pre_args          -Np1
+
+# Provide the community version as an install variant
+set community_version   5.9.1
+variant community description "Installs the deprecated community release version ${community_version}" {}
+
+if {![variant_exists community] || ![variant_isset community]} {
+# !variant_isset community - rebooted QtWebKit
+
 PortGroup           cmake 1.1
 PortGroup           github 1.0
 
@@ -41,7 +84,7 @@ if {${subport} eq "${name}"} {
     # set a numeric version for "5.212.0-alpha2":
     # alpha2 = 92
     # .68 : number of included corrective commits since the alpha2 release
-    version         5.211.92.68
+    version         ${mainPortVersion}
 } else {
     fetch.type      git
     git.branch      f53b6b8cfef091770dd3dccd8371420b63d89f83
@@ -51,33 +94,6 @@ if {${subport} eq "${name}"} {
                     ${name}
 }
 
-# a convenience procedure to register conflicts among the different Qt5 ports:
-# for instance: [qt5_port_conflicts {qtbase x11}]
-# adapted from port:qt5-kde
-proc qt5_port_conflicts {components} {
-    global available_qt5_versions available_qt_versions name
-    set cnfls {}
-    if {![info exists available_qt5_versions]} {
-        ui_debug "set available_qt5_versions [array get available_qt_versions]"
-        set available_qt5_versions [array get available_qt_versions]
-    }
-    foreach suffix {"" "-devel"} {
-        foreach comp ${components} {
-            foreach {v info} ${available_qt5_versions} {
-                if {"${v}-${comp}" ne "${name}"} {
-                    if {${comp} ne "" && ${comp} ne "qtbase"} {
-                        set cnfls [lappend cnfls ${v}-${comp}]
-                        set cnfls [lappend cnfls ${v}-kde${suffix}-${comp}]
-                    } else {
-                        set cnfls [lappend cnfls ${v}-qtbase]
-                        set cnfls [lappend cnfls ${v}-kde${suffix}]
-                    }
-                }
-            }
-        }
-    }
-    return ${cnfls}
-}
 proc qt5.active_version {} {
     global prefix
     if {[file exists ${prefix}/bin/pkg-config]} {
@@ -124,8 +140,6 @@ if {![variant_isset minimal]} {
                         qtsensors \
                         qtwebchannel
 }
-
-patch.pre_args          -Np1
 
 # add the commits made to the qtwebkit-stable branch since the alpha release:
 # commit #83f9eff575568815a8e7cf0f0b28300b0171f67e
@@ -331,6 +345,110 @@ post-destroot {
         file rename ${destroot}${qt_libs_dir}/pkgconfig/Qt5WebKit.pc ${destroot}${qt_pkg_config_dir}/Qt5WebKit.pc
         file rename ${destroot}${qt_libs_dir}/pkgconfig/Qt5WebKitWidgets.pc ${destroot}${qt_pkg_config_dir}/Qt5WebKitWidgets.pc
     }
+}
+
+# !variant_isset community
+} else {
+    # variant_isset community - deprecated community version
+    PortGroup   qmake5 1.0
+    PortGroup   xcodeversion 1.0
+    minimum_xcodeversions {13 6.2}
+    universal_variant no
+
+    description Qt5 WebKit Community version
+    long_description \
+                ${description} ${community_version}, QtWebEngine's deprecated predecessor. This variant is provided for comparison and testing only.
+    version     ${mainPortVersion}
+
+    set branch  [join [lrange [split ${community_version} .] 0 1] .]
+    conflicts-append \
+                [qt5_port_conflicts qtwebkit]
+
+    use_xz      yes
+    master_sites \
+                http://download.qt.io/official_releases/qt/${branch}/${community_version}/submodules/ \
+                http://download.qt.io/community_releases/${branch}/${community_version}-final/
+    distname    qtwebkit-opensource-src-${community_version}
+    distfiles   ${distname}${extract.suffix}
+    checksums   rmd160  72cab2a8473801dcbbe8fc41ecf8dc45775f8b18 \
+                sha256  28a560becd800a4229bfac317c2e5407cd3cc95308bc4c3ca90dba2577b052cf
+
+    depends_lib-append \
+                ${qt5_dependency}
+    platform darwin {
+        depends_lib-append \
+                port:leveldb
+    }
+    platform linux {
+        conflicts_build-append leveldb
+    }
+
+    variant strip conflicts debug {reduce the disk footprint by stripping debug-related information (at the cost of increased build time)} {}
+
+    # Prevent conflicting definitions of Objective-C classes in C++ code
+    #    from ${qt_libs_dir}/QtCore.framework/Headers/qglobal.h
+    patchfiles-append \
+                community/patch-qtwk-objc.diff \
+                community/patch-qtwk-icu.diff
+
+    platform darwin {
+        if {${os.major} < 13} {
+            # untested adaptations taken from mcalhoun's port:qt5-qtwebkit;
+            # shouldn't be required on 10.9 and upwards (untested).
+            PortGroup   cxx11 1.0
+            configure.args-delete QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}
+            # -mmacosx-version-min=10.7 sets the stdlib to libstdc++ unless -stdlib=libc++ is set
+            # QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib} is insufficient since order of switches matters
+            configure.args-delete \
+                QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++ \
+                QMAKE_LFLAGS_CXX11-=-stdlib=libc++
+        }
+        post-patch {
+            # qtwebkit uses glx, libXcomposite, libXrender if they can be found
+            # Ensure that test fails even if software is installed
+            foreach test { glx libXcomposite libXrender } {
+                reinplace "s|return 0;|return 0;\\\n#error turn off test|g" \
+                    ${worksrcpath}/Tools/qmake/config.tests/${test}/${test}.cpp
+            }
+        }
+    }
+
+    # QtWebKit has a dependency on jpeglib which apparently has always been somewhat
+    # problematic. There's a 2012 mod to improve reliability but that appears to have
+    # solved only pulling in the right library. The header is still expected to be
+    # on the header search path. Add ${prefix}/include globally to ensure that, in
+    # addition to defining the path to our frameworks directory.
+    configure.args              QMAKE_CXXFLAGS+="-F${qt_frameworks_dir} -I${prefix}/include"
+    default configure.dir       {${workpath}/build.community}
+    configure.pre_args          ../${worksrcdir}/WebKit.pro
+    default build.dir           {${workpath}/build.community}
+    # make sure qmake is called without unwanted arguments!
+    configure.cmd               ${qt_qmake_cmd}
+    configure.post_args-append -after QMAKE_CXXFLAGS-=-O3
+    configure.post_args-append QMAKE_CXXFLAGS-=-O2
+    configure.post_args-append QMAKE_CXXFLAGS-=-g
+    configure.post_args-append "QMAKE_CXXFLAGS+=\"${configure.cxxflags}\""
+    # don't add the "all" target because that will interfere with generation of the interface headers
+    build.pre_args-delete       all
+#     build {
+#         if {[catch {system -W ${build.dir} "${build.cmd} -j${build.jobs} ${build.pre_args}"} result]} {
+#             # this should be redundant by now:
+#             # there's a chance the 1st build attempt will fail because not all interface
+#             # headers have been generated. We can either attempt to create via symlinks
+#             # or else run make a 2nd time and presume the build system will always
+#             # generate them then. If it does, at least they'll be exactly right.
+#             ui_msg "--->    Building ${subport} (take 2)"
+#             system -W ${build.dir} "${build.cmd} -j${build.jobs} ${build.pre_args}"
+#         }
+#     }
+    post-build {
+        if {[variant_exists strip] && [variant_isset strip]} {
+            ui_msg "--->  Stripping build"
+            catch {system -W ${build.dir} \
+                "find . -name \"*.\[ao\]\" -o -name \"*.dylib\" -o -name \"*.so\" | xargs strip -S"}
+        }
+    }
+
 }
 
 # optional support for HFS-compression of the source and build dirs
