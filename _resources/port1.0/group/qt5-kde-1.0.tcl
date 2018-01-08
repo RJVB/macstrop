@@ -2,7 +2,7 @@
 
 # Copyright (c) 2014 The MacPorts Project
 # Copyright (c) 2013-11-26 michaelld@macports.org
-# Copyright (c) 2015-2017 R.J.V. Bertin
+# Copyright (c) 2015-2018 R.J.V. Bertin
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -865,7 +865,7 @@ proc qt5.depends_build_component {args} {
     return [qt5::depends_component_p depends_build {*}${args}]
 }
 
-proc qt5.depends_run_component {args} {
+proc qt5.depends_runtime_component {args} {
     return [qt5::depends_component_p depends_run {*}${args}]
 }
 

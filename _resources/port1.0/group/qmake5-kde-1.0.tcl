@@ -1,6 +1,6 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
 #
-# Copyright (c) 2013-2017 The MacPorts Project
+# Copyright (c) 2013-2018 RJVB & The MacPorts Project
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -42,6 +42,9 @@
 # that fact.
 if {![tbool qt5.using_kde]} {
     ui_warn "The qmake5-kde PortGroup shouldn't be called directly"
+    # We don't allow ourselves to be called directly. This ensures
+    # that we get all the options declarations from the mainstream
+    # qmake5 PG, before it transfers control back to us.
     PortGroup                   qmake5 1.0
     return
 }
@@ -130,6 +133,10 @@ pre-configure {
         set qt5::cache [open "${qt5.top_level}/.qmake.cache" a 0644]
     }
     platform darwin {
+        ## NB: 5.9 and newer apparently support true universal building and no longer
+        ## require the muniversal PG approach. Mcalhoun's port:qt5 family support that,
+        ## not us (sorry, too much complexity for something that's too niche for the
+        ## expected profile of users interested in KF5).
         puts ${qt5::cache} "if(${qt_qmake_spec_64}) {"
         puts ${qt5::cache} "  QT_ARCH=x86_64"
         puts ${qt5::cache} "  QT_TARGET_ARCH=x86_64"
@@ -180,11 +187,11 @@ pre-configure {
         }
     }
     set qmake5_cxx11_flags [join ${qmake5_cxx11_flags} " "]
-    set qmake5_cxx_flags   [join ${qmake5_cxx11_flags} " "]
+    set qmake5_cxx_flags   [join ${qmake5_cxx_flags} " "]
     set qmake5_l_flags     [join ${qmake5_l_flags}     " "]
 
     if {${configure.cxx_stdlib} ne ""} {
-        if { [vercmp ${qt5::qt_version} 5.6.0] >= 0 } {
+        if { [vercmp ${qt5::qt_version} 5.6] >= 0 } {
             if { ${configure.cxx_stdlib} ne "libc++" } {
                 # override C++ flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
                 #    so value of ${configure.cxx_stdlib} can always be used
@@ -196,23 +203,23 @@ pre-configure {
             if {${qmake5_cxx11_flags} ne ""} {
                 puts ${qt5::cache} QMAKE_CXXFLAGS+="${qmake5_cxx11_flags}"
             }
-        } elseif { [vercmp ${qt5::qt_version} 5.5.0] == 0 } {
+        } elseif { [vercmp ${qt5::qt_version} 5.5] >= 0 } {
 
-            # always use the same standard library
-            puts ${qt5::cache} QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}
-            puts ${qt5::cache} QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
+        # always use the same standard library
+        puts ${qt5::cache} QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}
+        puts ${qt5::cache} QMAKE_LFLAGS+=-stdlib=${configure.cxx_stdlib}
 
-            # override C++ flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
-            #    so value of ${configure.cxx_stdlib} can always be used
-            if { ${configure.cxx_stdlib} ne "libc++" } {
-                puts ${qt5::cache} QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++
-                puts ${qt5::cache} QMAKE_LFLAGS_CXX11-=-stdlib=libc++
-                puts ${qt5::cache} QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
-                puts ${qt5::cache} QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
-            }
-            if {${qmake5_cxx11_flags} ne ""} {
-                puts ${qt5::cache} QMAKE_CXXFLAGS_CXX11+="${qmake5_cxx11_flags}"
-            }
+        # override C++ flags set in ${prefix}/libexec/qt5/mkspecs/common/clang-mac.conf
+        #    so value of ${configure.cxx_stdlib} can always be used
+        if { ${configure.cxx_stdlib} ne "libc++" } {
+            puts ${qt5::cache} QMAKE_CXXFLAGS_CXX11-=-stdlib=libc++
+            puts ${qt5::cache} QMAKE_LFLAGS_CXX11-=-stdlib=libc++
+            puts ${qt5::cache} QMAKE_CXXFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
+            puts ${qt5::cache} QMAKE_LFLAGS_CXX11+=-stdlib=${configure.cxx_stdlib}
+        }
+        if {${qmake5_cxx11_flags} ne ""} {
+            puts ${qt5::cache} QMAKE_CXXFLAGS_CXX11+="${qmake5_cxx11_flags}"
+        }
         } else {
             # always use the same standard library
             puts ${qt5::cache} QMAKE_CXXFLAGS+=-stdlib=${configure.cxx_stdlib}
@@ -227,6 +234,27 @@ pre-configure {
     }
     if {${qmake5_l_flags} ne "" } {
         puts ${qt5::cache} QMAKE_LFLAGS+="${qmake5_l_flags}"
+    }
+
+    # respect configure.optflags
+    if {[vercmp ${qt5.version} 5.9] >= 0} {
+# this is correct only if configure.optflags actually contains a -Os option!
+#         puts ${qt5::cache} "CONFIG+=optimize_size"
+        puts ${qt5::cache} "QMAKE_CFLAGS_OPTIMIZE_SIZE=${configure.optflags}"
+    } else {
+        puts ${qt5::cache} "QMAKE_CXXFLAGS_RELEASE~=s/-O.+/${configure.optflags}/g"
+    }
+
+    foreach flag ${qt5.cxxflags} {
+        puts ${qt5::cache} "QMAKE_CXXFLAGS+=${flag}"
+    }
+
+    foreach flag ${qt5.ldflags} {
+        puts ${qt5::cache} "QMAKE_LFLAGS+=${flag}"
+    }
+
+    foreach flag ${qt5.frameworkpaths} {
+        puts ${qt5::cache} "QMAKE_FRAMEWORKPATH+=${flag}"
     }
 
     # no debug+release build support in qt5-kde

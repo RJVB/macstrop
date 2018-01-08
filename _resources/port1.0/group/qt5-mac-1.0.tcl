@@ -675,6 +675,12 @@ proc qt5.depends_build_component {args} {
         lappend qt5_private_build_components ${comp}
     }
 }
+proc qt5.depends_runtime_component {args} {
+    global qt5_private_runtime_components
+    foreach comp ${args} {
+        lappend qt5_private_runtime_components ${comp}
+    }
+}
 
 options qt5.kde_variant
 default qt5.kde_variant no
@@ -780,8 +786,11 @@ if {!${private_building_qt5}} {
         ui_debug "qt5 PortGroup: Qt is provided by ${qt5.name}"
 
         if { [variant_exists qt5kde] && [variant_isset qt5kde] } {
-            ui_error "Internal Qt5 port error: inappropriate use of the Qt5 1.0 PortGroup"
-            return -code error "internal Qt5 port error"
+            if { ${qt5.base_port} ne "qt5-kde" } {
+                ui_error "qt5 PortGroup: Qt is installed but not qt5-kde, as is required by this variant"
+                ui_error "qt5 PortGroup: please run `sudo port uninstall --follow-dependents ${qt5.base_port} and try again"
+                return -code error "improper Qt installed"
+            }
         } else {
             if { ${qt5.name} ne [qt5.get_default_name] } {
                 # see https://wiki.qt.io/Qt-Version-Compatibility
@@ -797,9 +806,20 @@ if {!${private_building_qt5}} {
     }
 }
 
+# add qt5kde variant if one does not exist and one is requested via qt5.kde_variant
+# variant is added in eval_variants so that qt5.kde_variant can be set anywhere in the Portfile
+rename ::eval_variants ::real_qt5_eval_variants
+proc eval_variants {variations} {
+    global qt5.kde_variant
+    if { ![variant_exists qt5kde] && [tbool qt5.kde_variant] } {
+        variant qt5kde description {use Qt patched for KDE compatibility} {}
+    }
+    uplevel ::real_qt5_eval_variants $variations
+}
+
 namespace eval qt5pg {
     proc register_dependents {} {
-        global qt5_private_components qt5_private_build_components qt5.name
+        global qt5_private_components qt5_private_build_components qt5_private_runtime_components qt5.name
 
         if { ![exists qt5_private_components] } {
             # no Qt components have been requested
@@ -809,6 +829,10 @@ namespace eval qt5pg {
         if { ![exists qt5_private_build_components] } {
             # qt5.depends_build_component has never been called
             set qt5_private_build_components ""
+        }
+        if { ![exists qt5_private_runtime_components] } {
+            # qt5.depends_build_component has never been called
+            set qt5_private_runtime_components ""
         }
 
         if { [variant_exists qt5kde] && [variant_isset qt5kde] } {
@@ -831,6 +855,20 @@ namespace eval qt5pg {
                 }
             }
             foreach component ${qt5_private_build_components} {
+                switch -exact ${component} {
+                    qtwebkit -
+                    qtwebengine -
+                    qtwebview -
+                    qtenginio {
+                        # these components are subports
+                        depends_run-append port:${qt_kde_name}-${component}
+                    }
+                    default {
+                        # qt5-kde provides all components except those above
+                    }
+                }
+            }
+            foreach component ${qt5_private_runtime_components} {
                 switch -exact ${component} {
                     qtwebkit -
                     qtwebengine -
@@ -862,6 +900,15 @@ namespace eval qt5pg {
                     set component_info $qt5pg::qt5_component_lib(${component})
                     set path           [lindex ${component_info} 2]
                     depends_build-append path:${path}:${qt5.name}-${component}
+                } else {
+                    return -code error "unknown component ${component}"
+                }
+            }
+            foreach component ${qt5_private_runtime_components} {
+                if { [info exists qt5pg::qt5_component_lib(${component})] } {
+                    set component_info $qt5pg::qt5_component_lib(${component})
+                    set path           [lindex ${component_info} 2]
+                    depends_run-append path:${path}:${qt5.name}-${component}
                 } else {
                     return -code error "unknown component ${component}"
                 }
