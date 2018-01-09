@@ -197,7 +197,7 @@ if {![variant_exists qt5kde]} {
 if {[variant_isset qt5kde]} {
     ui_debug "+qt5kde is set for port:${subport}"
 } else {
-    ui_debug "+qt5kde is not yet but will be set for port:${subport}"
+    ui_debug "+qt5kde is not yet set but will be for port:${subport}"
 }
 default_variants        +qt5kde
 
