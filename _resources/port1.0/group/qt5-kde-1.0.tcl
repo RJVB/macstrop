@@ -537,6 +537,7 @@ if {${os.platform} eq "darwin"} {
                         path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext}:${qt5::pprefix}-qtwebengine
 }
 if {![info exists building_qt5]} {
+    ui_debug "Adding depspec \"${qt5_dependency}\" ([dict get [info frame 0] file])"
     depends_lib-append ${qt5_dependency}
     if {[info exists qt5.depends_qtwebengine] && ${qt5.depends_qtwebengine}} {
         depends_lib-append \
@@ -800,7 +801,7 @@ set qt5::component2pathspec(webkit)     $qt5::component2pathspec(qtwebkit)
 proc qt5::depends_component_p {deptype args} {
     global qt5::component2pathspec qt5.using_kde os.major qt5.kde_stubports version qt5::pprefix
     # select the Qt5 port prefix, depending on which Qt5 port is installed
-    set is_qt5kde [expr [info exists qt5.using_kde] && ${qt5.using_kde}]
+    set is_qt5kde [tbool qt5.using_kde]
     if {!${is_qt5kde}} {
         switch ${os.major} {
             "11" {

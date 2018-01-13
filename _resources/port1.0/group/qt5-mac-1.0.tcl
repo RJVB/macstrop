@@ -237,7 +237,7 @@ switch -exact ${qt5PGname} {
     qt5-kde {
         # Qt5 has been installed through port:qt5-kde or port:qt5-kde-devel or we're on 10.6
         # transfer control to qt5-kde-1.0.tcl
-        ui_debug "Qt5 is provided by port:qt5-kde"
+        ui_debug "Qt5 is provided by port:qt5-kde; transferring to PortGroup qt5-kde 1.0"
         PortGroup           ${qt5PGname} 1.0
         return
     }
