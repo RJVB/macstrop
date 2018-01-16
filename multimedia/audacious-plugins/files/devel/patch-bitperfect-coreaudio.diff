@@ -12,7 +12,7 @@ index d1faefd88af400b58c7c86bb44f9373bc772fa5e..8d285151600529b994ab33ad6e25fee7
  include ../../extra.mk
 diff --git src/coreaudio/audiodevice.h src/coreaudio/audiodevice.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..81665ba470d6313c3445736f2a2cd570d7134085
+index 0000000000000000000000000000000000000000..7c66425c053552b0a82543d12242032e9421a619
 --- /dev/null
 +++ src/coreaudio/audiodevice.h
 @@ -0,0 +1,138 @@
@@ -73,12 +73,12 @@ index 0000000000000000000000000000000000000000..81665ba470d6313c3445736f2a2cd570
 +
 +#ifndef DEPRECATED_LISTENER_API
 +#	if !(defined(MAC_OS_X_VERSION_10_11) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_11)
-+#		define DEPRECATED_LISTENER_API
++#		define DEPRECATED_LISTENER_API 1
 +#		warning "Using the deprecated PropertyListener API; at least it works"
 +#	endif
 +#endif
 +
-+#ifdef DEPRECATED_LISTENER_API
++#if DEPRECATED_LISTENER_API
 +using AudioPropertyListenerProc = AudioDevicePropertyListenerProc;
 +#else
 +using AudioPropertyListenerProc = AudioObjectPropertyListenerProc;
@@ -156,10 +156,10 @@ index 0000000000000000000000000000000000000000..81665ba470d6313c3445736f2a2cd570
 +#endif // __AudioDevice_h__
 diff --git src/coreaudio/audiodevice.mm src/coreaudio/audiodevice.mm
 new file mode 100644
-index 0000000000000000000000000000000000000000..c2784f2abefeb2235c6cfe8213556c43b1c46725
+index 0000000000000000000000000000000000000000..51d10115903ef4d70aae8adc5fe218d9c85b5a93
 --- /dev/null
 +++ src/coreaudio/audiodevice.mm
-@@ -0,0 +1,666 @@
+@@ -0,0 +1,676 @@
 +/*
 +     File: AudioDevice.cpp
 + Adapted from the CAPlayThough example
@@ -233,7 +233,7 @@ index 0000000000000000000000000000000000000000..c2784f2abefeb2235c6cfe8213556c43
 +                                      };
 +static UInt32 supportedSRates = sizeof(supportedSRateList) / sizeof(Float64);
 +
-+#ifdef DEPRECATED_LISTENER_API
++#if DEPRECATED_LISTENER_API
 +
 +OSStatus DefaultListener(AudioDeviceID inDevice, UInt32 inChannel, Boolean forInput,
 +                         AudioDevicePropertyID inPropertyID,
@@ -269,7 +269,7 @@ index 0000000000000000000000000000000000000000..c2784f2abefeb2235c6cfe8213556c43
 +            }
 +            break;
 +        default:
-+            if ((dev && !dev->listenerSilentFor)) {
++            /*if ((dev && !dev->listenerSilentFor))*/ {
 +                NSLog(msg);
 +            }
 +            break;
@@ -362,10 +362,17 @@ index 0000000000000000000000000000000000000000..c2784f2abefeb2235c6cfe8213556c43
 +    listenerProc = lProc;
 +    listenerSilentFor = 0;
 +    if (lProc) {
-+#ifdef DEPRECATED_LISTENER_API
-+        AudioDeviceAddPropertyListener(mID, 0, false, kAudioDevicePropertyActualSampleRate, lProc, this);
-+        AudioDeviceAddPropertyListener(mID, 0, false, kAudioDevicePropertyNominalSampleRate, lProc, this);
-+        AudioDeviceAddPropertyListener(mID, 0, false, kAudioHardwarePropertyDefaultOutputDevice, lProc, this);
++#if DEPRECATED_LISTENER_API
++        AUDDBG ("Installing CoreAudio listener procedure (legacy mode).\n");
++        if ((err = AudioDeviceAddPropertyListener(mID, 0, false, kAudioDevicePropertyActualSampleRate, lProc, this)) != noErr) {
++            AUDERR ("Couldn't register property listener for actual sample rate: %d (%s)", err, OSTStr(err));
++        }
++        if ((err = AudioDeviceAddPropertyListener(mID, 0, false, kAudioDevicePropertyNominalSampleRate, lProc, this)) != noErr) {
++            AUDERR ("Couldn't register property listener for nominal sample rate: %d (%s)", err, OSTStr(err));
++        }
++        if ((err = AudioDeviceAddPropertyListener(mID, 0, false, kAudioHardwarePropertyDefaultOutputDevice, lProc, this)) != noErr) {
++            AUDERR ("Couldn't register property listener for selected default device: %d (%s)", err, OSTStr(err));
++        }
 +#else
 +        AudioObjectPropertyAddress prop = { kAudioDevicePropertyActualSampleRate,
 +                                            kAudioObjectPropertyScopeGlobal,
@@ -402,6 +409,7 @@ index 0000000000000000000000000000000000000000..c2784f2abefeb2235c6cfe8213556c43
 +        if (propsize == 0) {
 +            propsize = 100 * sizeof(AudioValueRange);
 +        }
++        //AUDWARN ("Allocating %u bytes for sampling rates property\n", propsize);
 +        if ((list = (AudioValueRange *) calloc(1, propsize))) {
 +            // this can be slow too, but we cannot really do a background lookup.
 +//             fprintf(stderr, "Fetching %d nomrates\n", propsize/sizeof(AudioValueRange)); fflush(stderr);
@@ -410,9 +418,8 @@ index 0000000000000000000000000000000000000000..c2784f2abefeb2235c6cfe8213556c43
 +            if (err == noErr) {
 +                UInt32 i;
 +                NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
-+                NSMutableArray *a = [NSMutableArray arrayWithCapacity:nominalSampleRates];
 +                nominalSampleRates = propsize / sizeof(AudioValueRange);
-+                a = [NSMutableArray arrayWithCapacity:nominalSampleRates];
++                NSMutableArray *a = [NSMutableArray arrayWithCapacity:nominalSampleRates];
 +                minNominalSR = list[0].mMinimum;
 +                maxNominalSR = list[0].mMaximum;
 +                // store the returned sample rates in [a] and record the extreme values
@@ -525,7 +532,7 @@ index 0000000000000000000000000000000000000000..c2784f2abefeb2235c6cfe8213556c43
 +                    (unsigned int) mID, GetName(), OSTStr(err), (long) err);
 +        }
 +        if (listenerProc) {
-+#ifdef DEPRECATED_LISTENER_API
++#if DEPRECATED_LISTENER_API
 +            AudioDeviceRemovePropertyListener(mID, 0, false, kAudioDevicePropertyActualSampleRate, listenerProc);
 +            AudioDeviceRemovePropertyListener(mID, 0, false, kAudioDevicePropertyNominalSampleRate, listenerProc);
 +            AudioDeviceRemovePropertyListener(mID, 0, false, kAudioHardwarePropertyDefaultOutputDevice, listenerProc);
@@ -767,6 +774,9 @@ index 0000000000000000000000000000000000000000..c2784f2abefeb2235c6cfe8213556c43
 +    if (buf != mDevName) {
 +        // fetching the device name to a user-provided buffer: let him/her wait.
 +        verify_noerr(AudioObjectGetPropertyData(mID, &theAddress, 0, NULL, &maxlen, buf));
++        if (maxlen) {
++            strncpy(mDevName, buf, sizeof(mDevName)/sizeof(char));
++        }
 +        return buf;
 +    } else {
 +        // the name lookup can take a while. Use GCD to run it in the background.
@@ -827,7 +837,7 @@ index 0000000000000000000000000000000000000000..c2784f2abefeb2235c6cfe8213556c43
 +
 +// kate: indent-mode cstyle; indent-width 4; replace-tabs on;
 diff --git src/coreaudio/coreaudio.cc src/coreaudio/coreaudio.cc
-index 84b7cfface2776c62020d80e0ed78349279387c9..a2b41afcf41b67ba804e78234145f7aad215eeac 100644
+index 84b7cfface2776c62020d80e0ed78349279387c9..0233dfcb921f47eb1111176fba37f42809812e22 100644
 --- src/coreaudio/coreaudio.cc
 +++ src/coreaudio/coreaudio.cc
 @@ -39,6 +39,8 @@
@@ -896,7 +906,7 @@ index 84b7cfface2776c62020d80e0ed78349279387c9..a2b41afcf41b67ba804e78234145f7aa
          return 0;
      }
  
-@@ -189,11 +201,40 @@ bool CoreAudioPlugin::init ()
+@@ -189,11 +201,44 @@ bool CoreAudioPlugin::init ()
          return 0;
      }
  
@@ -915,6 +925,10 @@ index 84b7cfface2776c62020d80e0ed78349279387c9..a2b41afcf41b67ba804e78234145f7aa
 +            delete coreAudioDevice;
 +        }
 +        coreAudioDevice = AudioDevice::GetDevice(defaultOutputDeviceID, false, coreAudioDevice, true);
++        // we use the quick mode which skips initialisation; cache the device name (in AudioDevice)
++        // using an immediate, blocking look-up.
++        char devName[256];
++        coreAudioDevice->GetName(devName, 256);
 +
 +        if (aud_get_bool ("coreaudio", "bitperfect_mode"))
 +        {
@@ -937,7 +951,7 @@ index 84b7cfface2776c62020d80e0ed78349279387c9..a2b41afcf41b67ba804e78234145f7aa
  }
  
  StereoVolume CoreAudioPlugin::get_volume ()
-@@ -321,16 +362,27 @@ bool CoreAudioPlugin::open_audio (int format, int rate_, int chan_, String & err
+@@ -321,16 +366,28 @@ bool CoreAudioPlugin::open_audio (int format, int rate_, int chan_, String & err
          prop.mScope    = kAudioObjectPropertyScopeGlobal;
          prop.mElement  = kAudioObjectPropertyElementMaster;
  
@@ -958,7 +972,8 @@ index 84b7cfface2776c62020d80e0ed78349279387c9..a2b41afcf41b67ba804e78234145f7aa
 +    {
 +        if (!caDeviceInitialised)
 +        {
-+            AUDINFO ("Preparing CoreAudio device %s for bitperfect output\n", coreAudioDevice->GetName());
++            // use the warning loglevel to inform the user this operation can take a while (up to a few seconds)
++            AUDWARN ("Preparing the \"%s\" for bitperfect output (this can take a moment)\n", coreAudioDevice->GetName());
 +            coreAudioDevice->Init();
 +            caDeviceInitialised = true;
 +        }
@@ -968,11 +983,13 @@ index 84b7cfface2776c62020d80e0ed78349279387c9..a2b41afcf41b67ba804e78234145f7aa
      if (AudioOutputUnitStart (output_instance))
      {
          error ("Unable to start audio unit.\n");
-@@ -347,6 +399,10 @@ void CoreAudioPlugin::close_audio ()
+@@ -347,6 +404,12 @@ void CoreAudioPlugin::close_audio ()
  
      AudioOutputUnitStop (output_instance);
  
 +    if (coreAudioDevice) {
++        // always restore the device samplerate when we're done playing
++        // (it's a noop when there's nothing to reset)
 +        coreAudioDevice->ResetNominalSampleRate();
 +    }
 +
