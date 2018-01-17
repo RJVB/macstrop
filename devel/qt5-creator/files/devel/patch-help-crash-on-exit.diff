@@ -1,0 +1,75 @@
+From 2b529673279f972425823cd574422d3664a2dc43 Mon Sep 17 00:00:00 2001
+From: Alexandru Croitor <alexandru.croitor@qt.io>
+Date: Wed, 17 Jan 2018 16:15:12 +0100
+Subject: [PATCH] Avoid double deletion of HelpWidget when quitting application
+ via Dock
+
+HelpWidgets that are created to be shown in an external window, had
+two different places where they were deleted:
+1) When the widget was closed (due to Qt::WA_DeleteOnClose)
+2) In HelpPlugin::aboutToShutdown via manual delete call
+
+In certain circumstances (when the WebEngine backend was used)
+this caused a double delete. Specifically, after opening an external
+help window, and closing the MainWindow, the application did not quit
+due to QTBUG-62596.
+
+Now if the help window were left open, and the application was quit
+via the macOS Dock, this caused a crash.
+
+When the application quits, it calls the HelpPlugin::aboutToShutdown,
+which deletes the HelpWidget. This in turn destroys the WebEngine
+view, which destroys the underlying QQuickWidget, which destroys
+a QQuickRenderControl, which calls
+QQuickRenderControlPrivate::windowDestroyed, which handles all
+posted QEvent::DeferredDelete events, which in turn triggers the
+deletion of the same HelpWidget due to the
+Qt::WA_DeleteOnClose attribute.
+
+The solution is to remove the Qt::WA_DeleteOnClose attribute, and only
+delete the external HelpWidget on shutdown, and not on CloseEvent.
+
+Task-number: QTBUG-63945
+Task-number: QTCREATORBUG-19582
+Change-Id: I5b73ff7fe52e7e1259a8aa98c97c9dbedd5e3c20
+===
+ src/plugins/help/helpplugin.cpp | 3 +++
+ src/plugins/help/helpwidget.cpp | 1 -
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git src/plugins/help/helpplugin.cpp src/plugins/help/helpplugin.cpp
+index 2057059..4595ff3 100644
+--- src/plugins/help/helpplugin.cpp
++++ src/plugins/help/helpplugin.cpp
+@@ -349,6 +349,7 @@ HelpViewer *HelpPlugin::externalHelpViewer()
+     if (m_externalWindow)
+         return m_externalWindow->currentViewer();
+     doSetupIfNeeded();
++    // Deletion for this widget is taken care of in HelpPlugin::aboutToShutdown().
+     m_externalWindow = createHelpWidget(Context(Constants::C_HELP_EXTERNAL),
+                                         HelpWidget::ExternalWindow);
+     if (m_externalWindowState.isNull()) {
+@@ -535,6 +536,8 @@ void HelpPlugin::showInHelpViewer(const QUrl &url, HelpViewer *viewer)
+     viewer->stop();
+     viewer->setSource(url);
+     ICore::raiseWindow(viewer);
++    // Show the parent top-level-widget in case it was closed previously.
++    viewer->window()->show();
+ }
+ 
+ HelpViewer *HelpPlugin::viewerForContextHelp()
+diff --git src/plugins/help/helpwidget.cpp src/plugins/help/helpwidget.cpp
+index feb6c3f..7933652 100644
+--- src/plugins/help/helpwidget.cpp
++++ src/plugins/help/helpwidget.cpp
+@@ -127,7 +127,6 @@ HelpWidget::HelpWidget(const Core::Context &context, WidgetStyle style, QWidget
+         static int windowId = 0;
+         Core::ICore::registerWindow(this,
+                                     Core::Context(Core::Id("Help.Window.").withSuffix(++windowId)));
+-        setAttribute(Qt::WA_DeleteOnClose);
+         setAttribute(Qt::WA_QuitOnClose, false); // don't prevent Qt Creator from closing
+     }
+     if (style != SideBarWidget) {
+-- 
+2.7.4
+
