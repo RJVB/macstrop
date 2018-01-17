@@ -12,10 +12,10 @@ index d1faefd88af400b58c7c86bb44f9373bc772fa5e..8d285151600529b994ab33ad6e25fee7
  include ../../extra.mk
 diff --git src/coreaudio/audiodevice.h src/coreaudio/audiodevice.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..32577cbbbb3fe40797eac5c3f06121a69e9192c7
+index 0000000000000000000000000000000000000000..b28d06b187b68d1cd1d8ccdb82368af0269484f3
 --- /dev/null
 +++ src/coreaudio/audiodevice.h
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,158 @@
 +/*
 +     File: AudioDevice.h 
 + Adapted from the CAPlayThough example
@@ -88,6 +88,9 @@ index 0000000000000000000000000000000000000000..32577cbbbb3fe40797eac5c3f06121a6
 +
 +class AudioDevice {
 +public:
++
++    typedef void (DefaultDeviceChangeHandler)(AudioObjectID newID, void *data);
++
 +    AudioDevice();
 +    AudioDevice(AudioObjectID devid, bool isInput=false);
 +    AudioDevice(AudioObjectID devid, bool quick, bool isInput);
@@ -132,6 +135,9 @@ index 0000000000000000000000000000000000000000..32577cbbbb3fe40797eac5c3f06121a6
 +        mDefaultDevice = isDefault;
 +    }
 +
++    void installDefaultDeviceChangeHandler(DefaultDeviceChangeHandler *handler, void *data);
++    void callDefaultDeviceChangeHandler(AudioObjectID newID);
++
 +    static AudioDevice *GetDefaultDevice(bool forInput, OSStatus &err, AudioDevice *dev=NULL);
 +    static AudioDevice *GetDevice(AudioObjectID devId, bool forInput, AudioDevice *dev=NULL, bool quick=false);
 +
@@ -153,6 +159,10 @@ index 0000000000000000000000000000000000000000..32577cbbbb3fe40797eac5c3f06121a6
 +
 +    bool mInitialised = false;
 +    bool mDefaultDevice = false;
++
++    DefaultDeviceChangeHandler *defDeviceChangeHandler = nullptr;
++    void *defDeviceChangeHanderData = nullptr;
++
 +private:
 +    bool gettingDevName = false;
 +
@@ -166,10 +176,10 @@ index 0000000000000000000000000000000000000000..32577cbbbb3fe40797eac5c3f06121a6
 +#endif // __AudioDevice_h__
 diff --git src/coreaudio/audiodevice.mm src/coreaudio/audiodevice.mm
 new file mode 100644
-index 0000000000000000000000000000000000000000..651baf4bb3a1ff6b5336855dad97285487e48914
+index 0000000000000000000000000000000000000000..578859fb846997b38a12d99d56017214102832bf
 --- /dev/null
 +++ src/coreaudio/audiodevice.mm
-@@ -0,0 +1,716 @@
+@@ -0,0 +1,721 @@
 +/*
 +     File: AudioDevice.cpp
 + Adapted from the CAPlayThough example
@@ -294,7 +304,8 @@ index 0000000000000000000000000000000000000000..651baf4bb3a1ff6b5336855dad972854
 +                    };
 +                    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &theAddress, 0, NULL, &propsize, &defaultDeviceID) == noErr) {
 +                        if (dev->ID() != defaultDeviceID) {
-+                            NSLog(@"Default device changed from %d to %d", dev->ID(), defaultDeviceID);
++                            AUDWARN ("Default device changed from %d to %d\n", dev->ID(), defaultDeviceID);
++                            dev->callDefaultDeviceChangeHandler(defaultDeviceID);
 +                        }
 +                    }
 +                }
@@ -361,7 +372,7 @@ index 0000000000000000000000000000000000000000..651baf4bb3a1ff6b5336855dad972854
 +                    };
 +                    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &theAddress, 0, NULL, &propsize, &defaultDeviceID) == noErr) {
 +                        if (dev->ID() != defaultDeviceID) {
-+                            NSLog(@"Default device changed from %d to %d", dev->ID(), defaultDeviceID);
++                            AUDWARN ("Default device changed from %d to %d\n", dev->ID(), defaultDeviceID);
 +                        }
 +                    }
 +                }
@@ -417,13 +428,13 @@ index 0000000000000000000000000000000000000000..651baf4bb3a1ff6b5336855dad972854
 +#if DEPRECATED_LISTENER_API
 +        AUDDBG ("Installing CoreAudio listener procedure (legacy mode).\n");
 +        if ((err = AudioDeviceAddPropertyListener(mID, 0, false, kAudioDevicePropertyActualSampleRate, lProc, this)) != noErr) {
-+            AUDERR ("Couldn't register property listener for actual sample rate: %d (%s)", err, OSTStr(err));
++            AUDERR ("Couldn't register property listener for actual sample rate: %d (%s)\n", err, OSTStr(err));
 +        }
 +        if ((err = AudioDeviceAddPropertyListener(mID, 0, false, kAudioDevicePropertyNominalSampleRate, lProc, this)) != noErr) {
-+            AUDERR ("Couldn't register property listener for nominal sample rate: %d (%s)", err, OSTStr(err));
++            AUDERR ("Couldn't register property listener for nominal sample rate: %d (%s)\n", err, OSTStr(err));
 +        }
 +        if ((err = AudioDeviceAddPropertyListener(kAudioObjectSystemObject, 0, false, kAudioHardwarePropertyDefaultOutputDevice, lProc, this)) != noErr) {
-+            AUDERR ("Couldn't register property listener for selected default device: %d (%s)", err, OSTStr(err));
++            AUDERR ("Couldn't register property listener for selected default device: %d (%s)\n", err, OSTStr(err));
 +        }
 +#else
 +        AudioObjectPropertyAddress prop = { kAudioDevicePropertyActualSampleRate,
@@ -431,15 +442,15 @@ index 0000000000000000000000000000000000000000..651baf4bb3a1ff6b5336855dad972854
 +                                            kAudioObjectPropertyElementMaster
 +                                          };
 +        if ((err = AudioObjectAddPropertyListener(mID, &prop, lProc, this)) != noErr) {
-+            AUDERR ("Couldn't register property listener for actual sample rate: %d (%s)", err, OSTStr(err));
++            AUDERR ("Couldn't register property listener for actual sample rate: %d (%s)\n", err, OSTStr(err));
 +        }
 +        prop.mElement = kAudioDevicePropertyNominalSampleRate;
 +        if ((err = AudioObjectAddPropertyListener(mID, &prop, lProc, this)) != noErr) {
-+            AUDERR ("Couldn't register property listener for nominal sample rate: %d (%s)", err, OSTStr(err));
++            AUDERR ("Couldn't register property listener for nominal sample rate: %d (%s)\n", err, OSTStr(err));
 +        }
 +        prop.mElement = kAudioHardwarePropertyDefaultOutputDevice;
 +        if ((err = AudioObjectAddPropertyListener(kAudioObjectSystemObject, &prop, lProc, this)) != noErr) {
-+            AUDERR ("Couldn't register property listener for selected default device: %d (%s)", err, OSTStr(err));
++            AUDERR ("Couldn't register property listener for selected default device: %d (%s)\n", err, OSTStr(err));
 +        }
 +#endif
 +    } else {
@@ -484,6 +495,7 @@ index 0000000000000000000000000000000000000000..651baf4bb3a1ff6b5336855dad972854
 +                    if (a) {
 +                        if (list[i].mMinimum != list[i].mMaximum) {
 +                            UInt32 j;
++                            AUDDBG ("device sample rate #%d is an interval: [%g,%g]\n", i, list[i].mMinimum, list[i].mMaximum);
 +                            discreteSampleRateList = false;
 +                            // the 'guessing' case: the device specifies one or more ranges, without
 +                            // indicating which rates in that range(s) are supported. We assume the
@@ -521,9 +533,15 @@ index 0000000000000000000000000000000000000000..651baf4bb3a1ff6b5336855dad972854
 +                            nominalSampleRateList[i] = [[a objectAtIndex:i] doubleValue];
 +                        }
 +                    }
-+                    NSLog(@"Using audio device %u \"%s\", %u sample rates in %u range(s); [%g,%g] %@; current sample rate %gHz",
-+                          mID, GetName(), nominalSampleRates, propsize / sizeof(AudioValueRange),
-+                          minNominalSR, maxNominalSR, (discreteSampleRateList) ? [a description] : @"continuous", currentNominalSR);
++                    if (discreteSampleRateList) {
++                        NSLog(@"Using audio device %u \"%s\", %u sample rates in %u range(s); [%g,%g] %@; current sample rate %gHz",
++                              mID, GetName(), nominalSampleRates, propsize / sizeof(AudioValueRange),
++                              minNominalSR, maxNominalSR, [a description], currentNominalSR);
++                    } else {
++                        NSLog(@"Using audio device %u \"%s\", %u supported sample rates in %u range(s); [%g,%g] continuous; current sample rate %gHz",
++                              mID, GetName(), nominalSampleRates, propsize / sizeof(AudioValueRange),
++                              minNominalSR, maxNominalSR, currentNominalSR);
++                    }
 +                } else {
 +                    AUDINFO ("Using audio device %u \"%s\", %u sample rates in %u range(s); [%g,%g] %s; current sample rate %gHz",
 +                          mID, GetName(), nominalSampleRates, propsize / sizeof(AudioValueRange),
@@ -726,7 +744,7 @@ index 0000000000000000000000000000000000000000..651baf4bb3a1ff6b5336855dad972854
 +        if (err == noErr) {
 +            currentNominalSR = sampleRate2;
 +        } else {
-+            AUDERR ("Failure setting device \"%s\" to %gHz: %d (%s)", GetName(), sampleRate2, err, OSTStr(err));
++            AUDERR ("Failure setting device \"%s\" to %gHz: %d (%s)\n", GetName(), sampleRate2, err, OSTStr(err));
 +        }
 +    } else {
 +        err = noErr;
@@ -811,36 +829,33 @@ index 0000000000000000000000000000000000000000..651baf4bb3a1ff6b5336855dad972854
 +
 +char *AudioDevice::GetName(char *buf, UInt32 maxlen)
 +{
-+    static char fetching[] = "(Fetching)";
 +    if (!buf) {
-+        buf = gettingDevName ? fetching : mDevName;
++        buf = mDevName;
 +        if (*buf) {
 +            return buf;
 +        }
++        maxlen = sizeof(mDevName) / sizeof(char);
 +    }
 +    AudioObjectPropertyAddress theAddress = { kAudioDevicePropertyDeviceName,
 +                                              mForInput ? kAudioDevicePropertyScopeInput : kAudioDevicePropertyScopeOutput,
 +                                              kAudioObjectPropertyElementMaster
 +                                            }; // channel
-+    if (buf != mDevName) {
-+        // fetching the device name to a user-provided buffer: let him/her wait.
-+        verify_noerr(AudioObjectGetPropertyData(mID, &theAddress, 0, NULL, &maxlen, buf));
-+        if (maxlen) {
-+            strncpy(mDevName, buf, sizeof(mDevName)/sizeof(char));
-+        }
-+        return buf;
-+    } else {
-+        // the name lookup can take a while. Use GCD to run it in the background.
-+        AUDDBG ("Background lookup for the name of device #%d\n", mID);
-+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-+            gettingDevName = true;
-+            UInt32 len = sizeof(mDevName) / sizeof(char);
-+            verify_noerr(AudioObjectGetPropertyData(mID, &theAddress, 0, NULL, &len, mDevName));
-+            gettingDevName = false;
-+            AUDDBG ("Got name: %s\n", mDevName);
-+        });
-+        AUDDBG ("Returning temp name %s\n", fetching);
-+        return fetching;
++
++    verify_noerr(AudioObjectGetPropertyData(mID, &theAddress, 0, NULL, &maxlen, buf));
++
++    return buf;
++}
++
++void AudioDevice::installDefaultDeviceChangeHandler(DefaultDeviceChangeHandler *handler, void *data)
++{
++    defDeviceChangeHandler = handler;
++    defDeviceChangeHanderData = data;
++}
++
++void AudioDevice::callDefaultDeviceChangeHandler(AudioObjectID newID)
++{
++    if (defDeviceChangeHandler) {
++        (*defDeviceChangeHandler)(newID, defDeviceChangeHanderData);
 +    }
 +}
 +
@@ -887,10 +902,15 @@ index 0000000000000000000000000000000000000000..651baf4bb3a1ff6b5336855dad972854
 +
 +// kate: indent-mode cstyle; indent-width 4; replace-tabs on;
 diff --git src/coreaudio/coreaudio.cc src/coreaudio/coreaudio.cc
-index 84b7cfface2776c62020d80e0ed78349279387c9..397503c8f1c8e6932cdeebf953a4e3b65568c512 100644
+index 84b7cfface2776c62020d80e0ed78349279387c9..fbb08709644da19ecc7abaaff5ded641afe78661 100644
 --- src/coreaudio/coreaudio.cc
 +++ src/coreaudio/coreaudio.cc
-@@ -39,6 +39,8 @@
+@@ -35,10 +35,13 @@
+ #include <libaudcore/ringbuf.h>
+ #include <libaudcore/i18n.h>
+ #include <libaudcore/preferences.h>
++#include <libaudcore/drct.h>
+ 
  #include <CoreAudio/CoreAudio.h>
  #include <AudioUnit/AudioUnit.h>
  
@@ -899,7 +919,7 @@ index 84b7cfface2776c62020d80e0ed78349279387c9..397503c8f1c8e6932cdeebf953a4e3b6
  class CoreAudioPlugin : public OutputPlugin {
  public:
      static const char about[];
-@@ -53,7 +55,9 @@ public:
+@@ -53,10 +56,13 @@ public:
          & prefs,
      };
  
@@ -910,16 +930,66 @@ index 84b7cfface2776c62020d80e0ed78349279387c9..397503c8f1c8e6932cdeebf953a4e3b6
  
      bool init ();
      void cleanup ();
-@@ -75,6 +79,8 @@ public:
++    void handle_new_default_device(AudioObjectID newID);
+ 
+     StereoVolume get_volume ();
+     void set_volume (StereoVolume vol);
+@@ -74,7 +80,16 @@ public:
+ 
  protected:
      static OSStatus callback (void *inRefCon, AudioUnitRenderActionFlags *ioActionFlags, const AudioTimeStamp *inTimeStamp, UInt32 inBusNumber, UInt32 inNumberFrames, AudioBufferList *ioData);
++    static OSStatus callback_noop (void *inRefCon, AudioUnitRenderActionFlags *ioActionFlags, const AudioTimeStamp *inTimeStamp, UInt32 inBusNumber, UInt32 inNumberFrames, AudioBufferList *ioData)
++    {
++        return notOpenErr;
++    }
++
      void check_started ();
++
++    bool set_device_samplerate(Float64 rate = 0.0);
 +    AudioDevice *coreAudioDevice = nullptr;
 +    bool caDeviceInitialised = false;
  };
  
  EXPORT CoreAudioPlugin aud_plugin_instance;
-@@ -137,11 +143,14 @@ const char * const CoreAudioPlugin::defaults[] = {
+@@ -85,6 +100,15 @@ EXPORT CoreAudioPlugin aud_plugin_instance;
+     aud_ui_show_error (str_printf ("CoreAudio error: " __VA_ARGS__)); \
+ } while (0)
+ 
++static void callDefaultDeviceChangeHandler(AudioObjectID newID, void *data)
++{
++    CoreAudioPlugin *cap = static_cast<CoreAudioPlugin*>(data);
++    if (cap)
++    {
++        cap->handle_new_default_device(newID);
++    }
++}
++
+ struct AudioUnitFormatDescriptionMap {
+     int aud_format;
+     unsigned int mBitsPerChannel;
+@@ -120,7 +144,8 @@ static int block_delay = 0;
+ static struct timeval block_time = {0, 0};
+ 
+ static AudioComponent output_comp = nullptr;
+-static AudioComponentInstance output_instance = nullptr;
++// static AudioComponentInstance output_instance = nullptr;
++static AudioUnit output_instance = nullptr;
+ 
+ static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+ static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+@@ -129,7 +154,10 @@ static bool is_exclusive = false;
+ 
+ const char CoreAudioPlugin::about[] =
+     N_("CoreAudio Output Plugin for Audacious\n"
+-       "Copyright 2014 William Pitcock\n\n"
++       "Copyright 2014 William Pitcock\n"
++       "Copyright 2017,18 René J.V. Bertin\n"
++       " (original code and code adapted from\n"
++       "  Apple examples, (C) Apple 2013)\n\n"
+        "Based on SDL Output Plugin for Audacious\n"
+        "Copyright 2010 John Lindgren");
+ 
+@@ -137,11 +165,14 @@ const char * const CoreAudioPlugin::defaults[] = {
      "vol_left", "100",
      "vol_right", "100",
      "exclusive_mode", "FALSE",
@@ -934,7 +1004,7 @@ index 84b7cfface2776c62020d80e0ed78349279387c9..397503c8f1c8e6932cdeebf953a4e3b6
  };
  
  const PluginPreferences CoreAudioPlugin::prefs = {
-@@ -173,9 +182,10 @@ bool CoreAudioPlugin::init ()
+@@ -173,9 +204,10 @@ bool CoreAudioPlugin::init ()
          return 0;
      }
  
@@ -947,7 +1017,7 @@ index 84b7cfface2776c62020d80e0ed78349279387c9..397503c8f1c8e6932cdeebf953a4e3b6
          return 0;
      }
  
-@@ -189,11 +199,49 @@ bool CoreAudioPlugin::init ()
+@@ -189,11 +221,127 @@ bool CoreAudioPlugin::init ()
          return 0;
      }
  
@@ -969,14 +1039,13 @@ index 84b7cfface2776c62020d80e0ed78349279387c9..397503c8f1c8e6932cdeebf953a4e3b6
 +        coreAudioDevice = AudioDevice::GetDevice(defaultOutputDeviceID, false, coreAudioDevice, true);
 +        if (coreAudioDevice != NULL)
 +        {
++            coreAudioDevice->installDefaultDeviceChangeHandler(callDefaultDeviceChangeHandler, static_cast<void*>(this));
 +            coreAudioDevice->setDefaultDevice(true);
-+            // we use the quick mode which skips initialisation; cache the device name (in AudioDevice)
-+            // using an immediate, blocking look-up.
-+            char devName[256];
-+            coreAudioDevice->GetName(devName, 256);
 +
-+            AUDINFO ("Using default output device %p #%d=\"%s\".\n",
-+                     coreAudioDevice, defaultOutputDeviceID, coreAudioDevice->GetName());
++            set_device_samplerate();
++
++            AUDINFO ("Using default output device #%d=\"%s\" (%p).\n",
++                     defaultOutputDeviceID, coreAudioDevice->GetName(), coreAudioDevice);
 +        }
 +        else
 +            AUDERR ("Failed to obtain a handle on the default device (%p)\n", coreAudioDevice);
@@ -987,6 +1056,85 @@ index 84b7cfface2776c62020d80e0ed78349279387c9..397503c8f1c8e6932cdeebf953a4e3b6
      return 1;
  }
  
++// combined initialisation and rate-setter:
++// initialises the CoreAudio device handle if not yet done
++// @p rate <= 0 : reset the device sampling rate unless the handle was NOT initialised
++// @p rate > 0 : set the device sampling rate after initialisation.
++bool CoreAudioPlugin::set_device_samplerate(Float64 rate)
++{
++    bool ret = false;
++    if (coreAudioDevice)
++    {
++        if (!caDeviceInitialised)
++        {
++            // use the warning loglevel to inform the user this operation can take a while (up to a few seconds)
++            AUDWARN ("Preparing the \"%s\" for bitperfect output (this can take a moment)\n", coreAudioDevice->GetName());
++            coreAudioDevice->Init();
++            caDeviceInitialised = true;
++        }
++        else if (rate <= 0)
++        {
++            coreAudioDevice->ResetNominalSampleRate();
++        }
++        ret = coreAudioDevice->SetNominalSampleRate(rate) == noErr;
++    }
++    return ret;
++}
++
++void CoreAudioPlugin::handle_new_default_device(AudioObjectID newID)
++{
++    int currentPosition = aud_drct_get_position();
++    int currentTime = aud_drct_get_time();
++
++    aud_drct_stop();
++
++    Float64 rate = 0;
++    if (coreAudioDevice)
++    {
++        if (coreAudioDevice->NominalSampleRate(rate) != noErr)
++        {
++            rate = coreAudioDevice->CurrentNominalSampleRate();
++        }
++    }
++
++    AURenderCallbackStruct input = { callback_noop, nullptr };
++    AudioUnitSetProperty (output_instance, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, & input, sizeof input);
++    AudioUnitReset(output_instance, kAudioUnitScope_Global, 0);
++
++    cleanup();
++
++    AudioComponentInstanceDispose(output_instance);
++    output_instance = nullptr;
++    caDeviceInitialised = false;
++
++    init();
++    if (currentPosition > 0 && currentTime > 0)
++    {
++        dispatch_block_t restart_playback = ^{
++            aud_drct_play();
++            aud_drct_seek(currentTime);
++        };
++        if (coreAudioDevice && rate > 0 && aud_get_bool ("coreaudio", "bitperfect_mode"))
++        {
++            // set the rate before starting playback to avoid hickups
++            AUDDBG ("Setting device to content's samplerate %gHz\n", rate);
++            set_device_samplerate(rate);
++            // give the device some time, again to avoid a hickup. A lossless
++            // playback gap is less annoying than a stutter to my ears.
++            // We use GCD to avoid a blocking wait (even if 400ms is hardly
++            // noticeable when you're busy switching the default output device
++            // via a system utility).
++            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.4 * NSEC_PER_SEC),
++                           dispatch_get_main_queue(), restart_playback);
++        }
++        else
++        {
++            // playback can be started immediately, just invoke the block.
++            restart_playback();
++        }
++    }
++}
++
  void CoreAudioPlugin::cleanup ()
  {
 +    if (coreAudioDevice) {
@@ -997,7 +1145,7 @@ index 84b7cfface2776c62020d80e0ed78349279387c9..397503c8f1c8e6932cdeebf953a4e3b6
  }
  
  StereoVolume CoreAudioPlugin::get_volume ()
-@@ -321,16 +369,28 @@ bool CoreAudioPlugin::open_audio (int format, int rate_, int chan_, String & err
+@@ -321,16 +469,22 @@ bool CoreAudioPlugin::open_audio (int format, int rate_, int chan_, String & err
          prop.mScope    = kAudioObjectPropertyScopeGlobal;
          prop.mElement  = kAudioObjectPropertyElementMaster;
  
@@ -1014,22 +1162,16 @@ index 84b7cfface2776c62020d80e0ed78349279387c9..397503c8f1c8e6932cdeebf953a4e3b6
              is_exclusive = true;
      }
  
-+    if (coreAudioDevice && aud_get_bool ("coreaudio", "bitperfect_mode"))
++    if (coreAudioDevice && aud_get_bool ("coreaudio", "bitperfect_mode") && rate != coreAudioDevice->CurrentNominalSampleRate())
 +    {
-+        if (!caDeviceInitialised)
-+        {
-+            // use the warning loglevel to inform the user this operation can take a while (up to a few seconds)
-+            AUDWARN ("Preparing the \"%s\" for bitperfect output (this can take a moment)\n", coreAudioDevice->GetName());
-+            coreAudioDevice->Init();
-+            caDeviceInitialised = true;
-+        }
-+        coreAudioDevice->SetNominalSampleRate(rate);
++        AUDDBG ("Setting device to content's samplerate %dHz\n", rate);
++        set_device_samplerate(Float64(rate));
 +    }
 +
      if (AudioOutputUnitStart (output_instance))
      {
          error ("Unable to start audio unit.\n");
-@@ -347,6 +407,12 @@ void CoreAudioPlugin::close_audio ()
+@@ -347,6 +501,12 @@ void CoreAudioPlugin::close_audio ()
  
      AudioOutputUnitStop (output_instance);
  
