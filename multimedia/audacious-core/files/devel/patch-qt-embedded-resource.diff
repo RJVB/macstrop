@@ -1,0 +1,161 @@
+diff --git src/libaudqt/Makefile src/libaudqt/Makefile
+index 6cee2dee2e41185c7339e679c5564a9e3b633f4a..2b348774cd84c5375c6b946cb17928762dc00eac 100644
+--- src/libaudqt/Makefile
++++ src/libaudqt/Makefile
+@@ -20,7 +20,8 @@ SRCS = about-qt.cc \
+        prefs-pluginlist-model.cc \
+        queue-manager-qt.cc \
+        url-opener-qt.cc \
+-       volumebutton.cc
++       volumebutton.cc \
++       qrc_resources.cc
+ 
+ INCLUDES = export.h \
+            iface.h \
+@@ -48,3 +49,6 @@ LIBS := -L../libaudcore -laudcore \
+ 
+ %.moc: %.h
+ 	moc $< -o $@
++
++qrc_%.cc: %.qrc
++	rcc $< -o $@
+diff --git src/libaudqt/about-qt.cc src/libaudqt/about-qt.cc
+index 5e74d3946111a0c35dfc04f8819a303229267694..4c5684a07fcfaa713fd34fd836486bcd057efdff 100644
+--- src/libaudqt/about-qt.cc
++++ src/libaudqt/about-qt.cc
+@@ -54,8 +54,6 @@ static QTabWidget * buildCreditsNotebook (QWidget * parent)
+ 
+ static QDialog * buildAboutWindow ()
+ {
+-    const char * data_dir = aud_get_path (AudPath::DataDir);
+-    const char * logo_path = filename_build ({data_dir, "images", "about-logo.png"});
+     const char * about_text = "<big><b>Audacious " VERSION "</b></big><br>" COPYRIGHT;
+     const char * website = "http://audacious-media-player.org";
+ 
+@@ -63,7 +61,7 @@ static QDialog * buildAboutWindow ()
+     window->setWindowTitle (_("About Audacious"));
+ 
+     auto logo = new QLabel (window);
+-    logo->setPixmap (QPixmap (logo_path));
++    logo->setPixmap (QPixmap (":/about-logo.svg"));
+     logo->setAlignment (Qt::AlignHCenter);
+ 
+     auto text = new QLabel (about_text, window);
+diff --git src/libaudqt/audqt.cc src/libaudqt/audqt.cc
+index 4938e789b6c86b144c0e5303edd05b33336d316f..d4c5c0c96341af6fcfdc3a2b0f633e32fa22fe06 100644
+--- src/libaudqt/audqt.cc
++++ src/libaudqt/audqt.cc
+@@ -55,15 +55,8 @@ public:
+ 
+         setApplicationName (_("Audacious"));
+         if (windowIcon().isNull()) {
+-            // find the likely icon theme directory
+-            QString appIconUrl = QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("icons/hicolor/scalable/apps/audacious.svg"));
+-            // load the scalable icon we installed ourselves (QIcon::fromTheme() won't do that)
+-            QIcon appIcon = QIcon(appIconUrl);
+-            if (appIcon.isNull()) {
+-                setWindowIcon (QIcon::fromTheme (argv[0]));
+-            } else {
+-                setWindowIcon (appIcon);
+-            }
++            QIcon appIcon = get_icon ("audacious.svg");
++            setWindowIcon (appIcon);
+         }
+         setQuitOnLastWindowClosed (true);
+     }
+@@ -171,6 +164,29 @@ EXPORT QFont get_font_for_class (const char *className)
+     return QApplication::font (className);
+ }
+ 
++// icon lookup function that returns the requested icon
++// from the embedded Qt resource. This function has to be
++// provided by the library that contains the resource.
++// If the resource lookup fails, try to find the icon in the
++// images datadir.
++EXPORT QIcon get_icon (const char *filename)
++{
++    QString resourceName = QStringLiteral (":/%1").arg (filename);
++    QIcon icon (resourceName);
++    if (icon.isNull ())
++    {
++        const char * data_dir = aud_get_path (AudPath::DataDir);
++        const char * img_path = filename_build ({data_dir, "images", filename});
++        icon = QIcon (img_path);
++        qDebug() << Q_FUNC_INFO << filename << "->" << img_path << "->" << icon;
++    }
++    else
++    {
++        qDebug() << Q_FUNC_INFO << filename << "->" << resourceName << "->" << icon;
++    }
++    return icon;
++}
++
+ EXPORT void enable_layout (QLayout * layout, bool enabled)
+ {
+     int count = layout->count ();
+diff --git src/libaudqt/libaudqt.h src/libaudqt/libaudqt.h
+index fb1bcfe465c940a301eef142c675cae7638c14c9..0fa9315be8774b538d4f3cd1bf16a3061f967ff2 100644
+--- src/libaudqt/libaudqt.h
++++ src/libaudqt/libaudqt.h
+@@ -34,6 +34,7 @@ class QFont;
+ class QPixmap;
+ class QToolButton;
+ class QWidget;
++class QIcon;
+ 
+ enum class PluginType;
+ class Playlist;
+@@ -102,6 +103,12 @@ QHBoxLayout * make_hbox (QWidget * parent, int spacing = sizes.FourPt);
+ QVBoxLayout * make_vbox (QWidget * parent, int spacing = sizes.FourPt);
+ 
+ QFont get_font_for_class (const char *className);
++/// lookup a QIcon in the embedded Qt resource from
++/// its @p filename in the resource. The function will
++/// prepend the required resource search path.
++/// If the lookup fails, another attempt is made to find
++/// the icon in the image datadir.
++QIcon get_icon (const char *filename);
+ 
+ void enable_layout (QLayout * layout, bool enabled);
+ void clear_layout (QLayout * layout);
+diff --git src/libaudqt/prefs-window-qt.cc src/libaudqt/prefs-window-qt.cc
+index a7c907609c80cf8741913f5d9bff4006030a9c10..5816dcd0ab9e6c447703c38b01c1816ff25038de 100644
+--- src/libaudqt/prefs-window-qt.cc
++++ src/libaudqt/prefs-window-qt.cc
+@@ -637,14 +637,13 @@ PrefsWindow::PrefsWindow () :
+     QObject::connect (bbox, & QDialogButtonBox::rejected, this, & QObject::deleteLater);
+ 
+     QSignalMapper * mapper = new QSignalMapper (this);
+-    const char * data_dir = aud_get_path (AudPath::DataDir);
+ 
+     QObject::connect (mapper, static_cast <void (QSignalMapper::*)(int)>(&QSignalMapper::mapped),
+                       s_category_notebook, static_cast <void (QStackedWidget::*)(int)>(&QStackedWidget::setCurrentIndex));
+ 
+     for (int i = 0; i < CATEGORY_COUNT; i ++)
+     {
+-        QIcon ico (QString (filename_build ({data_dir, "images", categories[i].icon_path})));
++        QIcon ico = get_icon (categories[i].icon_path);
+         QAction * a = new QAction (ico, translate_str (categories[i].name), toolbar);
+ 
+         toolbar->addAction (a);
+diff --git src/libaudqt/resources.qrc src/libaudqt/resources.qrc
+new file mode 100644
+index 0000000000000000000000000000000000000000..be1e599427e273470f372c8f4e64994c4ec6f65f
+--- /dev/null
++++ src/libaudqt/resources.qrc
+@@ -0,0 +1,15 @@
++<RCC>
++<qresource>
++	<file alias="about-logo.svg">../../images/about-logo.svg</file>
++	<file alias="audacious.svg">../../images/audacious.svg</file>
++
++	<file alias="advanced.png">../../images/advanced.png</file>
++	<file alias="album.png">../../images/album.png</file>
++	<file alias="appearance.png">../../images/appearance.png</file>
++	<file alias="audio.png">../../images/audio.png</file>
++	<file alias="connectivity.png">../../images/connectivity.png</file>
++	<file alias="info.png">../../images/info.png</file>
++	<file alias="playlist.png">../../images/playlist.png</file>
++	<file alias="plugins.png">../../images/plugins.png</file>
++</qresource>
++</RCC>
