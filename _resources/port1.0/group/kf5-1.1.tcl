@@ -104,11 +104,13 @@ if { ![ info exists kf5.project ] } {
 
 # KF5 frameworks current version, which is the same for all frameworks
 if {![info exists kf5.version]} {
-    set kf5.version     5.38.0
+    set kf5.version     5.42.0
     # kf5.latest_version is supposed to be used only in the KF5-Frameworks Portfile
     # when updating it to the new version (=kf5.latest_version). This feature is
     # activated only when a file `port dir KF5-Frameworks`/files/enable_latest exists.
     # The variable is thus no longer defined here.
+    # When upgrading, don't forget that port:kf5-breeze-icons and port:kf5-oxygen-icons5
+    # are part of the frameworks universe and should be kept in sync.
 }
 
 # KF5 Applications version
