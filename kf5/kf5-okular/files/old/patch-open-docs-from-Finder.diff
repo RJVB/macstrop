@@ -87,24 +87,26 @@ index 0000000..b0622c6
 +</dict>
 +</plist>
 diff --git a/shell/shell.cpp b/shell/shell.cpp
-index 16290dbcc39987cefae93bbd761fa8a0c4962bdc..ce743ccde673529a085c3f14f362a947f2d9c42b 100644
+index 60b22ea..7e46c0e 100644
 --- a/shell/shell.cpp
 +++ b/shell/shell.cpp
-@@ -53,6 +53,8 @@
+@@ -53,6 +53,10 @@
  #include <KActivities/ResourceInstance>
  #endif
  
++#ifdef Q_OS_MACOS
 +#include <QFileOpenEvent>
++#endif
 +
  // local includes
  #include "kdocumentviewer.h"
  #include "../interfaces/viewerinterface.h"
-@@ -145,6 +147,20 @@ Shell::Shell( const QString &serializedOptions )
+@@ -145,6 +149,21 @@ Shell::Shell( const QString &serializedOptions )
      }
  
      QDBusConnection::sessionBus().registerObject(QStringLiteral("/okularshell"), this, QDBusConnection::ExportScriptableSlots);
 +#ifdef Q_OS_MACOS
-+    m_fileOpenOptions = serializedOptions;
++    m_serialOptions = serializedOptions;
 +    qApp->installEventFilter(this);
 +    // try to handle all pending FileOpen requests right here and now, i.e. those
 +    // that were created after the Finder launched us when the user double-clicked
@@ -112,15 +114,16 @@ index 16290dbcc39987cefae93bbd761fa8a0c4962bdc..ce743ccde673529a085c3f14f362a947
 +    m_initialFileOpenRequests = true;
 +    QCoreApplication::sendPostedEvents(qApp, QEvent::FileOpen);
 +    QCoreApplication::processEvents();
-+    // The initial requests were processed. New QFileOpenEvents after this
-+    // moment will be handled via the queue.
++    // The initial requests were processed. Any new documents to be opened will
++    // open in a separate window (= process).
++    // This mimicks Preview.app's behaviour, which will open a selection of files
++    // as tabs in a single window, at least at start-up.
 +    m_initialFileOpenRequests = false;
-+    m_fileOpenTimer = 0;
 +#endif
    }
    else
    {
-@@ -171,6 +187,51 @@ bool Shell::eventFilter(QObject *obj, QEvent *event)
+@@ -171,6 +190,20 @@ bool Shell::eventFilter(QObject *obj, QEvent *event)
          dEvent->setAccepted(true);
          return true;
      }
@@ -128,62 +131,29 @@ index 16290dbcc39987cefae93bbd761fa8a0c4962bdc..ce743ccde673529a085c3f14f362a947
 +    /**
 +     * handle Mac OS X file open events (only exist on OS X)
 +     */
-+    switch (event->type()) {
-+        case QEvent::FileOpen: {
-+            QFileOpenEvent *fileOpenEvent = static_cast<QFileOpenEvent*>(event);
-+            if (m_initialFileOpenRequests) {
-+                openNewTab(fileOpenEvent->url(), m_fileOpenOptions);
-+            } else {
-+                if (m_fileOpenTimer) {
-+                    killTimer(m_fileOpenTimer);
-+                }
-+                m_fileOpenQueue.push_back(fileOpenEvent->url());
-+                m_fileOpenTimer = startTimer(100);
-+            }
-+            return true;
-+            break;
++    if (event->type() == QEvent::FileOpen) {
++        QFileOpenEvent *fileOpenEvent = static_cast<QFileOpenEvent*>(event);
++        if (m_initialFileOpenRequests) {
++            openNewTab(fileOpenEvent->url(), m_serialOptions);
++        } else {
++            openUrl(fileOpenEvent->url(), m_serialOptions);
 +        }
-+        case QEvent::Timer: {
-+            if (static_cast<QTimerEvent*>(event)->timerId() == m_fileOpenTimer) {
-+                killTimer(m_fileOpenTimer);
-+                m_fileOpenTimer = 0;
-+                if (!m_fileOpenQueue.isEmpty()) {
-+                    const QUrl newWindow(m_fileOpenQueue.takeFirst());
-+                    Shell* targetShell;
-+                    KParts::ReadWritePart* const part = m_tabs[m_tabWidget->currentIndex()].part;
-+                    if( dynamic_cast<Okular::ViewerInterface *>(part)->openNewFilesInTabs() ) {
-+                        targetShell = this;
-+                    } else {
-+                        targetShell = new Shell(m_fileOpenOptions);
-+                        targetShell->show();
-+                    }
-+                    targetShell->openUrl(newWindow, m_fileOpenOptions);
-+                    while (!m_fileOpenQueue.isEmpty()) {
-+                        const QUrl newTab(m_fileOpenQueue.takeFirst());
-+                        targetShell->openNewTab(newTab, m_fileOpenOptions);
-+                    }
-+                }
-+                return true;
-+            }
-+            break;
-+        }
++        return true;
 +    }
 +
      return false;
  }
  
 diff --git a/shell/shell.h b/shell/shell.h
-index 4c5604be70760f986e6628b7c7bcec8d2bda26ba..bc1ab2617744ded93b092f43d958ffd97f6f9064 100644
+index a6b9479..d59a12f 100644
 --- a/shell/shell.h
 +++ b/shell/shell.h
-@@ -178,6 +178,10 @@ private:
+@@ -178,6 +178,8 @@ private:
    KActivities::ResourceInstance* m_activityResource;
  #endif
    bool m_isValid;
++  QString m_serialOptions;
 +  bool m_initialFileOpenRequests;
-+  QString m_fileOpenOptions;
-+  int m_fileOpenTimer;
-+  QList<QUrl> m_fileOpenQueue;
  };
  
  #endif
