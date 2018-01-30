@@ -1,5 +1,5 @@
 diff --git a/qtbase/src/corelib/tools/qregexp.cpp b/qtbase/src/corelib/tools/qregexp.cpp
-index 96ddca56afab297ebeac889af0cb02b62587559b..7d0cf4cad0c5f8cb22a68dd3a81ff8a158a6f5bc 100644
+index 96ddca56afab297ebeac889af0cb02b62587559b..9834c0770a71d26cada174c38edf3364672194d9 100644
 --- a/qtbase/src/corelib/tools/qregexp.cpp
 +++ b/qtbase/src/corelib/tools/qregexp.cpp
 @@ -39,6 +39,7 @@
@@ -10,52 +10,44 @@ index 96ddca56afab297ebeac889af0cb02b62587559b..7d0cf4cad0c5f8cb22a68dd3a81ff8a1
  #include "qalgorithms.h"
  #include "qbitarray.h"
  #include "qcache.h"
-@@ -52,6 +53,8 @@
+@@ -52,6 +53,7 @@
  #include "qstringlist.h"
  #include "qstringmatcher.h"
  #include "qvector.h"
 +#include "qcoreapplication.h"
-+#include "qsemaphore.h"
  
  #include <limits.h>
  #include <algorithm>
-@@ -3813,17 +3816,102 @@ struct QRegExpPrivate
+@@ -3813,17 +3815,80 @@ struct QRegExpPrivate
  };
  
  #if !defined(QT_NO_REGEXP_OPTIM)
 -typedef QCache<QRegExpEngineKey, QRegExpEngine> EngineCache;
 +class EngineCache : public QCache<QRegExpEngineKey, QRegExpEngine>
-+#if !defined(QT_NO_OBJECT) && !defined(QT_BOOTSTRAPPED)
++#ifndef QT_BOOTSTRAPPED
 +    , public QObject
 +#endif
 +{
++// #ifndef QT_BOOTSTRAPPED
++//     Q_OBJECT
++// #endif
 +public:
 +    class Locker : public QMutexLocker
 +    {
 +    public:
 +        Locker(EngineCache *cache)
 +            : QMutexLocker(&cache->m_mutex)
-+            , m_cache(cache)
-+        {
-+            m_cache->m_sem.acquire();
-+        }
-+        ~Locker()
-+        {
-+            m_cache->m_sem.release();
-+        }
-+        EngineCache *m_cache;
++        {}
 +    };
 +
 +    EngineCache()
 +        : QCache<QRegExpEngineKey, QRegExpEngine>()
 +    {
-+#if !defined(QT_NO_OBJECT) && !defined(QT_BOOTSTRAPPED)
++#ifndef QT_BOOTSTRAPPED
 +        if (QCoreApplication::instance()) {
 +            connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &EngineCache::takeDown);
 +        }
 +#endif
-+        // create the number of required resources:
-+        m_sem.release(1);
 +    }
 +
 +    bool isAvailable(bool forAdding)
@@ -65,10 +57,6 @@ index 96ddca56afab297ebeac889af0cb02b62587559b..7d0cf4cad0c5f8cb22a68dd3a81ff8a1
 +                qDebug() << "globalEngineCache: new items can no longer be added";
 +            } else {
 +                qDebug() << "globalEngineCache has already been emptied";
-+            }
-+            if (!isEmpty()) {
-+                // keep trying to empty the cache until we succeed (no need to use a timer for that?!)
-+                emptyCache();
 +            }
 +        }
 +        return m_isAvailable;
@@ -85,30 +73,19 @@ index 96ddca56afab297ebeac889af0cb02b62587559b..7d0cf4cad0c5f8cb22a68dd3a81ff8a1
 +    {
 +        // take the cache offline
 +        m_isAvailable = false;
-+        emptyCache();
++        qDebug() << "globalEngineCache discarding" << size() << "entries";
++        m_mutex.lock();
++        clear();
++        if (!isEmpty()) {
++            qWarning() << "globalEngineCache wasn't emptied completely; remain:" << size();
++        }
++        m_mutex.unlock();
 +    }
 +
 +    // mutex for syncing access from different threads
 +    QBasicMutex m_mutex;
-+    // semaphore for avoiding concurrent cache access by the same thread.
-+    QSemaphore m_sem;
 +
 +private:
-+    void emptyCache()
-+    {
-+        // use the semaphore to ensure no one else is using the cache,
-+        // using a timeout to avoi deadlocks if the semaphore is owne
-+        // by the current thread.
-+        if (m_sem.tryAcquire(1, 250)) {
-+            qDebug() << "globalEngineCache discarding" << size() << "entries";
-+            clear();
-+            m_sem.release();
-+        }
-+        if (!isEmpty()) {
-+            qWarning() << "globalEngineCache wasn't emptied completely; remain:" << size();
-+        }
-+    }
-+
 +    bool m_isAvailable = true;
 +};
  Q_GLOBAL_STATIC(EngineCache, globalEngineCache)
@@ -126,7 +103,7 @@ index 96ddca56afab297ebeac889af0cb02b62587559b..7d0cf4cad0c5f8cb22a68dd3a81ff8a1
              QT_TRY {
                  globalEngineCache()->insert(key, eng, 4 + key.pattern.length() / 4);
              } QT_CATCH(const std::bad_alloc &) {
-@@ -3844,8 +3932,8 @@ static void prepareEngine_helper(QRegExpPrivate *priv)
+@@ -3844,8 +3909,8 @@ static void prepareEngine_helper(QRegExpPrivate *priv)
  {
      bool initMatchState = !priv->eng;
  #if !defined(QT_NO_REGEXP_OPTIM)
@@ -137,3 +114,11 @@ index 96ddca56afab297ebeac889af0cb02b62587559b..7d0cf4cad0c5f8cb22a68dd3a81ff8a1
          priv->eng = globalEngineCache()->take(priv->engineKey);
          if (priv->eng != 0)
              priv->eng->ref.ref();
+@@ -4601,3 +4666,7 @@ QDebug operator<<(QDebug dbg, const QRegExp &r)
+ #endif
+ 
+ QT_END_NAMESPACE
++
++// #ifndef QT_BOOTSTRAPPED
++// #include "moc_qregexp.cpp"
++// #endif
