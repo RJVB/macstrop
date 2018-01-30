@@ -1,5 +1,5 @@
 diff --git a/qtbase/src/corelib/tools/qregexp.cpp b/qtbase/src/corelib/tools/qregexp.cpp
-index 96ddca56afab297ebeac889af0cb02b62587559b..77d31b10d0f418deb75f1fb3fa4304d1efdaa063 100644
+index 96ddca56afab297ebeac889af0cb02b62587559b..ab429d3f5749a71600c53a25c408dbf6c6874d2e 100644
 --- a/qtbase/src/corelib/tools/qregexp.cpp
 +++ b/qtbase/src/corelib/tools/qregexp.cpp
 @@ -39,6 +39,7 @@
@@ -10,15 +10,16 @@ index 96ddca56afab297ebeac889af0cb02b62587559b..77d31b10d0f418deb75f1fb3fa4304d1
  #include "qalgorithms.h"
  #include "qbitarray.h"
  #include "qcache.h"
-@@ -52,6 +53,7 @@
+@@ -52,6 +53,8 @@
  #include "qstringlist.h"
  #include "qstringmatcher.h"
  #include "qvector.h"
 +#include "qcoreapplication.h"
++#include "qsemaphore.h"
  
  #include <limits.h>
  #include <algorithm>
-@@ -3813,7 +3815,56 @@ struct QRegExpPrivate
+@@ -3813,17 +3816,90 @@ struct QRegExpPrivate
  };
  
  #if !defined(QT_NO_REGEXP_OPTIM)
@@ -29,6 +30,22 @@ index 96ddca56afab297ebeac889af0cb02b62587559b..77d31b10d0f418deb75f1fb3fa4304d1
 +#endif
 +{
 +public:
++    class Locker : public QMutexLocker
++    {
++    public:
++        Locker(EngineCache *cache)
++            : QMutexLocker(&cache->m_mutex)
++            , m_cache(cache)
++        {
++            m_cache->m_sem.acquire();
++        }
++        ~Locker()
++        {
++            m_cache->m_sem.release();
++        }
++        EngineCache *m_cache;
++    };
++
 +    EngineCache()
 +        : QCache<QRegExpEngineKey, QRegExpEngine>()
 +    {
@@ -37,6 +54,8 @@ index 96ddca56afab297ebeac889af0cb02b62587559b..77d31b10d0f418deb75f1fb3fa4304d1
 +            connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &EngineCache::takeDown);
 +        }
 +#endif
++        // create the number of required resources:
++        m_sem.release(1);
 +    }
 +
 +    bool isAvailable(bool forAdding)
@@ -63,34 +82,46 @@ index 96ddca56afab297ebeac889af0cb02b62587559b..77d31b10d0f418deb75f1fb3fa4304d1
 +        // should I attempt to lock the mutex here (and risk getting deadlocked)?
 +        // take the cache offline
 +        m_isAvailable = false;
++        m_sem.acquire();
 +        qDebug() << "globalEngineCache discarding" << size() << "entries";
 +        clear();
 +        if (!isEmpty()) {
 +            qWarning() << "globalEngineCache wasn't emptied completely; remain:" << size();
 +        }
++        m_sem.release();
 +    }
++
++    // mutex for syncing access from different threads
++    QBasicMutex m_mutex;
++    // semaphore for avoiding concurrent cache access by the same thread.
++    QSemaphore m_sem;
 +
 +private:
 +    bool m_isAvailable = true;
 +};
  Q_GLOBAL_STATIC(EngineCache, globalEngineCache)
- static QBasicMutex globalEngineCacheMutex;
+-static QBasicMutex globalEngineCacheMutex;
  #endif // QT_NO_REGEXP_OPTIM
-@@ -3822,7 +3873,7 @@ static void derefEngine(QRegExpEngine *eng, const QRegExpEngineKey &key)
+ 
+ static void derefEngine(QRegExpEngine *eng, const QRegExpEngineKey &key)
  {
      if (!eng->ref.deref()) {
  #if !defined(QT_NO_REGEXP_OPTIM)
 -        if (globalEngineCache()) {
+-            QMutexLocker locker(&globalEngineCacheMutex);
 +        if (globalEngineCache() && globalEngineCache()->isAvailable(true)) {
-             QMutexLocker locker(&globalEngineCacheMutex);
++            EngineCache::Locker locker(globalEngineCache());
              QT_TRY {
                  globalEngineCache()->insert(key, eng, 4 + key.pattern.length() / 4);
-@@ -3844,7 +3895,7 @@ static void prepareEngine_helper(QRegExpPrivate *priv)
+             } QT_CATCH(const std::bad_alloc &) {
+@@ -3844,8 +3920,8 @@ static void prepareEngine_helper(QRegExpPrivate *priv)
  {
      bool initMatchState = !priv->eng;
  #if !defined(QT_NO_REGEXP_OPTIM)
 -    if (!priv->eng && globalEngineCache()) {
+-        QMutexLocker locker(&globalEngineCacheMutex);
 +    if (!priv->eng && globalEngineCache() && globalEngineCache()->isAvailable(false)) {
-         QMutexLocker locker(&globalEngineCacheMutex);
++        EngineCache::Locker locker(globalEngineCache());
          priv->eng = globalEngineCache()->take(priv->engineKey);
          if (priv->eng != 0)
+             priv->eng->ref.ref();
