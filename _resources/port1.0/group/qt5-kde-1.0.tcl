@@ -463,6 +463,9 @@ proc qt5.active_version {} {
     }
 }
 
+## NB
+## Remember to update the component2pathspec table when promoting
+## a stubport to a (sub)port!
 set qt5.kde_stubports \
             {qtbase qtdeclarative qtserialbus qtserialport qtsensors \
             qtquick1 qtwebchannel qtimageformats qtsvg qtmacextras \
@@ -792,6 +795,8 @@ platform linux {
         qtwebview       path:libexec/${qt_name}/lib/libQt5WebView.${qt_libs_ext} \
     ]
 }
+set qt5::component2pathspec(qt3d)       path:${qt_pkg_config_dir}/Qt53DCore.pc
+set qt5::component2pathspec(qttranslations) path:${qt_translations_dir}/qt_en.qm
 set qt5::component2pathspec(assistant)  path:${qt_bins_dir}/assistant
 set qt5::component2pathspec(webkit)     $qt5::component2pathspec(qtwebkit)
 
