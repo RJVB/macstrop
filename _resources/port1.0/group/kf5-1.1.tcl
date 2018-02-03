@@ -222,10 +222,12 @@ if {${kf5::includecounter} == 0} {
                             ${prefix}/lib/${build_arch}-linux-gnu
         configure.args-append \
                             -DCMAKE_PREFIX_PATH=${prefix}
-        variant libcxx description {highly experimental option to build against libc++. \
-                Requires using clang and an independently provided libc++ installation.} {
-            configure.cxx_stdlib \
-                            libc++
+        if {[string match *clang* ${configure.cxx}]} {
+            variant libcxx description {highly experimental option to build against libc++. \
+                    Requires using clang and an independently provided libc++ installation.} {
+                configure.cxx_stdlib \
+                                libc++
+            }
         }
     }
     configure.args-append   -DSYSCONF_INSTALL_DIR="${prefix}/etc"
