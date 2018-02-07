@@ -1,0 +1,150 @@
+diff --git a/qtbase/src/plugins/platforms/cocoa/qcocoamenu.mm b/qtbase/src/plugins/platforms/cocoa/qcocoamenu.mm
+index 981d900..77eca5a 100644
+--- a/qtbase/src/plugins/platforms/cocoa/qcocoamenu.mm
++++ b/qtbase/src/plugins/platforms/cocoa/qcocoamenu.mm
+@@ -331,7 +331,7 @@ void QCocoaMenu::insertMenuItem(QPlatformMenuItem *menuItem, QPlatformMenuItem *
+ 
+     // Empty menus on a menubar are hidden by default. If the menu gets
+     // added to the menubar before it contains any item, we need to sync.
+-    if (isVisible() && attachedItem().hidden) {
++    if (isVisible() && [m_attachedItem isHidden]) {
+         if (auto *mb = qobject_cast<QCocoaMenuBar *>(menuParent()))
+             mb->syncMenu(this);
+     }
+diff --git a/qtbase/src/plugins/platforms/cocoa/qcocoanativeinterface.mm b/qtbase/src/plugins/platforms/cocoa/qcocoanativeinterface.mm
+index ee762f6..de47af3 100644
+--- a/qtbase/src/plugins/platforms/cocoa/qcocoanativeinterface.mm
++++ b/qtbase/src/plugins/platforms/cocoa/qcocoanativeinterface.mm
+@@ -172,12 +172,28 @@ void *QCocoaNativeInterface::NSPrintInfoForPrintEngine(QPrintEngine *printEngine
+ 
+ QPixmap QCocoaNativeInterface::defaultBackgroundPixmapForQWizard()
+ {
++    QCFType<CFURLRef> url109;
++    CFURLRef url = nullptr;
+     const int ExpectedImageWidth = 242;
+     const int ExpectedImageHeight = 414;
+-    QCFType<CFArrayRef> urls = LSCopyApplicationURLsForBundleIdentifier(
+-        CFSTR("com.apple.KeyboardSetupAssistant"), nullptr);
+-    if (urls && CFArrayGetCount(urls) > 0) {
+-        CFURLRef url = (CFURLRef)CFArrayGetValueAtIndex(urls, 0);
++    bool ok = false;
++    if (QSysInfo::macVersion() < QSysInfo::MV_10_10) {
++        if (LSFindApplicationForInfo(kLSUnknownCreator, CFSTR("com.apple.KeyboardSetupAssistant"),
++                                     0, 0, &url109) == noErr) {
++            url = url109;
++            ok = true;
++        }
++    } else {
++#if QT_OSX_PLATFORM_SDK_EQUAL_OR_ABOVE(__MAC_10_10)
++        QCFType<CFArrayRef> urls = LSCopyApplicationURLsForBundleIdentifier(
++            CFSTR("com.apple.KeyboardSetupAssistant"), nullptr);
++        if (urls && CFArrayGetCount(urls) > 0) {
++            url = (CFURLRef)CFArrayGetValueAtIndex(urls, 0);
++            ok = true;
++        }
++#endif
++    }
++    if (ok) {
+         QCFType<CFBundleRef> bundle = CFBundleCreate(kCFAllocatorDefault, url);
+         if (bundle) {
+             url = CFBundleCopyResourceURL(bundle, CFSTR("Background"), CFSTR("png"), 0);
+diff --git a/qtbase/src/plugins/platforms/cocoa/qcocoawindow.mm b/qtbase/src/plugins/platforms/cocoa/qcocoawindow.mm
+index 7f94e31..7516826 100644
+--- a/qtbase/src/plugins/platforms/cocoa/qcocoawindow.mm
++++ b/qtbase/src/plugins/platforms/cocoa/qcocoawindow.mm
+@@ -60,6 +60,16 @@
+ 
+ #include <vector>
+ 
++#if QT_MACOS_PLATFORM_SDK_EQUAL_OR_ABOVE(__MAC_10_10)
++#   define NSWINPROPERTY(w,property,selector) (w).property
++#else
++#   define NSWINPROPERTY(w,property,selector) [(w) selector]
++#endif
++
++#ifndef __has_builtin
++#   define __has_builtin(x) false
++#endif
++
+ enum {
+     defaultWindowWidth = 160,
+     defaultWindowHeight = 160
+@@ -320,7 +326,14 @@ static void qt_closePopups()
+ + (void)applicationActivationChanged:(NSNotification*)notification
+ {
+     const id sender = self;
++#if QT_MACOS_PLATFORM_SDK_EQUAL_OR_ABOVE(__MAC_10_11)
++    // ObjC generics were introduced with Xcode 7 (= OS X 10.10) but only allow the compiler
++    // to generate errors when storing a deviant type. The 10.10SDK on 10.9 doesn't yet
++    // know about them, so we only support them from 10.11 onwards.
+     NSEnumerator<NSWindow*> *windowEnumerator = nullptr;
++#else
++    NSEnumerator *windowEnumerator = nullptr;
++#endif
+     NSApplication *application = [NSApplication sharedApplication];
+ 
+ #if QT_MACOS_PLATFORM_SDK_EQUAL_OR_ABOVE(__MAC_10_12)
+@@ -779,7 +792,7 @@ void QCocoaWindow::show(bool becauseOfAncestor)
+     if ([m_nsWindow isVisible])
+         return;
+ 
+-    if (m_view.window.parentWindow && !m_view.window.parentWindow.visible) {
++    if (m_view.window.parentWindow && !NSWINPROPERTY(m_view.window.parentWindow,visible,isVisible)) {
+         m_hiddenByAncestor = true; // Parent still hidden, don't show now
+     } else if ((becauseOfAncestor == m_hiddenByAncestor) // Was NEITHER explicitly hidden
+                && !m_hiddenByClipping) { // ... NOR clipped
+@@ -2095,11 +2108,11 @@ Qt::WindowState QCocoaWindow::windowState() const
+     // FIXME: Support compound states (Qt::WindowStates)
+ 
+     NSWindow *window = m_view.window;
+-    if (window.miniaturized)
++    if (NSWINPROPERTY(window, miniaturized, isMiniaturized))
+         return Qt::WindowMinimized;
+     if (window.qt_fullScreen)
+         return Qt::WindowFullScreen;
+-    if ((window.zoomed && !isTransitioningToFullScreen())
++    if ((NSWINPROPERTY(window, zoomed, isZoomed) && !isTransitioningToFullScreen())
+         || (m_lastReportedWindowState == Qt::WindowMaximized && isTransitioningToFullScreen()))
+         return Qt::WindowMaximized;
+ 
+@@ -2229,10 +2242,22 @@ void QCocoaWindow::applyContentBorderThickness(NSWindow *window)
+ 
+     QMacAutoReleasePool pool;
+ 
++#if !__has_builtin(__builtin_available)  // #if __MAC_OS_X_VERSION_MAX_ALLOWED < 101200
++    bool hasTitlebarAppearsTransparent = [window respondsToSelector:@selector(setTitlebarAppearsTransparent:)];
++#endif
++
+     if (!m_drawContentBorderGradient) {
+         [window setStyleMask:[window styleMask] & ~NSTexturedBackgroundWindowMask];
+         [[[window contentView] superview] setNeedsDisplay:YES];
+-        window.titlebarAppearsTransparent = NO;
++#if __has_builtin(__builtin_available)  // #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 101200
++        if (__builtin_available(macOS 10.10, *)) {
++            window.titlebarAppearsTransparent = NO;
++        }
++#else
++        if (hasTitlebarAppearsTransparent) {
++            [window setTitlebarAppearsTransparent:NO];
++        }
++#endif
+         return;
+     }
+ 
+@@ -2257,7 +2282,15 @@ void QCocoaWindow::applyContentBorderThickness(NSWindow *window)
+     int effectiveBottomContentBorderThickness = m_bottomContentBorderThickness;
+ 
+     [window setStyleMask:[window styleMask] | NSTexturedBackgroundWindowMask];
+-    window.titlebarAppearsTransparent = YES;
++#if __has_builtin(__builtin_available)  // #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 101200
++    if (__builtin_available(macOS 10.10, *)) {
++        window.titlebarAppearsTransparent = YES;
++    }
++#else
++    if (hasTitlebarAppearsTransparent) {
++        [window setTitlebarAppearsTransparent:YES];
++    }
++#endif
+ 
+     [window setContentBorderThickness:effectiveTopContentBorderThickness forEdge:NSMaxYEdge];
+     [window setAutorecalculatesContentBorderThickness:NO forEdge:NSMaxYEdge];
