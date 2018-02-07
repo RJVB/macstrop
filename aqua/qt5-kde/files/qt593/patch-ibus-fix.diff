@@ -1,0 +1,110 @@
+From 25f1da9e73f4fe4c1ed1b837fbf9a41215baa42e Mon Sep 17 00:00:00 2001
+From: Sebastian Sauer <sebastian.sauer@kdab.com>
+Date: Fri, 18 Nov 2016 16:26:21 +0100
+Subject: [PATCH] XCB/Input methods: Fix keyboard input stops working when
+ ibus-daemon goes away
+
+Reproduce:
+1.  start ibus-daemon using "ibus-daemon"
+2.  start a Qt-application
+2a. observation 1: keyboard input works as expected
+3.  exit ibus-daemon using e.g. CTRL+C/killall
+3b. observation 2: keyboard input not works any more
+
+Change-Id: If42615bbb441c0eeb0e79124118468c3d2411788
+---
+ .../ibus/qibusplatforminputcontext.cpp             | 26 ++++++++++++++++++----
+ .../ibus/qibusplatforminputcontext.h               |  1 +
+ 2 files changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/qtbase/src/plugins/platforminputcontexts/ibus/qibusplatforminputcontext.cpp b/qtbase/src/plugins/platforminputcontexts/ibus/qibusplatforminputcontext.cpp
+index 9675d82..f700ef7 100644
+--- a/qtbase/src/plugins/platforminputcontexts/ibus/qibusplatforminputcontext.cpp
++++ b/qtbase/src/plugins/platforminputcontexts/ibus/qibusplatforminputcontext.cpp
+@@ -42,6 +42,7 @@
+ #include <QTextCharFormat>
+ #include <QGuiApplication>
+ #include <QDBusVariant>
++#include <QDBusServiceWatcher>
+ #include <qwindow.h>
+ #include <qevent.h>
+ 
+@@ -69,7 +70,7 @@ enum { debug = 0 };
+ class QIBusPlatformInputContextPrivate
+ {
+ public:
+-    QIBusPlatformInputContextPrivate();
++    explicit QIBusPlatformInputContextPrivate(QIBusPlatformInputContext *q);
+     ~QIBusPlatformInputContextPrivate()
+     {
+         delete context;
+@@ -83,6 +84,7 @@ public:
+     void initBus();
+     void createBusProxy();
+ 
++    QIBusPlatformInputContext *q;
+     QDBusConnection *connection;
+     QIBusProxy *bus;
+     QIBusInputContextProxy *context;
+@@ -96,7 +98,7 @@ public:
+ 
+ 
+ QIBusPlatformInputContext::QIBusPlatformInputContext ()
+-    : d(new QIBusPlatformInputContextPrivate())
++    : d(new QIBusPlatformInputContextPrivate(this))
+ {
+     QString socketPath = QIBusPlatformInputContextPrivate::getSocketPath();
+     QFile file(socketPath);
+@@ -487,6 +489,18 @@ void QIBusPlatformInputContext::globalEngineChanged(const QString &engine_name)
+     }
+ }
+ 
++void QIBusPlatformInputContext::serviceOwnerChanged(const QString &service, const QString &oldName, const QString &newName)
++{
++    Q_UNUSED(service);
++    if (newName.isEmpty() && !oldName.isEmpty()) {
++        qCDebug(qtQpaInputMethods) << "ibus-daemon unregistered";
++        d->busConnected = false;
++    } else if (!newName.isEmpty() && oldName.isEmpty()) {
++        qCDebug(qtQpaInputMethods) << "ibus-daemon registered";
++        d->busConnected = true;
++    }
++}
++
+ void QIBusPlatformInputContext::connectToContextSignals()
+ {
+     if (d->bus && d->bus->isValid()) {
+@@ -501,8 +515,9 @@ void QIBusPlatformInputContext::connectToContextSignals()
+     }
+ }
+ 
+-QIBusPlatformInputContextPrivate::QIBusPlatformInputContextPrivate()
+-    : connection(0),
++QIBusPlatformInputContextPrivate::QIBusPlatformInputContextPrivate(QIBusPlatformInputContext *q)
++    : q(q),
++      connection(0),
+       bus(0),
+       context(0),
+       valid(false),
+@@ -566,6 +581,9 @@ void QIBusPlatformInputContextPrivate::createBusProxy()
+     if (debug)
+         qDebug(">>>> bus connected!");
+     busConnected = true;
++
++    QDBusServiceWatcher *watcher = new QDBusServiceWatcher(QLatin1String("org.freedesktop.IBus"), QDBusConnection::sessionBus(), QDBusServiceWatcher::WatchForOwnerChange, q);
++    QObject::connect(watcher, SIGNAL(serviceOwnerChanged(QString,QString,QString)), q, SLOT(serviceOwnerChanged(QString,QString,QString)));
+ }
+ 
+ QString QIBusPlatformInputContextPrivate::getSocketPath()
+diff --git a/qtbase/src/plugins/platforminputcontexts/ibus/qibusplatforminputcontext.h b/qtbase/src/plugins/platforminputcontexts/ibus/qibusplatforminputcontext.h
+index 7baa9ad..5cf2e42 100644
+--- a/qtbase/src/plugins/platforminputcontexts/ibus/qibusplatforminputcontext.h
++++ b/qtbase/src/plugins/platforminputcontexts/ibus/qibusplatforminputcontext.h
+@@ -107,6 +107,7 @@ public Q_SLOTS:
+     void socketChanged(const QString &str);
+     void connectToBus();
+     void globalEngineChanged(const QString &engine_name);
++    void serviceOwnerChanged(const QString &service, const QString &oldName, const QString &newName);
+ 
+ private:
+     QIBusPlatformInputContextPrivate *d;
