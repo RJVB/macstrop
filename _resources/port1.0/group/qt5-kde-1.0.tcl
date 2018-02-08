@@ -495,6 +495,10 @@ if {![info exist building_qt5] || [vercmp ${version} 5.9.0] >= 0} {
     set qt5.kde_stubports [lsearch -all -inline -not -exact ${qt5.kde_stubports} qt3d]
 }
 
+platform linux {
+    lappend qt5.kde_stubports x11
+}
+
 global qt5_dependency
 global qt5webkit_dependency
 if {${os.platform} eq "darwin"} {
@@ -799,6 +803,9 @@ set qt5::component2pathspec(qt3d)       path:${qt_pkg_config_dir}/Qt53DCore.pc
 set qt5::component2pathspec(qttranslations) path:${qt_translations_dir}/qt_en.qm
 set qt5::component2pathspec(assistant)  path:${qt_bins_dir}/assistant
 set qt5::component2pathspec(webkit)     $qt5::component2pathspec(qtwebkit)
+platform darwin {
+    set qt5::component2pathspec(x11)    path:${qt_pkg_config_dir}/Qt5X11Extras.pc
+}
 
 # a procedure for declaring dependencies on Qt5 components, which will expand them
 # into the appropriate subports for the Qt5 flavour installed
