@@ -1,5 +1,4 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
-# $Id: github-1.0.tcl 129506 2014-12-15 00:11:38Z ionic@macports.org $
 #
 # Copyright (c) 2012-2014 The MacPorts Project
 # All rights reserved.
@@ -136,9 +135,6 @@ proc handle_tarball_from {option action args} {
             tags {
                 github.master_sites ${github.homepage}/tarball/${git.branch}
             }
-            archive {
-                github.master_sites ${github.homepage}/archive/${git.branch}
-            }
             default {
                 return -code error "invalid value \"${args}\" for github.tarball_from"
             }
@@ -147,7 +143,7 @@ proc handle_tarball_from {option action args} {
 }
 
 proc github.setup {gh_author gh_project gh_version {gh_tag_prefix ""}} {
-    global extract.suffix github.author github.project github.version github.tag_prefix github.homepage github.master_sites PortInfo
+    global extract.suffix os.platform os.major github.author github.project github.version github.tag_prefix github.homepage github.master_sites PortInfo
 
     github.author           ${gh_author}
     github.project          ${gh_project}
@@ -163,7 +159,9 @@ proc github.setup {gh_author gh_project gh_version {gh_tag_prefix ""}} {
     git.url                 ${github.homepage}.git
     git.branch              [join ${github.tag_prefix}]${github.version}
     distname                ${github.project}-${github.version}
-    fetch.ignore_sslcert    yes
+    if {${os.platform} eq "darwin" && ${os.major} <= 9} {
+        fetch.ignore_sslcert yes
+    }
 
     post-extract {
         # When fetching from a tag, the extracted directory name will contain a
@@ -178,9 +176,13 @@ proc github.setup {gh_author gh_project gh_version {gh_tag_prefix ""}} {
                 [lsearch -exact ${master_sites} ${github.master_sites}] != -1 && \
                 [llength ${distfiles}] > 0 && \
                 [llength [glob -nocomplain ${workpath}/*]] > 0} {
-            if {[file exists [glob ${workpath}/${github.author}-${github.project}-*]] && \
-                [file isdirectory [glob ${workpath}/${github.author}-${github.project}-*]]} {
+            if {[file exists [glob -nocomplain ${workpath}/${github.author}-${github.project}-*]] && \
+                [file isdirectory [glob -nocomplain ${workpath}/${github.author}-${github.project}-*]]} {
                 move [glob ${workpath}/${github.author}-${github.project}-*] ${workpath}/${distname}
+            } else {
+                # tarball is not "${github.author}-${github.project}-*"
+                ui_error "\n\ngithub PortGroup: Error: tarball name is not as expected. This might mean that the repository name is different than set in the Portfile. Please review and try to correct.\n"
+                return -code error "Unexpected github tarball extract."
             }
         }
     }
