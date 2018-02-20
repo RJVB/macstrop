@@ -42,8 +42,19 @@ proc trAccept {path} {
         return 0
     }
 }
+# don't follow symlinks:
+proc noLinks {path} {
+    if {[string equal [file type ${path}] link]} {
+        set target [file link ${path}]
+        if {[string equal [file type ${target}] "directory"]} {
+            ui_debug "Not following symlink ${path} to directory ${target}"
+            return 0
+        }
+    }
+    return 1
+}
 
-fileutil::traverse Trawler . -filter trAccept
+fileutil::traverse Trawler . -filter trAccept -prefilter noLinks
 
 # extend a command with a new subcommand
 proc extend {cmd body} {
