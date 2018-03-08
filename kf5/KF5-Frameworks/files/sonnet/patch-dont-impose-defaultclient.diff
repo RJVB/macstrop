@@ -1,0 +1,105 @@
+commit 89c78911ce2d6138e55b0666421e794b774cdf2a
+Author: R.J.V. Bertin <rjvbertin@gmail.com>
+Date:   Thu Mar 8 18:10:24 2018 +0100
+
+    Don't force the use of the defaultClient for any language
+    
+    Use the best available client instead for languages
+    the default client doesn't support.
+
+diff --git a/src/core/loader.cpp b/src/core/loader.cpp
+index 9870a16..2440cc9 100644
+--- a/src/core/loader.cpp
++++ b/src/core/loader.cpp
+@@ -84,13 +84,9 @@ SpellerPlugin *Loader::createSpeller(const QString &language, const QString &cli
+     QString backend = clientName;
+     QString plang = language;
+ 
+-    if (backend.isEmpty()) {
+-        backend = d->settings->defaultClient();
+-    }
+     if (plang.isEmpty()) {
+         plang = d->settings->defaultLanguage();
+     }
+-
+     const QVector<Client *> lClients = d->languageClients[plang];
+ 
+     if (lClients.isEmpty()) {
+@@ -98,22 +94,43 @@ SpellerPlugin *Loader::createSpeller(const QString &language, const QString &cli
+         return nullptr;
+     }
+ 
++    if (backend.isEmpty()) {
++        backend = d->settings->defaultClient();
++        // check if the default client supports the requested language;
++        // if it does it will be contained in lClients.
++        QVectorIterator<Client *> itr1(lClients);
++        bool unknown = true;
++        while (unknown && itr1.hasNext()) {
++            Client *client = itr1.next();
++            if (client->name() == backend) {
++                unknown = false;
++            }
++        }
++        if (unknown) {
++            qCWarning(SONNET_LOG_CORE) << "Default client" << backend << "doesn't support language:" << plang;
++            backend = QString();
++        }
++    }
++
+     QVectorIterator<Client *> itr(lClients);
+     while (itr.hasNext()) {
+         Client *item = itr.next();
+         if (!backend.isEmpty()) {
+             if (backend == item->name()) {
+                 SpellerPlugin *dict = item->createSpeller(plang);
++                qCDebug(SONNET_LOG_CORE) << "Using the" << item->name() << "plugin for language" << plang;
+                 return dict;
+             }
+         } else {
+             //the first one is the one with the highest
+             //reliability
+             SpellerPlugin *dict = item->createSpeller(plang);
++            qCDebug(SONNET_LOG_CORE) << "Using the" << item->name() << "plugin for language" << plang;
+             return dict;
+         }
+     }
+ 
++    qCWarning(SONNET_LOG_CORE) << "The preferred backend" << backend << "has no language dictionaries for the language:" << plang;
+     return nullptr;
+ }
+ 
+
+commit 788e31ae0fd3347f7dd7ad69c8f891376e71bc8f
+Author: R.J.V. Bertin <rjvbertin@gmail.com>
+Date:   Thu Mar 8 20:05:37 2018 +0100
+
+    Central overrides for Hunspell and NSSpellChecker
+
+diff --git a/src/core/loader.cpp b/src/core/loader.cpp
+index 2440cc9..a111988 100644
+--- a/src/core/loader.cpp
++++ b/src/core/loader.cpp
+@@ -329,6 +329,22 @@ void Loader::loadPlugin(const QString &pluginPath)
+         plugin.unload(); // don't leave it in memory
+         return;
+     }
++    if (qEnvironmentVariableIsSet("SONNET_USE_HUNSPELL")) {
++        if (client->name() != QStringLiteral("Hunspell")) {
++            qCWarning(SONNET_LOG_CORE) << "Ignoring" << client->name();
++            plugin.unload();
++            return;
++        }
++    }
++#ifdef Q_OS_MACOS
++    if (qEnvironmentVariableIsSet("SONNET_USE_NSSPELLCHECKER")) {
++        if (client->name() != QStringLiteral("NSSpellChecker")) {
++            qCWarning(SONNET_LOG_CORE) << "Ignoring" << client->name();
++            plugin.unload();
++            return;
++        }
++    }
++#endif
+ #else
+     Client *client = nullptr;
+     if (pluginPath == QLatin1String("Hunspell")) {
