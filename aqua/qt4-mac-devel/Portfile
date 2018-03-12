@@ -1,11 +1,10 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4:nomodified
-# $Id: Portfile 126922 2014-10-17 18:50:56Z ryandesign@macports.org $
 
 PortSystem          1.0
 
 set basename        qt4-mac
 name                ${basename}-devel
-version             4.8.7
+version             4.8.7 ; revision 1
 
 # set qtportlist {qt4-mac qt4-mac-devel}
 set qtportlist {qt4-mac-devel}
@@ -66,7 +65,7 @@ minimum_xcodeversions   {8 2.5}
 depends_lib-append  port:zlib path:bin/dbus-daemon:dbus \
                     port:openssl port:tiff \
                     port:libpng port:libmng \
-                    path:libjpeg.dylib:jpeg
+                    path:lib/libjpeg.dylib:jpeg
 
 # find a way to specify the OS MINOR version.  For OSX 10.X, this
 # value will be X.  The type is this variable is integer, so we can
@@ -186,13 +185,19 @@ if {${subport} eq ${name} || ${subport} eq "${basename}"} {
 
     patchfiles-append   patch-qmake_project.cpp.diff
 
-    # (13) In QMake: (a) enable correct "-framework foo,bar" parsing as
+    # (13a) In QMake: (a) enable correct "-framework foo,bar" parsing as
     # specified by Apple's LD; (b) disable "/Library/Frameworks" as a
     # default search path; use "PREFIX/Library/Frameworks" and replace
     # PREFIX in post-patch.  Also set "PREFIX/lib" as a default library
     # search path.
 
-    patchfiles-append   patch-qmake_generators_unix_unixmakke.cpp.diff
+    patchfiles-append   patch-qmake_generators_unix_unixmake.cpp.framework.diff
+
+    # (13b) In QMake: fix issue for when LFLAGS and env LDFLAGS contain
+    # multiple "-arch FOO" duplicate flags, which would result in output
+    # such as "-arch x86_64 -arch -Xarch_x86_64 ...".
+
+    patchfiles-append   patch-qmake_generators_unix_unixmake.cpp.fix_arch.diff
 
     # (14) Allow easy replacement of MACOSX_DEPLOYMENT_TARGET: build for
     # just the user's current OS.
@@ -314,9 +319,41 @@ if {${subport} eq ${name} || ${subport} eq "${basename}"} {
         }
     }
     # upstream patch: Better handling of invalid font tables
+    # (patch (27) in mainstream port:qt4-mac)
     patchfiles-append       patch-invalid-fnt-table-handling.diff
+
+    # (u28) Fix pointer comparison with 0
+    # These error out on clang 4.0, whereas they didn't in 3.9 .
+    # Addresses ticket https://trac.macports.org/ticket/54183
+    patchfiles-append       patch-fix_pointer_comparison_to_0.diff
+
+    # (u29) Backport of Qt5 patch to fix an issue with null bytes in
+    # QSetting strings (QTBUG-56124).
+    patchfiles-append       patch-qsettings-null.diff
+
+    ## NB: I'm skipping (u30), fixes for 10.4 "Tiger"!
+
+    # (u31) Patch to fix build on macOS High Sierra
+    patchfiles-append       patch-qt4-versions-without-underscores.diff
+
+
+    # (u32) Fix default thread stack size on Mac OS X (QTBUG-49607)
+    # https://bugreports.qt.io/secure/attachment/52520/patch-qthread-stacksize.diff
+    # Note that Qt 5.10 and later implement QThreadPool:stackSize to set the
+    # stack size (QTBUG-2568).
+    patchfiles-append       patch-qthread-stacksize.diff
+
+    # (u33) Add possibility to set a custom global thread pool
+    patchfiles-append       patch-qt-custom-threadpool.diff
 }
 
+# (27) QTKit no longer exists as of macOS 10.12 (Sierra)
+# https://trac.macports.org/ticket/52332
+platform darwin {
+    if {${MINOR} >= 12} {
+        patchfiles-append patch-src_gui_kernel_qmime_mac.cpp.diff
+    }
+}
 
 # we no longer error out if trying to build on a new, untested OS X version.
 # platform darwin {
@@ -377,7 +414,7 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
     post-patch {
         # set ARCHES in configure (per the third patchfile above), for
         # building QMake.  join any 2 or more arch entries with the GCC
-        # arch flag (join does not effect a single entry).  first "-arch"
+        # arch flag (join does not affect a single entry).  first "-arch"
         # is already in place in the 'configure' script (since there has
         # to be at least 1 arch).
 
@@ -696,6 +733,19 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
             # disable qmake optimization on 10.6 32-bit
             configure.args-delete -optimized-qmake
 
+        }
+
+        # on Leopard and Snow Leopard with libc++ForOlderSystems
+        # installed, SDK must be unset as we can only use system libraries
+        # also, a missing library link must be replaced for build to
+        # succeed: <https://trac.macports.org/ticket/51844>
+        platform darwin {
+            if {${os.major} == 9 || ${os.major} == 10} {
+                if {${configure.cxx_stdlib} eq "libc++"} {
+                    set SDK ""
+                    configure.ldflags-append "-lobjc"
+                }
+            }
         }
 
         # set the SDK, if it was found and exists
