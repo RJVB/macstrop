@@ -265,7 +265,7 @@ index c99e7e0c2316bf24df76d303fdb599a8095193da..0bb9e9a3c899505fd1e06235b31f6194
  
  }
 diff --git kdevplatform/project/filemanagerlistjob.cpp kdevplatform/project/filemanagerlistjob.cpp
-index 06e1d69c70ba762cc476086794a79324871401f9..bdb228090d50e5cb3fe6c8d4cbc5759c54dbc8f1 100644
+index 06e1d69c70ba762cc476086794a79324871401f9..82c78efbc57d5fd1cad42a49b0db41cda68307e4 100644
 --- kdevplatform/project/filemanagerlistjob.cpp
 +++ kdevplatform/project/filemanagerlistjob.cpp
 @@ -27,11 +27,59 @@
@@ -329,7 +329,7 @@ index 06e1d69c70ba762cc476086794a79324871401f9..bdb228090d50e5cb3fe6c8d4cbc5759c
  {
      qRegisterMetaType<KIO::UDSEntryList>("KIO::UDSEntryList");
      qRegisterMetaType<KIO::Job*>();
-@@ -49,13 +97,38 @@ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
+@@ -49,13 +97,37 @@ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
  #endif
  }
  
@@ -364,11 +364,10 @@ index 06e1d69c70ba762cc476086794a79324871401f9..bdb228090d50e5cb3fe6c8d4cbc5759c
 +        return;
 +    }
 +
-+    QMutexLocker lock(&m_listMutex);
      Q_ASSERT(!m_listQueue.contains(item));
      Q_ASSERT(!m_item || m_item == item || m_item->path().isDirectParentOf(item->path()));
  
-@@ -64,6 +137,11 @@ void FileManagerListJob::addSubDir( ProjectFolderItem* item )
+@@ -64,6 +136,10 @@ void FileManagerListJob::addSubDir( ProjectFolderItem* item )
  
  void FileManagerListJob::removeSubDir(ProjectFolderItem* item)
  {
@@ -376,21 +375,10 @@ index 06e1d69c70ba762cc476086794a79324871401f9..bdb228090d50e5cb3fe6c8d4cbc5759c
 +        return;
 +    }
 +
-+    QMutexLocker lock(&m_listMutex);
      m_listQueue.removeAll(item);
  }
  
-@@ -83,7 +161,9 @@ void FileManagerListJob::startNextJob()
-     m_subTimer.start();
- #endif
- 
-+    m_listMutex.lock();
-     m_item = m_listQueue.dequeue();
-+    m_listMutex.unlock();
-     if (m_item->path().isLocalFile()) {
-         // optimized version for local projects using QDir directly
-         QtConcurrent::run([this] (const Path& path) {
-@@ -95,6 +175,10 @@ void FileManagerListJob::startNextJob()
+@@ -95,6 +171,10 @@ void FileManagerListJob::startNextJob()
              if (m_aborted) {
                  return;
              }
@@ -401,7 +389,7 @@ index 06e1d69c70ba762cc476086794a79324871401f9..bdb228090d50e5cb3fe6c8d4cbc5759c
              KIO::UDSEntryList results;
              std::transform(entries.begin(), entries.end(), std::back_inserter(results), [] (const QFileInfo& info) -> KIO::UDSEntry {
                  KIO::UDSEntry entry;
-@@ -107,7 +191,9 @@ void FileManagerListJob::startNextJob()
+@@ -107,7 +187,9 @@ void FileManagerListJob::startNextJob()
                  }
                  return entry;
              });
@@ -412,12 +400,9 @@ index 06e1d69c70ba762cc476086794a79324871401f9..bdb228090d50e5cb3fe6c8d4cbc5759c
          }, m_item->path());
      } else {
          KIO::ListJob* job = KIO::listDir( m_item->path().toUrl(), KIO::HideProgressInfo );
-@@ -150,8 +236,14 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
- 
+@@ -151,7 +233,11 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
      emit entries(this, m_item, entriesIn);
  
-+    // protecting the queue here is probably overkill
-+    QMutexLocker lock(&m_listMutex);
      if( m_listQueue.isEmpty() ) {
 +        m_baseItem = nullptr;
          emitResult();
@@ -427,7 +412,7 @@ index 06e1d69c70ba762cc476086794a79324871401f9..bdb228090d50e5cb3fe6c8d4cbc5759c
  
  #ifdef TIME_IMPORT_JOB
          qCDebug(PROJECT) << "TIME FOR LISTJOB:" << m_timer.elapsed();
-@@ -164,13 +256,37 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
+@@ -164,13 +250,37 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
  void FileManagerListJob::abort()
  {
      m_aborted = true;
@@ -466,7 +451,7 @@ index 06e1d69c70ba762cc476086794a79324871401f9..bdb228090d50e5cb3fe6c8d4cbc5759c
      startNextJob();
  }
 diff --git kdevplatform/project/filemanagerlistjob.h kdevplatform/project/filemanagerlistjob.h
-index 0d32c992c47ebc7d084a019badb64988f0be9ec0..bb33241156c958a7c0e428d3c1c48857b6a6f76a 100644
+index 0d32c992c47ebc7d084a019badb64988f0be9ec0..9166477f3184ce7988649e630f1b3373475997e4 100644
 --- kdevplatform/project/filemanagerlistjob.h
 +++ kdevplatform/project/filemanagerlistjob.h
 @@ -33,6 +33,7 @@
@@ -501,11 +486,8 @@ index 0d32c992c47ebc7d084a019badb64988f0be9ec0..bb33241156c958a7c0e428d3c1c48857
  
  private Q_SLOTS:
      void slotEntries(KIO::Job* job, const KIO::UDSEntryList& entriesIn );
-@@ -62,8 +68,11 @@ private Q_SLOTS:
- private:
- 
+@@ -64,6 +70,8 @@ private:
      QQueue<ProjectFolderItem*> m_listQueue;
-+    QMutex m_listMutex;
      /// current base dir
      ProjectFolderItem* m_item;
 +    /// entrypoint
@@ -513,7 +495,7 @@ index 0d32c992c47ebc7d084a019badb64988f0be9ec0..bb33241156c958a7c0e428d3c1c48857
      KIO::UDSEntryList entryList;
      // kill does not delete the job instantaniously
      QAtomicInt m_aborted;
-@@ -73,6 +82,9 @@ private:
+@@ -73,6 +81,9 @@ private:
      QElapsedTimer m_subTimer;
      qint64 m_subWaited = 0;
  #endif
