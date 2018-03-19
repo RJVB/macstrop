@@ -66,7 +66,7 @@ platform darwin {
                 } else {
                     set compjobs ""
                 }
-                if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} ${compress.build_dir} 2>&1"} result context]} {
+                if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} -S ${compress.build_dir} 2>&1"} result context]} {
                     ui_info "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
                     if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compress.build_dir} 2>&1"} result context]} {
                         ui_error "Compression failed: ${result}, ${context}"
@@ -75,7 +75,7 @@ platform darwin {
                     ui_debug "Compressing ${compress.build_dir}: ${result}"
                     if {[tbool configure.ccache]} {
                         ui_msg "--->  Compressing the ccache directory ..."
-                        if {![catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} ${ccache_dir} 2>&1"} result context]} {
+                        if {![catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} -S ${ccache_dir} 2>&1"} result context]} {
                             ui_debug "Compressing ${ccache_dir}: ${result}"
                         }
                     }
