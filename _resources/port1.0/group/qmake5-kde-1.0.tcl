@@ -83,6 +83,9 @@ options qt5.unset_cflags qt5.unset_cxxflags
 default qt5.unset_cflags        {}
 default qt5.unset_cxxflags      {}
 
+# this should be set to ${configure.ldflags} by default
+default qt5.ldflags             {${configure.ldflags}}
+
 ### using port:qt5-kde
 # we use a somewhat simpler qmake cookbook, which doesn't require the magic related
 # to providing all Qt components through subports. We also provide a different +debug
