@@ -160,9 +160,14 @@ pre-configure {
         }
     }
     # respect configure.compiler but still allow qmake to find correct Xcode clang based on SDK
-    if { ${configure.compiler} ne "clang" } {
-        puts ${qt5::cache} "QMAKE_CC=${configure.cc}"
-        puts ${qt5::cache} "QMAKE_CXX=${configure.cxx}"
+    if { ${configure.compiler} ne "clang" || ${configure.ccache} } {
+        if {${configure.ccache}} {
+            set qt5::ccache "${prefix}/bin/ccache "
+        } else {
+            set qt5::ccache ""
+        }
+        puts ${qt5::cache} "QMAKE_CC=${qt5::ccache}${configure.cc}"
+        puts ${qt5::cache} "QMAKE_CXX=${qt5::ccache}${configure.cxx}"
         puts ${qt5::cache} "QMAKE_LINK_C=${configure.cc}"
         puts ${qt5::cache} "QMAKE_LINK_C_SHLIB=${configure.cc}"
         puts ${qt5::cache} "QMAKE_LINK=${configure.cxx}"
