@@ -2,7 +2,7 @@
 #
 # Copyright (c) 2009 Orville Bennett <illogical1 at gmail.com>
 # Copyright (c) 2010-2015 The MacPorts Project
-# Copyright (c) 2015-2017 R.J.V. Bertin
+# Copyright (c) 2015-2018 R.J.V. Bertin
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -42,6 +42,7 @@ namespace eval cmake {
 options                             cmake.build_dir \
                                     cmake.source_dir \
                                     cmake.generator \
+                                    cmake.generator_blacklist \
                                     cmake.build_type \
                                     cmake.install_prefix \
                                     cmake.install_rpath \
@@ -50,18 +51,20 @@ options                             cmake.build_dir \
                                     cmake.out_of_source \
                                     cmake.set_osx_architectures
 
-# make out-of-source builds the default (finally)
-default cmake.out_of_source         {yes}
+## Explanation of and default values for the options defined above ##
 
-# set CMAKE_OSX_ARCHITECTURES when necessary.
-# This can be deactivated when (non-Apple) compilers are used
-# that don't support the corresponding -arch options.
-default cmake.set_osx_architectures {yes}
+# out-of-source builds are the default
+default cmake.out_of_source         {yes}
 
 # cmake.build_dir defines where the build will take place
 default cmake.build_dir             {${workpath}/build}
 # cmake.source_dir defines where CMake will look for the toplevel CMakeLists.txt file
 default cmake.source_dir            {${worksrcpath}}
+
+# set CMAKE_OSX_ARCHITECTURES when necessary.
+# This can be deactivated when (non-Apple) compilers are used
+# that don't support the corresponding -arch options.
+default cmake.set_osx_architectures {yes}
 
 # cmake.build_type defines the type of build; it defaults to "MacPorts"
 # which means only the compiler options set through configure.c*flags and configure.optflags
@@ -74,6 +77,47 @@ default cmake.install_prefix        {${prefix}}
 
 # minimal/initial value for the install rpath:
 default cmake.install_rpath         {${prefix}/lib}
+
+# standard place to install extra CMake modules
+default cmake_share_module_dir      {${prefix}/share/cmake/Modules}
+# extra locations to search for modules can be specified with
+# cmake.module_path; they come after ${cmake_share_module_dir}
+default cmake.module_path           {}
+
+# CMake provides several different generators corresponding to different utilities
+# (and IDEs) used for building the sources. We support "Unix Makefiles" (the default)
+# and Ninja, a leaner-and-meaner alternative.
+#
+# In the Portfile, use
+#
+# cmake.generator Ninja
+# or
+# cmake.generator "Unix Makefiles"
+# or even
+# cmake.generator "Eclipse CDT4 - Ninja"
+# if maintaining the port means editing it using an IDE of choice.
+#
+# If ports package code that cannot be built with certain generators this
+# fact can be signalled:
+#
+# cmake.generator_blacklist <generator-pattern>
+# (patterns are case-insensitive, e.g. "*ninja*")
+#
+default cmake.generator             {"CodeBlocks - Unix Makefiles"}
+default cmake.generator_blacklist   {}
+# CMake generates Unix Makefiles that contain a special "fast" install target
+# which skips the whole "let's see if there's anything left to (re)build before
+# we install" you normally get with `make install`. That check should be
+# redundant in normal destroot steps, because we just completed the build step.
+default destroot.target             {install/fast}
+
+## ############################################################### ##
+
+# make sure cmake is available:
+# can use cmake or cmake-devel; default to cmake if not installed
+depends_build-append                path:bin/cmake:cmake
+
+
 proc cmake::rpath_flags {} {
     global prefix
     if {[llength [option cmake.install_rpath]]} {
@@ -105,11 +149,6 @@ proc cmake::system_prefix_path {} {
     }
 }
 
-# standard place to install extra CMake modules
-default cmake_share_module_dir      {${prefix}/share/cmake/Modules}
-# extra locations to search for modules can be specified with
-# cmake.module_path; they come after ${cmake_share_module_dir}
-default cmake.module_path           {}
 proc cmake::module_path {} {
     if {[llength [option cmake.module_path]]} {
         set modpath "[join [concat [option cmake_share_module_dir] [option cmake.module_path]] \;]"
@@ -122,34 +161,6 @@ proc cmake::module_path {} {
     ]
 }
 
-# CMake provides several different generators corresponding to different utilities
-# (and IDEs) used for building the sources. We support "Unix Makefiles" (the default)
-# and Ninja, a leaner-and-meaner alternative.
-#
-# In the Portfile, use
-#
-# cmake.generator Ninja
-# or
-# cmake.generator "Unix Makefiles"
-# or even
-# cmake.generator "Eclipse CDT4 - Ninja"
-# if maintaining the port means editing it using an IDE of choice.
-#
-# Ports can signal incompatibilities by setting
-# set cmake.make_generator_incompatible yes
-# or
-# set cmake.ninja_generator_incompatible yes
-#
-default cmake.generator             {"CodeBlocks - Unix Makefiles"}
-# CMake generates Unix Makefiles that contain a special "fast" install target
-# which skips the whole "let's see if there's anything left to (re)build before
-# we install" you normally get with `make install`. That check should be
-# redundant in normal destroot steps, because we just completed the build step.
-default destroot.target             {install/fast}
-
-# can use cmake or cmake-devel; default to cmake if not installed
-depends_build-append                path:bin/cmake:cmake
-
 proc cmake::build_dir {} {
     if {[option cmake.out_of_source]} {
         return [option cmake.build_dir]
@@ -161,27 +172,20 @@ option_proc cmake.generator cmake::handle_generator
 proc cmake::handle_generator {option action args} {
     global cmake.generator destroot destroot.target build.cmd build.post_args
     global depends_build destroot.post_args build.jobs subport
-    global cmake.make_generator_incompatible cmake.ninja_generator_incompatible
-    if {${action} eq "read"} {
-        # we need to handle the "read" action too if we want to be able to raise
-        # an error when an incompatible generator is requested.
-        set args ${cmake.generator}
-    }
-    if {${action} eq "set" || ${action} eq "read"} {
+    if {${action} eq "set"} {
         switch -glob [lindex ${args} 0] {
             "*Unix Makefiles*" {
-                if {![tbool cmake.make_generator_incompatible]} {
-                    ui_debug "Selecting the 'Unix Makefiles' generator ($args)"
-                    depends_build-delete \
-                                    port:ninja
-                    build.cmd       make
-                    build.post_args VERBOSE=ON
-                    destroot.target install/fast
-                    destroot.destdir \
-                                    DESTDIR=${destroot}
-                    # unset the DESTDIR env. variable if it has been set before
-                    destroot.env-delete \
-                                    DESTDIR=${destroot}
+                ui_debug "Selecting the 'Unix Makefiles' generator ($args)"
+                depends_build-delete \
+                                port:ninja
+                build.cmd       make
+                build.post_args VERBOSE=ON
+                destroot.target install/fast
+                destroot.destdir \
+                                DESTDIR=${destroot}
+                # unset the DESTDIR env. variable if it has been set before
+                destroot.env-delete \
+                                DESTDIR=${destroot}
 #                     proc ui_progress_info {string} {
 #                         if {[scan $string "\[%d%%\] " perc] == 1} {
 #                             return $perc
@@ -189,30 +193,20 @@ proc cmake::handle_generator {option action args} {
 #                             return -1
 #                         }
 #                     }
-                } else {
-                    ui_error "port:${subport} doesn't support CMake's ${args} generator (don't use cmake.generator on the commandline)"
-                    return -code error "unsupported CMake generator requested (port:${subport})"
-                }
             }
             "*Ninja" {
-                if {![tbool cmake.ninja_generator_incompatible]} {
-                    ui_debug "Selecting the Ninja generator ($args)"
-                    depends_build-append \
-                                    port:ninja
-                    build.cmd       ninja
-                    # force Ninja to use the exact number of requested build jobs
-                    build.post_args -j${build.jobs} -v
-                    destroot.target install
-                    # ninja needs the DESTDIR argument in the environment
-                    destroot.destdir
-                    destroot.env-append DESTDIR=${destroot}
-                } else {
-                    ui_error "port:${subport} doesn't support CMake's ${args} generator (don't use cmake.generator on the commandline)"
-                    return -code error "unsupported CMake generator requested (port:${subport})"
-                }
+                ui_debug "Selecting the Ninja generator ($args)"
+                depends_build-append \
+                                port:ninja
+                build.cmd       ninja
+                # force Ninja to use the exact number of requested build jobs
+                build.post_args -j${build.jobs} -v
+                destroot.target install
+                # ninja needs the DESTDIR argument in the environment
+                destroot.destdir
+                destroot.env-append DESTDIR=${destroot}
             }
             default {
-                ui_msg "generator fallback"
                 if {[llength $args] != 1} {
                     set msg "cmake.generator requires a single value (not \"${args}\")"
                 } else {
@@ -303,8 +297,16 @@ default configure.post_args {[option cmake.source_dir]}
 # TODO: Handle the Java-specific configure.classpath variable.
 
 pre-configure {
-    # create the build directory:
+    # create the build directory as the first step
     file mkdir ${configure.dir}
+
+    # check and bail early if we'd be using an incompatible cmake generator
+    foreach genpattern ${cmake.generator_blacklist} {
+        if {[string match -nocase ${genpattern} ${cmake.generator}]} {
+            ui_error "port:${subport} doesn't support CMake's ${cmake.generator} generator"
+            return -code error "unsupported CMake generator requested (port:${subport})"
+        }
+    }
 
     # The environment variable CPPFLAGS is not considered by CMake.
     # (CMake upstream ticket #12928 "CMake silently ignores CPPFLAGS"
