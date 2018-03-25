@@ -411,6 +411,9 @@ proc kf5.set_project {project} {
                 return -code error "incomplete port definition"
             } else {
                 if {${kf5.virtualPath} eq "plasma"} {
+                    if {[vercmp ${kf5.plasma} 5.8.7] < 0} {
+                        set dbranch "Attic"
+                    }
                     set f   "${kf5.virtualPath}/${kf5.plasma}"
                     if {![info exists version]} {
                         version \
@@ -437,6 +440,9 @@ proc kf5.set_project {project} {
     } else {
         if {![info exists version]} {
             version         ${kf5.version}
+        }
+        if {[vercmp ${kf5.version} 5.36.0] < 0} {
+            set dbranch "Attic"
         }
     }
     categories-append       ${kf5::cat}
