@@ -1,5 +1,171 @@
+diff --git a/plugins/hunspell/hunspellinterface.h b/plugins/hunspell/hunspellinterface.h
+index cf5fdeb1f48014a3810027ea4acc8504ddac131c..a23da290eec122ba7881b69dcf823a14b7398a61 100644
+--- a/plugins/hunspell/hunspellinterface.h
++++ b/plugins/hunspell/hunspellinterface.h
+@@ -33,7 +33,7 @@ class HunspellInterface
+ public:
+     virtual ~HunspellInterface() {}
+ 
+-    virtual void initialize(QString programDictionary, QString userDictionary) = 0;
++    virtual bool initialize(QString programDictionary, QString userDictionary, QString &errMsg) = 0;
+     virtual bool spellCheck(QString word, QStringList &suggestions) = 0;
+     virtual void addWord(QString dictionary, QString word) = 0;
+ 
+diff --git a/plugins/hunspell/hunspellplugin.cpp b/plugins/hunspell/hunspellplugin.cpp
+index f712abc92c0f76d53d900005e7c12502e395ca76..1211f229c7aaf45a80e8c51a9307856e2e12d587 100644
+--- a/plugins/hunspell/hunspellplugin.cpp
++++ b/plugins/hunspell/hunspellplugin.cpp
+@@ -19,6 +19,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ 
+ 
+ #include <iostream>
++#include <QDebug>
+ 
+ #include "hunspellplugin.h"
+ HunspellPlugin::HunspellPlugin() {
+@@ -27,11 +28,14 @@ HunspellPlugin::HunspellPlugin() {
+ 
+ // Initialize for use. I don't do it in the constructor because I don't 
+ // want to take the time unless the user REALLY wants to use the spell checker.
+-void HunspellPlugin::initialize(QString programDictionary, QString userDictionary)  {
++bool HunspellPlugin::initialize(QString programDictionary, QString userDictionary, QString &errMsg)  {
+     checker = new SpellChecker();
+-    std::cout << "**************" << checker << std::endl;
+-    checker->setup(programDictionary, userDictionary);
+-    return;
++    qDebug() << "**** Setting up SpellChecker:" << checker << "with" << programDictionary << "and" << userDictionary;
++    bool result = checker->setup(programDictionary, userDictionary);
++    if (!result) {
++        errMsg = checker->errorMsg;
++    }
++    return result;
+ }
+ 
+ bool HunspellPlugin::spellCheck(QString word, QStringList &suggestions) {
+diff --git a/plugins/hunspell/hunspellplugin.h b/plugins/hunspell/hunspellplugin.h
+index 1bb433c5ac6211119cf9defd87fb4c1d19a92946..c2742c759b74108ace5ef68aab3fef722cd02c68 100644
+--- a/plugins/hunspell/hunspellplugin.h
++++ b/plugins/hunspell/hunspellplugin.h
+@@ -24,7 +24,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ #define HUNSPELLPLUGIN_H
+ #include "hunspellinterface.h"
+ 
+-#// Windows Check
++// Windows Check
+ #ifndef _WIN32
+ 
+ class HunspellPlugin : public QObject, HunspellInterface
+@@ -41,7 +41,7 @@ private:
+ 
+ public:
+     HunspellPlugin();
+-    void initialize(QString programDictionary, QString userDictionary);
++    bool initialize(QString programDictionary, QString userDictionary, QString &errMsg);
+     bool spellCheck(QString word, QStringList &suggestions);
+     void addWord(QString dictionary, QString word);
+ };
+diff --git a/utilities/spellchecker.cpp b/utilities/spellchecker.cpp
+index 66ebf677221014d80a07b3d464d66af794104557..b26ab26bd10efce2b68b1d2ccac3309e3d1be300 100644
+--- a/utilities/spellchecker.cpp
++++ b/utilities/spellchecker.cpp
+@@ -23,11 +23,19 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ #include <QFile>
+ #include <QLocale>
+ #include <QTextStream>
++#if QT_VERSION >= QT_VERSION_CHECK(5, 0, 0) && !defined(_WIN32)
++#include <QLibraryInfo>
++#endif
++#include <QDebug>
+ 
++#include <hunspell.hxx>
+ 
+ SpellChecker::SpellChecker(QObject *parent) :
+     QObject(parent)
+ {
++#if QT_VERSION >= QT_VERSION_CHECK(5, 0, 0) && !defined(_WIN32)
++    dictionaryPath.append(QLibraryInfo::location(QLibraryInfo::PrefixPath) + "/share/hunspell/");
++#endif
+     dictionaryPath.append("/usr/share/hunspell/");
+     dictionaryPath.append("/usr/share/myspell/");
+     dictionaryPath.append("/usr/share/myspell/dicts/");
+@@ -51,27 +59,29 @@ SpellChecker::SpellChecker(QObject *parent) :
+ 
+ 
+ QString SpellChecker::findDictionary(QString file) {
+-    for (int i=0; i<dictionaryPath.size(); i++) {
+-        QFile f(dictionaryPath[i]+file);
++    for (int i = 0; i < dictionaryPath.size(); ++i) {
++        const QString dictFile = dictionaryPath[i] + file;
++        QFile f(dictFile);
+         if (f.exists())
+-            return dictionaryPath[i]+file;
++            return dictFile;
+     }
+-    return "";
++    return QString();
+ }
+ 
+ 
+ 
+-void SpellChecker::setup(QString programDictionary, QString customDictionary) {
++bool SpellChecker::setup(QString programDictionary, QString customDictionary) {
+     QString locale = QLocale::system().name();
+     dictionaryPath.prepend(programDictionary);
+     dictionaryPath.prepend(customDictionary);
+ 
+     QString aff = findDictionary(locale+".aff");
+     QString dic = findDictionary(locale+".dic");
+-    if (dic=="" || aff == "") {
++    if (dic.isEmpty() || aff.isEmpty()) {
+         error = true;
+-        errorMsg = tr("Unable to find dictionaries.  Is Huntspell installed?");
+-        return;
++        errorMsg = tr("Unable to find dictionaries for locale %1. Is a Huntspell dictionary installed?").arg(locale);
++        qWarning() << errorMsg << "path=" << dictionaryPath;
++        return false;
+     }
+     hunspell = new Hunspell(aff.toStdString().c_str(), dic.toStdString().c_str());
+ 
+@@ -86,25 +96,30 @@ void SpellChecker::setup(QString programDictionary, QString customDictionary) {
+         }
+         f.close();
+     }
++    return true;
+ }
+ 
+ 
+ bool SpellChecker::spellCheck(QString word, QStringList &suggestions) {
+-    int isValid = hunspell->spell(word.toStdString().c_str());
+-    suggestions.empty();
++    suggestions.clear();
++    if (Q_UNLIKELY(error)) {
++        return false;
++    }
++    int isValid = hunspell->spell(word.toStdString());
+     if (isValid) {
+         return true;
+     }
+-    char **wlst;
+-    int ns = hunspell->suggest(&wlst,word.toStdString().c_str());
+-    for (int i=0; i < ns; i++) {
+-      suggestions.append(QString::fromStdString(wlst[i]));
+-    }
++    const auto suggested = hunspell->suggest(word.toStdString());
++    for_each (suggested.begin(), suggested.end(), [&suggestions](const std::string &suggestion) {
++            suggestions << QString::fromStdString(suggestion); });
+     return false;
+ }
+ 
+ 
+ void SpellChecker::addWord(QString dictionary, QString word) {
++    if (Q_UNLIKELY(error)) {
++        return;
++    }
+     hunspell->add(word.toStdString().c_str());
+ 
+     // Append to the end of the user dictionary
 diff --git a/utilities/spellchecker.h b/utilities/spellchecker.h
-index 08a166cfd546d4d14ded22122e7ee9451ddcd9cf..e0a3ddace3ed1adea457695932733d5e24f68fa2 100644
+index 08a166cfd546d4d14ded22122e7ee9451ddcd9cf..aa5043f684cfca7908245210e9a76b915cba02b2 100644
 --- a/utilities/spellchecker.h
 +++ b/utilities/spellchecker.h
 @@ -27,7 +27,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
@@ -11,23 +177,37 @@ index 08a166cfd546d4d14ded22122e7ee9451ddcd9cf..e0a3ddace3ed1adea457695932733d5e
  
  class SpellChecker : public QObject
  {
-diff --git a/utilities/spellchecker.cpp b/utilities/spellchecker.cpp
-index 66ebf677221014d80a07b3d464d66af794104557..df817e44d465d58a9067f77a3457cc7040dfeb2e 100644
---- a/utilities/spellchecker.cpp
-+++ b/utilities/spellchecker.cpp
-@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
- #include <QLocale>
- #include <QTextStream>
+@@ -37,14 +37,14 @@ private:
+     QString findDictionary(QString file);
+     Hunspell *hunspell;
+     bool error;
+-    QString errorMsg;
  
-+#include <hunspell.hxx>
- 
- SpellChecker::SpellChecker(QObject *parent) :
-     QObject(parent)
+ public:
+     explicit SpellChecker(QObject *parent = 0);
+-    void setup(QString programDictionary, QString customDictionary);
++    bool setup(QString programDictionary, QString customDictionary);
+     bool spellCheck(QString word, QStringList &suggestions);
+     void addWord(QString dictionary, QString word);
+     
++    QString errorMsg;
+ signals:
+     
+ public slots:
 diff --git a/gui/nbrowserwindow.cpp b/gui/nbrowserwindow.cpp
 index 8d3c2fa4777104670326dcb3fccb21e5ccedb338..6178c5efe1c3b186a2a76ecea194e54678706230 100644
 --- a/gui/nbrowserwindow.cpp
 +++ b/gui/nbrowserwindow.cpp
-@@ -3801,10 +3800,11 @@ void NBrowserWindow::loadPlugins() {
+@@ -3506,7 +3506,7 @@ void NBrowserWindow::spellCheckPressed() {
+ 
+     // If we STILL don't have a plugin then it can't be loaded. Quit out
+     if (!hunspellPluginAvailable) {
+-        QMessageBox::critical(this, tr("Plugin Error"), tr("Hunspell plugin not found or could not be loaded."), QMessageBox::Ok);
++        QMessageBox::critical(this, tr("Plugin Error"), tr("Hunspell plugin not available or no dictionary for current locale"), QMessageBox::Ok);
+         return;
+     }
+ 
+@@ -3801,15 +3804,20 @@ void NBrowserWindow::loadPlugins() {
          QDir pluginsDir(dirList[i]);
          QStringList filter;
          filter.append("libhunspellplugin.so");
@@ -40,6 +220,17 @@ index 8d3c2fa4777104670326dcb3fccb21e5ccedb338..6178c5efe1c3b186a2a76ecea194e546
                  if (plugin) {
                      hunspellInterface = qobject_cast<HunspellInterface *>(plugin);
                      if (hunspellInterface) {
+-                        hunspellPluginAvailable = true;
+-                        hunspellInterface->initialize(global.fileManager.getProgramDirPath(""), global.fileManager.getSpellDirPathUser());
++                        QString errMsg;
++                        hunspellPluginAvailable = hunspellInterface->initialize(global.fileManager.getProgramDirPath(""),
++                            global.fileManager.getSpellDirPathUser(), errMsg);
++                        if (!hunspellPluginAvailable) {
++                            QLOG_ERROR() << errMsg;
++                        }
+                     }
+                 } else {
+                     QLOG_ERROR() << pluginLoader.errorString();
 diff --git a/nixnote.cpp b/nixnote.cpp
 index 777edfd141cf7abea9ac94a754ca3b684020c9a8..e4e9aabaf5b1e4def7c26533acff6a3ef6787645 100644
 --- a/nixnote.cpp
