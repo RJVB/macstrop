@@ -515,20 +515,23 @@ if {${os.platform} eq "darwin"} {
             }
         }
     }
-    # see if the framework install exists, and if so depend on it;
-    # if not, depend on the library version
-    if {[file exists ${qt_frameworks_dir}/QtCore.framework/QtCore]} {
-        set qt5_pathlibspec path:libexec/${qt_name}/Library/Frameworks/QtCore.framework/QtCore
+    # see if the library install exists for some reason, and if so depend on it;
+    # if not, depend on the regular framework version
+    if {[file exists ${qt_libs_dir}/libQt5Core.${qt_libs_ext}]} {
+        ui_warn "QtCore is installed as a regular library (${qt_libs_dir}/libQt5Core.${qt_libs_ext})"
+        set qt5_pathlibspec path:libexec/${qt_name}/lib/libQt5Core.${qt_libs_ext}
     } else {
-        set qt5_pathlibspec path:libexec/${qt_name}/lib/libQtCore.${qt_libs_ext}
+        set qt5_pathlibspec path:libexec/${qt_name}/Library/Frameworks/QtCore.framework/QtCore
     }
     set qt5_dependency ${qt5_pathlibspec}:${qt5::pprefix}
-    if {[file exists ${qt_frameworks_dir}/QtWebKit.framework/QtWebKit]} {
-        set qt5_pathlibspec path:libexec/${qt_name}/Library/Frameworks/QtWebKit.framework/QtWebKit
+    if {[file exists ${qt_libs_dir}/libQt5WebKit.${qt_libs_ext}]} {
+        ui_warn "QtCore is installed as a regular library (${qt_libs_dir}/libQt5WebKit.${qt_libs_ext})"
+        set qt5_pathlibspec path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext}
     } else {
-        set qt5_pathlibspec path:libexec/${qt_name}/lib/libQtWebKit.${qt_libs_ext}
+        set qt5_pathlibspec path:libexec/${qt_name}/Library/Frameworks/QtWebKit.framework/QtWebKit
     }
-    set qt5webkit_dependency ${qt5_pathlibspec}:${qt5::pprefix}-qtwebkit
+    # prefer the newer, rebooted qt5-webkit
+    set qt5webkit_dependency ${qt5_pathlibspec}:qt5-webkit
     set qt5webengine_dependency \
                         path:libexec/${qt_name}/Library/Frameworks/QtWebEngineCore.framework/QtWebEngineCore:${qt5::pprefix}-qtwebengine
 } elseif {${os.platform} eq "linux"} {
@@ -539,7 +542,7 @@ if {${os.platform} eq "darwin"} {
     }
     set qt5_pathlibspec path:libexec/${qt_name}/lib/libQt5Core.${qt_libs_ext}
     set qt5_dependency ${qt5_pathlibspec}:${qt5::pprefix}
-    set qt5webkit_dependency path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext}:${qt5::pprefix}-qtwebkit
+    set qt5webkit_dependency path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext}:qt5-webkit
     set qt5webengine_dependency \
                         path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext}:${qt5::pprefix}-qtwebengine
 }
@@ -840,12 +843,12 @@ proc qt5::depends_component_p {deptype args} {
                     ${deptype}-append port:${qt5::pprefix}
                 }
             }
+            "qtwebkit" -
             "webkit" {
                 # this refers to the new version-agnostic port:qt5-webkit
-                set portname "qt5-${comp}"
+                set portname "qt5-webkit"
                 set done false
             }
-            "qtwebkit" -
             "qtwebengine" -
             "qtwebview" {
                 # these components are never stub subports (or possibly so, in the case of QtWebKit)
