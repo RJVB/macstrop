@@ -1,49 +1,186 @@
-diff --git gcc/incpath.c
---- gcc/orig.incpath.c	2017-02-20 12:38:16.000000000 +0100
-+++ gcc/incpath.c	2017-05-11 19:02:37.000000000 +0200
-@@ -129,6 +129,10 @@
-   int relocated = cpp_relocated ();
-   size_t len;
+diff --git gcc/c-family/c-opts.c gcc/c-family/c-opts.c
+index 7dea165..f75f769 100644
+--- gcc/c-family/c-opts.c
++++ gcc/c-family/c-opts.c
+@@ -41,6 +41,10 @@ along with GCC; see the file COPYING3.  If not see
+ #include "mkdeps.h"
+ #include "dumpfile.h"
  
-+  if (cxx_stdinc == 2)
-+    {
-+      add_path (xstrdup ("@LLVMHEADERPATH@"), SYSTEM, true, false);
-+    }
-   if (iprefix && (len = cpp_GCC_INCLUDE_DIR_len) != 0)
-     {
-       /* Look for directories that start with the standard prefix.
-@@ -136,7 +140,7 @@
- 	 IPREFIX and search them first.  */
-       for (p = cpp_include_defaults; p->fname; p++)
- 	{
--	  if (!p->cplusplus || cxx_stdinc)
-+	  if (!p->cplusplus || cxx_stdinc == 1)
- 	    {
- 	      /* Should we be translating sysrooted dirs too?  Assume
- 		 that iprefix and sysroot are mutually exclusive, for
-@@ -167,7 +171,7 @@
++#ifdef __APPLE__
++#include <AvailabilityMacros.h>
++#endif
++
+ #ifndef DOLLARS_IN_IDENTIFIERS
+ # define DOLLARS_IN_IDENTIFIERS true
+ #endif
+@@ -87,9 +91,17 @@ static const char *sysroot = TARGET_SYSTEM_ROOT;
+ /* Zero disables all standard directories for headers.  */
+ static bool std_inc = true;
  
-   for (p = cpp_include_defaults; p->fname; p++)
-     {
--      if (!p->cplusplus || cxx_stdinc)
-+      if (!p->cplusplus || cxx_stdinc == 1)
- 	{
- 	  char *str;
+-/* Zero disables the C++-specific standard directories for headers.  */
++/* Zero disables the C++-specific standard directories for headers */
+ static bool std_cxx_inc = true;
  
-@@ -474,6 +478,9 @@
-   /* CPATH and language-dependent environment variables may add to the
-      include chain.  */
-   add_env_var_paths ("CPATH", BRACKET);
-+  /* cxx_stdinc is no longer a bool but also indicates which C++ headers to include */
-+  if (stdinc && cxx_stdinc == 2)
-+    add_env_var_paths ("LIBCPP_INCLUDE_PATH", SYSTEM);
-   add_env_var_paths (lang_env_vars[idx], SYSTEM);
++/* 1 enables the libstdc++ specific standard header directories;
++   2 enables the libc++ specific standard header directories. */
++#if defined(MAC_OS_X_VERSION_MIN_REQUIRED) && MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_9
++static int std_cxx_header_type = 2;
++#else
++static int std_cxx_header_type = 1;
++#endif
++
+ /* If the quote chain has been split by -I-.  */
+ static bool quote_chain_split;
  
-   target_c_incpath.extra_pre_includes (sysroot, iprefix, stdinc);
-diff --git gcc/cp/g++spec.c
---- gcc/cp/orig.g++spec.c	2017-09-07 22:30:27.000000000 +0200
-+++ gcc/cp/g++spec.c	2017-10-31 20:44:58.000000000 +0100
-@@ -23,6 +23,10 @@
+@@ -597,7 +609,21 @@ c_common_handle_option (size_t scode, const char *arg, int value,
+       break;
+ 
+     case OPT_nostdinc__:
+-      std_cxx_inc = false;
++      std_cxx_inc = 0;
++      break;
++
++    /* OPT_stdlib_libc__ & OPT_stdlib_libstdc__ are also handled in g++spec.c */
++    case OPT_stdlib_libc__:
++      /* use libc++ */
++      warning (OPT_stdlib_libc__,
++        "using the LLVM/libc++ standard C++ headers");
++      std_cxx_header_type = 2;
++      break;
++
++    case OPT_stdlib_libstdc__:
++      warning (OPT_stdlib_libstdc__,
++        "using the GNU/libstdc++ standard C++ headers");
++      std_cxx_header_type = 1;
+       break;
+ 
+     case OPT_o:
+@@ -762,7 +788,7 @@ c_common_post_options (const char **pfilename)
+   sanitize_cpp_opts ();
+ 
+   register_include_chains (parse_in, sysroot, iprefix, imultilib,
+-			   std_inc, std_cxx_inc && c_dialect_cxx (), verbose);
++			   std_inc, std_cxx_inc && c_dialect_cxx () ? std_cxx_header_type : 0, verbose);
+ 
+ #ifdef C_COMMON_OVERRIDE_OPTIONS
+   /* Some machines may reject certain combinations of C
+diff --git gcc/c-family/c.opt gcc/c-family/c.opt
+index 13b930d..ce11406 100644
+--- gcc/c-family/c.opt
++++ gcc/c-family/c.opt
+@@ -1992,6 +1992,15 @@ std=iso9899:2011
+ C ObjC Alias(std=c11)
+ Conform to the ISO 2011 C standard.
+ 
++stdlib=libc++
++C++ ObjC++
++Specify the C++ standard library to use: LLVM libc++
++(default on Mac OS X 10.9 and up)
++
++stdlib=libstdc++
++C++ ObjC++
++Specify the C++ standard library to use: GNU libstdc++
++
+ traditional
+ Driver
+ 
+diff --git gcc/config.in gcc/config.in
+index eca3fd8..3381211 100644
+--- gcc/config.in
++++ gcc/config.in
+@@ -2416,3 +2416,8 @@
+ #undef vfork
+ #endif
+ 
++/* default location where the libc++ headers are obtained from
++   when compiling C++ with -stdlib=libc++ . */
++#ifndef USED_FOR_TARGET
++#undef LIBCXX_INCLUDE_DIR
++#endif
+diff --git gcc/configure gcc/configure
+index 043a62b..49c3b48 100755
+--- gcc/configure
++++ gcc/configure
+@@ -642,6 +642,7 @@ host_xm_file_list
+ host_exeext
+ gcc_gxx_include_dir_add_sysroot
+ gcc_gxx_include_dir
++libcxx_include_dir
+ gcc_config_arguments
+ float_h_file
+ extra_programs
+@@ -886,6 +887,7 @@ with_build_sysroot
+ with_sysroot
+ with_gxx_include_dir
+ with_cpp_install_dir
++with_libcxx_include_dir
+ enable_generated_files_in_srcdir
+ with_gnu_ld
+ with_ld
+@@ -1709,6 +1711,9 @@ Optional Packages:
+   --with-cpp-install-dir=DIR
+                           install the user visible C preprocessor in DIR
+                           (relative to PREFIX) as well as PREFIX/bin
++  --with-libcxx-include-dir
++                          default location for the libc++ headerfiles
++                          when using -stdlib=libc++
+   --with-gnu-ld           arrange to work with GNU ld
+   --with-ld               arrange to use the specified ld (full pathname)
+   --with-demangler-in-ld  try to use demangler in GNU ld
+@@ -3603,6 +3608,22 @@ fi
+ fi
+ 
+ 
++libcxx_include_dir=
++# Specify the libc++ header file directory
++
++# Check whether --with-libcxx-include-dir was given.
++if test "${with_libcxx_include_dir+set}" = set; then :
++  withval=$with_libcxx_include_dir; case "${withval}" in
++yes)	as_fn_error "bad value ${withval} given for the default libc++ include directory" "$LINENO" 5 ;;
++no)	;;
++*)	libcxx_include_dir=$with_libcxx_include_dir
++cat >>confdefs.h <<_ACEOF
++#define LIBCXX_INCLUDE_DIR "$libcxx_include_dir"
++_ACEOF
++    ;;
++esac
++fi
++
+ # We would like to our source tree to be readonly.  However when releases or
+ # pre-releases are generated, the flex/bison generated files as well as the
+ # various formats of manuals need to be included along with the rest of the
+diff --git gcc/configure.ac gcc/configure.ac
+index 2b52da3..dc6164a 100644
+--- gcc/configure.ac
++++ gcc/configure.ac
+@@ -239,6 +239,21 @@ elif test x$withval != xno; then
+   cpp_install_dir=$withval
+ fi])
+ 
++libcxx_include_dir=
++# Specify the libc++ header file directory
++AC_ARG_WITH(libcxx_include_dir,
++[AC_HELP_STRING([--with-libcxx-include-dir=DIR],
++                [default location for the libc++ headerfiles
++                 when using -stdlib=libc++])],
++[if test x$withval = xyes; then
++  AC_MSG_ERROR(bad value ${withval} given for the default libc++ include directory)
++elif test x$withval != xno; then
++  libcxx_include_dir=$withval
++  AC_DEFINE_UNQUOTED(LIBCXX_INCLUDE_DIR,"libcxx_include_dir",
++	[default location where the libc++ headers are obtained from
++when compiling C++ with -stdlib=libc++ .])
++fi])
++
+ # We would like to our source tree to be readonly.  However when releases or
+ # pre-releases are generated, the flex/bison generated files as well as the 
+ # various formats of manuals need to be included along with the rest of the
+diff --git gcc/cp/g++spec.c gcc/cp/g++spec.c
+index ffcc87c..2430f24 100644
+--- gcc/cp/g++spec.c
++++ gcc/cp/g++spec.c
+@@ -23,6 +23,10 @@ along with GCC; see the file COPYING3.  If not see
  #include "tm.h"
  #include "opts.h"
  
@@ -54,7 +191,7 @@ diff --git gcc/cp/g++spec.c
  /* This bit is set if we saw a `-xfoo' language specification.  */
  #define LANGSPEC	(1<<1)
  /* This bit is set if they did `-lm' or `-lmath'.  */
-@@ -48,9 +52,18 @@
+@@ -48,9 +52,18 @@ along with GCC; see the file COPYING3.  If not see
  #ifndef LIBSTDCXX
  #define LIBSTDCXX "stdc++"
  #endif
@@ -73,7 +210,7 @@ diff --git gcc/cp/g++spec.c
  #ifndef LIBSTDCXX_STATIC
  #define LIBSTDCXX_STATIC NULL
  #endif
-@@ -65,7 +78,14 @@
+@@ -65,7 +78,14 @@ lang_specific_driver (struct cl_decoded_option **in_decoded_options,
    /* If nonzero, the user gave us the `-p' or `-pg' flag.  */
    int saw_profile_flag = 0;
  
@@ -89,7 +226,7 @@ diff --git gcc/cp/g++spec.c
       -1 means we should not link in libstdc++
       0  means we should link in libstdc++ if it is needed
       1  means libstdc++ is needed and should be linked in.
-@@ -141,6 +161,14 @@
+@@ -141,6 +161,14 @@ lang_specific_driver (struct cl_decoded_option **in_decoded_options,
  	  library = -1;
  	  break;
  
@@ -104,7 +241,7 @@ diff --git gcc/cp/g++spec.c
  	case OPT_l:
  	  if (strcmp (arg, MATH_LIBRARY) == 0)
  	    {
-@@ -331,7 +359,7 @@
+@@ -331,7 +359,7 @@ lang_specific_driver (struct cl_decoded_option **in_decoded_options,
        j++;
      }
  
@@ -113,7 +250,7 @@ diff --git gcc/cp/g++spec.c
    if (library > 0)
      {
  #ifdef HAVE_LD_STATIC_DYNAMIC
-@@ -342,19 +370,44 @@
+@@ -342,19 +370,44 @@ lang_specific_driver (struct cl_decoded_option **in_decoded_options,
  	  j++;
  	}
  #endif
@@ -171,87 +308,48 @@ diff --git gcc/cp/g++spec.c
  #ifdef HAVE_LD_STATIC_DYNAMIC
        if (library > 1 && !static_link)
  	{
-diff --git gcc/c-family/c.opt
---- gcc/c-family/orig.c.opt	2017-03-31 16:24:27.000000000 +0200
-+++ gcc/c-family/c.opt	2017-10-31 11:31:59.000000000 +0100
-@@ -1992,6 +1992,15 @@
- C ObjC Alias(std=c11)
- Conform to the ISO 2011 C standard.
+diff --git gcc/incpath.c gcc/incpath.c
+index 98fe5ec..7689e4b 100644
+--- gcc/incpath.c
++++ gcc/incpath.c
+@@ -129,6 +129,12 @@ add_standard_paths (const char *sysroot, const char *iprefix,
+   int relocated = cpp_relocated ();
+   size_t len;
  
-+stdlib=libc++
-+C++ ObjC++
-+Specify the C++ standard library to use: LLVM libc++
-+(default on Mac OS X 10.9 and up)
-+
-+stdlib=libstdc++
-+C++ ObjC++
-+Specify the C++ standard library to use: GNU libstdc++
-+
- traditional
- Driver
- 
-diff --git gcc/c-family/c-opts.c
---- gcc/c-family/orig.c-opts.c	2017-01-05 15:17:07.000000000 +0100
-+++ gcc/c-family/c-opts.c	2017-10-31 20:45:16.000000000 +0100
-@@ -41,6 +41,10 @@
- #include "mkdeps.h"
- #include "dumpfile.h"
- 
-+#ifdef __APPLE__
-+#include <AvailabilityMacros.h>
++#ifdef LIBCXX_INCLUDE_DIR
++  if (cxx_stdinc == 2)
++    {
++      add_path (xstrdup (LIBCXX_INCLUDE_DIR), SYSTEM, true, false);
++    }
 +#endif
-+
- #ifndef DOLLARS_IN_IDENTIFIERS
- # define DOLLARS_IN_IDENTIFIERS true
- #endif
-@@ -87,9 +91,17 @@
- /* Zero disables all standard directories for headers.  */
- static bool std_inc = true;
+   if (iprefix && (len = cpp_GCC_INCLUDE_DIR_len) != 0)
+     {
+       /* Look for directories that start with the standard prefix.
+@@ -136,7 +142,7 @@ add_standard_paths (const char *sysroot, const char *iprefix,
+ 	 IPREFIX and search them first.  */
+       for (p = cpp_include_defaults; p->fname; p++)
+ 	{
+-	  if (!p->cplusplus || cxx_stdinc)
++	  if (!p->cplusplus || cxx_stdinc == 1)
+ 	    {
+ 	      /* Should we be translating sysrooted dirs too?  Assume
+ 		 that iprefix and sysroot are mutually exclusive, for
+@@ -167,7 +173,7 @@ add_standard_paths (const char *sysroot, const char *iprefix,
  
--/* Zero disables the C++-specific standard directories for headers.  */
-+/* Zero disables the C++-specific standard directories for headers */
- static bool std_cxx_inc = true;
+   for (p = cpp_include_defaults; p->fname; p++)
+     {
+-      if (!p->cplusplus || cxx_stdinc)
++      if (!p->cplusplus || cxx_stdinc == 1)
+ 	{
+ 	  char *str;
  
-+/* 1 enables the libstdc++ specific standard header directories;
-+   2 enables the libc++ specific standard header directories. */
-+#if defined(MAC_OS_X_VERSION_MIN_REQUIRED) && MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_9
-+static int std_cxx_header_type = 2;
-+#else
-+static int std_cxx_header_type = 1;
-+#endif
-+
- /* If the quote chain has been split by -I-.  */
- static bool quote_chain_split;
+@@ -474,6 +480,9 @@ register_include_chains (cpp_reader *pfile, const char *sysroot,
+   /* CPATH and language-dependent environment variables may add to the
+      include chain.  */
+   add_env_var_paths ("CPATH", BRACKET);
++  /* cxx_stdinc is no longer a bool but also indicates which C++ headers to include */
++  if (stdinc && cxx_stdinc == 2)
++    add_env_var_paths ("LIBCPP_INCLUDE_PATH", SYSTEM);
+   add_env_var_paths (lang_env_vars[idx], SYSTEM);
  
-@@ -597,7 +609,21 @@
-       break;
- 
-     case OPT_nostdinc__:
--      std_cxx_inc = false;
-+      std_cxx_inc = 0;
-+      break;
-+
-+    /* OPT_stdlib_libc__ & OPT_stdlib_libstdc__ are also handled in g++spec.c */
-+    case OPT_stdlib_libc__:
-+      /* use libc++ */
-+      warning (OPT_stdlib_libc__,
-+        "using the LLVM/libc++ standard C++ headers");
-+      std_cxx_header_type = 2;
-+      break;
-+
-+    case OPT_stdlib_libstdc__:
-+      warning (OPT_stdlib_libstdc__,
-+        "using the GNU/libstdc++ standard C++ headers");
-+      std_cxx_header_type = 1;
-       break;
- 
-     case OPT_o:
-@@ -762,7 +788,7 @@
-   sanitize_cpp_opts ();
- 
-   register_include_chains (parse_in, sysroot, iprefix, imultilib,
--			   std_inc, std_cxx_inc && c_dialect_cxx (), verbose);
-+			   std_inc, std_cxx_inc && c_dialect_cxx () ? std_cxx_header_type : 0, verbose);
- 
- #ifdef C_COMMON_OVERRIDE_OPTIONS
-   /* Some machines may reject certain combinations of C
+   target_c_incpath.extra_pre_includes (sysroot, iprefix, stdinc);
