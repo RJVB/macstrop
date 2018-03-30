@@ -1,14 +1,15 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
-# $Id$
 
 PortSystem          1.0
-PortGroup           cxx11 1.0
+if {${os.major} < 13} {
+    PortGroup       cxx11 1.0
+}
 # qgpgme is mostly used as a KDE dependency, so prefer qt5-kde
 set qt5.prefer_kde  1
 PortGroup           qt5 1.0
 
 name                qgpgme
-version             1.9.0
+version             1.10.0
 categories          devel security crypto
 license             GPL-2+
 maintainers         gmail.com:rjvbertin mk openmaintainer
@@ -24,14 +25,17 @@ use_bzip2           yes
 distname            gpgme-${version}
 # we use the same distfiles as port:gpgme:
 dist_subdir         gpgme
-checksums           rmd160  55719b4a7263ae8d0ef79205e26409ff5693ea27 \
-                    sha256  1b29fedb8bfad775e70eafac5b0590621683b2d9869db994568e6401f4034ceb
+checksums           rmd160  9e6d0cef086b47f697a17384082f0c9f2f95c412 \
+                    sha256  1a8fed1197c3b99c35f403066bb344a26224d292afc048cfdfc4ccd5690a0693
 
 # either gnupg2 (the default) or gnupg21 is needed for running the unit tests
 # and at runtime but nothing from gnupg2 links directly with qgpgme
 depends_build       port:pkgconfig \
                     path:bin/gpg2:gnupg2
 
+# this is not actually how things work currently, we actually build
+# much of gpgme again. However, depending on port:gpgme will ensure
+# that all dependencies are there, and simplifies the depspec (maintenance).
 depends_lib         port:gpgme
 
 depends_run         path:bin/gpg2:gnupg2
@@ -42,7 +46,8 @@ use_parallel_build  yes
 destroot.dir        ${worksrcpath}/lang/qt
 
 patchfiles          patch-configure.ac.diff \
-                    patch-tests-gpg-Makefile.am.diff
+                    patch-tests-gpg-Makefile.am.diff \
+                    patch-lang_qt_src_qgpgmeencryptjob.diff
 
 platform darwin {
     pre-patch {
@@ -56,14 +61,22 @@ post-patch {
     reinplace "s|@GPGSM@|${prefix}/bin/gpgsm|" ${worksrcpath}/src/gpgme-config.in
 }
 
-# cpp bindings require libc++ which we can rely on having thanks to the cxx11 portgroup
-lappend languages   cpp qt
+lappend languages   qt
 
-use_autoreconf      yes
-autoreconf.args     -fvi
+platform darwin {
+    # cpp bindings require C++11 (thus libc++), which we can rely on having thanks to the cxx11 portgroup
+    if {${configure.cxx_stdlib} eq "libc++"} {
+        lappend languages cpp
+    }
 
-post-configure {
-    reinplace "s|CC -dynamiclib|CC -dynamiclib [get_canonical_archflags]|g" ${worksrcpath}/libtool
+    if {![file exists ${worksrcpath}/config.log]} {
+        use_autoreconf  yes
+        autoreconf.args -fvi
+    }
+
+    post-configure {
+        reinplace "s|CC -dynamiclib|CC -dynamiclib [get_canonical_archflags]|g" ${worksrcpath}/libtool
+    }
 }
 
 # rename libqgpgme to libq5gpgme to avoid conflicts with port:kdepimlibs4
@@ -72,21 +85,22 @@ post-configure {
 patchfiles-append   patch-libqgpgme-name.diff
 
 
-# for building gpgme and gpgme++
-configure.cflags-append \
-                    -D_POSIX_C_SOURCE=200112L
-configure.cxxflags-append \
-                    -D_POSIX_C_SOURCE=200112L
+# gpg regression tests run during build repeatedly fail with error
+# gpg: can't connect to the agent: File name too long
+# disable for now to avoid build error
+patchfiles-append   patch-disable-qt-tests.diff
 
 configure.args      --disable-dependency-tracking \
-                    --enable-languages="${languages}"
+                    --enable-languages="${languages}" \
+                    --disable-gpg-test \
+                    --disable-gpgconf-test
 
-test.run            yes
-test.target         check
-test.dir            ${destroot.dir}
-pre-test {
-    ui_warn "enter \"abc\" when a passphrase is requested"
-}
+# test.run            yes
+# test.target         check
+# test.dir            ${destroot.dir}
+# pre-test {
+#     ui_warn "enter \"abc\" when a passphrase is requested"
+# }
 
 post-destroot {
     xinstall -m 755 -d ${destroot}${prefix}/share/doc/${name}
