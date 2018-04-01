@@ -211,6 +211,16 @@ if {${kf5::includecounter} == 0} {
                             -DCMAKE_INSTALL_LIBEXECDIR=${prefix}/libexec \
                             -DKDE_INSTALL_LIBEXECDIR=${kf5.libexec_dir} \
                             -DCMAKE_MACOSX_RPATH=ON
+        if {[string match *g*-mp-7* ${configure.cxx}]} {
+            variant libcxx description {Experimental option to use -stdlib=libc++ with g++-mp-7. \
+                    Requires using port:gcc7+libcxxXY.} {}
+            if {[variant_isset libcxx]} {
+                configure.cxx_stdlib \
+                                libc++
+                configure.ldflags-append \
+                                -stdlib=libc++
+            }
+        }
         # 20160914: may need to set -DCMAKE_POLICY_DEFAULT_CMP0042=NEW
     } elseif {${os.platform} eq "linux"} {
         set kf5.applications_dir \
@@ -227,6 +237,16 @@ if {${kf5::includecounter} == 0} {
                     Requires using clang and an independently provided libc++ installation.} {
                 configure.cxx_stdlib \
                                 libc++
+            }
+        }
+        if {[string match *g*-mp-7* ${configure.cxx}]} {
+            variant libcxx description {highly experimental option to build against libc++. \
+                    Requires using port:gcc7+libcxx and an independently provided libc++ installation.} {}
+            if {[variant_isset libcxx]} {
+                configure.cxx_stdlib \
+                                libc++
+                configure.ldflags-append \
+                                -stdlib=libc++
             }
         }
     }
