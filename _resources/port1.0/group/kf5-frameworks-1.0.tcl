@@ -76,7 +76,7 @@ namespace eval kf5 {
         # this should probably become under control of a variant
         variable pythondep   port:python27
         variable pylibdir    ${frameworks_dir}/Python.framework/Versions/${pyversion}/lib/python${pyversion}
-    } elseif {${os.platform} eq "linux"} {
+    } else {
         set libs_ext   so
 
         # for personal use: don't add a python dependency.
@@ -177,10 +177,10 @@ namespace eval kf5 {
 }
 
 # public variables:
-if {${os.platform} eq "darwin"} {
-    set kf5.libs_dir    ${prefix}/lib
-} elseif {${os.platform} eq "linux"} {
+if {${os.platform} eq "linux"} {
     set kf5.libs_dir    ${prefix}/lib/${build_arch}-linux-gnu
+} else {
+    set kf5.libs_dir    ${prefix}/lib
 }
 
 proc kf5.depends_frameworks {first args} {

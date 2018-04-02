@@ -155,43 +155,7 @@ proc preserve_libraries {srcdir patternlist} {
     }
 }
 
-platform linux {
-    proc update_preserved_libraries {{pattern ""}} {
-        global prefix subport destroot preserve_runtime_library_dir
-        if {[variant_isset preserve_runtime_libraries]} {
-            if {${pattern} eq ""} {
-                set pattern "*.so.*"
-            }
-            # when preserving multiple directories, make them depend on each other
-            # construct a dict that maps SO names to file names
-            foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${preserve_runtime_library_dir}/${pattern}] {
-                dict set sonames ${lib} soname [file tail [exec patchelf --print-soname ${lib}]]
-                dict set sonames ${lib} filename [file tail ${lib}]
-            }
-            # now make the preserved libraries depend on other preserved libraries.
-            foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${preserve_runtime_library_dir}/${pattern}] {
-                set lrpath [exec patchelf --print-rpath ${lib}]
-                # prepend the new installation path to the rpath
-                system "patchelf --set-rpath ${prefix}/lib/${preserve_runtime_library_dir}:${lrpath} ${lib}"
-                # update any dependencies on the other libraries installed by this port
-                dict for {id info} ${sonames} {
-                    dict with info {
-                        # store a fully resolved DT_NEEDED entry to the preserved library
-                        set sopath [file join ${prefix}/lib/${preserve_runtime_library_dir} ${soname}]
-                        if {[file exists ${sopath}] || [file exists [file join ${destroot} ${sopath}]]} {
-                            # but only if the file exists
-                            system "patchelf --replace-needed ${soname} ${sopath} ${lib}"
-                        }
-                    }
-                }
-            }
-        } else {
-            ui_debug "The preserve_runtime_libraries variant isn't set; ignoring the call to update_preserved_libraries"
-        }
-    }
-}
-
-platform darwin {
+if {${os.platform} eq "darwin"} {
     proc update_preserved_libraries {{pattern ""}} {
         global prefix subport destroot preserve_runtime_library_dir
         if {[variant_isset preserve_runtime_libraries]} {
@@ -236,6 +200,40 @@ platform darwin {
             }
         } else {
             ui_debug "The preserve_runtime_libraries variant isn't set; ignoring the call to preserve_libraries"
+        }
+    }
+} else {
+    proc update_preserved_libraries {{pattern ""}} {
+        global prefix subport destroot preserve_runtime_library_dir
+        if {[variant_isset preserve_runtime_libraries]} {
+            if {${pattern} eq ""} {
+                set pattern "*.so.*"
+            }
+            # when preserving multiple directories, make them depend on each other
+            # construct a dict that maps SO names to file names
+            foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${preserve_runtime_library_dir}/${pattern}] {
+                dict set sonames ${lib} soname [file tail [exec patchelf --print-soname ${lib}]]
+                dict set sonames ${lib} filename [file tail ${lib}]
+            }
+            # now make the preserved libraries depend on other preserved libraries.
+            foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${preserve_runtime_library_dir}/${pattern}] {
+                set lrpath [exec patchelf --print-rpath ${lib}]
+                # prepend the new installation path to the rpath
+                system "patchelf --set-rpath ${prefix}/lib/${preserve_runtime_library_dir}:${lrpath} ${lib}"
+                # update any dependencies on the other libraries installed by this port
+                dict for {id info} ${sonames} {
+                    dict with info {
+                        # store a fully resolved DT_NEEDED entry to the preserved library
+                        set sopath [file join ${prefix}/lib/${preserve_runtime_library_dir} ${soname}]
+                        if {[file exists ${sopath}] || [file exists [file join ${destroot} ${sopath}]]} {
+                            # but only if the file exists
+                            system "patchelf --replace-needed ${soname} ${sopath} ${lib}"
+                        }
+                    }
+                }
+            }
+        } else {
+            ui_debug "The preserve_runtime_libraries variant isn't set; ignoring the call to update_preserved_libraries"
         }
     }
 }

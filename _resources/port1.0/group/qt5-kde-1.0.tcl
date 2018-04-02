@@ -388,6 +388,22 @@ if {${os.platform} eq "darwin"} {
         compiler.blacklist-append \
                                 clang
     }
+} else {
+    if {[string match *clang* ${configure.compiler}]} {
+        set qt_qmake_spec_32    "${os.platform}-clang"
+        pre-configure {
+            # this has probably not been taken care of:
+            if {![string match "*-std=c++*" ${configure.cxxflags}]} {
+                configure.cxxflags-append \
+                                -std=c++11
+            }
+        }
+    } else {
+        set qt_qmake_spec_32    "${os.platform}-g++"
+        compiler.blacklist-append \
+                                clang
+    }
+    set qt_qmake_spec_64        ${qt_qmake_spec_32}
 }
 
 proc qt5::get_default_spec {} {
@@ -495,7 +511,7 @@ if {![info exist building_qt5] || [vercmp ${version} 5.9.0] >= 0} {
     set qt5.kde_stubports [lsearch -all -inline -not -exact ${qt5.kde_stubports} qt3d]
 }
 
-platform linux {
+if {${os.platform} ne "darwin"} {
     lappend qt5.kde_stubports x11
 }
 
@@ -534,7 +550,7 @@ if {${os.platform} eq "darwin"} {
     set qt5webkit_dependency ${qt5_pathlibspec}:qt5-webkit
     set qt5webengine_dependency \
                         path:libexec/${qt_name}/Library/Frameworks/QtWebEngineCore.framework/QtWebEngineCore:${qt5::pprefix}-qtwebengine
-} elseif {${os.platform} eq "linux"} {
+} else {
     if {[info exists building_qt5]} {
         set qt5::pprefix            ${basename}
     } else {
@@ -580,7 +596,7 @@ if {![info exists building_qt5]} {
             configure.ldflags-append    -fuse-linker-plugin
         }
     }
-    platform linux {
+    if {${os.platform} ne "darwin"} {
         configure.ldflags-append        -Wl,-rpath,${qt_libs_dir}
     }
 }
@@ -788,14 +804,15 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
 ###############################################################################
 # define the qt5::component2pathspec array element-by-element instead of in a table;
 # using a table wouldn't allow the use of variables (they wouldn't be expanded)
-platform darwin {
+if {${os.platform} eq "darwin"} {
     array set qt5::component2pathspec [list \
         qtwebkit        path:libexec/${qt_name}/Library/Frameworks/QtWebKit.framework/QtWebKit \
         qtwebengine     path:libexec/${qt_name}/Library/Frameworks/QtWebEngine.framework/QtWebEngine \
         qtwebview       path:libexec/${qt_name}/Library/Frameworks/QtWebView.framework/QtWebView \
     ]
-}
-platform linux {
+    set qt5::component2pathspec(x11) \
+                        path:${qt_pkg_config_dir}/Qt5X11Extras.pc
+} else {
     array set qt5::component2pathspec [list \
         qtwebkit        path:libexec/${qt_name}/lib/libQt5WebKit.${qt_libs_ext} \
         qtwebengine     path:libexec/${qt_name}/lib/libQt5WebEngineCore.${qt_libs_ext} \
@@ -806,9 +823,6 @@ set qt5::component2pathspec(qt3d)       path:${qt_pkg_config_dir}/Qt53DCore.pc
 set qt5::component2pathspec(qttranslations) path:${qt_translations_dir}/qt_en.qm
 set qt5::component2pathspec(assistant)  path:${qt_bins_dir}/assistant
 set qt5::component2pathspec(webkit)     $qt5::component2pathspec(qtwebkit)
-platform darwin {
-    set qt5::component2pathspec(x11)    path:${qt_pkg_config_dir}/Qt5X11Extras.pc
-}
 
 # a procedure for declaring dependencies on Qt5 components, which will expand them
 # into the appropriate subports for the Qt5 flavour installed
