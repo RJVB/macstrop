@@ -232,6 +232,8 @@ if {${kf5::includecounter} == 0} {
                             ${prefix}/lib/${build_arch}-linux-gnu
         configure.args-append \
                             -DCMAKE_PREFIX_PATH=${prefix}
+    }
+    if {${os.platform} ne "darwin"} {
         if {[string match *clang* ${configure.cxx}]} {
             variant libcxx description {highly experimental option to build against libc++. \
                     Requires using clang and an independently provided libc++ installation.} {
@@ -344,7 +346,9 @@ if {${kf5::includecounter} == 0} {
 
         set match 0
         # 'os' could be a platform or an arch when it's alone
-        if {$len == 2 && ($os == ${os.platform} || $os == ${os.subplatform} || $os == ${os.arch})} {
+        if {$os == "other" && ${os.platform} != "darwin"} {
+            set match 1
+        } elseif {$len == 2 && ($os == ${os.platform} || $os == ${os.subplatform} || $os == ${os.arch})} {
             set match 1
         } elseif {($os == ${os.platform} || $os == ${os.subplatform})
                   && (![info exists release] || ${os.major} == $release)
