@@ -329,7 +329,7 @@ compiler.blacklist-append   macports-llvm-gcc-4.2 llvm-gcc-4.2
 compiler.blacklist-append   gcc-4.2 apple-gcc-4.2 gcc-4.0
 compiler.blacklist-append   {clang < 500}
 platform darwin {
-    if {${os.major} >= 13 && [info exists building_qt5} {
+    if {${os.major} >= 13 && [info exists building_qt5]} {
         compiler.blacklist-append *gcc*
     }
 }
