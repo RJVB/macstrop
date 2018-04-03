@@ -329,7 +329,7 @@ compiler.blacklist-append   macports-llvm-gcc-4.2 llvm-gcc-4.2
 compiler.blacklist-append   gcc-4.2 apple-gcc-4.2 gcc-4.0
 compiler.blacklist-append   {clang < 500}
 platform darwin {
-    if {${os.major} >= 13} {
+    if {${os.major} >= 13 && [info exists building_qt5} {
         compiler.blacklist-append *gcc*
     }
 }
@@ -385,8 +385,8 @@ if {${os.platform} eq "darwin"} {
     } else {
         set qt_qmake_spec_32    linux-g++
         set qt_qmake_spec_64    linux-g++-64
-        compiler.blacklist-append \
-                                clang
+#         compiler.blacklist-append \
+#                                 clang
     }
 } else {
     if {[string match *clang* ${configure.compiler}]} {
@@ -400,8 +400,8 @@ if {${os.platform} eq "darwin"} {
         }
     } else {
         set qt_qmake_spec_32    "${os.platform}-g++"
-        compiler.blacklist-append \
-                                clang
+#         compiler.blacklist-append \
+#                                 clang
     }
     set qt_qmake_spec_64        ${qt_qmake_spec_32}
 }
