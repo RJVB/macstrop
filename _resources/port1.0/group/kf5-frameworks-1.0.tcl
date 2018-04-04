@@ -167,10 +167,15 @@ namespace eval kf5 {
 
     proc has_translations {} {
         global prefix
-        ui_debug "Adding gettext and ${kf5::pythondep} build dependencies because of KI18n"
+        ui_debug "Adding gettext and ${kf5::pythondep} (build) dependencies because of KI18n"
+        depends_lib-append \
+                        port:gettext
         depends_build-append \
-                        port:gettext \
                         ${kf5::pythondep}
+        ifplatform other {
+            depends_build-append \
+                    port:gettext-dev
+        }
         configure.args-append \
                         -DPYTHON_EXECUTABLE=${prefix}/bin/python${kf5::pyversion}
     }
