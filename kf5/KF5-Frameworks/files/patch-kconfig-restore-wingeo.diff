@@ -6,15 +6,15 @@ index d2f355c..2cdf801 100644
  /*
     This file is part of the KDE libraries
     Copyright (c) 2012 Benjamin Port <benjamin.port@ben2367.fr>
-+   Copyright (c) 2015 René J.V. Bertin <rjvbertin@gmail.com>
++   Copyright (c) 2015,18 René J.V. Bertin <rjvbertin@gmail.com>
  
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
-@@ -24,6 +25,139 @@
+@@ -24,6 +25,155 @@
  #include <QScreen>
  #include <QWindow>
  
-+#if defined(Q_OS_WIN) || defined(Q_OS_OSX)
++#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
 +
 +#include <QGuiApplication>
 +#include <QDebug>
@@ -28,8 +28,7 @@ index d2f355c..2cdf801 100644
 +        geometryData.clear();
 +        if (window) {
 +            QDataStream geoDStream(&geometryData, QIODevice::WriteOnly);
-+            quint32 magic = 0xDADACAFE;
-+            geoDStream << magic
++            geoDStream << magicTag
 +                    << window->frameGeometry()
 +                    << window->geometry()
 +                    << quint8(window->windowState());
@@ -48,7 +47,7 @@ index d2f355c..2cdf801 100644
 +            while (geometryData.size() > 0 && !ok) {
 +                QDataStream dstream(geometryData);
 +                dstream >> magic;
-+                if (magic == 0xDADACAFE) {
++                if (magic == magicTag) {
 +                    ok = true;
 +                } else if(geometryData == data) {
 +                    geometryData = QByteArray::fromBase64(data);
@@ -105,7 +104,9 @@ index d2f355c..2cdf801 100644
 +    // a pointer to the source of the data, or the window to which
 +    // the data have last been applied.
 +    const QWindow *associatedWindow;
++    static const quint32 magicTag;
 +};
++const quint32 GeometryData::magicTag = 0xDADACAFE;
 +
 +void KWindowConfig::saveWindowSize(const QWindow *window, KConfigGroup &config, KConfigGroup::WriteConfigFlags options)
 +{
@@ -119,8 +120,13 @@ index d2f355c..2cdf801 100644
 +        // geometry is saved separately for each resolution
 +        QString geometryKey = QStringLiteral("geometry-%1-%2").arg(desk.width()).arg(desk.height());
 +#else
-+        // geometry is saved separately for each supported/used platform
-+        QString geometryKey = QStringLiteral("geometry-") + QGuiApplication::platformName();
++        // geometry is saved separately for each supported/used platform, and specific to
++        // $DISPLAY under X11.
++        const auto platformName = QGuiApplication::platformName();
++        QString geometryKey = QStringLiteral("geometry-") + platformName;
++        if (platformName == "xcb") {
++            geometryKey += QStringLiteral("-%1").arg(qgetenv("DISPLAY"));
++        }
 +#endif
 +        config.writeEntry(geometryKey, GeometryData(window).data().toBase64(), options );
 +    }
@@ -134,11 +140,21 @@ index d2f355c..2cdf801 100644
 +
 +    const QRect desk = window->screen()->geometry();
 +#ifdef Q_OS_WIN
-+    QString geometryKey = QStringLiteral("geometry-%1-%2").arg(desk.width()).arg(desk.height());
++    const QString geometryKey = QStringLiteral("geometry-%1-%2").arg(desk.width()).arg(desk.height());
++    const QByteArray geometryValue = config.readEntry(geometryKey, QByteArray());
 +#else
-+    QString geometryKey = QStringLiteral("geometry-") + QGuiApplication::platformName();
++    const auto platformName = QGuiApplication::platformName();
++    const QString geometryKey = QStringLiteral("geometry-") + platformName;
++    QByteArray geometryValue;
++    if (platformName == "xcb") {
++        QString geometryPrefKey = geometryKey + QStringLiteral("-%1").arg(qgetenv("DISPLAY"));
++        geometryValue = config.readEntry(geometryPrefKey, QByteArray());
++    }
++    if (geometryValue.isEmpty()) {
++        geometryValue = config.readEntry(geometryKey, QByteArray());
++    }
 +#endif
-+    if (!GeometryData::GeometryData(config.readEntry(geometryKey, QByteArray())).applyToWindow(window)) {
++    if (!GeometryData::GeometryData(geometryValue).applyToWindow(window)) {
 +        // if first time run, centre the window
 +        window->setFramePosition(QPoint((desk.width() - window->frameGeometry().width()) / 2,
 +                                      (desk.height() - window->frameGeometry().height()) / 2));
@@ -150,13 +166,12 @@ index d2f355c..2cdf801 100644
  static const char s_initialSizePropertyName[] = "_kconfig_initial_size";
  static const char s_initialScreenSizePropertyName[] = "_kconfig_initial_screen_size";
  
-@@ -85,3 +219,5 @@ void KWindowConfig::restoreWindowSize(QWindow *window, const KConfigGroup &confi
+@@ -85,3 +235,5 @@ void KWindowConfig::restoreWindowSize(QWindow *window, const KConfigGroup &confi
          window->setWindowState(Qt::WindowMaximized);
      }
  }
 +
 +#endif
-\ No newline at end of file
 diff --git src/gui/kwindowconfig.h src/gui/kwindowconfig.h
 index 48a8f3c..027e852 100644
 --- src/gui/kwindowconfig.h
@@ -165,7 +180,7 @@ index 48a8f3c..027e852 100644
  /*
     This file is part of the KDE libraries
     Copyright (c) 2012 Benjamin Port <benjamin.port@ben2367.fr>
-+   Copyright (c) 2015 René J.V. Bertin <rjvbertin@gmail.com>
++   Copyright (c) 2015,18 René J.V. Bertin <rjvbertin@gmail.com>
  
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -175,7 +190,7 @@ index 48a8f3c..027e852 100644
   * Saves the window's size dependent on the screen dimension either to the
 - * global or application config file.
 + * global or application config file. On MS Windows and Mac OS X this also
-+ * saves the window position.
++ * saves the window position as users will expect that on those platforms.
   *
   * @note the group must be set before calling
   *
@@ -185,7 +200,7 @@ index 48a8f3c..027e852 100644
   * Restores the dialog's size from the configuration according to
 - * the screen size.
 + * the screen size. On MS Windows and Mac OS X this also restores
-+ * the dialog position.
++ * the dialog position as users will expect that on those platforms.
   *
-  * @note the group must be set before calling
-  *
+  * If you're calling this from a constructor (for a mainwindow or dialog, for instance)
+  * you should first call winId() so that a QWindow is created, then you can call windowHandle()
