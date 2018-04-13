@@ -39,7 +39,7 @@ index 7b2e83876bd33fd8759c9172aeccc0149210138f..18a5c2be35c840c4d860063ca43cb85e
  
  install(FILES
 diff --git a/kdevplatform/language/duchain/topducontextdynamicdata.cpp b/kdevplatform/language/duchain/topducontextdynamicdata.cpp
-index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c940b502b 100644
+index 5a857fc657cc8276fb861b5478d5d79de92b07df..8abdf51607271552b9c0dcdf55e9de8afe6a8f9f 100644
 --- a/kdevplatform/language/duchain/topducontextdynamicdata.cpp
 +++ b/kdevplatform/language/duchain/topducontextdynamicdata.cpp
 @@ -24,6 +24,12 @@
@@ -87,7 +87,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
    const TopDUContextData* topData = reinterpret_cast<const TopDUContextData*>(data.constData());
    callback(topData);
  }
-@@ -209,6 +218,617 @@ Q_DECL_CONSTEXPR bool isSharedDataItem<ProblemPointer>()
+@@ -209,6 +218,636 @@ Q_DECL_CONSTEXPR bool isSharedDataItem<ProblemPointer>()
  
  }
  
@@ -95,7 +95,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +
 +QString TopDUContextDB::fileName() const
 +{
-+  return basePath() + "data.mdb" + ":#" + m_currentKey;
++  return basePath() + "data.mdb" + ":#" + QByteArray::number(m_currentIndex);
 +}
 +
 +QString TopDUContextDB::errorString() const
@@ -180,6 +180,43 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +  return QByteArray::number(idx);
 +}
 +
++// NB: @p idx must point to a variable that will not be outlived by the returned QByteArray!
++QByteArray TopDUContextDB::indexKey(uint* idx)
++{
++  return QByteArray::fromRawData(reinterpret_cast<const char*>(idx), sizeof(idx));
++}
++
++bool TopDUContextDB::migrateFromFile()
++{
++  TopDUContextFile migrateFile(m_currentIndex);
++  if (migrateFile.open(QIODevice::ReadOnly)) {
++    // should we care about empty files here?
++    qCDebug(LANGUAGE) << "Migrating" << migrateFile.fileName();
++    const QByteArray content = migrateFile.readAll();
++    migrateFile.close();
++    m_mode = 0;
++    m_currentValue = content;
++    m_currentLen = content.size();
++    // commit() will reset the key so we need to cache it
++    const QByteArray key = m_currentKey;
++    m_errorString.clear();
++    commit();
++    if (m_errorString.isEmpty()) {
++      // migration was successful, remove the file
++      QFile::remove(migrateFile.fileName());
++    }
++    m_errorString.clear();
++    // take care that we don't have to read the data back in
++    m_currentKey = key;
++    m_currentValue = content;
++    m_currentLen = content.size();
++    m_readCursor = 0;
++    m_mode = MDB_RDONLY;
++    return true;
++  }
++  return false;
++}
++
 +// TopDUContextLMDB : wraps the QFile API needed for TopDUContexts around LMDB
 +
 +static QString lmdbxx_exception_handler(const lmdb::error& e, const QString& operation)
@@ -218,12 +255,20 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +  }
 +  if (s_envExists) {
 +    m_currentKey = indexKey(topContextIndex);
++    m_currentIndex = topContextIndex;
++    // FIXME testing
++    auto test = new TopDUContextLevelDB(topContextIndex);
++    lvldbStore = reinterpret_cast<void*>(test);
 +  }
 +  // the remaining member vars are initialised elsewhere.
 +}
 +
 +TopDUContextLMDB::~TopDUContextLMDB()
 +{
++  // FIXME testing
++  if (lvldbStore) {
++    delete reinterpret_cast<TopDUContextLevelDB*>(lvldbStore);
++  }
 +  if (s_envExists) {
 +    // todo: use a refcounting scheme to know when to close lmdbEnv?
 +    try {
@@ -235,39 +280,12 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +  }
 +}
 +
-+bool TopDUContextDB::migrateFromFile()
-+{
-+  TopDUContextFile migrateFile(m_currentKey.toUInt());
-+  if (migrateFile.open(QIODevice::ReadOnly)) {
-+    // should we care about empty files here?
-+    qCDebug(LANGUAGE) << "Migrating" << migrateFile.fileName();
-+    const QByteArray content = migrateFile.readAll();
-+    migrateFile.close();
-+    m_mode = 0;
-+    m_currentValue = content;
-+    m_currentLen = content.size();
-+    // commit() will reset the key so we need to cache it
-+    const QByteArray key = m_currentKey;
-+    m_errorString.clear();
-+    commit();
-+    if (m_errorString.isEmpty()) {
-+      // migration was successful, remove the file
-+      QFile::remove(migrateFile.fileName());
-+    }
-+    m_errorString.clear();
-+    // take care that we don't have to read the data back in
-+    m_currentKey = key;
-+    m_currentValue = content;
-+    m_currentLen = content.size();
-+    m_readCursor = 0;
-+    m_mode = MDB_RDONLY;
-+    return true;
-+  }
-+  return false;
-+}
-+
 +bool TopDUContextLMDB::open(QIODevice::OpenMode mode)
 +{
++  // FIXME testing
++  if (lvldbStore) {
++    reinterpret_cast<TopDUContextLevelDB*>(lvldbStore)->open(mode);
++  }
 +  if (s_envExists && !m_currentKey.isEmpty()) {
 +    int lmMode = mode == QIODevice::ReadOnly ? MDB_RDONLY : 0;
 +    if (lmMode == MDB_RDONLY && !exists(m_currentKey)) {
@@ -275,7 +293,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +      if (migrateFromFile()) {
 +        return true;
 +      }
-+      m_errorString = QStringLiteral("No item") + m_currentKey + QStringLiteral("in database");
++      m_errorString = QStringLiteral("No item") + QByteArray::number(m_currentIndex) + QStringLiteral("in database");
 +      return false;
 +    }
 +    m_mode = lmMode;
@@ -298,7 +316,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +  if (s_envExists && m_mode != MDB_RDONLY) {
 +    if (m_currentValue.size() != m_currentLen) {
 +      // m_currentLen is the true size
-+      qCDebug(LANGUAGE) << "TopDUContextLMDB index" << m_currentKey << "internal size mismatch:"
++      qCDebug(LANGUAGE) << "TopDUContextLMDB index" << QByteArray::number(m_currentIndex) << "internal size mismatch:"
 +        << m_currentValue.size() << "vs" << m_currentLen;
 +    }
 +    // ensure that there's a NUL byte at the end
@@ -329,12 +347,14 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +            m_errorString = lmdbxx_exception_handler(e, QStringLiteral("growing mapsize to ") + QString::number(s_mapSize));
 +          }
 +        } else {
-+          m_errorString = lmdbxx_exception_handler(e, QStringLiteral("committing index ") + m_currentKey + " size " + QString::number(m_currentLen));
++          m_errorString = lmdbxx_exception_handler(e, QStringLiteral("committing index ")
++            + QByteArray::number(m_currentIndex) + " size " + QString::number(m_currentLen));
 +        }
 +      }
 +    }
 +    catch (const lmdb::error& e) {
-+      m_errorString = lmdbxx_exception_handler(e, QStringLiteral("committing index ") + m_currentKey + " size " + QString::number(m_currentLen));
++      m_errorString = lmdbxx_exception_handler(e, QStringLiteral("committing index ")
++        + QByteArray::number(m_currentIndex) + " size " + QString::number(m_currentLen));
 +    }
 +    m_currentKey.clear();
 +    m_currentValue.clear();
@@ -369,7 +389,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +        rtxn.abort();
 +      }
 +      catch (const lmdb::error& e) {
-+        m_errorString = lmdbxx_exception_handler(e, QStringLiteral("reading index ") + m_currentKey);
++        m_errorString = lmdbxx_exception_handler(e, QStringLiteral("reading index ") + QByteArray::number(m_currentIndex));
 +        return -1;
 +      }
 +    }
@@ -461,82 +481,96 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +// db.h in our own headerfile).
 +static leveldb::DB* levelDB = nullptr;
 +uint TopDUContextLevelDB::s_DbRefCount = 0;
-+static qint64 maxDbRefCount = 0;
 +
-+// sorting is useless in this application so don't waste time on it
-+class NonSortingComparator : public leveldb::Comparator {
++// our keys are uint values and stored as uint* in the original QByteArray m_currentKey
++// use that knowledge to avoid sorting lexographically.
++class QuickSortingComparator : public leveldb::Comparator {
 + public:
 +  // Comparison function that doesn't result in any sorting
-+  int Compare(const leveldb::Slice&, const leveldb::Slice&) const {
-+    return 0;
++  int Compare(const leveldb::Slice& a, const leveldb::Slice& b) const
++  {
++    const uint *ia = reinterpret_cast<const uint*>(a.data());
++    const uint *ib = reinterpret_cast<const uint*>(b.data());
++    return *ia - *ib;
 +  }
 +
-+  const char* Name() const { return "NonSortingComparator"; }
++  const char* Name() const { return "QuickSortingComparator"; }
 +  void FindShortestSeparator(std::string*, const leveldb::Slice&) const {}
 +  void FindShortSuccessor(std::string*) const {}
 +};
-+static NonSortingComparator leveldbComparator;
++static QuickSortingComparator leveldbComparator;
 +
 +TopDUContextLevelDB::TopDUContextLevelDB(uint topContextIndex)
 +{
-+  if (!s_DbRefCount && Q_LIKELY(QFileInfo(basePath()).isWritable())) {
++  if (!levelDB && Q_LIKELY(QFileInfo(basePath()).isWritable())) {
 +    leveldb::Options options;
 +    options.create_if_missing = true;
 +    options.comparator = &leveldbComparator;
-+    leveldb::Status status = leveldb::DB::Open(options, basePath().toStdString(), &levelDB);
-+    if (status.ok()) {
-+      s_DbRefCount += 1;
-+      leveldb::Iterator* it = levelDB->NewIterator(leveldb::ReadOptions());
-+      qint64 N = 0;
-+      for (it->SeekToFirst(); it->Valid(); it->Next()) {
-+        N += 1;
++    int attempts = 0;
++    do {
++      attempts += 1;
++      leveldb::Status status = leveldb::DB::Open(options, basePath().toStdString(), &levelDB);
++      if (!status.ok()) {
++        m_errorString = QStringLiteral("Error opening LevelDB database:") + QString::fromStdString(status.ToString());
++        qWarning() << Q_FUNC_INFO << m_errorString;
++        levelDB = nullptr;
++        if (status.IsInvalidArgument()) {
++          // retry opening a fresh store
++          leveldb::DestroyDB(basePath().toStdString(), options);
++        }
 +      }
-+      delete it;
-+      if (N) {
-+        qCWarning(LANGUAGE) << "LevelDB:" << levelDB << "contains" << N << "indices";
-+      }
-+    } else {
-+      m_errorString = QStringLiteral("Error opening LevelDB database:") + QString::fromStdString(status.ToString());
-+      qWarning() << Q_FUNC_INFO << m_errorString;
-+    }
++    } while (!levelDB && attempts < 2);
 +  }
-+  if (s_DbRefCount) {
-+    m_currentKey = indexKey(topContextIndex);
++  if (levelDB) {
++    m_currentIndex = topContextIndex;
++    m_currentKey = indexKey(&m_currentIndex);
 +    s_DbRefCount += 1;
-+    if (s_DbRefCount > maxDbRefCount) {
-+      maxDbRefCount = s_DbRefCount;
-+    }
 +  }
 +  // the remaining member vars are initialised elsewhere.
 +}
 +
 +TopDUContextLevelDB::~TopDUContextLevelDB()
 +{
-+  s_DbRefCount -= 1;
-+  if (s_DbRefCount <= 0 && levelDB) {
-+//     qWarning() << Q_FUNC_INFO << "Deleting" << levelDB;
-+    delete levelDB;
-+    levelDB = nullptr;
++  if (levelDB) {
++    s_DbRefCount -= 1;
++    if (s_DbRefCount <= 0) {
++      // optimisation: don't delete the global DB handle; too many TopDUContextLevelDB
++      // instances are created too frequently that are deleted immediately after a
++      // single use.
++//       delete levelDB;
++//       levelDB = nullptr;
++      s_DbRefCount = 0;
++    }
++  } else {
 +    s_DbRefCount = 0;
 +  }
 +}
 +
 +__attribute__((destructor)) int atLibClose()
 +{
-+  std::fprintf(stderr, "levelDB maxDbRefCount=%lld\n", maxDbRefCount);
++  leveldb::Iterator* it = levelDB->NewIterator(leveldb::ReadOptions());
++  qint64 N = 0;
++  for (it->SeekToFirst(); it->Valid(); it->Next()) {
++    N += 1;
++  }
++  delete it;
++  if (N) {
++    std::fprintf(stderr, "LevelDB %p has %lld indices\n", levelDB, N);
++  }
++  delete levelDB;
 +  return 0;
 +}
 +
 +bool TopDUContextLevelDB::open(QIODevice::OpenMode mode)
 +{
-+  if (s_DbRefCount && !m_currentKey.isEmpty()) {
++  if (levelDB && !m_currentKey.isEmpty()) {
 +    int lmMode = mode == QIODevice::ReadOnly ? MDB_RDONLY : 0;
 +    if (lmMode == MDB_RDONLY && !exists(m_currentKey)) {
 +      // migration: see if the index file exists
 +      if (migrateFromFile()) {
 +        return true;
 +      }
-+      m_errorString = QStringLiteral("No item") + m_currentKey + QStringLiteral("in database");
++      m_errorString = QStringLiteral("No item") + QByteArray::number(m_currentIndex) + QStringLiteral("in database");
 +      return false;
 +    }
 +    m_mode = lmMode;
@@ -552,10 +586,10 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +
 +void TopDUContextLevelDB::commit()
 +{
-+  if (s_DbRefCount && m_mode != MDB_RDONLY) {
++  if (levelDB && m_mode != MDB_RDONLY) {
 +    if (m_currentValue.size() != m_currentLen) {
 +      // m_currentLen is the true size
-+      qCDebug(LANGUAGE) << "TopDUContextLevelDB index" << m_currentKey << "internal size mismatch:"
++      qCDebug(LANGUAGE) << "TopDUContextLevelDB index" << QByteArray::number(m_currentIndex) << "internal size mismatch:"
 +        << m_currentValue.size() << "vs" << m_currentLen;
 +    }
 +    // ensure that there's a NUL byte at the end
@@ -563,17 +597,18 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +      m_currentValue.append('\0');
 +    }
 +    leveldb::Status status;
++    leveldb::Slice key(m_currentKey.constData(), m_currentKey.size());
 +    leveldb::Slice value(m_currentValue.constData(), m_currentLen);
 +    try {
-+      status = levelDB->Put(leveldb::WriteOptions(), m_currentKey.toStdString(), value);
++      status = levelDB->Put(leveldb::WriteOptions(), key, value);
 +    }
 +    catch (const std::exception& e) {
-+        m_errorString = leveldb_exception_handler(e, QStringLiteral("committing value for ") + m_currentKey);
++        m_errorString = leveldb_exception_handler(e, QStringLiteral("committing value for ") + QByteArray::number(m_currentIndex));
 +        qCWarning(LANGUAGE) << m_errorString;
 +    }
 +    if (!status.ok()) {
 +      m_errorString = QStringLiteral("Error committing index ")
-+        + m_currentKey + " size " + QString::number(m_currentLen)
++        + QByteArray::number(m_currentIndex) + " size " + QString::number(m_currentLen)
 +        + QStringLiteral(":") + QString::fromStdString(status.ToString());
 +      qWarning() << Q_FUNC_INFO << m_errorString;
 +    }
@@ -591,28 +626,10 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +// and do NOT reset m_currentValue
 +qint64 TopDUContextLevelDB::read(char* data, qint64 maxSize)
 +{
-+  if (s_DbRefCount && !m_currentKey.isEmpty() && m_mode == MDB_RDONLY) {
++  if (levelDB && !m_currentKey.isEmpty() && m_mode == MDB_RDONLY) {
 +    if (m_currentValue.isEmpty()) {
 +      // read the key value from storage into cache
-+      try {
-+        auto rtxn = lmdb::txn::begin(lmdbEnv, nullptr, MDB_RDONLY);
-+        auto dbi = lmdb::dbi::open(rtxn, nullptr);
-+        auto cursor = lmdb::cursor::open(rtxn, dbi);
-+        lmdb::val key(m_currentKey.constData(), m_currentKey.size());
-+        lmdb::val val{};
-+        bool found = cursor.get(key, val, MDB_SET);
-+        if (found) {
-+          m_currentValue = QByteArray::fromRawData(val.data(), val.size());
-+          m_currentLen = m_currentValue.size();
-+          m_readCursor = 0;
-+        }
-+        cursor.close();
-+        rtxn.abort();
-+      }
-+      catch (const lmdb::error& e) {
-+        m_errorString = lmdbxx_exception_handler(e, QStringLiteral("reading index ") + m_currentKey);
-+        return -1;
-+      }
++      // TODO
 +    }
 +    if (m_readCursor >= 0 && m_readCursor < m_currentLen) {
 +      qint64 rlen = m_currentLen - m_readCursor;
@@ -646,9 +663,10 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +
 +bool TopDUContextLevelDB::exists(const QByteArray& key)
 +{
-+  if (s_DbRefCount) {
++  if (levelDB) {
 +    std::string value;
-+    leveldb::Status status = levelDB->Get(leveldb::ReadOptions(), key.toStdString(), &value);
++    leveldb::Slice k(key.constData(), key.size());
++    leveldb::Status status = levelDB->Get(leveldb::ReadOptions(), k, &value);
 +    if (!status.ok() && !status.IsNotFound()) {
 +      qCWarning(LANGUAGE) << QStringLiteral("Error checking for index") + key
 +        + QStringLiteral(":") + QString::fromStdString(status.ToString());
@@ -661,14 +679,15 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +
 +bool TopDUContextLevelDB::exists(uint topContextIndex)
 +{
-+  return exists(indexKey(topContextIndex));
++  return exists(indexKey(&topContextIndex));
 +}
 +
 +bool TopDUContextLevelDB::remove(uint topContextIndex)
 +{
-+  if (s_DbRefCount) {
-+    const auto key = indexKey(topContextIndex);
-+    leveldb::Status status = levelDB->Delete(leveldb::WriteOptions(), key.toStdString());
++  if (levelDB) {
++    const auto key = indexKey(&topContextIndex);
++    leveldb::Slice k(key.constData(), key.size());
++    leveldb::Status status = levelDB->Delete(leveldb::WriteOptions(), k);
 +    if (!status.ok()) {
 +      qCWarning(LANGUAGE) << QStringLiteral("Error removing index %1").arg(topContextIndex)
 +        + QStringLiteral(":") + QString::fromStdString(status.ToString());
@@ -705,7 +724,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
  //BEGIN DUChainItemStorage
  
  template<class Item>
-@@ -407,7 +1027,7 @@ Item TopDUContextDynamicData::DUChainItemStorage<Item>::getItemForIndex(uint ind
+@@ -407,7 +1046,7 @@ Item TopDUContextDynamicData::DUChainItemStorage<Item>::getItemForIndex(uint ind
                                      "Potentially, the context has been deleted without deleting its children.");
      item->rebuildDynamicData(parent, index);
    } else {
@@ -714,7 +733,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
    }
  
    return item;
-@@ -424,27 +1044,27 @@ void TopDUContextDynamicData::DUChainItemStorage<Item>::deleteOnDisk()
+@@ -424,27 +1063,27 @@ void TopDUContextDynamicData::DUChainItemStorage<Item>::deleteOnDisk()
  }
  
  template<class Item>
@@ -748,7 +767,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
  }
  
  //END DUChainItemStorage
-@@ -495,7 +1115,7 @@ void KDevelop::TopDUContextDynamicData::unmap() {
+@@ -495,7 +1134,7 @@ void KDevelop::TopDUContextDynamicData::unmap() {
  
  bool TopDUContextDynamicData::fileExists(uint topContextIndex)
  {
@@ -757,7 +776,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
  }
  
  QList<IndexedDUContext> TopDUContextDynamicData::loadImporters(uint topContextIndex) {
-@@ -537,63 +1157,63 @@ void TopDUContextDynamicData::loadData() const {
+@@ -537,63 +1176,63 @@ void TopDUContextDynamicData::loadData() const {
    Q_ASSERT(!m_dataLoaded);
    Q_ASSERT(m_data.isEmpty());
  
@@ -843,7 +862,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
        return nullptr;
      }
  
-@@ -630,7 +1250,7 @@ void TopDUContextDynamicData::deleteOnDisk() {
+@@ -630,7 +1269,7 @@ void TopDUContextDynamicData::deleteOnDisk() {
  
    m_onDisk = false;
  
@@ -852,7 +871,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
    Q_UNUSED(successfullyRemoved);
    Q_ASSERT(successfullyRemoved);
    qCDebug(LANGUAGE) << "deletion ready";
-@@ -713,32 +1333,45 @@ void TopDUContextDynamicData::store() {
+@@ -713,32 +1352,40 @@ void TopDUContextDynamicData::store() {
  
      QDir().mkpath(basePath());
  
@@ -861,11 +880,6 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
 +    if (Q_LIKELY(QFileInfo(basePath()).isWritable())) {
 +      TopDUContextStore store(m_topContext->ownIndex());
 +      if(store.open(QIODevice::WriteOnly)) {
-+        // FIXME testing
-+        TopDUContextLevelDB test(m_topContext->ownIndex());
-+        if (test.open(QIODevice::WriteOnly)) {
-+            store.lvldbStore = reinterpret_cast<void*>(&test);
-+        }
  
 -      file.resize(0);
 +        store.resize(0);
@@ -916,7 +930,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..749d7397272d9a1a3e6a818c1781960c
  
  TopDUContextDynamicData::ItemDataInfo TopDUContextDynamicData::writeDataInfo(const ItemDataInfo& info, const DUChainBaseData* data, uint& totalDataOffset) {
 diff --git a/kdevplatform/language/duchain/topducontextdynamicdata.h b/kdevplatform/language/duchain/topducontextdynamicdata.h
-index 1212afc73cd56bcbdbeca45d699154b0181f79ad..8dacc2f202721cf6ef95181c09724c10a2504390 100644
+index 1212afc73cd56bcbdbeca45d699154b0181f79ad..d60e4f902a8356b5b9f4880dbf24da20f13b7e24 100644
 --- a/kdevplatform/language/duchain/topducontextdynamicdata.h
 +++ b/kdevplatform/language/duchain/topducontextdynamicdata.h
 @@ -21,10 +21,9 @@
@@ -931,7 +945,7 @@ index 1212afc73cd56bcbdbeca45d699154b0181f79ad..8dacc2f202721cf6ef95181c09724c10
  namespace KDevelop {
  
  class TopDUContext;
-@@ -34,6 +33,89 @@ class IndexedString;
+@@ -34,6 +33,91 @@ class IndexedString;
  class IndexedDUContext;
  class DUChainBaseData;
  
@@ -966,8 +980,10 @@ index 1212afc73cd56bcbdbeca45d699154b0181f79ad..8dacc2f202721cf6ef95181c09724c10
 +protected:
 +  static bool exists(const QByteArray&) { return false; };
 +  static QByteArray indexKey(uint idx);
++  static QByteArray indexKey(uint* idx);
 +  bool migrateFromFile();
 +  QByteArray m_currentKey;
++  uint m_currentIndex;
 +  QByteArray m_currentValue;
 +  qint64 m_currentLen, m_readCursor;
 +  int m_mode;
@@ -1021,7 +1037,7 @@ index 1212afc73cd56bcbdbeca45d699154b0181f79ad..8dacc2f202721cf6ef95181c09724c10
  ///This class contains dynamic data of a top-context, and also the repository that contains all the data within this top-context.
  class TopDUContextDynamicData {
    public:
-@@ -153,8 +235,8 @@ class TopDUContextDynamicData {
+@@ -153,8 +237,8 @@ class TopDUContextDynamicData {
        void deleteOnDisk();
        bool isItemForIndexLoaded(uint index) const;
  
@@ -1032,7 +1048,7 @@ index 1212afc73cd56bcbdbeca45d699154b0181f79ad..8dacc2f202721cf6ef95181c09724c10
  
        //May contain zero items if they were deleted
        mutable QVector<Item> items;
-@@ -174,7 +256,7 @@ class TopDUContextDynamicData {
+@@ -174,7 +258,7 @@ class TopDUContextDynamicData {
      bool m_onDisk;
      mutable bool m_dataLoaded;
  
