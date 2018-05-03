@@ -54,11 +54,22 @@ index 7b2e83876b..26c5daa6cd 100644
  install(FILES
      assistant/renameaction.h
 diff --git a/kdevplatform/language/duchain/topducontextdynamicdata.cpp b/kdevplatform/language/duchain/topducontextdynamicdata.cpp
-index 5a857fc657..809848e7f1 100644
+index 5a857fc657cc8276fb861b5478d5d79de92b07df..afa566dfb32071897f37833a65f4dbe44e93278a 100644
 --- a/kdevplatform/language/duchain/topducontextdynamicdata.cpp
 +++ b/kdevplatform/language/duchain/topducontextdynamicdata.cpp
-@@ -39,7 +41,10 @@
+@@ -18,6 +18,7 @@
+    Boston, MA 02110-1301, USA.
+ */
+ 
++#include "topducontextdynamicdata_p.h"
+ #include "topducontextdynamicdata.h"
+ 
+ #include <typeinfo>
+@@ -37,9 +38,13 @@
+ #include <debug.h>
+ 
  //#define DEBUG_DATA_INFO
++#include <QElapsedTimer>
  
  //This might be problematic on some systems, because really many mmaps are created
 +#if defined(KDEV_TOPCONTEXTS_USE_FILES) && !defined(KDEV_TOPCONTEXTS_DONT_MMAP)
@@ -388,13 +399,16 @@ index 5a857fc657..809848e7f1 100644
    //Check if something has changed. If nothing has changed, don't store to disk.
    bool contentDataChanged = hasChanged();
    if (!contentDataChanged) {
-@@ -713,32 +819,40 @@ void TopDUContextDynamicData::store() {
+@@ -713,32 +819,55 @@ void TopDUContextDynamicData::store() {
  
      QDir().mkpath(basePath());
  
 -    QFile file(filePath());
 -    if(file.open(QIODevice::WriteOnly)) {
++    QElapsedTimer timer;
++    qint64 nBytes = 0;
 +    if (Q_LIKELY(QFileInfo(basePath()).isWritable())) {
++      timer.start();
 +      TopDUContextStore store(m_topContext->ownIndex());
 +      if(store.open(QIODevice::WriteOnly)) {
  
@@ -425,6 +439,7 @@ index 5a857fc657..809848e7f1 100644
  
 -      if (file.size() == 0) {
 -        qCWarning(LANGUAGE) << "Saving zero size top ducontext data";
++        nBytes = store.size();
 +        if (store.size() == 0) {
 +          qCWarning(LANGUAGE) << "Saving zero size top ducontext data";
 +        }
@@ -441,13 +456,24 @@ index 5a857fc657..809848e7f1 100644
 +        qCWarning(LANGUAGE) << "Topcontexts directory" << basePath() << "is not writable, topcontext files won't be stored.";
 +        warned = true;
 +      }
++    }
++    if (timer.isValid()) {
++      auto elapsed = timer.elapsed();
++      static quint64 totalBytes = 0;
++      static double totalElapsed = 0.0;
++      totalBytes += nBytes;
++      totalElapsed += elapsed / 1000.0;
++      if (totalBytes && totalElapsed >= 0.5) {
++        qCInfo(LANGUAGE) << "Stored" << totalBytes << "topcontext bytes at" << totalBytes / totalElapsed << "bytes/second";
++        totalBytes = 0, totalElapsed = 0.0;
++      }
      }
 -//   qCDebug(LANGUAGE) << "stored" << m_topContext->url().str() << m_topContext->ownIndex() << "import-count:" << m_topContext->importedParentContexts().size();
  }
  
  TopDUContextDynamicData::ItemDataInfo TopDUContextDynamicData::writeDataInfo(const ItemDataInfo& info, const DUChainBaseData* data, uint& totalDataOffset) {
 diff --git a/kdevplatform/language/duchain/topducontextdynamicdata.h b/kdevplatform/language/duchain/topducontextdynamicdata.h
-index 1212afc73c..9873c05a38 100644
+index 1212afc73cd56bcbdbeca45d699154b0181f79ad..870e8fc242c8a6d22671141e7c96a1b5c614ddab 100644
 --- a/kdevplatform/language/duchain/topducontextdynamicdata.h
 +++ b/kdevplatform/language/duchain/topducontextdynamicdata.h
 @@ -21,10 +21,9 @@
@@ -462,133 +488,10 @@ index 1212afc73c..9873c05a38 100644
  namespace KDevelop {
  
  class TopDUContext;
-@@ -34,6 +33,139 @@ class IndexedString;
+@@ -34,6 +33,18 @@ class IndexedString;
  class IndexedDUContext;
  class DUChainBaseData;
  
-+// #define KDEV_TOPCONTEXTS_USE_FILES
-+// #define KDEV_TOPCONTEXTS_USE_LMDB
-+// #define KDEV_TOPCONTEXTS_USE_LEVELDB
-+#define KDEV_TOPCONTEXTS_USE_KYOTO
-+
-+// thin wrapper around QFile, implementing the default TopDUContext
-+// storage mechanism but also used for migration purposes in the
-+// database stores.
-+class TopDUContextFile : public QFile
-+{
-+public:
-+    TopDUContextFile(uint topContextIndex);
-+    void commit();
-+    static bool exists(uint topContextIndex);
-+    static bool remove(uint topContextIndex);
-+};
-+
-+#if defined(KDEV_TOPCONTEXTS_USE_LMDB) || defined(KDEV_TOPCONTEXTS_USE_LEVELDB) || defined(KDEV_TOPCONTEXTS_USE_KYOTO)
-+class TopDUContextDB
-+{
-+public:
-+  virtual ~TopDUContextDB() {};
-+  virtual bool open(QIODevice::OpenMode mode) = 0;
-+  virtual void commit() = 0;
-+  bool resize(qint64);
-+  qint64 write(const char* data, qint64 len);
-+  qint64 read(char* data, qint64 maxSize);
-+  QByteArray read(qint64 maxSize);
-+  QByteArray readAll();
-+  qint64 pos() const;
-+  bool seek(qint64 pos);
-+  qint64 size();
-+  QString errorString() const;
-+  QString fileName() const;
-+  static bool exists(uint) { return false; };
-+  static bool remove(uint) { return false; };
-+
-+protected:
-+  bool open(QIODevice::OpenMode mode, const QString &backendName);
-+  virtual bool getCurrentKeyValue() = 0;
-+  virtual bool isValid() = 0;
-+  virtual bool currentKeyExists() = 0;
-+  static bool exists(const QByteArray&) { return false; };
-+  static QByteArray indexKey(uint idx);
-+  static QByteArray indexKey(uint* idx);
-+  bool migrateFromFile();
-+  QByteArray m_currentKey;
-+  uint m_currentIndex;
-+  QByteArray m_currentValue;
-+  qint64 m_currentLen, m_readCursor;
-+  int m_mode;
-+  QString m_errorString;
-+#ifdef KDEV_TOPCONTEXTS_DB_TESTING
-+public:
-+  void* lvldbStore = nullptr;
-+  void* kyodbStore = nullptr;
-+#endif
-+};
-+#endif
-+
-+#ifdef KDEV_TOPCONTEXTS_USE_LMDB
-+class TopDUContextLMDB : public TopDUContextDB
-+{
-+public:
-+  TopDUContextLMDB(uint topContextIndex);
-+  virtual ~TopDUContextLMDB();
-+  bool open(QIODevice::OpenMode mode) override;
-+  void commit() override;
-+  QString fileName() const;
-+  static bool exists(uint topContextIndex);
-+  static bool remove(uint topContextIndex);
-+
-+protected:
-+  virtual bool getCurrentKeyValue() override;
-+  virtual bool isValid() override;
-+  virtual bool currentKeyExists() override;
-+  static bool exists(const QByteArray& key);
-+  static bool s_envExists;
-+  static size_t s_mapSize;
-+};
-+#endif
-+
-+#ifdef KDEV_TOPCONTEXTS_USE_LEVELDB
-+class TopDUContextLevelDB : public TopDUContextDB
-+{
-+public:
-+  TopDUContextLevelDB(uint topContextIndex);
-+  virtual ~TopDUContextLevelDB();
-+  bool open(QIODevice::OpenMode mode) override;
-+  void commit() override;
-+  static bool exists(uint topContextIndex);
-+  static bool remove(uint topContextIndex);
-+
-+protected:
-+  virtual bool getCurrentKeyValue() override;
-+  virtual bool isValid() override;
-+  virtual bool currentKeyExists() override;
-+  static bool exists(const QByteArray& key);
-+  static uint s_DbRefCount;
-+};
-+#endif
-+
-+#ifdef KDEV_TOPCONTEXTS_USE_KYOTO
-+class TopDUContextKyotoCabinet : public TopDUContextDB
-+{
-+public:
-+  TopDUContextKyotoCabinet(uint topContextIndex);
-+  virtual ~TopDUContextKyotoCabinet();
-+  bool open(QIODevice::OpenMode mode) override;
-+  void commit() override;
-+  QString fileName() const;
-+  static bool exists(uint topContextIndex);
-+  static bool remove(uint topContextIndex);
-+
-+protected:
-+  virtual bool getCurrentKeyValue() override;
-+  virtual bool isValid() override;
-+  virtual bool currentKeyExists() override;
-+  static bool exists(const QByteArray& key);
-+  static uint s_DbRefCount;
-+};
-+#endif
-+
 +#ifdef KDEV_TOPCONTEXTS_USE_FILES
 +using TopDUContextStore = TopDUContextFile;
 +#elif defined(KDEV_TOPCONTEXTS_USE_LMDB)
@@ -597,12 +500,14 @@ index 1212afc73c..9873c05a38 100644
 +using TopDUContextStore = TopDUContextLevelDB;
 +#elif defined(KDEV_TOPCONTEXTS_USE_KYOTO)
 +using TopDUContextStore = TopDUContextKyotoCabinet;
++#else
++class TopDUContextStore;
 +#endif
 +
  ///This class contains dynamic data of a top-context, and also the repository that contains all the data within this top-context.
  class TopDUContextDynamicData {
    public:
-@@ -118,6 +250,9 @@ class TopDUContextDynamicData {
+@@ -118,6 +129,9 @@ class TopDUContextDynamicData {
      uint position;
    };
  
@@ -612,7 +517,7 @@ index 1212afc73c..9873c05a38 100644
    private:
      bool hasChanged() const;
  
-@@ -153,8 +288,8 @@ class TopDUContextDynamicData {
+@@ -153,8 +167,8 @@ class TopDUContextDynamicData {
        void deleteOnDisk();
        bool isItemForIndexLoaded(uint index) const;
  
@@ -623,7 +528,7 @@ index 1212afc73c..9873c05a38 100644
  
        //May contain zero items if they were deleted
        mutable QVector<Item> items;
-@@ -174,7 +309,7 @@ class TopDUContextDynamicData {
+@@ -174,7 +188,7 @@ class TopDUContextDynamicData {
      bool m_onDisk;
      mutable bool m_dataLoaded;
  
@@ -634,10 +539,10 @@ index 1212afc73c..9873c05a38 100644
      mutable bool m_itemRetrievalForbidden;
 diff --git a/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp b/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp
 new file mode 100644
-index 0000000000..2bb1e25aa5
+index 0000000000000000000000000000000000000000..943db3500e9347b8565b76679900eeb83ea56314
 --- /dev/null
 +++ b/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp
-@@ -0,0 +1,1014 @@
+@@ -0,0 +1,1011 @@
 +/* This  is part of KDevelop
 +
 +   Copyright 2018 R.J.V. Bertin <rjvbertin@gmail.com>
@@ -657,20 +562,17 @@ index 0000000000..2bb1e25aa5
 +   Boston, MA 02110-1301, USA.
 +*/
 +
-+// #define KDEV_TOPCONTEXTS_DB_TESTING
-+
++#include "topducontextdynamicdata_p.h"
 +#include "topducontextdynamicdata.h"
 +
-+#include <QFile>
 +#include <QFileInfo>
-+#include <QByteArray>
 +
 +#ifndef KDEV_TOPCONTEXTS_USE_FILES
-+// #ifdef KDEV_TOPCONTEXTS_USE_LMDB
++#ifdef KDEV_TOPCONTEXTS_USE_LMDB
 +#include <lmdb++.h>
-+// #else
-+// #define MDB_RDONLY 0x20000
-+// #endif
++#else
++#define MDB_RDONLY 0x20000
++#endif
 +#ifdef KDEV_TOPCONTEXTS_USE_LEVELDB
 +#include <leveldb/db.h>
 +#include <leveldb/comparator.h>
@@ -1652,3 +1554,161 @@ index 0000000000..2bb1e25aa5
 +}
 +
 +// kate: indent-width 2; tab-width 2;
+diff --git a/kdevplatform/language/duchain/topducontextdynamicdata_p.h b/kdevplatform/language/duchain/topducontextdynamicdata_p.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..4b4653444cd08e484a09f2c3ed9f5773a2ee7d7c
+--- /dev/null
++++ b/kdevplatform/language/duchain/topducontextdynamicdata_p.h
+@@ -0,0 +1,152 @@
++/* This is part of KDevelop
++   Copyright 2018 R.J.V. Bertin <rjvbertin@gmail.com>
++
++   This library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU Library General Public
++   License version 2 as published by the Free Software Foundation.
++
++   This library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++   Library General Public License for more details.
++
++   You should have received a copy of the GNU Library General Public License
++   along with this library; see the file COPYING.LIB.  If not, write to
++   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++   Boston, MA 02110-1301, USA.
++*/
++
++#ifndef KDEVPLATFORM_TOPDUCONTEXTDYNAMICDATA_P_H
++#define KDEVPLATFORM_TOPDUCONTEXTDYNAMICDATA_P_H
++
++#include <QByteArray>
++#include <QFile>
++
++namespace KDevelop {
++
++// #define KDEV_TOPCONTEXTS_DB_TESTING
++// #define KDEV_TOPCONTEXTS_USE_FILES
++// #define KDEV_TOPCONTEXTS_USE_LMDB
++// #define KDEV_TOPCONTEXTS_USE_LEVELDB
++#define KDEV_TOPCONTEXTS_USE_KYOTO
++
++// thin wrapper around QFile, implementing the default TopDUContext
++// storage mechanism but also used for migration purposes in the
++// database stores.
++class TopDUContextFile : public QFile
++{
++public:
++    TopDUContextFile(uint topContextIndex);
++    void commit();
++    static bool exists(uint topContextIndex);
++    static bool remove(uint topContextIndex);
++};
++
++#if defined(KDEV_TOPCONTEXTS_USE_LMDB) || defined(KDEV_TOPCONTEXTS_USE_LEVELDB) || defined(KDEV_TOPCONTEXTS_USE_KYOTO)
++class TopDUContextDB
++{
++public:
++  virtual ~TopDUContextDB() {};
++  virtual bool open(QIODevice::OpenMode mode) = 0;
++  virtual void commit() = 0;
++  bool resize(qint64);
++  qint64 write(const char* data, qint64 len);
++  qint64 read(char* data, qint64 maxSize);
++  QByteArray read(qint64 maxSize);
++  QByteArray readAll();
++  qint64 pos() const;
++  bool seek(qint64 pos);
++  qint64 size();
++  QString errorString() const;
++  QString fileName() const;
++  static bool exists(uint) { return false; };
++  static bool remove(uint) { return false; };
++
++protected:
++  bool open(QIODevice::OpenMode mode, const QString &backendName);
++  virtual bool getCurrentKeyValue() = 0;
++  virtual bool isValid() = 0;
++  virtual bool currentKeyExists() = 0;
++  static bool exists(const QByteArray&) { return false; };
++  static QByteArray indexKey(uint idx);
++  static QByteArray indexKey(uint* idx);
++  bool migrateFromFile();
++  QByteArray m_currentKey;
++  uint m_currentIndex;
++  QByteArray m_currentValue;
++  qint64 m_currentLen, m_readCursor;
++  int m_mode;
++  QString m_errorString;
++#ifdef KDEV_TOPCONTEXTS_DB_TESTING
++public:
++  void* lvldbStore = nullptr;
++  void* kyodbStore = nullptr;
++#endif
++};
++#endif
++
++#ifdef KDEV_TOPCONTEXTS_USE_LMDB
++class TopDUContextLMDB : public TopDUContextDB
++{
++public:
++  TopDUContextLMDB(uint topContextIndex);
++  virtual ~TopDUContextLMDB();
++  bool open(QIODevice::OpenMode mode) override;
++  void commit() override;
++  QString fileName() const;
++  static bool exists(uint topContextIndex);
++  static bool remove(uint topContextIndex);
++
++protected:
++  virtual bool getCurrentKeyValue() override;
++  virtual bool isValid() override;
++  virtual bool currentKeyExists() override;
++  static bool exists(const QByteArray& key);
++  static bool s_envExists;
++  static size_t s_mapSize;
++};
++#endif
++
++#ifdef KDEV_TOPCONTEXTS_USE_LEVELDB
++class TopDUContextLevelDB : public TopDUContextDB
++{
++public:
++  TopDUContextLevelDB(uint topContextIndex);
++  virtual ~TopDUContextLevelDB();
++  bool open(QIODevice::OpenMode mode) override;
++  void commit() override;
++  static bool exists(uint topContextIndex);
++  static bool remove(uint topContextIndex);
++
++protected:
++  virtual bool getCurrentKeyValue() override;
++  virtual bool isValid() override;
++  virtual bool currentKeyExists() override;
++  static bool exists(const QByteArray& key);
++  static uint s_DbRefCount;
++};
++#endif
++
++#ifdef KDEV_TOPCONTEXTS_USE_KYOTO
++class TopDUContextKyotoCabinet : public TopDUContextDB
++{
++public:
++  TopDUContextKyotoCabinet(uint topContextIndex);
++  virtual ~TopDUContextKyotoCabinet();
++  bool open(QIODevice::OpenMode mode) override;
++  void commit() override;
++  QString fileName() const;
++  static bool exists(uint topContextIndex);
++  static bool remove(uint topContextIndex);
++
++protected:
++  virtual bool getCurrentKeyValue() override;
++  virtual bool isValid() override;
++  virtual bool currentKeyExists() override;
++  static bool exists(const QByteArray& key);
++  static uint s_DbRefCount;
++};
++#endif
++
++}
++#endif
