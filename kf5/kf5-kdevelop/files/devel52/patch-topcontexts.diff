@@ -1,30 +1,32 @@
 diff --git a/kdevplatform/language/CMakeLists.txt b/kdevplatform/language/CMakeLists.txt
-index 7b2e83876b..26c5daa6cd 100644
+index 7b2e83876bd33fd8759c9172aeccc0149210138f..f263334f26d50ee0bc2e621c53f9ca484d0234ac 100644
 --- a/kdevplatform/language/CMakeLists.txt
 +++ b/kdevplatform/language/CMakeLists.txt
-@@ -6,6 +6,21 @@ include(CheckSymbolExists)
+@@ -6,6 +6,23 @@ include(CheckSymbolExists)
  check_include_file("malloc.h" HAVE_MALLOC_H)
  check_symbol_exists(malloc_trim "malloc.h" HAVE_MALLOC_TRIM)
  
++include(FindPkgConfig)
 +# find LMDB and lmdbxx
 +find_path(LMDBXX_INCLUDE_DIRS NAMES "lmdb++.h" HINTS "$ENV{LMDB_DIR}/include")
 +find_path(LMDB_INCLUDE_DIRS NAMES "lmdb.h" HINTS "$ENV{LMDB_DIR}/include")
-+find_library(LMDB_LIBRARIES NAMES lmdb HINTS $ENV{LMDB_DIR}/lib )
++find_library(LMDB_LIBRARIES NAMES lmdb HINTS $ENV{LMDB_DIR}/lib)
 +find_package_handle_standard_args(LMDB DEFAULT_MSG LMDB_INCLUDE_DIRS LMDB_LIBRARIES)
 +find_package_handle_standard_args(LMDBXX DEFAULT_MSG LMDBXX_INCLUDE_DIRS)
++pkg_check_modules(PKG_LZ4 liblz4 REQUIRED)
++find_package_handle_standard_args(LZ4 DEFAULT_MSG PKG_LZ4_INCLUDEDIR PKG_LZ4_LIBRARIES)
 +# # find LevelDB stuff
 +# find_path(LEVELDB_INCLUDE_DIRS NAMES "leveldb" HINTS "$ENV{LEVELDB_DIR}/include")
 +# find_library(LEVELDB_LIBRARIES NAMES leveldb HINTS $ENV{LEVELDB_DIR}/lib )
 +# find_package_handle_standard_args(LEVELDB DEFAULT_MSG LEVELDB_INCLUDE_DIRS LEVELDB_LIBRARIES)
 +# find KyotoCabinet stuff
-+include(FindPkgConfig)
 +pkg_check_modules(PKG_KYOTOCABINET kyotocabinet REQUIRED)
 +find_package_handle_standard_args(KYOTOCABINET DEFAULT_MSG PKG_KYOTOCABINET_INCLUDEDIR PKG_KYOTOCABINET_LIBRARIES)
 +
  if(BUILD_TESTING)
      add_subdirectory(highlighting/tests)
      add_subdirectory(duchain/tests)
-@@ -48,6 +63,7 @@ set(KDevPlatformLanguage_LIB_SRCS
+@@ -48,6 +65,7 @@ set(KDevPlatformLanguage_LIB_SRCS
      duchain/localindexeddeclaration.cpp
      duchain/topducontext.cpp
      duchain/topducontextdynamicdata.cpp
@@ -32,22 +34,22 @@ index 7b2e83876b..26c5daa6cd 100644
      duchain/topducontextutils.cpp
      duchain/functiondefinition.cpp
      duchain/declaration.cpp
-@@ -177,6 +193,10 @@ ki18n_wrap_ui(KDevPlatformLanguage_LIB_SRCS
+@@ -177,6 +195,10 @@ ki18n_wrap_ui(KDevPlatformLanguage_LIB_SRCS
  
  kdevplatform_add_library(KDevPlatformLanguage SOURCES ${KDevPlatformLanguage_LIB_SRCS})
  target_include_directories(KDevPlatformLanguage PRIVATE ${Boost_INCLUDE_DIRS})
-+target_include_directories(KDevPlatformLanguage PRIVATE ${LMDB_INCLUDE_DIRS} ${LMDBXX_INCLUDE_DIRS})
++target_include_directories(KDevPlatformLanguage PRIVATE ${LMDB_INCLUDE_DIRS} ${LMDBXX_INCLUDE_DIRS} ${PKG_LZ4_INCLUDEDIR})
 +# target_include_directories(KDevPlatformLanguage PRIVATE ${LEVELDB_INCLUDE_DIRS})
 +target_include_directories(KDevPlatformLanguage PRIVATE ${PKG_KYOTOCABINET_INCLUDEDIR})
 +kde_source_files_enable_exceptions(duchain/topducontextdynamicdata_p.cpp)
  target_link_libraries(KDevPlatformLanguage LINK_PUBLIC
          KF5::ThreadWeaver
          KDev::Interfaces
-@@ -191,6 +211,9 @@ LINK_PRIVATE
+@@ -191,6 +213,9 @@ LINK_PRIVATE
          KDev::Util
          KDev::Project
  )
-+target_link_libraries(KDevPlatformLanguage LINK_PRIVATE ${LMDB_LIBRARIES})
++target_link_libraries(KDevPlatformLanguage LINK_PRIVATE ${LMDB_LIBRARIES} ${PKG_LZ4_LIBRARIES})
 +# target_link_libraries(KDevPlatformLanguage LINK_PRIVATE ${LEVELDB_LIBRARIES})
 +target_link_libraries(KDevPlatformLanguage LINK_PRIVATE ${PKG_KYOTOCABINET_LIBRARIES})
  
@@ -69,10 +71,10 @@ index 7b8e50f415e9df16918c15cbbf0e58378f50d283..a598651e2b0e5bee32aba789f443712c
          LINK_LIBRARIES Qt5::Test KDev::Tests KDev::Language)
 diff --git a/kdevplatform/language/duchain/tests/test_topcontextstore.cpp b/kdevplatform/language/duchain/tests/test_topcontextstore.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..37a00c51e666556362a4bf6922d9bdb17cbfcb1b
+index 0000000000000000000000000000000000000000..080637e25a3eba829272d84624ad64169b4519cb
 --- /dev/null
 +++ b/kdevplatform/language/duchain/tests/test_topcontextstore.cpp
-@@ -0,0 +1,1915 @@
+@@ -0,0 +1,1926 @@
 +/*
 + * This file is part of KDevelop
 + *
@@ -94,7 +96,8 @@ index 0000000000000000000000000000000000000000..37a00c51e666556362a4bf6922d9bdb1
 + * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 + */
 +
-+// with LMDB, the store is about 1.1x larger than the length of the stored values
++// with LMDB, the store is about 1.1x larger than the length of the stored values (but
++// our LZ4 compression can reach as much as a 2x reduction in average value size).
 +// with KyotoCabinet-lzo, the store is about 1.76x smaller than the length of the stored values
 +
 +// timing results on Linux 4.14 running on an 1.6Ghz Intel N3150 and ZFSonLinux 0.7.6
@@ -143,27 +146,27 @@ index 0000000000000000000000000000000000000000..37a00c51e666556362a4bf6922d9bdb1
 +// PASS   : TestTopDUContextStore::cleanupTestCase()
 +// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 51921ms
 +// KDEV_TOPCONTEXTS_USE_LMDB:
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38459 from sample of length 38497
-+// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 28483969 total key bytes: 6000
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 8.176 seconds
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38436 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29003787 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 7.496 seconds
 +// PASS   : TestTopDUContextStore::benchTopContextStore()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.104 seconds
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.13 seconds
 +// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 5.494 seconds
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 5.556 seconds
 +// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
 +// PASS   : TestTopDUContextStore::cleanupTestCase()
-+// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 40078ms
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 39789ms
 +// ## idem, on NFS:
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38478 from sample of length 38497
-+// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 28616201 total key bytes: 6000
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 26.911 seconds
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38489 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29405755 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 25.161 seconds
 +// PASS   : TestTopDUContextStore::benchTopContextStore()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.036 seconds
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.102 seconds
 +// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 22.898 seconds
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 21.618 seconds
 +// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
 +// PASS   : TestTopDUContextStore::cleanupTestCase()
-+// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 114984ms
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 116657ms
 +// KDEV_TOPCONTEXTS_USE_KYOTO:
 +// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38467 from sample of length 38497
 +// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29759286 total key bytes: 6000
@@ -276,6 +279,9 @@ index 0000000000000000000000000000000000000000..37a00c51e666556362a4bf6922d9bdb1
 +    TestCore::shutdown();
 +}
 +
++extern unsigned char realDUData[];
++extern double realDUDataSize;
++
 +void TestTopDUContextStore::testTopContextStore_data()
 +{
 +    QTest::addColumn<uint>("key");
@@ -285,11 +291,20 @@ index 0000000000000000000000000000000000000000..37a00c51e666556362a4bf6922d9bdb1
 +    for (uint i = 0 ; i < benchKeys ; ++i) {
 +        TopDUContextStore writer(i);
 +        QByteArray data;
-+        uint size = qrand() * 32767.0 / RAND_MAX;
-+        data.resize(size);
-+        char *d = data.data();
-+        for (uint j = 0 ; j < size ; ++j) {
-+            d[j] = qrand() * 256.0 / RAND_MAX;
++        uint size;
++        if (i == 0) {
++          // 1st key/value pair will use the stored real data so that we can
++          // test our own LZ4 compression scheme in the LMDB backend (random
++          // values won't compress).
++          size = realDUDataSize;
++          data.setRawData(reinterpret_cast<char*>(realDUData), size);
++        } else {
++          size = qrand() * 32767.0 / RAND_MAX;
++          data.resize(size);
++          char *d = data.data();
++          for (uint j = 0 ; j < size ; ++j) {
++              d[j] = qrand() * 256.0 / RAND_MAX;
++          }
 +        }
 +        if (i < testKeys) {
 +            // we store all keys that will be used in the benchmark so the store will be primed
@@ -297,7 +312,7 @@ index 0000000000000000000000000000000000000000..37a00c51e666556362a4bf6922d9bdb1
 +            QTest::newRow("keyval") << i << data << data.size();
 +        }
 +        if (writer.open(QIODevice::WriteOnly)) {
-+            writer.write(d, size);
++            writer.write(data.constData(), data.size());
 +            writer.commit();
 +            const auto errString = writer.errorString();
 +            if (!errString.isEmpty() && errString != "Unknown error") {
@@ -339,8 +354,6 @@ index 0000000000000000000000000000000000000000..37a00c51e666556362a4bf6922d9bdb1
 +{
 +    uint maxSize = 0, totalSize = 0;
 +    benchValues.reserve(benchKeys);
-+    extern unsigned char realDUData[];
-+    extern double realDUDataSize;
 +    // subsample random strings from the real topcontext data
 +    // (always from the left, there should be no interest to
 +    // randomising the offset).
@@ -2433,10 +2446,10 @@ index 1212afc73cd56bcbdbeca45d699154b0181f79ad..af529be33c99bd53c233d3361ee09dda
      mutable bool m_itemRetrievalForbidden;
 diff --git a/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp b/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc27c314c46
+index 0000000000000000000000000000000000000000..bf9e2cb8baf4c5a56f9b8c7b34c459dd8eb5132d
 --- /dev/null
 +++ b/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp
-@@ -0,0 +1,976 @@
+@@ -0,0 +1,1035 @@
 +/* This  is part of KDevelop
 +
 +   Copyright 2018 R.J.V. Bertin <rjvbertin@gmail.com>
@@ -2464,6 +2477,8 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +#ifndef KDEV_TOPCONTEXTS_USE_FILES
 +#ifdef KDEV_TOPCONTEXTS_USE_LMDB
 +#include <lmdb++.h>
++// we roll our own compression
++#include <lz4.h>
 +#else
 +#define MDB_RDONLY 0x20000
 +#endif
@@ -2484,7 +2499,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +
 +#ifndef KDEV_TOPCONTEXTS_USE_FILES
 +
-+bool TopDUContextDB::open(QIODevice::OpenMode mode, const QString& backendName)
++bool TopDUContextDB::open(QIODevice::OpenMode mode, const QString &backendName)
 +{
 +  if (isValid() && !m_currentKey.isEmpty()) {
 +    int lmMode = mode == QIODevice::ReadOnly ? MDB_RDONLY : 0;
@@ -2522,7 +2537,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +  return m_mode != MDB_RDONLY;
 +}
 +
-+qint64 TopDUContextDB::write(const char* data, qint64 len)
++qint64 TopDUContextDB::write(const char *data, qint64 len)
 +{
 +  if (m_mode != MDB_RDONLY) {
 +    m_currentValue.append(QByteArray::fromRawData(data, len));
@@ -2538,7 +2553,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +// been returned.
 +// Special case: data==NULL and maxSize==-1; return the number of remaining bytes
 +// and do NOT reset m_currentValue
-+qint64 TopDUContextDB::read(char* data, qint64 maxSize)
++qint64 TopDUContextDB::read(char *data, qint64 maxSize)
 +{
 +  if (isValid() && !m_currentKey.isEmpty() && m_mode == MDB_RDONLY) {
 +    if (!getCurrentKeyValue()) {
@@ -2547,20 +2562,20 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +    if (m_readCursor >= 0 && m_readCursor < m_currentLen) {
 +      qint64 rlen = m_currentLen - m_readCursor;
 +      if (Q_LIKELY(maxSize >= 0)) {
-+          if (maxSize < rlen) {
-+              rlen = maxSize;
-+          }
-+          const char *val = m_currentValue.constData();
-+          memcpy(data, &val[m_readCursor], rlen);
-+          m_readCursor += rlen;
-+          if (m_readCursor >= m_currentLen) {
-+            // all read, clear the cache
-+            m_currentValue.clear();
-+            m_currentLen = 0;
-+            m_readCursor = -1;
-+          }
++        if (maxSize < rlen) {
++          rlen = maxSize;
++        }
++        const char *val = m_currentValue.constData();
++        memcpy(data, &val[m_readCursor], rlen);
++        m_readCursor += rlen;
++        if (m_readCursor >= m_currentLen) {
++          // all read, clear the cache
++          m_currentValue.clear();
++          m_currentLen = 0;
++          m_readCursor = -1;
++        }
 +      } else {
-+          // special case: don't update m_readCursor;
++        // special case: don't update m_readCursor;
 +      }
 +      return rlen;
 +    }
@@ -2594,7 +2609,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +      }
 +    } else {
 +      qCWarning(LANGUAGE) << Q_FUNC_INFO << "m_readCursor=" << m_readCursor << "readLen=" << readLen
-+        << "m_currentValue.size=" << m_currentValue.size();
++                          << "m_currentValue.size=" << m_currentValue.size();
 +      if (readLen == m_currentValue.size()) {
 +        // m_readCursor should have been 0!!!
 +        qCWarning(LANGUAGE) << "\tm_readCursor should have been 0!!";
@@ -2638,9 +2653,9 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +}
 +
 +// NB: @p idx must point to a variable that will not be outlived by the returned QByteArray!
-+QByteArray TopDUContextDB::indexKey(uint* idx)
++QByteArray TopDUContextDB::indexKey(uint *idx)
 +{
-+  return QByteArray::fromRawData(reinterpret_cast<const char*>(idx), sizeof(uint));
++  return QByteArray::fromRawData(reinterpret_cast<const char *>(idx), sizeof(uint));
 +}
 +
 +bool TopDUContextDB::migrateFromFile()
@@ -2677,7 +2692,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +#ifdef KDEV_TOPCONTEXTS_USE_LMDB
 +// TopDUContextLMDB : wraps the QFile API needed for TopDUContexts around LMDB
 +
-+static QString lmdbxx_exception_handler(const lmdb::error& e, const QString& operation)
++static QString lmdbxx_exception_handler(const lmdb::error &e, const QString &operation)
 +{
 +  const QString msg = QStringLiteral("LMDB exception in \"%1\": %2").arg(operation).arg(e.what());
 +  qCWarning(LANGUAGE) << msg;
@@ -2690,11 +2705,21 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +// there is exactly 1 topcontexts directory per session, so we can make do with a single
 +// global static LMDB env instance which is not exported at all (= no need to include
 +// lmdb.h and/or lmdbxx.h in our own headerfile).
-+static lmdb::env lmdbEnv{nullptr};
++static lmdb::env lmdbEnv {nullptr};
++void *TopDUContextLMDB::s_lz4State = nullptr;
 +bool TopDUContextLMDB::s_envExists = false;
 +uint TopDUContextLMDB::s_DbRefCount = 0;
 +// set the initial map size to 64Mb
 +size_t TopDUContextLMDB::s_mapSize = 1024UL * 1024UL * 64UL;
++static double compRatioSum = 0;
++static size_t compRatioN = 0;
++
++static void printCompRatio()
++{
++  if (compRatioN) {
++    fprintf(stderr, "average LZ4 compression ratio: %g\n", compRatioSum / compRatioN);
++  }
++}
 +
 +TopDUContextLMDB::TopDUContextLMDB(uint topContextIndex)
 +{
@@ -2708,10 +2733,11 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +        s_mapSize = stat.me_mapsize;
 +      }
 +      lmdbEnv.set_mapsize(s_mapSize);
++      s_lz4State = new char[LZ4_sizeofState()];
 +      s_envExists = true;
 +      qCDebug(LANGUAGE) << "lmdbEnv=" << lmdbEnv << "mapsize=" << stat.me_mapsize;
-+    }
-+    catch (const lmdb::error& e) {
++      atexit(printCompRatio);
++    } catch (const lmdb::error &e) {
 +      m_errorString = lmdbxx_exception_handler(e, QStringLiteral("database creation"));
 +    }
 +  }
@@ -2748,22 +2774,51 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +    if (m_currentValue.size() != m_currentLen) {
 +      // m_currentLen is the true size
 +      qCDebug(LANGUAGE) << "TopDUContextLMDB index" << QByteArray::number(m_currentIndex) << "internal size mismatch:"
-+        << m_currentValue.size() << "vs" << m_currentLen;
++                        << m_currentValue.size() << "vs" << m_currentLen;
 +    }
-+    // ensure that there's a NUL byte at the end (after the range we'll commit to the store)
-+    if (!m_currentValue.endsWith('\0')) {
-+      m_currentValue.append('\0');
++    char *data;
++    size_t dataLen = 0;
++    int lz4BufLen = m_currentLen > sizeof(qint64) ? LZ4_compressBound(m_currentLen) : 0;
++    lmdb::val value;
++    if (lz4BufLen) {
++      data = new char[lz4BufLen + sizeof(m_currentLen)];
++      // compress to an qint64-sized offset into the dest buffer; the original size will be stored in
++      // those first 64 bits.
++      dataLen = LZ4_compress_fast_extState(s_lz4State, m_currentValue.constData(), &data[sizeof(m_currentLen)],
++                                           m_currentLen, lz4BufLen, 1);
++      if (dataLen && dataLen + sizeof(qint64) < m_currentLen) {
++        union {
++          char *bytes;
++          qint64 *qint64Ptr;
++        } frame;
++        frame.bytes = data;
++        frame.qint64Ptr[0] = m_currentLen;
++        value = lmdb::val(data, dataLen + sizeof(m_currentLen));
++        compRatioSum += double(m_currentLen) / dataLen;
++        compRatioN += 1;
++      } else {
++        qCDebug(LANGUAGE) << "Index" << m_currentIndex << "compression failed or useless: m_currentLen=" << m_currentLen
++          << "compressedLen=" << dataLen << "LZ4_compressBound=" << lz4BufLen;
++        delete data;
++        dataLen = 0;
++        lz4BufLen = 0;
++      }
 +    }
++    if (!dataLen) {
++      value = lmdb::val(m_currentValue.constData(), m_currentLen);
++    }
++//     // ensure that there's a NUL byte at the end (after the range we'll commit to the store)
++//     if (!m_currentValue.endsWith('\0')) {
++//       m_currentValue.append('\0');
++//     }
 +    lmdb::val key(m_currentKey.constData(), m_currentKey.size());
-+    lmdb::val value(m_currentValue.constData(), m_currentLen);
 +    try {
 +      auto txn = lmdb::txn::begin(lmdbEnv);
 +      auto dbi = lmdb::dbi::open(txn, nullptr);
 +      try {
 +        lmdb::dbi_put(txn, dbi, key, value);
 +        txn.commit();
-+      }
-+      catch (const lmdb::error& e) {
++      } catch (const lmdb::error &e) {
 +        if (e.code() == MDB_MAP_FULL) {
 +          try {
 +            qCDebug(LANGUAGE) << "aborting LMDB write to grow mapsize";
@@ -2773,23 +2828,24 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +            qCDebug(LANGUAGE) << "\tgrowing mapsize to" << s_mapSize;
 +            lmdbEnv.set_mapsize(s_mapSize);
 +            commit();
-+          }
-+          catch (const lmdb::error& e) {
++          } catch (const lmdb::error &e) {
 +            m_errorString = lmdbxx_exception_handler(e, QStringLiteral("growing mapsize to ") + QString::number(s_mapSize));
 +          }
 +        } else {
 +          m_errorString = lmdbxx_exception_handler(e, QStringLiteral("committing index ")
-+            + QByteArray::number(m_currentIndex) + " size " + QString::number(m_currentLen));
++                          + QByteArray::number(m_currentIndex) + " size " + QString::number(m_currentLen));
 +        }
 +      }
-+    }
-+    catch (const lmdb::error& e) {
++    } catch (const lmdb::error &e) {
 +      m_errorString = lmdbxx_exception_handler(e, QStringLiteral("committing index ")
-+        + QByteArray::number(m_currentIndex) + " size " + QString::number(m_currentLen));
++                      + QByteArray::number(m_currentIndex) + " size " + QString::number(m_currentLen));
 +    }
 +    m_currentKey.clear();
 +    m_currentValue.clear();
 +    m_currentLen = 0;
++    if (lz4BufLen && data) {
++      delete data;
++    }
 +  }
 +}
 +
@@ -2798,8 +2854,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +  if (s_envExists && m_mode != MDB_RDONLY) {
 +    try {
 +      return mdb_env_sync(lmdbEnv, true) == MDB_SUCCESS;
-+    }
-+    catch (const lmdb::error& e) {
++    } catch (const lmdb::error &e) {
 +      m_errorString = lmdbxx_exception_handler(e, QStringLiteral("database flush"));
 +    }
 +  }
@@ -2818,17 +2873,39 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +      auto dbi = lmdb::dbi::open(rtxn, nullptr);
 +      auto cursor = lmdb::cursor::open(rtxn, dbi);
 +      lmdb::val key(m_currentKey.constData(), m_currentKey.size());
-+      lmdb::val val{};
++      lmdb::val val {};
 +      bool found = cursor.get(key, val, MDB_SET);
 +      if (found) {
-+        m_currentValue = QByteArray(val.data(), val.size());
-+        m_currentLen = m_currentValue.size();
++        bool isRaw = true;
++        if (val.size() > sizeof(qint64)) {
++          union {
++            char *bytes;
++            qint64 *qint64Ptr;
++          } frame;
++          frame.bytes = val.data();
++          qint64 orgSize = frame.qint64Ptr[0];
++          if (orgSize > 0) {
++            int compressedSize = val.size() - sizeof(qint64);
++            // size m_currentValue so decompression can go into the final destination directly
++            m_currentValue.resize(orgSize);
++            if (LZ4_decompress_safe(&frame.bytes[sizeof(qint64)], m_currentValue.data(), compressedSize, orgSize) == orgSize) {
++              isRaw = false;
++              m_currentLen = m_currentValue.size();
++            } else {
++//               qCDebug(LANGUAGE) << "Index" << m_currentIndex << "failed LZ4 decompression from size" << compressedSize << "to size" << orgSize;
++            }
++          }
++        }
++        if (isRaw) {
++//           qCDebug(LANGUAGE) << "Index" << m_currentIndex << "is uncompressed, size=" << val.size();
++          m_currentValue = QByteArray(val.data(), val.size());
++          m_currentLen = m_currentValue.size();
++        }
 +        m_readCursor = 0;
 +      }
 +      cursor.close();
 +      rtxn.abort();
-+    }
-+    catch (const lmdb::error& e) {
++    } catch (const lmdb::error &e) {
 +      m_errorString = lmdbxx_exception_handler(e, QStringLiteral("reading index ") + QByteArray::number(m_currentIndex));
 +      ret = false;
 +    }
@@ -2846,7 +2923,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +  return exists(m_currentKey);
 +}
 +
-+bool TopDUContextLMDB::exists(const QByteArray& key)
++bool TopDUContextLMDB::exists(const QByteArray &key)
 +{
 +  if (lmdbEnv.handle() != nullptr) {
 +    try {
@@ -2858,8 +2935,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +      cursor.close();
 +      rtxn.abort();
 +      return ret;
-+    }
-+    catch (const lmdb::error& e) {
++    } catch (const lmdb::error &e) {
 +      lmdbxx_exception_handler(e, QStringLiteral("checking for index") + key);
 +    }
 +  }
@@ -2880,7 +2956,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +{
 +  if (s_envExists) {
 +    const auto key = indexKey(topContextIndex);
-+    lmdb::val k{key.constData(), static_cast<size_t>(key.size())};
++    lmdb::val k {key.constData(), static_cast<size_t>(key.size())};
 +    try {
 +      auto txn = lmdb::txn::begin(lmdbEnv);
 +      auto dbi = lmdb::dbi::open(txn, nullptr);
@@ -2890,8 +2966,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +      // also remove the file if it (still) exists
 +      QFile::remove(TopDUContextDynamicData::pathForTopContext(topContextIndex));
 +      return ret;
-+    }
-+    catch (const lmdb::error& e) {
++    } catch (const lmdb::error &e) {
 +      lmdbxx_exception_handler(e, QStringLiteral("removing index %1").arg(topContextIndex));
 +    }
 +  }
@@ -2901,7 +2976,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +
 +#ifdef KDEV_TOPCONTEXTS_USE_LEVELDB
 +// LevelDB storage backend
-+static QString leveldb_exception_handler(const std::exception& e, const QString& operation)
++static QString leveldb_exception_handler(const std::exception &e, const QString &operation)
 +{
 +  const QString msg = QStringLiteral("LevelDB exception in \"%1\": %2").arg(operation).arg(e.what());
 +  qCWarning(LANGUAGE) << msg;
@@ -2913,19 +2988,23 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +
 +// our keys are uint values and stored as uint* in the original QByteArray m_currentKey
 +// use that knowledge to avoid sorting lexographically.
-+class QuickSortingComparator : public leveldb::Comparator {
-+ public:
++class QuickSortingComparator : public leveldb::Comparator
++{
++public:
 +  // Comparison function that doesn't result in any sorting
-+  int Compare(const leveldb::Slice& a, const leveldb::Slice& b) const
++  int Compare(const leveldb::Slice &a, const leveldb::Slice &b) const
 +  {
-+    const uint *ia = reinterpret_cast<const uint*>(a.data());
-+    const uint *ib = reinterpret_cast<const uint*>(b.data());
++    const uint *ia = reinterpret_cast<const uint *>(a.data());
++    const uint *ib = reinterpret_cast<const uint *>(b.data());
 +    return *ia - *ib;
 +  }
 +
-+  const char* Name() const { return "QuickSortingComparator"; }
-+  void FindShortestSeparator(std::string*, const leveldb::Slice&) const {}
-+  void FindShortSuccessor(std::string*) const {}
++  const char *Name() const
++  {
++    return "QuickSortingComparator";
++  }
++  void FindShortestSeparator(std::string *, const leveldb::Slice &) const {}
++  void FindShortSuccessor(std::string *) const {}
 +};
 +static QuickSortingComparator leveldbComparator;
 +
@@ -2933,7 +3012,8 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +// global static LevelDB instance which is not exported at all (= no need to include
 +// db.h in our own headerfile).
 +
-+class LevelDBHook {
++class LevelDBHook
++{
 +public:
 +  ~LevelDBHook()
 +  {
@@ -2963,16 +3043,16 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +    return status;
 +  }
 +
-+  inline leveldb::DB* instance()
++  inline leveldb::DB *instance()
 +  {
 +    return s_levelDB;
 +  }
 +
-+  static leveldb::DB* s_levelDB;
++  static leveldb::DB *s_levelDB;
 +};
 +static LevelDBHook levelDB;
 +
-+leveldb::DB* LevelDBHook::s_levelDB = nullptr;
++leveldb::DB *LevelDBHook::s_levelDB = nullptr;
 +uint TopDUContextLevelDB::s_DbRefCount = 0;
 +
 +TopDUContextLevelDB::TopDUContextLevelDB(uint topContextIndex)
@@ -3019,22 +3099,21 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +    if (m_currentValue.size() != m_currentLen) {
 +      // m_currentLen is the true size
 +      qCDebug(LANGUAGE) << "TopDUContextLevelDB index" << QByteArray::number(m_currentIndex) << "internal size mismatch:"
-+        << m_currentValue.size() << "vs" << m_currentLen;
++                        << m_currentValue.size() << "vs" << m_currentLen;
 +    }
 +    leveldb::Status status;
 +    leveldb::Slice key(m_currentKey.constData(), m_currentKey.size());
 +    leveldb::Slice value(m_currentValue.constData(), m_currentLen);
 +    try {
 +      status = levelDB.instance()->Put(leveldb::WriteOptions(), key, value);
-+    }
-+    catch (const std::exception& e) {
-+        m_errorString = leveldb_exception_handler(e, QStringLiteral("committing value for ") + QByteArray::number(m_currentIndex));
-+        qCWarning(LANGUAGE) << m_errorString;
++    } catch (const std::exception &e) {
++      m_errorString = leveldb_exception_handler(e, QStringLiteral("committing value for ") + QByteArray::number(m_currentIndex));
++      qCWarning(LANGUAGE) << m_errorString;
 +    }
 +    if (!status.ok()) {
 +      m_errorString = QStringLiteral("Error committing index ")
-+        + QByteArray::number(m_currentIndex) + " size " + QString::number(m_currentLen)
-+        + QStringLiteral(": ") + QString::fromStdString(status.ToString());
++                      + QByteArray::number(m_currentIndex) + " size " + QString::number(m_currentLen)
++                      + QStringLiteral(": ") + QString::fromStdString(status.ToString());
 +      qCWarning(LANGUAGE) << m_errorString;
 +    }
 +    m_currentKey.clear();
@@ -3049,10 +3128,9 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +    try {
 +      levelDB.instance()->CompactRange(nullptr, nullptr);
 +      return true;
-+    }
-+    catch (const std::exception& e) {
-+        m_errorString = leveldb_exception_handler(e, QStringLiteral("database flush (CompactRange)"));
-+        qCWarning(LANGUAGE) << m_errorString;
++    } catch (const std::exception &e) {
++      m_errorString = leveldb_exception_handler(e, QStringLiteral("database flush (CompactRange)"));
++      qCWarning(LANGUAGE) << m_errorString;
 +    }
 +  }
 +  return false;
@@ -3065,16 +3143,16 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +  bool ret = true;
 +  if (m_currentValue.isEmpty()) {
 +    // read the key value from storage into cache
-+      leveldb::Slice key(m_currentKey.constData(), m_currentKey.size());
-+      std::string value;
-+      leveldb::Status status = levelDB.instance()->Get(leveldb::ReadOptions(), key, &value);
-+      if (status.ok()) {
-+        m_currentValue = QByteArray(value.data(), value.size());
-+        m_currentLen = value.size();
-+        m_readCursor = 0;
-+      } else if (status.IsCorruption() || status.IsIOError() || status.IsNotSupportedError() || status.IsInvalidArgument()) {
-+        ret = false;
-+      }
++    leveldb::Slice key(m_currentKey.constData(), m_currentKey.size());
++    std::string value;
++    leveldb::Status status = levelDB.instance()->Get(leveldb::ReadOptions(), key, &value);
++    if (status.ok()) {
++      m_currentValue = QByteArray(value.data(), value.size());
++      m_currentLen = value.size();
++      m_readCursor = 0;
++    } else if (status.IsCorruption() || status.IsIOError() || status.IsNotSupportedError() || status.IsInvalidArgument()) {
++      ret = false;
++    }
 +  }
 +  return ret;
 +}
@@ -3089,7 +3167,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +  return exists(m_currentKey);
 +}
 +
-+bool TopDUContextLevelDB::exists(const QByteArray& key)
++bool TopDUContextLevelDB::exists(const QByteArray &key)
 +{
 +  if (levelDB.instance()) {
 +    std::string value;
@@ -3097,7 +3175,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +    leveldb::Status status = levelDB.instance()->Get(leveldb::ReadOptions(), k, &value);
 +    if (!status.ok() && !status.IsNotFound()) {
 +      qCWarning(LANGUAGE) << QStringLiteral("Error checking for index") + key
-+        + QStringLiteral(": ") + QString::fromStdString(status.ToString());
++                          + QStringLiteral(": ") + QString::fromStdString(status.ToString());
 +      return false;
 +    }
 +    return status.ok();
@@ -3118,7 +3196,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +    leveldb::Status status = levelDB.instance()->Delete(leveldb::WriteOptions(), k);
 +    if (!status.ok()) {
 +      qCWarning(LANGUAGE) << QStringLiteral("Error removing index %1").arg(topContextIndex)
-+        + QStringLiteral(": ") + QString::fromStdString(status.ToString());
++                          + QStringLiteral(": ") + QString::fromStdString(status.ToString());
 +      return false;
 +    }
 +    // also remove the file if it (still) exists
@@ -3133,7 +3211,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +#ifdef KDEV_TOPCONTEXTS_USE_KYOTO
 +using namespace kyotocabinet;
 +
-+static QString kyotocabinet_exception_handler(const std::exception& e, const QString& operation)
++static QString kyotocabinet_exception_handler(const std::exception &e, const QString &operation)
 +{
 +  const QString msg = QStringLiteral("KyotoCabinet exception in \"%1\": %2").arg(operation).arg(e.what());
 +  qCWarning(LANGUAGE) << msg;
@@ -3147,7 +3225,8 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +// global static KyotoCabinet instance anyway. Wrap it in a local class which is not exported at all
 +// (= no need to include kcpolydb.h in our own headerfile).
 +
-+class KyotoCabinetHook {
++class KyotoCabinetHook
++{
 +public:
 +  ~KyotoCabinetHook()
 +  {
@@ -3157,8 +3236,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +          qCWarning(LANGUAGE) << "Error closing KyotoCabinet database:" << errorString();
 +        }
 +        delete s_kyotoCab;
-+      }
-+      catch (const std::exception& e) {
++      } catch (const std::exception &e) {
 +        qCWarning(LANGUAGE) << kyotocabinet_exception_handler(e, QStringLiteral("closing cabinet.kch"));
 +        // don't delete s_kyotoCab if something went wrong closing the DB
 +      }
@@ -3167,7 +3245,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +
 +  static bool init()
 +  {
-+    s_kyotoCab= new PolyDB;
++    s_kyotoCab = new PolyDB;
 +    bool ok = false;
 +    s_errorString.clear();
 +    try {
@@ -3185,15 +3263,14 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +          flags = PolyDB::OWRITER | PolyDB::OTRUNCATE;
 +        }
 +      } while (!ok && attempts < 2);
-+    }
-+    catch (const std::exception& e) {
++    } catch (const std::exception &e) {
 +      s_errorString = kyotocabinet_exception_handler(e, QStringLiteral("opening cabinet.kch"));
 +      ok = false;
 +    }
 +    if (!ok) {
 +      if (s_errorString.isEmpty()) {
 +        s_errorString = QStringLiteral("Error opening KyotoCabinet database:")
-+          + errorString();
++                        + errorString();
 +      }
 +      delete s_kyotoCab;
 +      s_kyotoCab = nullptr;
@@ -3201,7 +3278,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +    return s_kyotoCab;
 +  }
 +
-+  inline PolyDB* instance()
++  inline PolyDB *instance()
 +  {
 +    return s_kyotoCab;
 +  }
@@ -3211,12 +3288,12 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +    return QString::fromStdString(s_kyotoCab->error().name());
 +  }
 +
-+  static PolyDB* s_kyotoCab;
++  static PolyDB *s_kyotoCab;
 +  static QString s_errorString;
 +};
 +static KyotoCabinetHook kyotoCabinet;
 +
-+PolyDB* KyotoCabinetHook::s_kyotoCab = nullptr;
++PolyDB *KyotoCabinetHook::s_kyotoCab = nullptr;
 +QString KyotoCabinetHook::s_errorString;
 +
 +uint TopDUContextKyotoCabinet::s_DbRefCount = 0;
@@ -3270,18 +3347,17 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +    if (m_currentValue.size() != m_currentLen) {
 +      // m_currentLen is the true size
 +      qCDebug(LANGUAGE) << "TopDUContextKyotoCabinet index" << QByteArray::number(m_currentIndex) << "internal size mismatch:"
-+        << m_currentValue.size() << "vs" << m_currentLen;
++                        << m_currentValue.size() << "vs" << m_currentLen;
 +    }
 +    try {
 +      if (!kyotoCabinet.instance()->set(m_currentKey.constData(), m_currentKey.size(),
-+          m_currentValue.constData(), m_currentLen)) {
++                                        m_currentValue.constData(), m_currentLen)) {
 +        m_errorString = QStringLiteral("Error committing index ")
-+          + QByteArray::number(m_currentIndex) + " size " + QString::number(m_currentLen)
-+          + QStringLiteral(": ") + kyotoCabinet.errorString();
++                        + QByteArray::number(m_currentIndex) + " size " + QString::number(m_currentLen)
++                        + QStringLiteral(": ") + kyotoCabinet.errorString();
 +        qCWarning(LANGUAGE) << m_errorString;
 +      }
-+    }
-+    catch (const std::exception& e) {
++    } catch (const std::exception &e) {
 +      m_errorString = kyotocabinet_exception_handler(e, QStringLiteral("committing value for ") + QByteArray::number(m_currentIndex));
 +      qCWarning(LANGUAGE) << m_errorString;
 +    }
@@ -3296,8 +3372,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +  if (isValid() && m_mode != MDB_RDONLY) {
 +    try {
 +      return kyotoCabinet.instance()->synchronize(true);
-+    }
-+    catch (const std::exception& e) {
++    } catch (const std::exception &e) {
 +      m_errorString = kyotocabinet_exception_handler(e, QStringLiteral("database flush"));
 +      qCWarning(LANGUAGE) << m_errorString;
 +    }
@@ -3314,7 +3389,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +    // read the key value from storage into cache
 +    size_t size;
 +    try {
-+      const char* value = kyotoCabinet.instance()->get(m_currentKey.constData(), m_currentKey.size(), &size);
++      const char *value = kyotoCabinet.instance()->get(m_currentKey.constData(), m_currentKey.size(), &size);
 +      if (value) {
 +        m_currentValue = QByteArray(value, size);
 +        m_currentLen = m_currentValue.size();
@@ -3323,8 +3398,7 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +      } else {
 +        qCWarning(LANGUAGE) << "read NULL for index" << m_currentIndex << "; exists=" << currentKeyExists();
 +      }
-+    }
-+    catch (const std::exception& e) {
++    } catch (const std::exception &e) {
 +      m_errorString = kyotocabinet_exception_handler(e, QStringLiteral("reading value for ") + QByteArray::number(m_currentIndex));
 +      qCWarning(LANGUAGE) << m_errorString;
 +      ret = false;
@@ -3343,18 +3417,17 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +  return exists(m_currentKey);
 +}
 +
-+bool TopDUContextKyotoCabinet::exists(const QByteArray& key)
++bool TopDUContextKyotoCabinet::exists(const QByteArray &key)
 +{
 +  if (kyotoCabinet.instance()) {
 +    try {
 +      bool found = kyotoCabinet.instance()->check(key.constData(), key.size()) >= 0;
 +      if (!found && kyotoCabinet.instance()->error().code() != BasicDB::Error::NOREC) {
 +        qCWarning(LANGUAGE) << QStringLiteral("Error checking for index") + key
-+          + QStringLiteral(": ") + kyotoCabinet.errorString();
++                            + QStringLiteral(": ") + kyotoCabinet.errorString();
 +      }
 +      return found;
-+    }
-+    catch (const std::exception& e) {
++    } catch (const std::exception &e) {
 +      qCWarning(LANGUAGE) << kyotocabinet_exception_handler(e, QStringLiteral("checking presence of ") + key);
 +    }
 +  }
@@ -3374,13 +3447,12 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +      bool ret = kyotoCabinet.instance()->remove(key.constData(), key.size());
 +      if (!ret) {
 +        qCWarning(LANGUAGE) << QStringLiteral("Error removing index %1").arg(topContextIndex)
-+          + QStringLiteral(": ") + kyotoCabinet.errorString();
++                            + QStringLiteral(": ") + kyotoCabinet.errorString();
 +      }
 +      // also remove the file if it (still) exists
 +      QFile::remove(TopDUContextDynamicData::pathForTopContext(topContextIndex));
 +      return ret;
-+    }
-+    catch (const std::exception& e) {
++    } catch (const std::exception &e) {
 +      qCWarning(LANGUAGE) << kyotocabinet_exception_handler(e, QStringLiteral("removing ") + QByteArray::number(topContextIndex));
 +    }
 +  }
@@ -3415,10 +3487,10 @@ index 0000000000000000000000000000000000000000..b5dcfed66183b19512b12f87700b4dc2
 +// kate: indent-width 2; tab-width 2;
 diff --git a/kdevplatform/language/duchain/topducontextdynamicdata_p.h b/kdevplatform/language/duchain/topducontextdynamicdata_p.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..03450d2696c30c25967a8578f044998099799860
+index 0000000000000000000000000000000000000000..cb7b48216467447741b0c9d0b6386f7bd76fbdab
 --- /dev/null
 +++ b/kdevplatform/language/duchain/topducontextdynamicdata_p.h
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,155 @@
 +/* This is part of KDevelop
 +   Copyright 2018 R.J.V. Bertin <rjvbertin@gmail.com>
 +
@@ -3522,6 +3594,7 @@ index 0000000000000000000000000000000000000000..03450d2696c30c25967a8578f0449980
 +  virtual bool isValid() override;
 +  virtual bool currentKeyExists() override;
 +  static bool exists(const QByteArray& key);
++  static void *s_lz4State;
 +  static size_t s_mapSize;
 +  static bool s_envExists;
 +  static uint s_DbRefCount;
