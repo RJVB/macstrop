@@ -2446,10 +2446,10 @@ index 1212afc73cd56bcbdbeca45d699154b0181f79ad..af529be33c99bd53c233d3361ee09dda
      mutable bool m_itemRetrievalForbidden;
 diff --git a/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp b/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..e928e709343fec998e73a44019c507dabd573c0f
+index 0000000000000000000000000000000000000000..ae17fa2ed66c6d72a9f3e6342100aa8f756523eb
 --- /dev/null
 +++ b/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp
-@@ -0,0 +1,1029 @@
+@@ -0,0 +1,1030 @@
 +/* This  is part of KDevelop
 +
 +   Copyright 2018 R.J.V. Bertin <rjvbertin@gmail.com>
@@ -2723,6 +2723,7 @@ index 0000000000000000000000000000000000000000..e928e709343fec998e73a44019c507da
 +
 +TopDUContextLMDB::TopDUContextLMDB(uint topContextIndex)
 +{
++    m_currentIndex = topContextIndex;
 +    if (!s_envExists && Q_LIKELY(QFileInfo(TopDUContextDynamicData::basePath()).isWritable())) {
 +        try {
 +            lmdbEnv = lmdb::env::create();
@@ -2742,7 +2743,6 @@ index 0000000000000000000000000000000000000000..e928e709343fec998e73a44019c507da
 +        }
 +    }
 +    if (s_envExists) {
-+        m_currentIndex = topContextIndex;
 +        m_currentKey = indexKey(m_currentIndex);
 +        s_DbRefCount += 1;
 +    }
@@ -2778,19 +2778,20 @@ index 0000000000000000000000000000000000000000..e928e709343fec998e73a44019c507da
 +        }
 +        char *data;
 +        size_t dataLen = 0;
-+        int lz4BufLen = m_currentLen > sizeof(qint64) ? LZ4_compressBound(m_currentLen) : 0;
++        int lz4BufLen = m_currentLen > 2 * sizeof(qint64) ? LZ4_compressBound(m_currentLen) : 0;
 +        lmdb::val value;
 +        if (lz4BufLen) {
-+            data = new char[lz4BufLen + sizeof(m_currentLen)];
++            data = new char[lz4BufLen + sizeof(qint64)];
 +            // compress to an qint64-sized offset into the dest buffer; the original size will be stored in
 +            // those first 64 bits.
-+            dataLen = LZ4_compress_fast_extState(s_lz4State, m_currentValue.constData(), &data[sizeof(m_currentLen)],
-+                                                 m_currentLen, lz4BufLen, 1);
++            dataLen = LZ4_compress_fast_extState(s_lz4State, m_currentValue.constData(), &data[sizeof(qint64)],
++              m_currentLen, lz4BufLen, 1);
 +            if (dataLen && dataLen + sizeof(qint64) < m_currentLen) {
 +                LZ4Frame frame;
 +                frame.bytes = data;
-+                frame.qint64Ptr[0] = m_currentLen;
-+                value = lmdb::val(data, dataLen + sizeof(m_currentLen));
++                frame.qint32Ptr[0] = m_currentLen;
++                frame.qint32Ptr[1] = dataLen;
++                value = lmdb::val(data, dataLen + sizeof(qint64));
 +                compRatioSum += double(m_currentLen) / value.size();
 +                compRatioN += 1;
 +            } else {
@@ -2877,9 +2878,9 @@ index 0000000000000000000000000000000000000000..e928e709343fec998e73a44019c507da
 +                if (val.size() > sizeof(qint64)) {
 +                    LZ4Frame frame;
 +                    frame.bytes = val.data();
-+                    qint64 orgSize = frame.qint64Ptr[0];
-+                    if (orgSize > 0) {
-+                        int compressedSize = val.size() - sizeof(qint64);
++                    int orgSize = frame.qint32Ptr[0];
++                    int compressedSize = val.size() - sizeof(qint64);
++                    if (orgSize > 0 && frame.qint32Ptr[1] == compressedSize) {
 +                        // size m_currentValue so decompression can go into the final destination directly
 +                        m_currentValue.resize(orgSize);
 +                        if (LZ4_decompress_safe(&frame.bytes[sizeof(qint64)], m_currentValue.data(), compressedSize, orgSize) == orgSize) {
@@ -3051,6 +3052,7 @@ index 0000000000000000000000000000000000000000..e928e709343fec998e73a44019c507da
 +
 +TopDUContextLevelDB::TopDUContextLevelDB(uint topContextIndex)
 +{
++    m_currentIndex = topContextIndex;
 +    if (!levelDB.instance() && Q_LIKELY(QFileInfo(TopDUContextDynamicData::basePath()).isWritable())) {
 +        leveldb::Status status = LevelDBHook::init();
 +        if (!status.ok()) {
@@ -3059,7 +3061,6 @@ index 0000000000000000000000000000000000000000..e928e709343fec998e73a44019c507da
 +        }
 +    }
 +    if (levelDB.instance()) {
-+        m_currentIndex = topContextIndex;
 +        m_currentKey = indexKey(&m_currentIndex);
 +        s_DbRefCount += 1;
 +    }
@@ -3294,6 +3295,7 @@ index 0000000000000000000000000000000000000000..e928e709343fec998e73a44019c507da
 +
 +TopDUContextKyotoCabinet::TopDUContextKyotoCabinet(uint topContextIndex)
 +{
++    m_currentIndex = topContextIndex;
 +    if (!kyotoCabinet.instance() && Q_LIKELY(QFileInfo(TopDUContextDynamicData::basePath()).isWritable())) {
 +        if (!kyotoCabinet.init()) {
 +            m_errorString = kyotoCabinet.s_errorString;
@@ -3301,7 +3303,6 @@ index 0000000000000000000000000000000000000000..e928e709343fec998e73a44019c507da
 +        }
 +    }
 +    if (kyotoCabinet.instance()) {
-+        m_currentIndex = topContextIndex;
 +        m_currentKey = indexKey(&m_currentIndex);
 +        s_DbRefCount += 1;
 +    }
@@ -3481,7 +3482,7 @@ index 0000000000000000000000000000000000000000..e928e709343fec998e73a44019c507da
 +// kate: indent-width 2; tab-width 2;
 diff --git a/kdevplatform/language/duchain/topducontextdynamicdata_p.h b/kdevplatform/language/duchain/topducontextdynamicdata_p.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..8389fcd407d35370153af6b0b3f456b8f72e9f4d
+index 0000000000000000000000000000000000000000..b3ef2a78ba504d6862e9560eaaf2f1c52500a465
 --- /dev/null
 +++ b/kdevplatform/language/duchain/topducontextdynamicdata_p.h
 @@ -0,0 +1,156 @@
@@ -3574,7 +3575,7 @@ index 0000000000000000000000000000000000000000..8389fcd407d35370153af6b0b3f456b8
 +class KDEVPLATFORMLANGUAGE_EXPORT TopDUContextLMDB : public TopDUContextDB
 +{
 +public:
-+  typedef union { char *bytes; qint64 *qint64Ptr; } LZ4Frame;
++  typedef union { char *bytes; qint32 *qint32Ptr; } LZ4Frame;
 +  TopDUContextLMDB(uint topContextIndex);
 +  virtual ~TopDUContextLMDB();
 +  bool open(QIODevice::OpenMode mode) override;
