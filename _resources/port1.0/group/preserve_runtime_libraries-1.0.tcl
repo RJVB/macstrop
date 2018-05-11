@@ -177,10 +177,11 @@ if {${os.platform} eq "darwin"} {
             } else {
                 set pattern [glob -nocomplain ${destroot}${prefix}/lib/${preserve_runtime_library_dir}/${pattern}]
             }
+            ui_debug "Updating MachO dependency information in preserved libraries matching \"${pattern}\""
             # when preserving multiple directories, make them depend on each other
             # construct a dict that maps SO names to file names
             foreach lib ${pattern} {
-                set otool [exec otool -D ${lib}]
+                set otool [exec otool -D ${destroot}${lib}]
                 dict set sonames ${lib} oldname [lindex ${otool} 1]
                 dict set sonames ${lib} newname [string map [list ${destroot} ""] ${lib}]
             }
@@ -190,11 +191,11 @@ if {${os.platform} eq "darwin"} {
             # now make the preserved libraries depend on other preserved libraries.
             foreach lib ${pattern} {
                 # set the ID to the new path
-                system "install_name_tool -id [string map [list ${destroot} ""] ${lib}] ${lib}"
+                system "install_name_tool -id [string map [list ${destroot} ""] ${lib}] ${destroot}${lib}"
                 # update any dependencies on the other libraries installed by this port
                 dict for {id info} ${sonames} {
                     dict with info {
-                        system "install_name_tool -change ${oldname} ${newname} ${lib}"
+                        system "install_name_tool -change ${oldname} ${newname} ${destroot}${lib}"
                     }
                 }
             }
@@ -224,7 +225,7 @@ if {${os.platform} eq "darwin"} {
                 dict for {id info} ${sonames} {
                     dict with info {
                         # store a fully resolved DT_NEEDED entry to the preserved library
-                        set sopath [file join ${prefix}/lib/${preserve_runtime_library_dir} ${soname}]
+                        set sopath [file join ${destroot}${prefix}/lib/${preserve_runtime_library_dir} ${soname}]
                         if {[file exists ${sopath}] || [file exists [file join ${destroot} ${sopath}]]} {
                             # but only if the file exists
                             system "patchelf --replace-needed ${soname} ${sopath} ${lib}"
