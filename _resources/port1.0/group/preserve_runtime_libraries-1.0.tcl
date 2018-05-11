@@ -225,7 +225,7 @@ if {${os.platform} eq "darwin"} {
                 dict for {id info} ${sonames} {
                     dict with info {
                         # store a fully resolved DT_NEEDED entry to the preserved library
-                        set sopath [file join ${destroot}${prefix}/lib/${preserve_runtime_library_dir} ${soname}]
+                        set sopath [file join ${prefix}/lib/${preserve_runtime_library_dir} ${soname}]
                         if {[file exists ${sopath}] || [file exists [file join ${destroot} ${sopath}]]} {
                             # but only if the file exists
                             system "patchelf --replace-needed ${soname} ${sopath} ${lib}"
