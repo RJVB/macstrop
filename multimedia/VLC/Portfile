@@ -157,41 +157,7 @@ if {(${subport} eq ${name}) || (${subport} eq "lib${name}")} {
         }
     }
 
-# port:opencv depends on port:ffmpeg and thus enters in conflict with us depending on our own ffmpeg build
-# 1 viable solution as long as this is the case: drop the opencv filter.
-#     depends_lib-append  port:opencv
-#     # the +qt5 and/or +qt4 variants of port:opencv currently lead to build errors. A patch has
-#     # been submitted (but not included) that resolves the issue for qt4, not yet for qt5.
-#     # https://trac.macports.org/ticket/50709
-#     # For regular users a single check in the pre-fetch would suffice, but this maintainer
-#     # needs the check at other opportune moments too.
-#     proc check_opencv {} {
-#         global subport
-#         if {![active_variants opencv "" {qt4 qt5}]} {
-#             ui_error "${subport} cannot currently be built against port:opencv with the qt5 variant.\
-#             Install port:opencv without that variant and try again. This is only a build conflict; \
-#             after building you can reactivate your preferred opencv variant"
-#             return -code error "Install or activate port:opencv without the qt5 variant before building ${subport}"
-#         }
-#     }
-#     pre-fetch {
-#         check_opencv
-#     }
-#     pre-configure {
-#         check_opencv
-#     }
-#     pre-build {
-#         check_opencv
-#     }
-#     patchfiles-append   patch-opencv_includes.diff
-#     # The opencv example apparently builds on 10.11 but I'm having issues with it on 10.9
-#     # it doesn't appear to be indispensable, so simply skip it.
-#     patchfiles-append   patch-no-opencv_example.diff
-
-    # VLC 2.2.2 should have full Lua 5.3 compatibility, for now, depend on port:lua52
-    # That requires the patch-for-lua52.diff which is appended to patchfiles below.
-    # update 2.2.2 : lua 5.3 gives compiler syntax errors so we stick with 5.2 for now.
-    depends_lib-append  port:lua52
+    depends_lib-append  port:lua
 
     # VLC doesn't currently build for me using port:clang-3.8
     compiler.blacklist-append \
@@ -200,7 +166,7 @@ if {(${subport} eq ${name}) || (${subport} eq "lib${name}")} {
     patchfiles          buildfix-package.mak.patch \
                         patch-configure.ac.diff \
                         PR-34741-no__clang_version__.patch \
-                        static_assert.patch \
+                        patch-static_assert.diff \
                         no-sparkle.patch \
                         patch-vlc-no-O4.diff \
                         patch-soundfont-path.diff
@@ -265,10 +231,6 @@ if {(${subport} eq ${name}) || (${subport} eq "lib${name}")} {
         configure.cmd "/bin/csh"
         ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
         system "echo '## ${cmd}' > ${workpath}/.macports.${subport}.configure.log"
-    }
-
-    post-configure {
-        system -W ${worksrcpath} "patch -Np0 -i ${filespath}/patch-static_assert.diff"
     }
 
     # do autoreconf only the first time around
@@ -421,25 +383,38 @@ if {(${subport} eq ${name}) || (${subport} eq "lib${name}")} {
         configure.args-append   --with-x --enable-xvideo --enable-xcb
     }
 
-    if {${subport} ne "lib${name}"} {
-        variant qt4 conflicts qt5 description {Build using Qt4 UI. This will use qt4-mac. Experimental and probably dysfunctional} {
-            patchfiles-append       patch-vlc-no-qt5.diff \
-                                    patch-vlc-qt-configureac.diff \
-                                    patch-simplepreferences.diff
-
-            configure.args-replace  --disable-qt --enable-qt
-
-            PortGroup               qt4 1.0
-        }
-        variant qt5 conflicts qt4 description {Build using Qt5 UI. This will use qt5-mac. Experimental and probably dysfunctional} {
-            patchfiles-append       patch-vlc-qt-configureac.diff \
-                                    patch-simplepreferences.diff
-
-            configure.args-replace  --disable-qt --enable-qt
-
-            PortGroup               qt5 1.0
-        }
-    }
+#     if {${subport} ne "lib${name}"} {
+#         variant qt4 conflicts qt5 description {Build using Qt4 UI. This will use port:qt4-mac. Experimental and probably dysfunctional} {
+#             patchfiles-append       patch-vlc-no-qt5.diff \
+#                                     patch-vlc-qt-configureac.diff \
+#                                     patch-simplepreferences.diff
+#
+#             configure.args-replace  --disable-qt --enable-qt
+#
+#             PortGroup               qt4 1.0
+#         }
+#         variant qt5 conflicts qt4 description {Build using Qt5 UI. This will use port:qt5. Experimental and probably dysfunctional} {
+#             platform darwin {
+#                 if {${os.major} < 13} {
+#                     PortGroup   cxx11 1.1
+#                 }
+#             }
+#
+#             patchfiles-append       patch-vlc-qt-configureac.diff \
+#                                     patch-simplepreferences.diff
+#
+#             configure.args-replace  --disable-qt --enable-qt
+#             configure.cxxflags-append \
+#                                     -std=c++11
+#             if {${configure.cxx_stdlib} ne "" && [string match *clang* ${configure.cxx}]} {
+#                 configure.ldflags-append \
+#                                     -stdlib=${configure.cxx_stdlib}
+#             }
+#
+#
+#             PortGroup               qt5 1.0
+#         }
+#     }
 
     variant quartz {
         depends_lib-delete      port:libsamplerate
@@ -481,9 +456,7 @@ if {(${subport} eq ${name}) || (${subport} eq "lib${name}")} {
             description {Enable all variants except x11 (and except freerdp, currently)} {}
     }
 
-#     # this patchfile can probably go with VLC 2.2.2, or should be reviewed then.
-#     # update 2.2.2 : lua 5.3 gives compiler syntax errors so we stick with 5.2 for now.
-    patchfiles-append           patch-for-lua52.diff
+    patchfiles-append           patch-for-lua53.diff
 
     # make 10.12 and later ignore all QTKit code in modules/gui/macosx/open.m
     patchfiles-append           patch-really-no-qtkit.diff
@@ -568,9 +541,9 @@ if {(${subport} eq ${name}) || (${subport} eq "lib${name}")} {
             }
         }
         post-activate {
-            if {[variant_isset qt4] || [variant_isset qt5]} {
-                notes-append "The Qt interface modules for VLC are currently dysfunctional. If you encounter bugs with them, please file them with VLC and not MacPorts."
-            }
+#             if {[variant_isset qt4] || [variant_isset qt5]} {
+#                 notes-append "The Qt interface modules for VLC are currently dysfunctional. If you encounter bugs with them, please file them with VLC and not MacPorts."
+#             }
             system "${prefix}/lib/vlc/vlc-cache-gen -f ${prefix}/lib/vlc"
         }
     }
