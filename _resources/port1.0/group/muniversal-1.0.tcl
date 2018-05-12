@@ -129,6 +129,11 @@ merger_target_provides ${org.macports.destroot} destroot
 variant universal {
     global universal_archs_to_use
 
+    if {${supported_archs} eq "noarch"} {
+        ui_warn "Port ${subport} is architecture-agnostic and shouldn't have nor use the +universal variant"
+        return
+    }
+
     foreach arch ${universal_archs} {
         configure.universal_cflags-delete    -arch ${arch}
         configure.universal_cxxflags-delete  -arch ${arch}
