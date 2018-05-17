@@ -229,6 +229,8 @@ default build.post_args {VERBOSE=ON}
 
 # cache the configure.ccache variable (it will be overridden in the pre-configure step)
 set cmake::ccache_cache ${configure.ccache}
+# idem for distcc
+set cmake::distcc_cache ${configure.distcc}
 
 # tell CMake to use ccache via the CMAKE_<LANG>_COMPILER_LAUNCHER variable
 # and unset the global configure.ccache option which is not compatible
@@ -243,6 +245,16 @@ proc cmake::ccaching {} {
             -DCMAKE_CXX_COMPILER_LAUNCHER=${prefix}/bin/ccache]
     }
 }
+proc cmake::distccing {} {
+    global prefix
+    namespace upvar ::cmake distcc_cache distcc
+    if {${distcc}} {
+        return [list \
+            -DCMAKE_C_COMPILER_LAUNCHER=distcc \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=distcc]
+    }
+}
+
 
 configure.cmd       ${prefix}/bin/cmake
 
@@ -258,6 +270,7 @@ default configure.pre_args {[list \
                     -DCMAKE_INSTALL_NAME_DIR="${cmake.install_prefix}/lib" \
                     {*}[cmake::system_prefix_path] \
                     {*}[cmake::ccaching] \
+                    {*}[cmake::distccing] \
                     {-DCMAKE_C_COMPILER="$CC"} \
                     {-DCMAKE_CXX_COMPILER="$CXX"} \
                     -DCMAKE_POLICY_DEFAULT_CMP0025=NEW \
@@ -355,6 +368,7 @@ pre-configure {
     # The configure.ccache variable has been cached so we can restore it in the post-configure
     # (pre-configure and post-configure are always run in a single `port` invocation.)
     configure.ccache        no
+    configure.distcc        no
     # surprising but intended behaviour that's impossible to work around more gracefully:
     # overriding configure.ccache fails if the user set it directly from the commandline
     if {[tbool configure.ccache]} {
@@ -364,6 +378,13 @@ pre-configure {
     if {${cmake::ccache_cache}} {
         ui_info "        (using ccache)"
     }
+    if {[tbool configure.distcc]} {
+        ui_error "Please don't use configure.distcc=yes on the commandline for port:${subport}, use configuredistcc=yes"
+        return -code error "invalid invocation (port:${subport})"
+    }
+    if {${cmake::distcc_cache}} {
+        ui_info "        (using distcc)"
+    }
 }
 
 post-configure {
@@ -371,6 +392,10 @@ post-configure {
     if {[info exists cmake::ccache_cache]} {
         configure.ccache    ${cmake::ccache_cache}
         ui_debug "configure.ccache restored to ${cmake::ccache_cache}"
+    }
+    if {[info exists cmake::distcc_cache]} {
+        configure.distcc    ${cmake::distcc_cache}
+        ui_debug "configure.distcc restored to ${cmake::distcc_cache}"
     }
     # either compile_commands.json was created because of -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
     # in which case touch'ing it won't change anything. Or else it wasn't created, in which case
