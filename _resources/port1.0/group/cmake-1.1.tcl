@@ -234,7 +234,7 @@ set cmake::distcc_cache ${configure.distcc}
 
 # tell CMake to use ccache via the CMAKE_<LANG>_COMPILER_LAUNCHER variable
 # and unset the global configure.ccache option which is not compatible
-# with CMake.
+# with CMake. Ditto for distcc.
 # See https://stackoverflow.com/questions/1815688/how-to-use-ccache-with-cmake
 proc cmake::ccaching {} {
     global prefix
@@ -248,7 +248,9 @@ proc cmake::ccaching {} {
 proc cmake::distccing {} {
     global prefix
     namespace upvar ::cmake distcc_cache distcc
-    if {${distcc}} {
+    namespace upvar ::cmake ccache_cache cccache
+    # "base" will handle the case where ccache and distcc are both used.
+    if {${distcc} && !${cccache}} {
         return [list \
             -DCMAKE_C_COMPILER_LAUNCHER=distcc \
             -DCMAKE_CXX_COMPILER_LAUNCHER=distcc]
