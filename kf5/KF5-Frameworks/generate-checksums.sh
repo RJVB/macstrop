@@ -5,7 +5,7 @@ if [ "${prefix}" = "" ] ;then
 fi
 export PATH="${prefix}/bin:${PATH}"
 
-version=5.42.0
+version=5.47.0
 branch=${version%.0}
 
 METAPORT="KF5-Frameworks"
