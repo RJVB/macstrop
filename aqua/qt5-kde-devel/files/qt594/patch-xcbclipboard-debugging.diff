@@ -1,8 +1,43 @@
 diff --git a/qtbase/src/plugins/platforms/xcb/qxcbclipboard.cpp b/qtbase/src/plugins/platforms/xcb/qxcbclipboard.cpp
-index 01b3bca0d2b75752d4d2fdc1019e9b196778b870..cc8c85206a2c8fac99f1eac08712a6e2a4578b98 100644
+index 01b3bca0d2b75752d4d2fdc1019e9b196778b870..cb9cd819fc807619b15cb04325c848289f66e6ab 100644
 --- a/qtbase/src/plugins/platforms/xcb/qxcbclipboard.cpp
 +++ b/qtbase/src/plugins/platforms/xcb/qxcbclipboard.cpp
-@@ -419,10 +419,20 @@ void QXcbClipboard::setMimeData(QMimeData *data, QClipboard::Mode mode)
+@@ -52,6 +52,11 @@
+ #include <xcb/xcb_icccm.h>
+ #undef class
+ 
++#if QT_CONFIG(xcb_xlib)
++#include <X11/Xlib.h>
++#include <X11/Xlib-xcb.h>
++#endif
++
+ QT_BEGIN_NAMESPACE
+ 
+ #ifndef QT_NO_CLIPBOARD
+@@ -292,8 +297,21 @@ QXcbClipboard::QXcbClipboard(QXcbConnection *c)
+         const uint32_t mask = XCB_XFIXES_SELECTION_EVENT_MASK_SET_SELECTION_OWNER |
+                 XCB_XFIXES_SELECTION_EVENT_MASK_SELECTION_WINDOW_DESTROY |
+                 XCB_XFIXES_SELECTION_EVENT_MASK_SELECTION_CLIENT_CLOSE;
+-        Q_XCB_CALL(xcb_xfixes_select_selection_input_checked(xcb_connection(), m_owner, XCB_ATOM_PRIMARY, mask));
++        xcb_void_cookie_t cookie;
++        cookie = Q_XCB_CALL(xcb_xfixes_select_selection_input_checked(xcb_connection(), m_owner, XCB_ATOM_PRIMARY, mask));
++        xcb_generic_error_t *error = xcb_request_check(xcb_connection(), cookie);
++        if (error) {
++            qWarning() << "X11 error in xcb_xfixes_select_selection_input(..primary..)" << error->error_code << "opcode" << error->major_code << ":" << error->minor_code;
++            connection()->handleXcbError(error);
++            free(error);
++        }
+         Q_XCB_CALL(xcb_xfixes_select_selection_input_checked(xcb_connection(), m_owner, atom(QXcbAtom::CLIPBOARD), mask));
++        error = xcb_request_check(xcb_connection(), cookie);
++        if (error) {
++            qWarning() << "X11 error in xcb_xfixes_select_selection_input(..clipboard..)" << error->error_code << "opcode" << error->major_code << ":" << error->minor_code;
++            connection()->handleXcbError(error);
++            free(error);
++        }
+     }
+ }
+ 
+@@ -419,13 +437,40 @@ void QXcbClipboard::setMimeData(QMimeData *data, QClipboard::Mode mode)
          m_timestamp[mode] = connection()->time();
      }
  
@@ -18,10 +53,31 @@ index 01b3bca0d2b75752d4d2fdc1019e9b196778b870..cc8c85206a2c8fac99f1eac08712a6e2
 +        if (error) {
 +            qWarning() << "\tX11 error" << error->error_code << "opcode" << error->major_code << ":" << error->minor_code;
 +            connection()->handleXcbError(error);
++            free(error);
 +        }
-+    }
-+    if (error) {
-+        free(error);
++        // adapted from QXcbClipboard::handleXFixesSelectionRequest(), in
++        // hope a full reset will clear the issue.
++        if (mode <= QClipboard::Selection) {
++            qWarning() << "\tattempting again after resetting the X clipboard";
++            m_xClipboard[mode].reset(new QXcbClipboardMime(mode, this));
++            cookie = xcb_set_selection_owner(xcb_connection(), newOwner, modeAtom, connection()->time());
++        }
++#if QT_CONFIG(xcb_xlib)
++        if (getSelectionOwner(modeAtom) != newOwner && data->hasText()) {
++            const QByteArray text(data->text().toLocal8Bit());
++            if (text.size()) {
++                qWarning() << "\tfallback: storing on X11 cutbuffer 0";
++                XStoreBuffer(DISPLAY_FROM_XCB(connection()), text.constData(), text.size(), 0);
++            }
++        }
++#endif
      }
  
-     emitChanged(mode);
+-    emitChanged(mode);
++    // only emit the change if we set the owner successfully
++    if (getSelectionOwner(modeAtom) == newOwner) {
++        emitChanged(mode);
++    }
+ }
+ 
+ bool QXcbClipboard::supportsMode(QClipboard::Mode mode) const
