@@ -78,8 +78,10 @@ proc register_devport_standard_content {} {
         foreach h [glob -nocomplain ${destroot}${prefix}/lib/lib*.la] {
             devport_content-append [string map [list ${destroot} ""] ${h}]
         }
-        foreach h [glob -nocomplain ${destroot}${prefix}/lib/lib*\[a-zA-Z\].so] {
-            devport_content-append [string map [list ${destroot} ""] ${h}]
+        foreach h [glob -nocomplain ${destroot}${prefix}/lib/lib*.dylib] {
+            if {![string match -nocase {lib*.[0-9.]*.dylib} [file tail ${h}]] && [file type ${h}] eq "link"} {
+                devport_content-append [string map [list ${destroot} ""] ${h}]
+            }
         }
         foreach h [glob -nocomplain ${destroot}${prefix}/lib/pkgconfig/*] {
             devport_content-append [string map [list ${destroot} ""] ${h}]
@@ -104,8 +106,11 @@ proc create_devport {dependency} {
     subport ${name}-dev {
         description     [join ${devport_description}]
         long_description [join ${devport_long_description}]
-        depends_lib-append \
-                        ${dependency}
+        depends_fetch
+        depends_build
+        depends_run
+        depends_lib     ${dependency}
+        depends_extract bin:bsdtar:libarchive
         installs_libs   yes
         supported_archs noarch
         distfiles
@@ -114,7 +119,7 @@ proc create_devport {dependency} {
         extract {}
         use_configure   no
         patchfiles
-        build {}
+        build           {}
         destroot {
             unpack_devport_content
         }
@@ -130,3 +135,12 @@ proc create_devport {dependency} {
     }
 }
 
+proc is_devport {} {
+    global subport name
+    return [eval {${subport} eq "${name}-dev"}]
+}
+
+proc is_mainport {} {
+    global subport name
+    return [expr {${subport} eq "${name}"}]
+}
