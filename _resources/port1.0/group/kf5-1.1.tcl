@@ -527,30 +527,33 @@ if {${kf5::includecounter} == 0} {
                     # this appears to be necessary, sometimes:
                     system "chmod 755 ${workpath}/apidocs"
                     if {[info exists kf5.framework]} {
-                        if {[catch {system -W ${build.dir} "kapidox_generate --qhp --searchengine --api-searchbox --indexing \
+                        set kapidox_dir ${build.dir}/kapidox
+                        file delete -force ${kapidox_dir}
+                        xinstall -m 755 -d ${kapidox_dir}
+                        if {[catch {system -W ${kapidox_dir} "kapidox_generate --qhp \
                             ${chmargs} \
                             --qtdoc-dir ${qt_docs_dir} --qhelpgenerator ${qt_bins_dir}/qhelpgenerator \
                             ${worksrcpath}"} result context]} {
                             ui_warn "Failure generating documentation: ${result}"
                         }
                         # after creating the destination, copy all generated qch documentation to it
-                        foreach doc [glob -nocomplain ${build.dir}/frameworks/*/qch/*.qch \
-                                ${build.dir}/*/qch/*.qch ${build.dir}/*/html/*.chm] {
+                        foreach doc [glob -nocomplain ${kapidox_dir}/frameworks/*/qch/*.qch \
+                            ${kapidox_dir}/*/qch/*.qch ${kapidox_dir}/*/html/*.chm] {
                             if {[file tail ${doc}] ne "None.qch"} {
                                 system "chmod 644 ${doc}"
                                 xinstall -m 644 ${doc} ${workpath}/apidocs/
                             }
                         }
-                        if {[file exists ${build.dir}/${kf5.framework}-${version}/html/Makefile]} {
+                        if {[file exists ${kapidox_dir}/${kf5.framework}-${version}/html/Makefile]} {
                             ui_debug "generating .docset version"
-                            system -W ${build.dir}/${kf5.framework}-${version}/html \
+                            system -W ${kapidox_dir}/${kf5.framework}-${version}/html \
                                 "make > /dev/null"
-                            set docset ${build.dir}/${kf5.framework}-${version}/html/org.kde.${kf5.framework}-${version}.docset
+                            set docset ${kapidox_dir}/${kf5.framework}-${version}/html/org.kde.${kf5.framework}-${version}.docset
                             if {[file exists ${docset}]} {
                                 file rename ${docset} ${workpath}/apidocs
                             }
                         }
-                        file delete -force ${build.dir}/${kf5.framework}-${version}
+                        file delete -force ${kapidox_dir}
                     } else {
                         system -W ${build.dir} "kgenapidox --qhp --searchengine --api-searchbox \
                             ${chmargs} \
