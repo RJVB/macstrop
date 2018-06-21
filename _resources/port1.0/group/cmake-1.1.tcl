@@ -410,6 +410,15 @@ post-configure {
     }
 }
 
+# add MACPORTS_KEEP_BUILDING to the extra_env in $prefix/etc/macports/macports.conf
+# and set this env. variable to a non-zero value to let the build step keep going
+# as far as possible when errors occur. This can be useful to get an overview of
+# all build errors in a single pass (and get the build as far as possible while you
+# do something more interesting elsewhere).
+if {[info exist ::env(MACPORTS_KEEP_BUILDING)] && $::env(MACPORTS_KEEP_BUILDING)} {
+    build.post_args-append  -k
+}
+
 proc cmake.save_configure_cmd {{save_log_too ""}} {
     if {${save_log_too} ne ""} {
         pre-configure {
