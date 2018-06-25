@@ -74,6 +74,9 @@ post-patch {
 set cc                  "[concat ${configure.cc} ${configure.cflags}]"
 set cxx                 "[concat ${configure.cxx} ${configure.cxxflags}]"
 
+# https://github.com/nodejs/node/blob/master/doc/guides/building-node-with-ninja.md
+set use_ninja           yes
+
 configure.args-append   --without-npm
 configure.args-append   --with-intl=small-icu
 configure.args-append   --shared-openssl
@@ -86,6 +89,13 @@ configure.args-append   --shared \
                         --shared-zlib \
                         --shared-zlib-includes=${prefix}/include \
                         --shared-zlib-libpath=${prefix}/lib
+
+if {[tbool use_ninja]} {
+    depends_build-append \
+                        port:ninja
+    configure.args-append \
+                        --ninja
+}
 
 # V8 only supports ARM and IA-32 processors
 supported_archs         i386 x86_64
@@ -141,13 +151,21 @@ if {${os.platform} ne "darwin"} {
     build.env-append \
                     LDFLAGS="${configure.ldflags}"
 }
-build.args-append   CC="${cc}" \
+
+if {[tbool use_ninja]} {
+    build.cmd       ${prefix}/bin/ninja
+    build.pre_args
+    build.args      -C out/Release -v -j${build.jobs}
+} else {
+    build.args-append \
+                    CC="${cc}" \
                     CXX="${cxx}" \
                     CXX.host=${configure.cxx} \
                     CPP=${configure.cpp} \
                     LDFLAGS="${configure.ldflags}" \
                     PYTHON=${configure.python} \
                     V=1
+}
 
 set shlib_version   57
 
@@ -257,7 +275,13 @@ if {${os.platform} eq "darwin"} {
             ${docdir}
     }
 } else {
-    destroot.args-append \
+    if {[tbool use_ninja]} {
+        # ninja needs the DESTDIR argument in the environment
+        destroot.destdir
+        destroot.env-append DESTDIR=${destroot}
+        build.cmd   ninja
+    } else {
+        destroot.args-append \
                     CC="${cc}" \
                     CXX="${cxx}" \
                     CXX.host=${configure.cxx} \
@@ -265,6 +289,7 @@ if {${os.platform} eq "darwin"} {
                     LDFLAGS="${configure.ldflags}" \
                     PYTHON=${configure.python} \
                     V=1
+    }
     post-destroot {
         set bindir ${destroot}${prefix}/bin
         xinstall -m 755 -W ${worksrcpath} \
@@ -295,3 +320,11 @@ platform darwin {
 livecheck.url       ${homepage}dist/
 livecheck.type      regex
 livecheck.regex     {v(8\.\d+\.\d+)}
+
+platform darwin {
+    # Enable HFS compression of the workdir if the compress_workdir PortGroup is installed
+    if {[file exists ${filespath}/../../../_resources/port1.0/group/compress_workdir-1.0.tcl]} {
+        PortGroup   compress_workdir 1.0
+    }
+}
+
