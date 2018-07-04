@@ -1,0 +1,287 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 7b643ac..fe8955e 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -77,6 +77,7 @@ set(kwidgetsaddons_SRCS
+   ksplittercollapserbutton.cpp
+   kstyleextensions.cpp
+   ktooltipwidget.cpp
++  kthemesettings.cpp
+   ${kwidgetsaddons_QM_LOADER}
+   ${kwidgetsaddons_ICON_SRCS}
+ )
+diff --git a/src/kmessagewidget.cpp b/src/kmessagewidget.cpp
+index 01a8e9f..0718320 100644
+--- a/src/kmessagewidget.cpp
++++ b/src/kmessagewidget.cpp
+@@ -19,6 +19,7 @@
+  * 02110-1301  USA
+  */
+ #include "kmessagewidget.h"
++#include "kthemesettings_p.h"
+ 
+ #include <QAction>
+ #include <QApplication>
+@@ -258,38 +259,56 @@ void KMessageWidget::setMessageType(KMessageWidget::MessageType type)
+ {
+     d->messageType = type;
+     QColor bgBaseColor;
++    const QPalette palette = QGuiApplication::palette();
+ 
+-    // We have to hardcode colors here because KWidgetsAddons is a tier 1 framework
+-    // and therefore can't depend on any other KDE Frameworks
+-    // The following RGB color values come from the "default" scheme in kcolorscheme.cpp
++    // We cannot use KColorScheme here because KWidgetsAddons is a tier 1 framework
++    // and therefore can't depend on any other KDE Frameworks. We thus try to get
++    // the colours that interest us directly from the global settings store using QSettings.
++    // It that fails we use hardcoded colours, or the highlight colour (for Information).
++    // The hardcoded RGB color bgBaseColors come from the "default" scheme in kcolorscheme.cpp
++    KThemeSettings settings(QStringLiteral("Colors:Window"));
+     switch (type) {
+     case Positive:
+-        bgBaseColor.setRgb(39, 174,  96); // Window: ForegroundPositive
++        bgBaseColor = settings.readRGB(QStringLiteral("ForegroundPositive"), QColor(39, 174, 96));
+         break;
+     case Information:
+-        bgBaseColor.setRgb(61, 174, 233); // Window: ForegroundActive
++        bgBaseColor = settings.readRGB(QStringLiteral("ForegroundActive"), palette.highlight().color());
+         break;
+     case Warning:
+-        bgBaseColor.setRgb(246, 116, 0); // Window: ForegroundNeutral
++        bgBaseColor = settings.readRGB(QStringLiteral("ForegroundNeutral"), QColor(246, 116, 0));
+         break;
+     case Error:
+-        bgBaseColor.setRgb(218, 68, 83); // Window: ForegroundNegative
++        bgBaseColor = settings.readRGB(QStringLiteral("ForegroundNegative"), QColor(218, 68, 83));
+         break;
+     }
+     const qreal bgBaseColorAlpha = 0.2;
+-    bgBaseColor.setAlphaF(bgBaseColorAlpha);
+ 
+-    const QPalette palette = QGuiApplication::palette();
+-    const QColor windowColor = palette.window().color();
+-    const QColor textColor = palette.text().color();
++    const QColor windowColor = settings.readRGB(QStringLiteral("BackgroundNormal"), palette.window().color());
++    QColor textColor = bgBaseColor;
+     const QColor border = bgBaseColor;
+ 
+-    // Generate a final background color from overlaying bgBaseColor over windowColor
+-    const int newRed = (bgBaseColor.red() * bgBaseColorAlpha) + (windowColor.red() * (1 - bgBaseColorAlpha));
+-    const int newGreen = (bgBaseColor.green() * bgBaseColorAlpha) + (windowColor.green() * (1 - bgBaseColorAlpha));
+-    const int newBlue = (bgBaseColor.blue() * bgBaseColorAlpha) + (windowColor.blue() * (1 - bgBaseColorAlpha));
+-
+-    const QColor bgFinalColor = QColor(newRed, newGreen, newBlue);
++    qreal bgBrightness = windowColor.lightnessF();
++    const qreal textBrightness = textColor.lightnessF();
++    // the darkening/lightening factor will get progressively smaller when the background brightness increases
++    int factor = bgBrightness < 0.5 ? 100 + 100 * bgBaseColorAlpha : 100 + 100 * bgBaseColorAlpha * (1 - bgBrightness) * 2;
++
++    QColor bgFinalColor = bgBrightness < 0.5 ? windowColor.darker(factor) : windowColor.lighter(factor);
++    bgBrightness = bgFinalColor.lightnessF();
++
++    // estimate the foreground/background contrast taking human colour sensitivities into account
++    const qreal brightDiff = qAbs(0.299 * (textColor.redF() - windowColor.redF())
++        + 0.586 * (textColor.greenF() - windowColor.greenF())
++        + 0.115 * (textColor.blueF() - windowColor.blueF()));
++    // darken or brighten text colours for the lower contrasts, more so the smaller the contrast.
++    if (brightDiff < 0.5) {
++        if (textBrightness < 0.4) {
++            // lighten darker colours, limiting saturation to white
++            textColor = textColor.lighter(100 + 100 * (0.5 - brightDiff) * (1 - textBrightness) / 0.6);
++        } else if (textBrightness > 0.6) {
++            // darken lighter colours
++            textColor = textColor.darker(100 + 100 * (0.5 - brightDiff));
++        }
++    }
+ 
+     d->content->setStyleSheet(
+         QString::fromLatin1(".QFrame {"
+diff --git a/src/kthemesettings.cpp b/src/kthemesettings.cpp
+new file mode 100644
+index 0000000..6bdbfb5
+--- /dev/null
++++ b/src/kthemesettings.cpp
+@@ -0,0 +1,86 @@
++/* This file is part of the KDE libraries
++ *
++ * Copyright (c) 2018 René J.V. Bertin <rjvbertin@gmail.com>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
++ * 02110-1301  USA
++ */
++
++#include "kthemesettings_p.h"
++
++#include <QCoreApplication>
++
++KThemeSettings::KThemeSettings(const QString &initialGroup)
++{
++    // Check if the KColorSchemeManager was used to activate a custom theme
++    QString themePath = qApp->property("KDE_COLOR_SCHEME_PATH").toString();
++    if (themePath.isEmpty()) {
++        themePath = QStandardPaths::locate(QStandardPaths::ConfigLocation, QStringLiteral("kdeglobals"));
++    }
++    if (!themePath.isEmpty()) {
++        m_settings = new QSettings(themePath, QSettings::IniFormat);
++    }
++    if (m_settings && !initialGroup.isEmpty()){
++        if (m_settings->childGroups().contains(initialGroup)) {
++            m_settings->beginGroup(initialGroup);
++        } else {
++            delete m_settings;
++            m_settings = nullptr;
++        }
++    }
++}
++
++KThemeSettings::~KThemeSettings()
++{
++    delete m_settings;
++}
++
++bool KThemeSettings::contains(const QString &key)
++{
++    return m_settings ? m_settings->contains(key) : false;
++}
++
++QStringList KThemeSettings::childGroups()
++{
++    return m_settings ? m_settings->childGroups() : QStringList();
++}
++
++void KThemeSettings::beginGroup(const QString &group)
++{
++    if (m_settings) {
++        m_settings->beginGroup(group);
++    }
++}
++
++void KThemeSettings::endGroup()
++{
++    if (m_settings) {
++        m_settings->endGroup();
++    }
++}
++
++QColor KThemeSettings::readRGB(const QString &key, QColor defaultValue)
++{
++    if (m_settings && m_settings->contains(key)) {
++        QStringList rgb = m_settings->value(key).toStringList();
++        if (rgb.size() >= 3) {
++            QColor newValue(rgb.at(0).toInt(), rgb.at(1).toInt(), rgb.at(2).toInt());
++            if (newValue.isValid()) {
++                defaultValue = newValue;
++            }
++        }
++    }
++    return defaultValue;
++}
+diff --git a/src/kthemesettings_p.h b/src/kthemesettings_p.h
+new file mode 100644
+index 0000000..6921b5e
+--- /dev/null
++++ b/src/kthemesettings_p.h
+@@ -0,0 +1,91 @@
++/* This file is part of the KDE libraries
++ *
++ * Copyright (c) 2018 René J.V. Bertin <rjvbertin@gmail.com>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
++ * 02110-1301  USA
++ */
++
++#ifndef KTHEMESETTINGS_P_H
++#define KTHEMESETTINGS_P_H
++
++#include <QStringList>
++#include <QStandardPaths>
++#include <QSettings>
++#include <QColor>
++
++/**
++ * @class KThemeSettings
++ *
++ * @short A basic interface to read the custom or global theme settings
++ *
++ * KThemeSettings is wrapper around QSettings that provides an elementary
++ * alternative for KColorScheme because that class is not accessible in
++ * other Tier 1 frameworks.
++ *
++ * It allows to obtain RGB specifications from current theme's, either a
++ * custom theme if the application set one, or from the user-defined default
++ * theme (as set in the kdeglobals settings store).
++ *
++ * This class is not exported because any external code desiring to use it
++ * can and should use KConfig, KColorScheme and KColorSchemeManager instead.
++ *
++ */
++class KThemeSettings
++{
++public:
++    /**
++     * Construct a KThemeSettings object
++     *
++     * @p initialGroup : the initial group to activate. This is a convenience
++     * option for quick lookups: setting this to a non-empty string will cause
++     * subsequent lookups to fail (return the fallback value) if the settings
++     * store does not contain the group.
++     *
++     */
++    KThemeSettings(const QString &initialGroup = QString());
++
++    virtual ~KThemeSettings();
++
++    /**
++     * exposes QSettings::contains(@p key)
++     */
++    bool contains(const QString &key);
++
++    /**
++     * exposes QSettings::childGroups()
++     */
++    QStringList childGroups();
++
++    /**
++     * exposes QSettings::beginGroup(@p group)
++     */
++    void beginGroup(const QString &group);
++
++    /**
++     * exposes QSettings::endGroup()
++     */
++    void endGroup();
++
++    /**
++     * read and return the RGB definition for @p key, or @p defaultValue on failure.
++     */
++    QColor readRGB(const QString &key, QColor defaultValue = QColor());
++
++private:
++    QSettings *m_settings = nullptr;
++};
++
++#endif
