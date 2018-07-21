@@ -85,6 +85,8 @@ set kde4.legacy_prefix  ${prefix}/libexec/kde4-legacy
 set kde4.cmake_module_dir \
                         ${prefix}/lib/cmake/${kde4.include_prefix}
 
+set kde4.mirror         http://mirrors.mit.edu/kde/stable/
+
 # Certain ports will need to be installed in "KF5 compatibility mode" if they are to co-exist
 # with their KF5 counterparts. Call `kde4.use_legacy_prefix` to activate this mode, *before*
 # the configure step is executed and taking care not to undo the effects.
