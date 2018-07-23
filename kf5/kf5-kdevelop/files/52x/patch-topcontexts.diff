@@ -1,5 +1,5 @@
 diff --git a/kdevplatform/language/CMakeLists.txt b/kdevplatform/language/CMakeLists.txt
-index 7b2e83876bd33fd8759c9172aeccc0149210138f..f263334f26d50ee0bc2e621c53f9ca484d0234ac 100644
+index 7b2e83876b..6d6a4208b4 100644
 --- a/kdevplatform/language/CMakeLists.txt
 +++ b/kdevplatform/language/CMakeLists.txt
 @@ -6,6 +6,23 @@ include(CheckSymbolExists)
@@ -55,8 +55,503 @@ index 7b2e83876bd33fd8759c9172aeccc0149210138f..f263334f26d50ee0bc2e621c53f9ca48
  
  install(FILES
      assistant/renameaction.h
+diff --git a/kdevplatform/language/duchain/tests/CMakeLists.txt b/kdevplatform/language/duchain/tests/CMakeLists.txt
+index 7b8e50f415..90adb41366 100644
+--- a/kdevplatform/language/duchain/tests/CMakeLists.txt
++++ b/kdevplatform/language/duchain/tests/CMakeLists.txt
+@@ -10,6 +10,12 @@ ecm_add_test(test_identifier.cpp
+ ecm_add_test(test_stringhelpers.cpp
+     LINK_LIBRARIES Qt5::Test KDev::Tests KDev::Language)
+ 
++set(topcontextstore_SRCS test_topcontextstore.cpp)
++qt5_add_resources(topcontextstore_SRCS test_topcontextstore.qrc)
++ecm_add_test(${topcontextstore_SRCS}
++    TEST_NAME test_topcontextstore
++    LINK_LIBRARIES Qt5::Test KDev::Tests KDev::Language)
++
+ if(NOT COMPILER_OPTIMIZATIONS_DISABLED)
+     ecm_add_test(bench_hashes.cpp
+         LINK_LIBRARIES Qt5::Test KDev::Tests KDev::Language)
+diff --git a/kdevplatform/language/duchain/tests/test_topcontextstore.cpp b/kdevplatform/language/duchain/tests/test_topcontextstore.cpp
+new file mode 100644
+index 0000000000..39ea18639c
+--- /dev/null
++++ b/kdevplatform/language/duchain/tests/test_topcontextstore.cpp
+@@ -0,0 +1,394 @@
++/*
++ * This file is part of KDevelop
++ *
++ * Copyright 2018 R.J.V. Bertin <rjvbertin@gmail.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU Library General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public
++ * License along with this program; if not, write to the
++ * Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ */
++
++// with LMDB, the store is about 1.1x larger than the length of the stored values (but
++// our LZ4 compression can reach as much as a 2x reduction in average value size).
++// with KyotoCabinet-lzo, the store is about 1.76x smaller than the length of the stored values
++
++// timing results on Linux 4.14 running on an 1.6Ghz Intel N3150 and ZFSonLinux 0.7.6
++
++// KDEV_TOPCONTEXTS_USE_FILES:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 6000 items, max length= 38494 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 115232709 total key bytes: 24000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 6000 keys (last flushed): 1.583 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 6000 keys: 0.445 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 6000 keys: 0.736 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 3426ms
++// ## Idem, with only 1500 keys
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38484 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 28350833 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 0.351 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.092 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.232 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 1171ms
++// ## idem, on NFS:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 6000 items, max length= 38488 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 115800253 total key bytes: 24000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 6000 keys (last flushed): 108.579 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 6000 keys: 50.502 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 6000 keys: 27.651 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 194162ms
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38462 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29375929 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 26.459 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 11.778 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 6.494 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 51921ms
++// KDEV_TOPCONTEXTS_USE_LMDB:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38424 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29024029 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 1.585 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.126 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.517 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreFlush() Flushing the database to disk: 0.656 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreFlush()
++// total 14M
++// 512 -rw-r--r-- 1 bertin bertin 8.0K May  8 14:19 lock.mdb
++// 14M -rw-r--r-- 1 bertin bertin  27M May  8 14:19 data.mdb
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 18941ms
++// ********* Finished testing of TestTopDUContextStore *********
++// average LZ4 compression ratio: 1.95162; 1501 compressed of 3000
++// ## idem, on NFS:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38496 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29311234 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 12.362 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.113 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.221 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreFlush() Flushing the database to disk: 8.763 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreFlush()
++// total 26M
++// 8.0K -rw-r--r-- 1 bertin bertin 8.0K May  8  2018 lock.mdb
++//  26M -rw-r--r-- 1 bertin bertin  26M May  8  2018 data.mdb
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 91060ms
++// ********* Finished testing of TestTopDUContextStore *********
++// average LZ4 compression ratio: 1.95829; 1499 compressed of 3000
++// KDEV_TOPCONTEXTS_USE_KYOTO:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38467 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29759286 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 7.891 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 6.139 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.212 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 37116ms
++// ## idem, on NFS:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38468 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 28638008 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 27.135 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 17.317 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.218 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 180553ms
++
++// ## on a 2.7Ghz i7 running Mac OS X 10.9.5
++// KDEV_TOPCONTEXTS_USE_FILES:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 6000 items, max length= 38495 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 115547442 total key bytes: 24000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 6000 keys (last flushed): 1.622 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 6000 keys: 0.13 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 6000 keys: 0.924 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 8829ms
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38463 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 28304777 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 0.299 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.032 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.208 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 3508ms
++// KDEV_TOPCONTEXTS_USE_LMDB:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38474 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29277850 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 0.267 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.028 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.035 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreFlush() Flushing the database to disk: 0.188 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreFlush()
++// total 52984
++//    16 -rw-r--r--  1 bertin  bertin   8.0K May  8 14:44 lock.mdb
++// 52968 -rw-r--r--  1 bertin  bertin    26M May  8 14:44 data.mdb
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 4704ms
++// ********* Finished testing of TestTopDUContextStore *********
++// average LZ4 compression ratio: 1.95736; 1500 compressed of 3000
++// KDEV_TOPCONTEXTS_USE_KYOTO:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38492 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 28963844 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 22.364 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 3.267 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.052 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 38792ms
++
++
++#include "test_topcontextstore.h"
++
++#include <unistd.h>
++
++#include <QTest>
++#include <QDir>
++
++#include <tests/autotestshell.h>
++#include <tests/testcore.h>
++
++#include <language/duchain/duchain.h>
++#include <language/codegen/coderepresentation.h>
++
++#include <language/duchain/topducontextdynamicdata_p.h>
++#include <language/duchain/topducontextdynamicdata.h>
++
++QTEST_MAIN(TestTopDUContextStore)
++
++using namespace KDevelop;
++
++uint TestTopDUContextStore::testKeys = 16;
++uint TestTopDUContextStore::benchKeys = 1500;
++
++static QString basePath()
++{
++    return globalItemRepositoryRegistry().path() + "/topcontexts/";
++}
++
++void TestTopDUContextStore::initTestCase()
++{
++    AutoTestShell::init();
++    TestCore::initialize(Core::NoUi);
++
++    DUChain::self()->disablePersistentStorage();
++    CodeRepresentation::setDiskChangesForbidden(true);
++    QDir().mkpath(basePath());
++
++    // fetch real TopDUContext data from the qresource
++    // (data obtained from a KDevelop project of the KDevelop source).
++    QFile qfp(QStringLiteral(":/topcontextdata.base64"));
++    if (qfp.open(QIODevice::ReadOnly)) {
++        realData = QByteArray::fromBase64(qfp.readAll());
++        qfp.close();
++    }
++}
++
++void TestTopDUContextStore::cleanupTestCase()
++{
++#ifdef Q_OS_UNIX
++    system(QStringLiteral("ls -lshtr %1").arg(basePath()).toLatin1());
++#endif
++    TestCore::shutdown();
++}
++
++void TestTopDUContextStore::testTopContextStore_data()
++{
++    QTest::addColumn<uint>("key");
++    QTest::addColumn<QByteArray>("value");
++    QTest::addColumn<int>("size");
++
++    for (uint i = 0 ; i < benchKeys ; ++i) {
++        TopDUContextStore writer(i);
++        QByteArray data;
++        uint size;
++        if (i == 0 /*|| i >= testKeys*/) {
++          // 1st key/value pair will use the stored real data so that we can
++          // test our own LZ4 compression scheme in the LMDB backend (random
++          // values won't compress).
++          // The additional values >= testKeys serve to prime the database store
++          // to a mostly constant size.
++          data = realData;
++        } else {
++          size = qrand() * 32767.0 / RAND_MAX;
++          data.resize(size);
++          char *d = data.data();
++          for (uint j = 0 ; j < size ; ++j) {
++              d[j] = qrand() * 256.0 / RAND_MAX;
++          }
++        }
++        if (i < testKeys) {
++            // we store all keys that will be used in the benchmark so the store will be primed
++            // but only do write/read/exists/remove verifications for the requested number of items.
++            QTest::newRow("keyval") << i << data << data.size();
++        }
++        if (writer.open(QIODevice::WriteOnly)) {
++            writer.write(data.constData(), data.size());
++            writer.commit();
++            const auto errString = writer.errorString();
++            if (!errString.isEmpty() && errString != "Unknown error") {
++                qCritical() << "Failed to write entry for key" << i << "to" << writer.fileName() << ":" << writer.errorString();
++            } else {
++                QVERIFY(writer.flush());
++            }
++        } else {
++            qCritical() << "Failed to open" << writer.fileName();
++        }
++    }
++    sync();
++}
++
++void TestTopDUContextStore::testTopContextStore()
++{
++    QFETCH(uint, key);
++    QFETCH(QByteArray, value);
++    QFETCH(int, size);
++
++    TopDUContextStore reader(key);
++    QByteArray testval;
++    if (reader.open(QIODevice::ReadOnly)) {
++        testval = reader.readAll();
++        if (testval.isEmpty() && !reader.errorString().isEmpty()) {
++            qCritical() << "Failed to read entry for key" << key  << "from" << reader.fileName() << ":" << reader.errorString();
++        }
++    } else {
++        qCritical() << "Failed to open" << reader.fileName();
++    }
++    QCOMPARE(testval.size(), size);
++    QCOMPARE(testval, value);
++    QVERIFY(TopDUContextStore::exists(key));
++    QVERIFY(TopDUContextStore::remove(key));
++    QVERIFY(!TopDUContextStore::exists(key));
++}
++
++void TestTopDUContextStore::benchTopContextStore_data()
++{
++    uint maxSize = 0, totalSize = 0;
++    benchValues.reserve(benchKeys);
++    // subsample random strings from the real topcontext data
++    // (always from the left, there should be no interest to
++    // randomising the offset).
++    for (uint i = 0 ; i < benchKeys ; ++i) {
++        uint size = qrand() * double(realData.size()) / RAND_MAX;
++        if (size > maxSize) {
++            maxSize = size;
++        }
++        benchValues.append(realData.left(size));
++        totalSize += size;
++        if (i >= testKeys) {
++          // remove keys that weren't removed in testTopContextStore()
++          // so we will time writing, not overwriting
++          TopDUContextStore::remove(i);
++        }
++    }
++    sync();
++    sleep(1);
++    qInfo() << benchValues.size() << "items, max length=" << maxSize << "from sample of length" << realData.size();
++    qInfo() << "\ttotal value bytes:" << totalSize << "total key bytes:" << benchKeys * sizeof(uint);
++}
++
++// benchmarks don't use QBENCHMARK because they're not suitable for being
++// called multiple times.
++void TestTopDUContextStore::benchTopContextStore()
++{
++    QElapsedTimer timer;
++    timer.start();
++    for (uint i = 0 ; i < benchKeys ; ++i) {
++        TopDUContextStore writer(i);
++        if (writer.open(QIODevice::WriteOnly)) {
++            QByteArray data = benchValues.at(i);
++            writer.write(data.constData(), data.size());
++            writer.commit();
++            if (i == benchKeys - 1) {
++              writer.flush();
++            }
++        }
++    }
++    qInfo() << "Writing" << benchKeys << "keys (last flushed):" << timer.elapsed() / 1000.0 << "seconds";
++}
++
++#include <unistd.h>
++void TestTopDUContextStore::benchTopContextStoreRead()
++{
++    QElapsedTimer timer;
++    timer.start();
++    for (uint i = 0 ; i < benchKeys ; ++i)
++    {
++        TopDUContextStore reader(i);
++        if (reader.open(QIODevice::ReadOnly)) {
++#if defined(KDEV_TOPCONTEXTS_USE_FILES) && !defined(KDEV_TOPCONTEXTS_DONT_MMAP)
++            uchar* data = reader.map(0, reader.size());
++            reader.commit();
++#else
++            QByteArray data = reader.readAll();
++#endif
++        }
++    }
++    qInfo() << "Reading" << benchKeys << "keys:" << timer.elapsed() / 1000.0 << "seconds";
++}
++
++void TestTopDUContextStore::benchTopContextStoreRemove()
++{
++    QElapsedTimer timer;
++    timer.start();
++    for (uint i = 0 ; i < benchKeys ; ++i)
++    {
++        TopDUContextStore::remove(i);
++    }
++    qInfo() << "Removing" << benchKeys << "keys:" << timer.elapsed() / 1000.0 << "seconds";
++}
++
++void TestTopDUContextStore::benchTopContextStoreFlush()
++{
++#ifndef KDEV_TOPCONTEXTS_USE_FILES
++    QElapsedTimer timer;
++    timer.start();
++    TopDUContextStore writer(0);
++    if (writer.open(QIODevice::WriteOnly)) {
++        writer.flush();
++    }
++    qInfo() << "Flushing the database to disk:" << timer.elapsed() / 1000.0 << "seconds";
++#endif
++}
+diff --git a/kdevplatform/language/duchain/tests/test_topcontextstore.h b/kdevplatform/language/duchain/tests/test_topcontextstore.h
+new file mode 100644
+index 0000000000..103535550e
+--- /dev/null
++++ b/kdevplatform/language/duchain/tests/test_topcontextstore.h
+@@ -0,0 +1,51 @@
++/*
++ * This file is part of KDevelop
++ *
++ * Copyright 2016 Milian Wolff <mail@milianw.de>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU Library General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public
++ * License along with this program; if not, write to the
++ * Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ */
++
++#ifndef KDEVPLATFORM_TEST_TOPCONTEXTSTORE_H
++#define KDEVPLATFORM_TEST_TOPCONTEXTSTORE_H
++
++#include <QObject>
++#include <QVector>
++#include <QByteArray>
++
++class TestTopDUContextStore : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void initTestCase();
++    void cleanupTestCase();
++    void testTopContextStore_data();
++    void testTopContextStore();
++
++    void benchTopContextStore_data();
++    void benchTopContextStore();
++    void benchTopContextStoreRead();
++    void benchTopContextStoreRemove();
++    void benchTopContextStoreFlush();
++
++private:
++    static uint testKeys;
++    static uint benchKeys;
++    QByteArray realData;
++    QVector<QByteArray> benchValues;
++};
++
++#endif // KDEVPLATFORM_TEST_TOPCONTEXTSTORE_H
+diff --git a/kdevplatform/language/duchain/tests/test_topcontextstore.qrc b/kdevplatform/language/duchain/tests/test_topcontextstore.qrc
+new file mode 100644
+index 0000000000..96c262be84
+--- /dev/null
++++ b/kdevplatform/language/duchain/tests/test_topcontextstore.qrc
+@@ -0,0 +1,7 @@
++<!DOCTYPE RCC>
++<RCC version="1.0">
++<qresource>
++  <file>topcontextdata.base64</file>
++</qresource>
++</RCC>
++
+diff --git a/kdevplatform/language/duchain/tests/topcontextdata.base64 b/kdevplatform/language/duchain/tests/topcontextdata.base64
+new file mode 100644
+index 0000000000..a7327aa844
+--- /dev/null
++++ b/kdevplatform/language/duchain/tests/topcontextdata.base64
+@@ -0,0 +1 @@
++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QLAHq8BwACAAEAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAQAADwAAAAABAAAWAAAAAAARADsXAABAAAAAPrQLALy8BwACAAEAAAAAAAAAAAAAAAAAPBYBAAADAwABAAAAAgAAAAAAAAABAQAACgAAAAEBAAARAAAAAAAJAAAAAAAAAAAAHiQBANK8BwACAAEAAAAAAAAAAAAAAAAAqRUBAAECAAACAQAACAAAAAIBAAAPAAAAAAAJAAAAAAAAAAAAsCQBAOi8BwACAAEAAAAAAAAAAAAAAAAAahYBAAECAAADAQAAAgAAAAMBAAAJAAAAAAAHAAAAAAAAAAAAXLQLALy8BwACAAEAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAQAADwAAAAABAAAWAAAAAAARADsXAABBAAAAPrQLALy8BwACAAEAAAAAAAAAAAAAAAAAPBYBAAADAwABAAAAAgAAAAAAAAABAQAACgAAAAEBAAARAAAAAAAJAAAAAAAAAAAAHiQBANK8BwACAAEAAAAAAAAAAAAAAAAAqRUBAAECAEACAQAACAAAAAIBAAAPAAAAAAAJAAAAAAAAAAAAsCQBAOi8BwACAAEAAAAAAAAAAAAAAAAAahYBAAECAAAGAQAADgAAAAYBAAAaAAAAAAAHAAAAAAAAAAAAmLQLAP68BwACAAEAAAAAAAAAAAAAAAAAAAAAAAAGAAAGAQAAKwAAAAYBAAAsAAAAAAAHAAAAAAAAAAAA3LQLAHJQAwACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAGAQAAPQAAAAYBAAA+AAAAAAAHAAAAAAAAAAAA3LQLAIhQAwACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAWAQAADgAAABYBAAAaAAAAAAAHAAAAAAAAAAAACLULACq9BwACAAEAAAAAAAAAAAAAAAAAAAAAAAAGAAAWAQAAJQAAABYBAAApAAAAAAAHAAAAAAAAAAAAKrULAJYCAQACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAWAQAAMQAAABYBAAA3AAAAAAAHAAAAAAAAAAAAsCQBAFa9BwACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAWAQAAPwAAABYBAABFAAAAAAAHAAAAAAAAAAAAsCQBAGy9BwACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAWAQAATQ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
+\ No newline at end of file
 diff --git a/kdevplatform/language/duchain/topducontextdynamicdata.cpp b/kdevplatform/language/duchain/topducontextdynamicdata.cpp
-index 5a857fc657cc8276fb861b5478d5d79de92b07df..6c63bf2a51e9d1f36df7612a1caf7a7294617e2b 100644
+index 3f0cdd8c25..7c951570f1 100644
 --- a/kdevplatform/language/duchain/topducontextdynamicdata.cpp
 +++ b/kdevplatform/language/duchain/topducontextdynamicdata.cpp
 @@ -18,6 +18,7 @@
@@ -81,7 +576,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..6c63bf2a51e9d1f36df7612a1caf7a72
  using namespace KDevelop;
  
  namespace {
-@@ -149,16 +154,6 @@ void verifyDataInfo(const TopDUContextDynamicData::ItemDataInfo& info, const QVe
+@@ -156,16 +161,6 @@ void verifyDataInfo(const TopDUContextDynamicData::ItemDataInfo& info, const QVe
  #endif
  }
  
@@ -98,7 +593,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..6c63bf2a51e9d1f36df7612a1caf7a72
  enum LoadType {
    PartialLoad, ///< Only load the direct member data
    FullLoad     ///< Load everything, including appended lists
-@@ -166,16 +161,16 @@ enum LoadType {
+@@ -173,16 +168,16 @@ enum LoadType {
  template<typename F>
  void loadTopDUContextData(const uint topContextIndex, LoadType loadType, F callback)
  {
@@ -119,7 +614,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..6c63bf2a51e9d1f36df7612a1caf7a72
    const TopDUContextData* topData = reinterpret_cast<const TopDUContextData*>(data.constData());
    callback(topData);
  }
-@@ -386,13 +381,18 @@ Item TopDUContextDynamicData::DUChainItemStorage<Item>::getItemForIndex(uint ind
+@@ -393,13 +388,18 @@ Item TopDUContextDynamicData::DUChainItemStorage<Item>::getItemForIndex(uint ind
        reinterpret_cast<const DUChainBaseData*>(data->pointerInData(offsets[realIndex].dataOffset))
      );
  
@@ -145,7 +640,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..6c63bf2a51e9d1f36df7612a1caf7a72
      }
  
      if (isSharedDataItem<Item>()) {
-@@ -424,27 +424,27 @@ void TopDUContextDynamicData::DUChainItemStorage<Item>::deleteOnDisk()
+@@ -431,27 +431,27 @@ void TopDUContextDynamicData::DUChainItemStorage<Item>::deleteOnDisk()
  }
  
  template<class Item>
@@ -179,7 +674,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..6c63bf2a51e9d1f36df7612a1caf7a72
  }
  
  //END DUChainItemStorage
-@@ -495,7 +495,7 @@ void KDevelop::TopDUContextDynamicData::unmap() {
+@@ -502,7 +502,7 @@ void KDevelop::TopDUContextDynamicData::unmap() {
  
  bool TopDUContextDynamicData::fileExists(uint topContextIndex)
  {
@@ -188,7 +683,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..6c63bf2a51e9d1f36df7612a1caf7a72
  }
  
  QList<IndexedDUContext> TopDUContextDynamicData::loadImporters(uint topContextIndex) {
-@@ -537,63 +537,63 @@ void TopDUContextDynamicData::loadData() const {
+@@ -544,63 +544,63 @@ void TopDUContextDynamicData::loadData() const {
    Q_ASSERT(!m_dataLoaded);
    Q_ASSERT(m_data.isEmpty());
  
@@ -274,7 +769,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..6c63bf2a51e9d1f36df7612a1caf7a72
        return nullptr;
      }
  
-@@ -630,12 +630,22 @@ void TopDUContextDynamicData::deleteOnDisk() {
+@@ -637,12 +637,22 @@ void TopDUContextDynamicData::deleteOnDisk() {
  
    m_onDisk = false;
  
@@ -298,7 +793,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..6c63bf2a51e9d1f36df7612a1caf7a72
  QString KDevelop::TopDUContextDynamicData::filePath() const {
    return pathForTopContext(m_topContext->ownIndex());
  }
-@@ -713,32 +723,55 @@ void TopDUContextDynamicData::store() {
+@@ -720,32 +730,55 @@ void TopDUContextDynamicData::store() {
  
      QDir().mkpath(basePath());
  
@@ -372,7 +867,7 @@ index 5a857fc657cc8276fb861b5478d5d79de92b07df..6c63bf2a51e9d1f36df7612a1caf7a72
  
  TopDUContextDynamicData::ItemDataInfo TopDUContextDynamicData::writeDataInfo(const ItemDataInfo& info, const DUChainBaseData* data, uint& totalDataOffset) {
 diff --git a/kdevplatform/language/duchain/topducontextdynamicdata.h b/kdevplatform/language/duchain/topducontextdynamicdata.h
-index 1212afc73cd56bcbdbeca45d699154b0181f79ad..af529be33c99bd53c233d3361ee09dda185239d7 100644
+index 1212afc73c..af529be33c 100644
 --- a/kdevplatform/language/duchain/topducontextdynamicdata.h
 +++ b/kdevplatform/language/duchain/topducontextdynamicdata.h
 @@ -1,5 +1,5 @@
@@ -445,7 +940,7 @@ index 1212afc73cd56bcbdbeca45d699154b0181f79ad..af529be33c99bd53c233d3361ee09dda
      mutable bool m_itemRetrievalForbidden;
 diff --git a/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp b/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..868fa281e0cac201e79ec19c67fb3bb6c90c415c
+index 0000000000..868fa281e0
 --- /dev/null
 +++ b/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp
 @@ -0,0 +1,1089 @@
@@ -1540,7 +2035,7 @@ index 0000000000000000000000000000000000000000..868fa281e0cac201e79ec19c67fb3bb6
 +}
 diff --git a/kdevplatform/language/duchain/topducontextdynamicdata_p.h b/kdevplatform/language/duchain/topducontextdynamicdata_p.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..b45f0e2afb9d353d7d46dc8942323a1ef88e4546
+index 0000000000..b45f0e2afb
 --- /dev/null
 +++ b/kdevplatform/language/duchain/topducontextdynamicdata_p.h
 @@ -0,0 +1,153 @@
@@ -1697,498 +2192,3 @@ index 0000000000000000000000000000000000000000..b45f0e2afb9d353d7d46dc8942323a1e
 +
 +}
 +#endif
-diff --git a/kdevplatform/language/duchain/tests/CMakeLists.txt b/kdevplatform/language/duchain/tests/CMakeLists.txt
-index 7b8e50f415..90adb41366 100644
---- a/kdevplatform/language/duchain/tests/CMakeLists.txt
-+++ b/kdevplatform/language/duchain/tests/CMakeLists.txt
-@@ -10,6 +10,12 @@ ecm_add_test(test_identifier.cpp
- ecm_add_test(test_stringhelpers.cpp
-     LINK_LIBRARIES Qt5::Test KDev::Tests KDev::Language)
- 
-+set(topcontextstore_SRCS test_topcontextstore.cpp)
-+qt5_add_resources(topcontextstore_SRCS test_topcontextstore.qrc)
-+ecm_add_test(${topcontextstore_SRCS}
-+    TEST_NAME test_topcontextstore
-+    LINK_LIBRARIES Qt5::Test KDev::Tests KDev::Language)
-+
- if(NOT COMPILER_OPTIMIZATIONS_DISABLED)
-     ecm_add_test(bench_hashes.cpp
-         LINK_LIBRARIES Qt5::Test KDev::Tests KDev::Language)
-diff --git a/kdevplatform/language/duchain/tests/test_topcontextstore.cpp b/kdevplatform/language/duchain/tests/test_topcontextstore.cpp
-new file mode 100644
-index 0000000000..39ea18639c
---- /dev/null
-+++ b/kdevplatform/language/duchain/tests/test_topcontextstore.cpp
-@@ -0,0 +1,394 @@
-+/*
-+ * This file is part of KDevelop
-+ *
-+ * Copyright 2018 R.J.V. Bertin <rjvbertin@gmail.com>
-+ *
-+ * This program is free software; you can redistribute it and/or modify
-+ * it under the terms of the GNU Library General Public License as
-+ * published by the Free Software Foundation; either version 2 of the
-+ * License, or (at your option) any later version.
-+ *
-+ * This program is distributed in the hope that it will be useful,
-+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
-+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-+ * GNU General Public License for more details.
-+ *
-+ * You should have received a copy of the GNU General Public
-+ * License along with this program; if not, write to the
-+ * Free Software Foundation, Inc.,
-+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
-+ */
-+
-+// with LMDB, the store is about 1.1x larger than the length of the stored values (but
-+// our LZ4 compression can reach as much as a 2x reduction in average value size).
-+// with KyotoCabinet-lzo, the store is about 1.76x smaller than the length of the stored values
-+
-+// timing results on Linux 4.14 running on an 1.6Ghz Intel N3150 and ZFSonLinux 0.7.6
-+
-+// KDEV_TOPCONTEXTS_USE_FILES:
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() 6000 items, max length= 38494 from sample of length 38497
-+// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 115232709 total key bytes: 24000
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 6000 keys (last flushed): 1.583 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStore()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 6000 keys: 0.445 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 6000 keys: 0.736 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
-+// PASS   : TestTopDUContextStore::cleanupTestCase()
-+// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 3426ms
-+// ## Idem, with only 1500 keys
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38484 from sample of length 38497
-+// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 28350833 total key bytes: 6000
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 0.351 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStore()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.092 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.232 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
-+// PASS   : TestTopDUContextStore::cleanupTestCase()
-+// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 1171ms
-+// ## idem, on NFS:
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() 6000 items, max length= 38488 from sample of length 38497
-+// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 115800253 total key bytes: 24000
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 6000 keys (last flushed): 108.579 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStore()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 6000 keys: 50.502 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 6000 keys: 27.651 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
-+// PASS   : TestTopDUContextStore::cleanupTestCase()
-+// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 194162ms
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38462 from sample of length 38497
-+// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29375929 total key bytes: 6000
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 26.459 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStore()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 11.778 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 6.494 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
-+// PASS   : TestTopDUContextStore::cleanupTestCase()
-+// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 51921ms
-+// KDEV_TOPCONTEXTS_USE_LMDB:
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38424 from sample of length 38497
-+// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29024029 total key bytes: 6000
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 1.585 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStore()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.126 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.517 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreFlush() Flushing the database to disk: 0.656 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreFlush()
-+// total 14M
-+// 512 -rw-r--r-- 1 bertin bertin 8.0K May  8 14:19 lock.mdb
-+// 14M -rw-r--r-- 1 bertin bertin  27M May  8 14:19 data.mdb
-+// PASS   : TestTopDUContextStore::cleanupTestCase()
-+// Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 18941ms
-+// ********* Finished testing of TestTopDUContextStore *********
-+// average LZ4 compression ratio: 1.95162; 1501 compressed of 3000
-+// ## idem, on NFS:
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38496 from sample of length 38497
-+// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29311234 total key bytes: 6000
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 12.362 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStore()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.113 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.221 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreFlush() Flushing the database to disk: 8.763 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreFlush()
-+// total 26M
-+// 8.0K -rw-r--r-- 1 bertin bertin 8.0K May  8  2018 lock.mdb
-+//  26M -rw-r--r-- 1 bertin bertin  26M May  8  2018 data.mdb
-+// PASS   : TestTopDUContextStore::cleanupTestCase()
-+// Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 91060ms
-+// ********* Finished testing of TestTopDUContextStore *********
-+// average LZ4 compression ratio: 1.95829; 1499 compressed of 3000
-+// KDEV_TOPCONTEXTS_USE_KYOTO:
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38467 from sample of length 38497
-+// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29759286 total key bytes: 6000
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 7.891 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStore()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 6.139 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.212 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
-+// PASS   : TestTopDUContextStore::cleanupTestCase()
-+// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 37116ms
-+// ## idem, on NFS:
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38468 from sample of length 38497
-+// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 28638008 total key bytes: 6000
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 27.135 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStore()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 17.317 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.218 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
-+// PASS   : TestTopDUContextStore::cleanupTestCase()
-+// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 180553ms
-+
-+// ## on a 2.7Ghz i7 running Mac OS X 10.9.5
-+// KDEV_TOPCONTEXTS_USE_FILES:
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() 6000 items, max length= 38495 from sample of length 38497
-+// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 115547442 total key bytes: 24000
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 6000 keys (last flushed): 1.622 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStore()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 6000 keys: 0.13 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 6000 keys: 0.924 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
-+// PASS   : TestTopDUContextStore::cleanupTestCase()
-+// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 8829ms
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38463 from sample of length 38497
-+// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 28304777 total key bytes: 6000
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 0.299 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStore()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.032 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.208 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
-+// PASS   : TestTopDUContextStore::cleanupTestCase()
-+// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 3508ms
-+// KDEV_TOPCONTEXTS_USE_LMDB:
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38474 from sample of length 38497
-+// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29277850 total key bytes: 6000
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 0.267 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStore()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.028 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.035 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreFlush() Flushing the database to disk: 0.188 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreFlush()
-+// total 52984
-+//    16 -rw-r--r--  1 bertin  bertin   8.0K May  8 14:44 lock.mdb
-+// 52968 -rw-r--r--  1 bertin  bertin    26M May  8 14:44 data.mdb
-+// PASS   : TestTopDUContextStore::cleanupTestCase()
-+// Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 4704ms
-+// ********* Finished testing of TestTopDUContextStore *********
-+// average LZ4 compression ratio: 1.95736; 1500 compressed of 3000
-+// KDEV_TOPCONTEXTS_USE_KYOTO:
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38492 from sample of length 38497
-+// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 28963844 total key bytes: 6000
-+// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 22.364 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStore()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 3.267 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
-+// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.052 seconds
-+// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
-+// PASS   : TestTopDUContextStore::cleanupTestCase()
-+// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 38792ms
-+
-+
-+#include "test_topcontextstore.h"
-+
-+#include <unistd.h>
-+
-+#include <QTest>
-+#include <QDir>
-+
-+#include <tests/autotestshell.h>
-+#include <tests/testcore.h>
-+
-+#include <language/duchain/duchain.h>
-+#include <language/codegen/coderepresentation.h>
-+
-+#include <language/duchain/topducontextdynamicdata_p.h>
-+#include <language/duchain/topducontextdynamicdata.h>
-+
-+QTEST_MAIN(TestTopDUContextStore)
-+
-+using namespace KDevelop;
-+
-+uint TestTopDUContextStore::testKeys = 16;
-+uint TestTopDUContextStore::benchKeys = 1500;
-+
-+static QString basePath()
-+{
-+    return globalItemRepositoryRegistry().path() + "/topcontexts/";
-+}
-+
-+void TestTopDUContextStore::initTestCase()
-+{
-+    AutoTestShell::init();
-+    TestCore::initialize(Core::NoUi);
-+
-+    DUChain::self()->disablePersistentStorage();
-+    CodeRepresentation::setDiskChangesForbidden(true);
-+    QDir().mkpath(basePath());
-+
-+    // fetch real TopDUContext data from the qresource
-+    // (data obtained from a KDevelop project of the KDevelop source).
-+    QFile qfp(QStringLiteral(":/topcontextdata.base64"));
-+    if (qfp.open(QIODevice::ReadOnly)) {
-+        realData = QByteArray::fromBase64(qfp.readAll());
-+        qfp.close();
-+    }
-+}
-+
-+void TestTopDUContextStore::cleanupTestCase()
-+{
-+#ifdef Q_OS_UNIX
-+    system(QStringLiteral("ls -lshtr %1").arg(basePath()).toLatin1());
-+#endif
-+    TestCore::shutdown();
-+}
-+
-+void TestTopDUContextStore::testTopContextStore_data()
-+{
-+    QTest::addColumn<uint>("key");
-+    QTest::addColumn<QByteArray>("value");
-+    QTest::addColumn<int>("size");
-+
-+    for (uint i = 0 ; i < benchKeys ; ++i) {
-+        TopDUContextStore writer(i);
-+        QByteArray data;
-+        uint size;
-+        if (i == 0 /*|| i >= testKeys*/) {
-+          // 1st key/value pair will use the stored real data so that we can
-+          // test our own LZ4 compression scheme in the LMDB backend (random
-+          // values won't compress).
-+          // The additional values >= testKeys serve to prime the database store
-+          // to a mostly constant size.
-+          data = realData;
-+        } else {
-+          size = qrand() * 32767.0 / RAND_MAX;
-+          data.resize(size);
-+          char *d = data.data();
-+          for (uint j = 0 ; j < size ; ++j) {
-+              d[j] = qrand() * 256.0 / RAND_MAX;
-+          }
-+        }
-+        if (i < testKeys) {
-+            // we store all keys that will be used in the benchmark so the store will be primed
-+            // but only do write/read/exists/remove verifications for the requested number of items.
-+            QTest::newRow("keyval") << i << data << data.size();
-+        }
-+        if (writer.open(QIODevice::WriteOnly)) {
-+            writer.write(data.constData(), data.size());
-+            writer.commit();
-+            const auto errString = writer.errorString();
-+            if (!errString.isEmpty() && errString != "Unknown error") {
-+                qCritical() << "Failed to write entry for key" << i << "to" << writer.fileName() << ":" << writer.errorString();
-+            } else {
-+                QVERIFY(writer.flush());
-+            }
-+        } else {
-+            qCritical() << "Failed to open" << writer.fileName();
-+        }
-+    }
-+    sync();
-+}
-+
-+void TestTopDUContextStore::testTopContextStore()
-+{
-+    QFETCH(uint, key);
-+    QFETCH(QByteArray, value);
-+    QFETCH(int, size);
-+
-+    TopDUContextStore reader(key);
-+    QByteArray testval;
-+    if (reader.open(QIODevice::ReadOnly)) {
-+        testval = reader.readAll();
-+        if (testval.isEmpty() && !reader.errorString().isEmpty()) {
-+            qCritical() << "Failed to read entry for key" << key  << "from" << reader.fileName() << ":" << reader.errorString();
-+        }
-+    } else {
-+        qCritical() << "Failed to open" << reader.fileName();
-+    }
-+    QCOMPARE(testval.size(), size);
-+    QCOMPARE(testval, value);
-+    QVERIFY(TopDUContextStore::exists(key));
-+    QVERIFY(TopDUContextStore::remove(key));
-+    QVERIFY(!TopDUContextStore::exists(key));
-+}
-+
-+void TestTopDUContextStore::benchTopContextStore_data()
-+{
-+    uint maxSize = 0, totalSize = 0;
-+    benchValues.reserve(benchKeys);
-+    // subsample random strings from the real topcontext data
-+    // (always from the left, there should be no interest to
-+    // randomising the offset).
-+    for (uint i = 0 ; i < benchKeys ; ++i) {
-+        uint size = qrand() * double(realData.size()) / RAND_MAX;
-+        if (size > maxSize) {
-+            maxSize = size;
-+        }
-+        benchValues.append(realData.left(size));
-+        totalSize += size;
-+        if (i >= testKeys) {
-+          // remove keys that weren't removed in testTopContextStore()
-+          // so we will time writing, not overwriting
-+          TopDUContextStore::remove(i);
-+        }
-+    }
-+    sync();
-+    sleep(1);
-+    qInfo() << benchValues.size() << "items, max length=" << maxSize << "from sample of length" << realData.size();
-+    qInfo() << "\ttotal value bytes:" << totalSize << "total key bytes:" << benchKeys * sizeof(uint);
-+}
-+
-+// benchmarks don't use QBENCHMARK because they're not suitable for being
-+// called multiple times.
-+void TestTopDUContextStore::benchTopContextStore()
-+{
-+    QElapsedTimer timer;
-+    timer.start();
-+    for (uint i = 0 ; i < benchKeys ; ++i) {
-+        TopDUContextStore writer(i);
-+        if (writer.open(QIODevice::WriteOnly)) {
-+            QByteArray data = benchValues.at(i);
-+            writer.write(data.constData(), data.size());
-+            writer.commit();
-+            if (i == benchKeys - 1) {
-+              writer.flush();
-+            }
-+        }
-+    }
-+    qInfo() << "Writing" << benchKeys << "keys (last flushed):" << timer.elapsed() / 1000.0 << "seconds";
-+}
-+
-+#include <unistd.h>
-+void TestTopDUContextStore::benchTopContextStoreRead()
-+{
-+    QElapsedTimer timer;
-+    timer.start();
-+    for (uint i = 0 ; i < benchKeys ; ++i)
-+    {
-+        TopDUContextStore reader(i);
-+        if (reader.open(QIODevice::ReadOnly)) {
-+#if defined(KDEV_TOPCONTEXTS_USE_FILES) && !defined(KDEV_TOPCONTEXTS_DONT_MMAP)
-+            uchar* data = reader.map(0, reader.size());
-+            reader.commit();
-+#else
-+            QByteArray data = reader.readAll();
-+#endif
-+        }
-+    }
-+    qInfo() << "Reading" << benchKeys << "keys:" << timer.elapsed() / 1000.0 << "seconds";
-+}
-+
-+void TestTopDUContextStore::benchTopContextStoreRemove()
-+{
-+    QElapsedTimer timer;
-+    timer.start();
-+    for (uint i = 0 ; i < benchKeys ; ++i)
-+    {
-+        TopDUContextStore::remove(i);
-+    }
-+    qInfo() << "Removing" << benchKeys << "keys:" << timer.elapsed() / 1000.0 << "seconds";
-+}
-+
-+void TestTopDUContextStore::benchTopContextStoreFlush()
-+{
-+#ifndef KDEV_TOPCONTEXTS_USE_FILES
-+    QElapsedTimer timer;
-+    timer.start();
-+    TopDUContextStore writer(0);
-+    if (writer.open(QIODevice::WriteOnly)) {
-+        writer.flush();
-+    }
-+    qInfo() << "Flushing the database to disk:" << timer.elapsed() / 1000.0 << "seconds";
-+#endif
-+}
-diff --git a/kdevplatform/language/duchain/tests/test_topcontextstore.h b/kdevplatform/language/duchain/tests/test_topcontextstore.h
-new file mode 100644
-index 0000000000..103535550e
---- /dev/null
-+++ b/kdevplatform/language/duchain/tests/test_topcontextstore.h
-@@ -0,0 +1,51 @@
-+/*
-+ * This file is part of KDevelop
-+ *
-+ * Copyright 2016 Milian Wolff <mail@milianw.de>
-+ *
-+ * This program is free software; you can redistribute it and/or modify
-+ * it under the terms of the GNU Library General Public License as
-+ * published by the Free Software Foundation; either version 2 of the
-+ * License, or (at your option) any later version.
-+ *
-+ * This program is distributed in the hope that it will be useful,
-+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
-+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-+ * GNU General Public License for more details.
-+ *
-+ * You should have received a copy of the GNU General Public
-+ * License along with this program; if not, write to the
-+ * Free Software Foundation, Inc.,
-+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
-+ */
-+
-+#ifndef KDEVPLATFORM_TEST_TOPCONTEXTSTORE_H
-+#define KDEVPLATFORM_TEST_TOPCONTEXTSTORE_H
-+
-+#include <QObject>
-+#include <QVector>
-+#include <QByteArray>
-+
-+class TestTopDUContextStore : public QObject
-+{
-+    Q_OBJECT
-+private Q_SLOTS:
-+    void initTestCase();
-+    void cleanupTestCase();
-+    void testTopContextStore_data();
-+    void testTopContextStore();
-+
-+    void benchTopContextStore_data();
-+    void benchTopContextStore();
-+    void benchTopContextStoreRead();
-+    void benchTopContextStoreRemove();
-+    void benchTopContextStoreFlush();
-+
-+private:
-+    static uint testKeys;
-+    static uint benchKeys;
-+    QByteArray realData;
-+    QVector<QByteArray> benchValues;
-+};
-+
-+#endif // KDEVPLATFORM_TEST_TOPCONTEXTSTORE_H
-diff --git a/kdevplatform/language/duchain/tests/test_topcontextstore.qrc b/kdevplatform/language/duchain/tests/test_topcontextstore.qrc
-new file mode 100644
-index 0000000000..96c262be84
---- /dev/null
-+++ b/kdevplatform/language/duchain/tests/test_topcontextstore.qrc
-@@ -0,0 +1,7 @@
-+<!DOCTYPE RCC>
-+<RCC version="1.0">
-+<qresource>
-+  <file>topcontextdata.base64</file>
-+</qresource>
-+</RCC>
-+
-diff --git a/kdevplatform/language/duchain/tests/topcontextdata.base64 b/kdevplatform/language/duchain/tests/topcontextdata.base64
-new file mode 100644
-index 0000000000..a7327aa844
---- /dev/null
-+++ b/kdevplatform/language/duchain/tests/topcontextdata.base64
-@@ -0,0 +1 @@
-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LAHq8BwACAAEAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAQAADwAAAAABAAAWAAAAAAARADsXAABAAAAAPrQLALy8BwACAAEAAAAAAAAAAAAAAAAAPBYBAAADAwABAAAAAgAAAAAAAAABAQAACgAAAAEBAAARAAAAAAAJAAAAAAAAAAAAHiQBANK8BwACAAEAAAAAAAAAAAAAAAAAqRUBAAECAAACAQAACAAAAAIBAAAPAAAAAAAJAAAAAAAAAAAAsCQBAOi8BwACAAEAAAAAAAAAAAAAAAAAahYBAAECAAADAQAAAgAAAAMBAAAJAAAAAAAHAAAAAAAAAAAAXLQLALy8BwACAAEAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAQAADwAAAAABAAAWAAAAAAARADsXAABBAAAAPrQLALy8BwACAAEAAAAAAAAAAAAAAAAAPBYBAAADAwABAAAAAgAAAAAAAAABAQAACgAAAAEBAAARAAAAAAAJAAAAAAAAAAAAHiQBANK8BwACAAEAAAAAAAAAAAAAAAAAqRUBAAECAEACAQAACAAAAAIBAAAPAAAAAAAJAAAAAAAAAAAAsCQBAOi8BwACAAEAAAAAAAAAAAAAAAAAahYBAAECAAAGAQAADgAAAAYBAAAaAAAAAAAHAAAAAAAAAAAAmLQLAP68BwACAAEAAAAAAAAAAAAAAAAAAAAAAAAGAAAGAQAAKwAAAAYBAAAsAAAAAAAHAAAAAAAAAAAA3LQLAHJQAwACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAGAQAAPQAAAAYBAAA+AAAAAAAHAAAAAAAAAAAA3LQLAIhQAwACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAWAQAADgAAABYBAAAaAAAAAAAHAAAAAAAAAAAACLULACq9BwACAAEAAAAAAAAAAAAAAAAAAAAAAAAGAAAWAQAAJQAAABYBAAApAAAAAAAHAAAAAAAAAAAAKrULAJYCAQACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAWAQAAMQAAABYBAAA3AAAAAAAHAAAAAAAAAAAAsCQBAFa9BwACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAWAQAAPwAAABYBAABFAAAAAAAHAAAAAAAAAAAAsCQBAGy9BwACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAWAQAATQA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
-\ No newline at end of file
