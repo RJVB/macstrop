@@ -830,6 +830,11 @@ set qt5::component2pathspec(webkit)     $qt5::component2pathspec(qtwebkit)
 proc qt5::depends_component_p {deptype args} {
     global qt5::component2pathspec qt5.using_kde os.major qt5.kde_stubports version qt5::pprefix
     # select the Qt5 port prefix, depending on which Qt5 port is installed
+    if {![info exists qt5.kde_stubports]} {
+        # FIXME!
+        ui_error "`qt5.depends_component_p ${deptype} ${args}` shouldn't be called in an inline variant code block"
+        return -code error "Unsupported qt5.depends_component usage"
+    }
     set is_qt5kde [tbool qt5.using_kde]
     if {!${is_qt5kde}} {
         switch ${os.major} {
@@ -841,7 +846,7 @@ proc qt5::depends_component_p {deptype args} {
             }
         }
     }
-    ui_debug "qt5::depends_component_p, deptype=${deptype} args=$args"
+    ui_debug "qt5::depends_component_p, deptype=${deptype} args=$args is_qt5kde=${is_qt5kde}"
     foreach comp $args {
         set done true
         set portname "${qt5::pprefix}-${comp}"
