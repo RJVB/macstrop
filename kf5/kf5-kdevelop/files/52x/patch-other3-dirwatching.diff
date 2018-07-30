@@ -268,7 +268,7 @@ diff --git kdevplatform/project/filemanagerlistjob.cpp kdevplatform/project/file
 index 30c89d3c2a..f83f3574b4 100644
 --- kdevplatform/project/filemanagerlistjob.cpp
 +++ kdevplatform/project/filemanagerlistjob.cpp
-@@ -29,11 +29,59 @@
+@@ -29,11 +29,62 @@
  // Qt
  #include <QtConcurrentRun>
  #include <QDir>
@@ -323,13 +323,16 @@ index 30c89d3c2a..f83f3574b4 100644
 +
  FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
 -    : KIO::Job(), m_item(item), m_aborted(false)
-+    : KIO::Job(), m_item(item), m_baseItem(item), m_aborted(false)
++    : KIO::Job(), m_item(item)
++    // cache *a copy* of the item info, without parent info so we own it completely
++    , m_baseItem(new ProjectFolderItem(item->project(), item->path()))
++    , m_aborted(false)
 +    , m_emitWatchDir(!qEnvironmentVariableIsSet("KDEV_PROJECT_INTREE_DIRWATCHING_MODE"))
 +    , m_rcProxy(nullptr)
  {
      qRegisterMetaType<KIO::UDSEntryList>("KIO::UDSEntryList");
      qRegisterMetaType<KIO::Job*>();
-@@ -51,13 +99,37 @@ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
+@@ -51,13 +102,38 @@ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
  #endif
  }
  
@@ -339,6 +342,7 @@ index 30c89d3c2a..f83f3574b4 100644
 +        m_rcProxy->done();
 +        m_rcProxy->deleteLater();
 +    }
++    delete m_baseItem;
 +    m_item = m_baseItem = nullptr;
 +    m_rcProxy = nullptr;
 +}
@@ -367,7 +371,7 @@ index 30c89d3c2a..f83f3574b4 100644
      Q_ASSERT(!m_listQueue.contains(item));
      Q_ASSERT(!m_item || m_item == item || m_item->path().isDirectParentOf(item->path()));
  
-@@ -66,6 +138,10 @@ void FileManagerListJob::addSubDir( ProjectFolderItem* item )
+@@ -66,6 +142,10 @@ void FileManagerListJob::addSubDir( ProjectFolderItem* item )
  
  void FileManagerListJob::removeSubDir(ProjectFolderItem* item)
  {
@@ -378,7 +382,7 @@ index 30c89d3c2a..f83f3574b4 100644
      m_listQueue.removeAll(item);
  }
  
-@@ -97,6 +173,10 @@ void FileManagerListJob::startNextJob()
+@@ -97,6 +177,10 @@ void FileManagerListJob::startNextJob()
              if (m_aborted) {
                  return;
              }
@@ -389,7 +393,7 @@ index 30c89d3c2a..f83f3574b4 100644
              KIO::UDSEntryList results;
              std::transform(entries.begin(), entries.end(), std::back_inserter(results), [] (const QFileInfo& info) -> KIO::UDSEntry {
                  KIO::UDSEntry entry;
-@@ -121,7 +201,9 @@ void FileManagerListJob::startNextJob()
+@@ -121,7 +205,9 @@ void FileManagerListJob::startNextJob()
                  }
                  return entry;
              });
@@ -400,10 +404,11 @@ index 30c89d3c2a..f83f3574b4 100644
          }, m_item->path());
      } else {
          KIO::ListJob* job = KIO::listDir( m_item->path().toUrl(), KIO::HideProgressInfo );
-@@ -165,7 +247,11 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
+@@ -165,7 +251,12 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
      emit entries(this, m_item, entriesIn);
  
      if( m_listQueue.isEmpty() ) {
++        delete m_baseItem;
 +        m_baseItem = nullptr;
          emitResult();
 +        if (m_rcProxy) {
@@ -412,7 +417,7 @@ index 30c89d3c2a..f83f3574b4 100644
  
  #ifdef TIME_IMPORT_JOB
          qCDebug(PROJECT) << "TIME FOR LISTJOB:" << m_timer.elapsed();
-@@ -178,13 +264,37 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
+@@ -178,13 +269,38 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
  void FileManagerListJob::abort()
  {
      m_aborted = true;
@@ -422,6 +427,7 @@ index 30c89d3c2a..f83f3574b4 100644
 +        m_rcProxy->done();
 +    }
 +
++    delete m_baseItem;
 +    m_baseItem = nullptr;
  
      bool killed = kill();
@@ -505,6 +511,28 @@ index 0d32c992c4..9166477f31 100644
  };
  
  }
+diff --git kdevplatform/project/projectmodel.cpp kdevplatform/project/projectmodel.cpp
+index 2aae7e1a28..aeb717e21d 100644
+--- kdevplatform/project/projectmodel.cpp
++++ kdevplatform/project/projectmodel.cpp
+@@ -414,7 +415,7 @@ bool ProjectBaseItem::pathLessThan(ProjectBaseItem* item1, ProjectBaseItem* item
+ IProject* ProjectBaseItem::project() const
+ {
+     Q_D(const ProjectBaseItem);
+-    return d->project;
++    return d ? d->project : nullptr;
+ }
+ 
+ void ProjectBaseItem::appendRow( ProjectBaseItem* item )
+@@ -447,7 +448,7 @@ void ProjectBaseItem::appendRow( ProjectBaseItem* item )
+ Path ProjectBaseItem::path() const
+ {
+     Q_D(const ProjectBaseItem);
+-    return d->m_path;
++    return d ? d->m_path : Path();
+ }
+ 
+ QString ProjectBaseItem::baseName() const
 diff --git kdevplatform/project/projectwatcher.cpp kdevplatform/project/projectwatcher.cpp
 new file mode 100644
 index 0000000000..9cb26665a4
