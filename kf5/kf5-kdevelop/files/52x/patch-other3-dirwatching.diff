@@ -11,7 +11,7 @@ index c61e8de32e..d8b14d8240 100644
      interfaces/iprojectfilemanager.cpp
      interfaces/ibuildsystemmanager.cpp
 diff --git kdevplatform/project/abstractfilemanagerplugin.cpp kdevplatform/project/abstractfilemanagerplugin.cpp
-index 3e7d24f137..d2ded0057c 100644
+index 3e7d24f1375db81a9befc27bc13348851d14d43d..a8a502d7b8bd77979fa5ae421458e4389183b41d 100644
 --- kdevplatform/project/abstractfilemanagerplugin.cpp
 +++ kdevplatform/project/abstractfilemanagerplugin.cpp
 @@ -1,3 +1,4 @@
@@ -93,8 +93,8 @@ index 3e7d24f137..d2ded0057c 100644
 +    while (jobListIt != jobListHead) {
 +        auto job = *(--jobListIt);
 +        // check the other jobs that are still running (baseItem() != NULL)
-+        if (job->baseItem()) {
-+            if (job->baseItem()->path().path().startsWith(path)) {
++        if (job->basePath().isValid()) {
++            if (job->basePath().path().startsWith(path)) {
 +                // this job is already reloading @p item or one of its subdirs: abort it
 +                // because the new job will provide a more up-to-date representation.
 +                qCDebug(FILEMANAGER) << "aborting old job" << job << "before starting job for" << item->path();
@@ -115,7 +115,7 @@ index 3e7d24f137..d2ded0057c 100644
      FileManagerListJob* listJob = new FileManagerListJob( item );
      m_projectJobs[ item->project() ] << listJob;
      qCDebug(FILEMANAGER) << "adding job" << listJob << item << item->path() << "for project" << item->project();
-@@ -147,7 +185,14 @@ KIO::Job* AbstractFileManagerPluginPrivate::eventuallyReadFolder(ProjectFolderIt
+@@ -147,16 +185,23 @@ KIO::Job* AbstractFileManagerPluginPrivate::eventuallyReadFolder(ProjectFolderIt
      q->connect( listJob, &FileManagerListJob::entries,
                  q, [&] (FileManagerListJob* job, ProjectFolderItem* baseItem, const KIO::UDSEntryList& entries) {
                      addJobItems(job, baseItem, entries); } );
@@ -130,6 +130,17 @@ index 3e7d24f137..d2ded0057c 100644
      return listJob;
  }
  
+ void AbstractFileManagerPluginPrivate::jobFinished(KJob* job)
+ {
+     FileManagerListJob* gmlJob = qobject_cast<FileManagerListJob*>(job);
+-    if (gmlJob) {
++    if (gmlJob && gmlJob->project()) {
+         ifDebug(qCDebug(FILEMANAGER) << job << gmlJob << gmlJob->item();)
+-        m_projectJobs[ gmlJob->item()->project() ].removeOne( gmlJob );
++        m_projectJobs[ gmlJob->project() ].removeOne( gmlJob );
+     } else {
+         // job emitted its finished signal from its destructor
+         // ensure we don't keep a dangling point in our list
 @@ -257,9 +302,13 @@ void AbstractFileManagerPluginPrivate::addJobItems(FileManagerListJob* job,
      }
  }
@@ -265,10 +276,10 @@ index c99e7e0c23..0bb9e9a3c8 100644
  
  }
 diff --git kdevplatform/project/filemanagerlistjob.cpp kdevplatform/project/filemanagerlistjob.cpp
-index 30c89d3c2a..f83f3574b4 100644
+index 30c89d3c2ab279b44ab2f036e09c5dd1d63d27b2..892a8aeae90c2ddddd4416e859d0964e4436f026 100644
 --- kdevplatform/project/filemanagerlistjob.cpp
 +++ kdevplatform/project/filemanagerlistjob.cpp
-@@ -29,11 +29,62 @@
+@@ -29,11 +29,66 @@
  // Qt
  #include <QtConcurrentRun>
  #include <QDir>
@@ -293,7 +304,10 @@ index 30c89d3c2a..f83f3574b4 100644
 +
 +    ~RunControllerProxy()
 +    {
-+        done();
++        if (m_proxied) {
++            m_proxied->m_rcProxy = nullptr;
++            done();
++        }
 +    }
 +
 +    // we don't run anything ourselves
@@ -303,9 +317,10 @@ index 30c89d3c2a..f83f3574b4 100644
 +    bool doKill()
 +    {
 +        if (m_proxied) {
-+            qCDebug(PROJECT) << "Aborting" << m_proxied;
-+            m_proxied->abort();
++            qCWarning(PROJECT) << "Aborting" << m_proxied;
++            auto proxied = m_proxied;
 +            done();
++            proxied->abort();
 +        }
 +        return true;
 +    }
@@ -323,16 +338,16 @@ index 30c89d3c2a..f83f3574b4 100644
 +
  FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
 -    : KIO::Job(), m_item(item), m_aborted(false)
-+    : KIO::Job(), m_item(item)
++    : KIO::Job(), m_item(item), m_project(item->project())
 +    // cache *a copy* of the item info, without parent info so we own it completely
-+    , m_baseItem(new ProjectFolderItem(item->project(), item->path()))
++    , m_basePath(item->path())
 +    , m_aborted(false)
 +    , m_emitWatchDir(!qEnvironmentVariableIsSet("KDEV_PROJECT_INTREE_DIRWATCHING_MODE"))
 +    , m_rcProxy(nullptr)
  {
      qRegisterMetaType<KIO::UDSEntryList>("KIO::UDSEntryList");
      qRegisterMetaType<KIO::Job*>();
-@@ -51,13 +102,38 @@ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
+@@ -51,13 +106,44 @@ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
  #endif
  }
  
@@ -342,9 +357,10 @@ index 30c89d3c2a..f83f3574b4 100644
 +        m_rcProxy->done();
 +        m_rcProxy->deleteLater();
 +    }
-+    delete m_baseItem;
-+    m_item = m_baseItem = nullptr;
++    m_item = nullptr;
++    m_project = nullptr;
 +    m_rcProxy = nullptr;
++    m_basePath = Path();
 +}
 +
  ProjectFolderItem* FileManagerListJob::item() const
@@ -352,14 +368,19 @@ index 30c89d3c2a..f83f3574b4 100644
      return m_item;
  }
  
++IProject* FileManagerListJob::project() const
++{
++    return m_project;
++}
++
 +QQueue<ProjectFolderItem*> FileManagerListJob::itemQueue() const
 +{
 +    return m_listQueue;
 +}
 +
-+ProjectFolderItem* FileManagerListJob::baseItem() const
++Path FileManagerListJob::basePath() const
 +{
-+    return m_baseItem;
++    return m_basePath;
 +}
 +
  void FileManagerListJob::addSubDir( ProjectFolderItem* item )
@@ -371,7 +392,7 @@ index 30c89d3c2a..f83f3574b4 100644
      Q_ASSERT(!m_listQueue.contains(item));
      Q_ASSERT(!m_item || m_item == item || m_item->path().isDirectParentOf(item->path()));
  
-@@ -66,6 +142,10 @@ void FileManagerListJob::addSubDir( ProjectFolderItem* item )
+@@ -66,6 +152,10 @@ void FileManagerListJob::addSubDir( ProjectFolderItem* item )
  
  void FileManagerListJob::removeSubDir(ProjectFolderItem* item)
  {
@@ -382,7 +403,15 @@ index 30c89d3c2a..f83f3574b4 100644
      m_listQueue.removeAll(item);
  }
  
-@@ -97,6 +177,10 @@ void FileManagerListJob::startNextJob()
+@@ -86,6 +176,7 @@ void FileManagerListJob::startNextJob()
+ #endif
+ 
+     m_item = m_listQueue.dequeue();
++    m_project = m_item->project();
+     if (m_item->path().isLocalFile()) {
+         // optimized version for local projects using QDir directly
+         QtConcurrent::run([this] (const Path& path) {
+@@ -97,6 +188,10 @@ void FileManagerListJob::startNextJob()
              if (m_aborted) {
                  return;
              }
@@ -393,7 +422,7 @@ index 30c89d3c2a..f83f3574b4 100644
              KIO::UDSEntryList results;
              std::transform(entries.begin(), entries.end(), std::back_inserter(results), [] (const QFileInfo& info) -> KIO::UDSEntry {
                  KIO::UDSEntry entry;
-@@ -121,7 +205,9 @@ void FileManagerListJob::startNextJob()
+@@ -121,7 +216,9 @@ void FileManagerListJob::startNextJob()
                  }
                  return entry;
              });
@@ -404,20 +433,21 @@ index 30c89d3c2a..f83f3574b4 100644
          }, m_item->path());
      } else {
          KIO::ListJob* job = KIO::listDir( m_item->path().toUrl(), KIO::HideProgressInfo );
-@@ -165,7 +251,12 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
+@@ -165,7 +262,13 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
      emit entries(this, m_item, entriesIn);
  
      if( m_listQueue.isEmpty() ) {
-+        delete m_baseItem;
-+        m_baseItem = nullptr;
++        m_basePath = Path();
          emitResult();
 +        if (m_rcProxy) {
 +            m_rcProxy->done();
 +        }
++        m_item = nullptr;
++        m_project = nullptr;
  
  #ifdef TIME_IMPORT_JOB
          qCDebug(PROJECT) << "TIME FOR LISTJOB:" << m_timer.elapsed();
-@@ -178,13 +269,38 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
+@@ -178,13 +281,39 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
  void FileManagerListJob::abort()
  {
      m_aborted = true;
@@ -427,8 +457,9 @@ index 30c89d3c2a..f83f3574b4 100644
 +        m_rcProxy->done();
 +    }
 +
-+    delete m_baseItem;
-+    m_baseItem = nullptr;
++    m_item = nullptr;
++    m_project = nullptr;
++    m_basePath = Path();
  
      bool killed = kill();
 +    m_killCount += 1;
@@ -457,25 +488,32 @@ index 30c89d3c2a..f83f3574b4 100644
      startNextJob();
  }
 diff --git kdevplatform/project/filemanagerlistjob.h kdevplatform/project/filemanagerlistjob.h
-index 0d32c992c4..9166477f31 100644
+index 0d32c992c47ebc7d084a019badb64988f0be9ec0..ca4f7bf1b0df41d0bedeaf90489aa8dba1a073ad 100644
 --- kdevplatform/project/filemanagerlistjob.h
 +++ kdevplatform/project/filemanagerlistjob.h
-@@ -33,6 +33,7 @@
+@@ -30,9 +30,13 @@
+ #include <QElapsedTimer>
+ #endif
+ 
++#include "path.h"
++
  namespace KDevelop
  {
      class ProjectFolderItem;
 +    class RunControllerProxy;
++    class IProject;
  
  class FileManagerListJob : public KIO::Job
  {
-@@ -40,18 +41,23 @@ class FileManagerListJob : public KIO::Job
+@@ -40,18 +44,24 @@ class FileManagerListJob : public KIO::Job
  
  public:
      explicit FileManagerListJob(ProjectFolderItem* item);
 +    virtual ~FileManagerListJob();
      ProjectFolderItem* item() const;
++    IProject* project() const;
 +    QQueue<ProjectFolderItem*> itemQueue() const;
-+    ProjectFolderItem* baseItem() const;
++    Path basePath() const;
  
      void addSubDir(ProjectFolderItem* item);
      void removeSubDir(ProjectFolderItem* item);
@@ -492,22 +530,26 @@ index 0d32c992c4..9166477f31 100644
  
  private Q_SLOTS:
      void slotEntries(KIO::Job* job, const KIO::UDSEntryList& entriesIn );
-@@ -64,6 +70,8 @@ private:
+@@ -64,6 +74,10 @@ private:
      QQueue<ProjectFolderItem*> m_listQueue;
      /// current base dir
      ProjectFolderItem* m_item;
++    /// current project
++    IProject* m_project;
 +    /// entrypoint
-+    ProjectFolderItem* m_baseItem;
++    Path m_basePath;
      KIO::UDSEntryList entryList;
      // kill does not delete the job instantaniously
      QAtomicInt m_aborted;
-@@ -73,6 +81,9 @@ private:
+@@ -73,6 +87,11 @@ private:
      QElapsedTimer m_subTimer;
      qint64 m_subWaited = 0;
  #endif
 +    bool m_emitWatchDir;
 +    int m_killCount = 0;
++protected:
 +    RunControllerProxy* m_rcProxy;
++    friend class RunControllerProxy;
  };
  
  }
