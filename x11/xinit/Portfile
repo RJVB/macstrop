@@ -1,0 +1,116 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
+PortSystem          1.0
+
+name                xinit
+version             1.3.4
+revision            4
+categories          x11
+platforms           darwin
+maintainers         {jeremyhu @jeremyhu} openmaintainer
+license             MIT
+description         X11 startup script processor
+long_description    xinit is responsible for configuring the initial environment \
+                    when X11 starts up.
+
+homepage            https://www.x.org
+master_sites        xorg:individual/app/
+
+checksums           sha1    de3469080d73ced1f7d7a1803e813bc6ea352072 \
+                    rmd160  ee5b21766556c4a16e2538700b432a11890d7829 \
+                    sha256  75d88d7397a07e01db253163b7c7a00b249b3d30e99489f2734cac9a0c7902b3
+
+use_bzip2           yes
+use_parallel_build  yes
+
+variant xquartz description {(try to) use all as much as possible from an XQuartz install} {}
+variant disable_launchd description {install disabled launchd plists to get a traditional DISPLAY value} {}
+
+depends_run         bin:xauth:xauth
+
+depends_build       port:pkgconfig \
+                    port:xorg-util-macros \
+                    port:tradcpp
+
+depends_lib         port:xorg-libX11
+
+patchfiles-append \
+    0001-launchd-Install-binaries-into-libexecdir.patch \
+    0002-startx-Add-listen-tcp-if-nolisten_tcp-is-disabled-fo.patch \
+    0003-startx-Add-support-for-enabling-IGLX-for-XQuartz.patch
+
+if {[vercmp ${os.version} 10.3.0] < 0 || [variant_isset disable_launchd]} {
+    patchfiles-append disable-launchagent.patch
+}
+
+patch.pre_args -p1
+
+pre-configure {
+    use_autoreconf [expr ![file exists ${worksrcpath}/config.log]]
+}
+autoreconf.args -fvi
+
+configure.args      --disable-silent-rules \
+                    --with-launchd-id-prefix=org.macports
+
+configure.args-append   RAWCPP=${prefix}/bin/tradcpp
+
+post-destroot {
+    xinstall -d ${destroot}${prefix}/etc/X11/xinit/xinitrc.d
+    xinstall -m 755 {*}[glob ${filespath}/xinitrc.d/*.sh] ${destroot}${prefix}/etc/X11/xinit/xinitrc.d
+    xinstall -m 755 ${filespath}/font_cache.sh ${destroot}${prefix}/bin/font_cache
+
+    reinplace "s|__PREFIX__|${prefix}|g" \
+        {*}[glob ${destroot}${prefix}/etc/X11/xinit/xinitrc.d/*.sh] \
+        ${destroot}${prefix}/bin/font_cache
+}
+
+platform darwin {
+    if {${os.major} > 9} {
+        # OS X 10.6.3 was the first version whose native X11 allowed the modern socket naming
+        # for better X11 server coexistence, so we require it for installing the LaunchAgent
+        if {[vercmp ${os.version} 10.3.0] < 0} {
+            notes {
+                To use MacPorts' X11 as the default server, install\
+                xorg-server, load the LaunchAgent with the following\
+                command, log out, and log back in.
+
+                    $ launchctl load -w /Library/LaunchAgents/org.macports.startx.plist
+
+                This will be remembered across port updates on Snow\
+                Leopard and later. Note that doing this may cause the\
+                Apple-provided X11 to fail to launch.}
+        } else {
+            notes {
+                To use MacPorts' X11 as the default server, install\
+                xorg-server, log out, and log back in.}
+        }
+    }
+
+    if {!([vercmp ${os.version} 10.3.0] < 0 || [variant_isset disable_launchd])} {
+        post-activate {
+            system "launchctl load /Library/LaunchDaemons/org.macports.privileged_startx.plist"
+        }
+
+        pre-deactivate {
+            system "launchctl unload /Library/LaunchDaemons/org.macports.privileged_startx.plist"
+        }
+    } elseif {[variant_isset disable_launchd]} {
+        destroot.violate_mtree yes
+        post-destroot {
+            xinstall -d ${destroot}/Library/LaunchDaemons-disabled
+            xinstall -d ${destroot}/Library/LaunchAgents-disabled
+            file rename ${destroot}/Library/LaunchDaemons/org.macports.privileged_startx.plist \
+                ${destroot}/Library/LaunchDaemons-disabled/org.macports.privileged_startx.plist
+            file rename ${destroot}/Library/LaunchAgents/org.macports.startx.plist \
+                ${destroot}/Library/LaunchAgents-disabled/org.macports.startx.plist
+        }
+    }
+}
+
+install.asroot      yes
+
+livecheck.type      regex
+livecheck.regex     ${name}-(\[\\d.\]+)${extract.suffix}
+livecheck.url       http://xorg.freedesktop.org/archive/individual/app/?C=M&O=D
+
