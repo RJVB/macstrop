@@ -1,0 +1,317 @@
+diff --git CMakeLists.txt CMakeLists.txt
+index 39e4297799c0c59c120fae3266a1239875674364..d82b7b6c8107cc9a115d29b8e0280d2ecfab9c18 100644
+--- CMakeLists.txt
++++ CMakeLists.txt
+@@ -38,6 +38,8 @@ if(POLICY CMP0071)
+   cmake_policy(SET CMP0071 OLD)
+ endif()
+ 
++include(GetGitRevisionDescription)
++
+ set(QT_MIN_VERSION "5.5.0")
+ find_package(Qt5 ${QT_MIN_VERSION} CONFIG REQUIRED Widgets Concurrent Quick QuickWidgets)
+ if(BUILD_TESTING)
+@@ -149,6 +151,28 @@ endif()
+ # create config-kdevelop.h
+ configure_file(config-kdevelop.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/config-kdevelop.h)
+ 
++# create kdevelop_fullversion.h
++set(KDevelop_FULL_VERSION "${KDevelop_VERSION_MAJOR}.${KDevelop_VERSION_MINOR}.${KDevelop_VERSION_PATCH}")
++git_describe(GIT_FULL_VERSION "--tags")
++if(GIT_FULL_VERSION)
++    # development build, i.e. from a git working copy.
++    # Get the current commit version using `git describe` and
++    # strip the leading v plus the part that matches the version
++    # declared in the project definition above.
++    string(REPLACE "v${KDevelop_FULL_VERSION}" "" COMMIT_VERSION "${GIT_FULL_VERSION}")
++    if(NOT ${COMMIT_VERSION} MATCHES ${GIT_FULL_VERSION})
++        # `git describe` agrees with KDevelop_VERSION_STRING;
++        # make an atomic version string by appending the additional info
++        string(APPEND KDevelop_FULL_VERSION ${COMMIT_VERSION})
++    else()
++        # `git describe` provides a seemingly unrelated version string;
++        # append it in parentheses.
++        string(APPEND KDevelop_FULL_VERSION " (${GIT_FULL_VERSION})")
++    endif()
++    message(STATUS "Setting KDevelop version to: ${KDevelop_FULL_VERSION}")
++endif()
++configure_file(kdevelop_fullversion.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/kdevelop_fullversion.h)
++
+ add_subdirectory(kdevplatform)
+ add_subdirectory(plugins)
+ 
+diff --git app/main.cpp app/main.cpp
+index d5821f66881b579292b46fb8ba5bd6acf2efc0a1..bdc9fefa8d49ce850eb9c60f82bc28cd03d9afca 100644
+--- app/main.cpp
++++ app/main.cpp
+@@ -29,6 +29,7 @@
+ 
+ #include "config-kdevelop.h"
+ #include "kdevelop_version.h"
++#include "kdevelop_fullversion.h"
+ 
+ #include "urlinfo.h"
+ 
+@@ -387,7 +388,7 @@ int main( int argc, char *argv[] )
+     KDevelopApplication app(argc, argv);
+     KLocalizedString::setApplicationDomain("kdevelop");
+ 
+-    KAboutData aboutData( QStringLiteral("kdevelop"), i18n("KDevelop"), QStringLiteral(KDEVELOP_VERSION_STRING),
++    KAboutData aboutData( QStringLiteral("kdevelop"), i18n("KDevelop"), QStringLiteral(KDEVELOP_FULL_VERSION_STRING),
+                           i18n("The KDevelop Integrated Development Environment"),
+                           KAboutLicense::GPL,
+                           i18n("Copyright 1999-2018, The KDevelop developers"), QString(), QStringLiteral("https://www.kdevelop.org/"));
+diff --git cmake/modules/GetGitRevisionDescription.cmake cmake/modules/GetGitRevisionDescription.cmake
+new file mode 100644
+index 0000000000000000000000000000000000000000..8ab03bc5f0b766462e05edb6afbe9c20e8115b46
+--- /dev/null
++++ cmake/modules/GetGitRevisionDescription.cmake
+@@ -0,0 +1,168 @@
++# - Returns a version string from Git
++#
++# These functions force a re-configure on each git commit so that you can
++# trust the values of the variables in your build system.
++#
++#  get_git_head_revision(<refspecvar> <hashvar> [<additional arguments to git describe> ...])
++#
++# Returns the refspec and sha hash of the current head revision
++#
++#  git_describe(<var> [<additional arguments to git describe> ...])
++#
++# Returns the results of git describe on the source tree, and adjusting
++# the output so that it tests false if an error occurs.
++#
++#  git_get_exact_tag(<var> [<additional arguments to git describe> ...])
++#
++# Returns the results of git describe --exact-match on the source tree,
++# and adjusting the output so that it tests false if there was no exact
++# matching tag.
++#
++#  git_local_changes(<var>)
++#
++# Returns either "CLEAN" or "DIRTY" with respect to uncommitted changes.
++# Uses the return code of "git diff-index --quiet HEAD --".
++# Does not regard untracked files.
++#
++# Requires CMake 2.6 or newer (uses the 'function' command)
++#
++# Original Author:
++# 2009-2010 Ryan Pavlik <rpavlik@iastate.edu> <abiryan@ryand.net>
++# http://academic.cleardefinition.com
++# Iowa State University HCI Graduate Program/VRAC
++#
++# Copyright Iowa State University 2009-2010.
++# Distributed under the Boost Software License, Version 1.0.
++# (See accompanying file LICENSE_1_0.txt or copy at
++# http://www.boost.org/LICENSE_1_0.txt)
++
++if(__get_git_revision_description)
++	return()
++endif()
++set(__get_git_revision_description YES)
++
++# We must run the following at "include" time, not at function call time,
++# to find the path to this module rather than the path to a calling list file
++get_filename_component(_gitdescmoddir ${CMAKE_CURRENT_LIST_FILE} PATH)
++
++function(get_git_head_revision _refspecvar _hashvar)
++	set(GIT_PARENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
++	set(GIT_DIR "${GIT_PARENT_DIR}/.git")
++	while(NOT EXISTS "${GIT_DIR}")	# .git dir not found, search parent directories
++		set(GIT_PREVIOUS_PARENT "${GIT_PARENT_DIR}")
++		get_filename_component(GIT_PARENT_DIR ${GIT_PARENT_DIR} PATH)
++		if(GIT_PARENT_DIR STREQUAL GIT_PREVIOUS_PARENT)
++			# We have reached the root directory, we are not in git
++			set(${_refspecvar} "GITDIR-NOTFOUND" PARENT_SCOPE)
++			set(${_hashvar} "GITDIR-NOTFOUND" PARENT_SCOPE)
++			return()
++		endif()
++		set(GIT_DIR "${GIT_PARENT_DIR}/.git")
++	endwhile()
++	# check if this is a submodule
++	if(NOT IS_DIRECTORY ${GIT_DIR})
++		file(READ ${GIT_DIR} submodule)
++		string(REGEX REPLACE "gitdir: (.*)\n$" "\\1" GIT_DIR_RELATIVE ${submodule})
++		get_filename_component(SUBMODULE_DIR ${GIT_DIR} PATH)
++		get_filename_component(GIT_DIR ${SUBMODULE_DIR}/${GIT_DIR_RELATIVE} ABSOLUTE)
++	endif()
++	set(GIT_DATA "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/git-data")
++	if(NOT EXISTS "${GIT_DATA}")
++		file(MAKE_DIRECTORY "${GIT_DATA}")
++	endif()
++
++	if(NOT EXISTS "${GIT_DIR}/HEAD")
++		return()
++	endif()
++	set(HEAD_FILE "${GIT_DATA}/HEAD")
++	configure_file("${GIT_DIR}/HEAD" "${HEAD_FILE}" COPYONLY)
++
++	configure_file("${_gitdescmoddir}/GetGitRevisionDescription.cmake.in"
++		"${GIT_DATA}/grabRef.cmake"
++		@ONLY)
++	include("${GIT_DATA}/grabRef.cmake")
++
++	set(${_refspecvar} "${HEAD_REF}" PARENT_SCOPE)
++	set(${_hashvar} "${HEAD_HASH}" PARENT_SCOPE)
++endfunction()
++
++function(git_describe _var)
++	if(NOT GIT_FOUND)
++		find_package(Git QUIET)
++	endif()
++	get_git_head_revision(refspec hash)
++	if(NOT GIT_FOUND)
++		set(${_var} "GIT-NOTFOUND" PARENT_SCOPE)
++		return()
++	endif()
++	if(NOT hash)
++		set(${_var} "HEAD-HASH-NOTFOUND" PARENT_SCOPE)
++		return()
++	endif()
++
++	# TODO sanitize
++	#if((${ARGN}" MATCHES "&&") OR
++	#	(ARGN MATCHES "||") OR
++	#	(ARGN MATCHES "\\;"))
++	#	message("Please report the following error to the project!")
++	#	message(FATAL_ERROR "Looks like someone's doing something nefarious with git_describe! Passed arguments ${ARGN}")
++	#endif()
++
++	#message(STATUS "Arguments to execute_process: ${ARGN}")
++
++	execute_process(COMMAND
++		"${GIT_EXECUTABLE}"
++		describe
++		${hash}
++		${ARGN}
++		WORKING_DIRECTORY
++		"${CMAKE_CURRENT_SOURCE_DIR}"
++		RESULT_VARIABLE
++		res
++		OUTPUT_VARIABLE
++		out
++		ERROR_QUIET
++		OUTPUT_STRIP_TRAILING_WHITESPACE)
++	if(NOT res EQUAL 0)
++		set(out "${out}-${res}-NOTFOUND")
++	endif()
++
++	set(${_var} "${out}" PARENT_SCOPE)
++endfunction()
++
++function(git_get_exact_tag _var)
++	git_describe(out --exact-match ${ARGN})
++	set(${_var} "${out}" PARENT_SCOPE)
++endfunction()
++
++function(git_local_changes _var)
++	if(NOT GIT_FOUND)
++		find_package(Git QUIET)
++	endif()
++	get_git_head_revision(refspec hash)
++	if(NOT GIT_FOUND)
++		set(${_var} "GIT-NOTFOUND" PARENT_SCOPE)
++		return()
++	endif()
++	if(NOT hash)
++		set(${_var} "HEAD-HASH-NOTFOUND" PARENT_SCOPE)
++		return()
++	endif()
++
++	execute_process(COMMAND
++		"${GIT_EXECUTABLE}"
++		diff-index --quiet HEAD --
++		WORKING_DIRECTORY
++		"${CMAKE_CURRENT_SOURCE_DIR}"
++		RESULT_VARIABLE
++		res
++		OUTPUT_VARIABLE
++		out
++		ERROR_QUIET
++		OUTPUT_STRIP_TRAILING_WHITESPACE)
++	if(res EQUAL 0)
++		set(${_var} "CLEAN" PARENT_SCOPE)
++	else()
++		set(${_var} "DIRTY" PARENT_SCOPE)
++	endif()
++endfunction()
+diff --git cmake/modules/GetGitRevisionDescription.cmake.in cmake/modules/GetGitRevisionDescription.cmake.in
+new file mode 100644
+index 0000000000000000000000000000000000000000..6d8b708efe56a66852752a7a30ec5c16b51cdc9e
+--- /dev/null
++++ cmake/modules/GetGitRevisionDescription.cmake.in
+@@ -0,0 +1,41 @@
++#
++# Internal file for GetGitRevisionDescription.cmake
++#
++# Requires CMake 2.6 or newer (uses the 'function' command)
++#
++# Original Author:
++# 2009-2010 Ryan Pavlik <rpavlik@iastate.edu> <abiryan@ryand.net>
++# http://academic.cleardefinition.com
++# Iowa State University HCI Graduate Program/VRAC
++#
++# Copyright Iowa State University 2009-2010.
++# Distributed under the Boost Software License, Version 1.0.
++# (See accompanying file LICENSE_1_0.txt or copy at
++# http://www.boost.org/LICENSE_1_0.txt)
++
++set(HEAD_HASH)
++
++file(READ "@HEAD_FILE@" HEAD_CONTENTS LIMIT 1024)
++
++string(STRIP "${HEAD_CONTENTS}" HEAD_CONTENTS)
++if(HEAD_CONTENTS MATCHES "ref")
++	# named branch
++	string(REPLACE "ref: " "" HEAD_REF "${HEAD_CONTENTS}")
++	if(EXISTS "@GIT_DIR@/${HEAD_REF}")
++		configure_file("@GIT_DIR@/${HEAD_REF}" "@GIT_DATA@/head-ref" COPYONLY)
++	else()
++		configure_file("@GIT_DIR@/packed-refs" "@GIT_DATA@/packed-refs" COPYONLY)
++		file(READ "@GIT_DATA@/packed-refs" PACKED_REFS)
++		if(${PACKED_REFS} MATCHES "([0-9a-z]*) ${HEAD_REF}")
++			set(HEAD_HASH "${CMAKE_MATCH_1}")
++		endif()
++	endif()
++else()
++	# detached HEAD
++	configure_file("@GIT_DIR@/HEAD" "@GIT_DATA@/head-ref" COPYONLY)
++endif()
++
++if(NOT HEAD_HASH)
++	file(READ "@GIT_DATA@/head-ref" HEAD_HASH LIMIT 1024)
++	string(STRIP "${HEAD_HASH}" HEAD_HASH)
++endif()
+diff --git kdevelop_fullversion.h.cmake kdevelop_fullversion.h.cmake
+new file mode 100644
+index 0000000000000000000000000000000000000000..83047445251b99fb78ed5f59ba7d8077aa2f3ed3
+--- /dev/null
++++ kdevelop_fullversion.h.cmake
+@@ -0,0 +1,27 @@
++/***************************************************************************
++ *   Copyright 2017 René J.V. Bertin <rjvbertin@gmail.com>                 *
++ *                                                                         *
++ *   This program is free software; you can redistribute it and/or modify  *
++ *   it under the terms of the GNU Library General Public License as       *
++ *   published by the Free Software Foundation; either version 2 of the    *
++ *   License, or (at your option) any later version.                       *
++ *                                                                         *
++ *   This program is distributed in the hope that it will be useful,       *
++ *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
++ *   GNU General Public License for more details.                          *
++ *                                                                         *
++ *   You should have received a copy of the GNU Library General Public     *
++ *   License along with this program; if not, write to the                 *
++ *   Free Software Foundation, Inc.,                                       *
++ *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.         *
++ ***************************************************************************/
++
++#ifndef KDEVELOP_FULLVERSION_H
++#define KDEVELOP_FULLVERSION_H
++
++/* kdevelop_fullversion.h.  Generated by cmake from kdevelop_fullversion.h.cmake */
++
++#define KDEVELOP_FULL_VERSION_STRING "@KDevelop_FULL_VERSION@"
++
++#endif //  KDEVELOP_FULLVERSION_H
