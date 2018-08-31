@@ -1,0 +1,786 @@
+diff --git kdevplatform/project/CMakeLists.txt kdevplatform/project/CMakeLists.txt
+index c61e8de32e..d8b14d8240 100644
+--- kdevplatform/project/CMakeLists.txt
++++ kdevplatform/project/CMakeLists.txt
+@@ -15,6 +15,7 @@ set(KDevPlatformProject_LIB_SRCS
+     abstractfilemanagerplugin.cpp
+     filemanagerlistjob.cpp
+     projectfiltermanager.cpp
++    projectwatcher.cpp
+     interfaces/iprojectbuilder.cpp
+     interfaces/iprojectfilemanager.cpp
+     interfaces/ibuildsystemmanager.cpp
+diff --git kdevplatform/project/abstractfilemanagerplugin.cpp kdevplatform/project/abstractfilemanagerplugin.cpp
+index 3e7d24f1375db81a9befc27bc13348851d14d43d..a8a502d7b8bd77979fa5ae421458e4389183b41d 100644
+--- kdevplatform/project/abstractfilemanagerplugin.cpp
++++ kdevplatform/project/abstractfilemanagerplugin.cpp
+@@ -1,3 +1,4 @@
++#define TIME_IMPORT_JOB
+ /***************************************************************************
+  *   This file is part of KDevelop                                         *
+  *   Copyright 2010-2012 Milian Wolff <mail@milianw.de>                    *
+@@ -41,6 +42,7 @@
+ #include <serialization/indexedstring.h>
+ 
+ #include "projectfiltermanager.h"
++#include "projectwatcher.h"
+ #include "debug.h"
+ 
+ #define ifDebug(x)
+@@ -74,6 +76,7 @@ class KDevelop::AbstractFileManagerPluginPrivate
+ public:
+     explicit AbstractFileManagerPluginPrivate(AbstractFileManagerPlugin* qq)
+         : q(qq)
++        , m_intreeDirWatching(qEnvironmentVariableIsSet("KDEV_PROJECT_INTREE_DIRWATCHING_MODE"))
+     {
+     }
+ 
+@@ -83,13 +86,13 @@ public:
+      * The just returned must be started in one way or another for this method
+      * to have any affect. The job will then auto-delete itself upon completion.
+      */
+-    Q_REQUIRED_RESULT KIO::Job* eventuallyReadFolder(ProjectFolderItem* item);
++    Q_REQUIRED_RESULT FileManagerListJob* eventuallyReadFolder(ProjectFolderItem* item);
+     void addJobItems(FileManagerListJob* job,
+                      ProjectFolderItem* baseItem,
+                      const KIO::UDSEntryList& entries);
+ 
+     void deleted(const QString &path);
+-    void created(const QString &path);
++    void dirty(const QString &path, bool isCreated = false);
+ 
+     void projectClosing(IProject* project);
+     void jobFinished(KJob* job);
+@@ -103,10 +106,14 @@ public:
+ 
+     void removeFolder(ProjectFolderItem* folder);
+ 
+-    QHash<IProject*, KDirWatch*> m_watchers;
++    QHash<IProject*, ProjectWatcher*> m_watchers;
+     QHash<IProject*, QList<FileManagerListJob*> > m_projectJobs;
+     QVector<QString> m_stoppedFolders;
+     ProjectFilterManager m_filters;
++    // intree dirwatching is the original mode that feeds all files
++    // and directories to the dirwatcher. It takes longer to load but
++    // works better for certain (large) projects that use in-tree builds.
++    bool m_intreeDirWatching;
+ };
+ 
+ void AbstractFileManagerPluginPrivate::projectClosing(IProject* project)
+@@ -114,11 +121,13 @@ void AbstractFileManagerPluginPrivate::projectClosing(IProject* project)
+     if ( m_projectJobs.contains(project) ) {
+         // make sure the import job does not live longer than the project
+         // see also addLotsOfFiles test
+-        foreach( FileManagerListJob* job, m_projectJobs[project] ) {
++        auto jobList = m_projectJobs[project];
++        m_projectJobs.remove(project);
++        foreach( FileManagerListJob* job, jobList ) {
+             qCDebug(FILEMANAGER) << "killing project job:" << job;
+             job->abort();
+         }
+-        m_projectJobs.remove(project);
++        jobList.clear();
+     }
+ #ifdef TIME_IMPORT_JOB
+     QElapsedTimer timer;
+@@ -129,14 +138,45 @@ void AbstractFileManagerPluginPrivate::projectClosing(IProject* project)
+     delete m_watchers.take(project);
+ #ifdef TIME_IMPORT_JOB
+     if (timer.isValid()) {
+-        qCDebug(FILEMANAGER) << "Deleting dir watcher took" << timer.elapsed() / 1000.0 << "seconds for project" << project->name();
++        qCInfo(FILEMANAGER) << "Deleting dir watcher took" << timer.elapsed() / 1000.0 << "seconds for project" << project->name();
+     }
+ #endif
+     m_filters.remove(project);
+ }
+ 
+-KIO::Job* AbstractFileManagerPluginPrivate::eventuallyReadFolder(ProjectFolderItem* item)
++FileManagerListJob* AbstractFileManagerPluginPrivate::eventuallyReadFolder(ProjectFolderItem* item)
+ {
++    ProjectWatcher* watcher = m_watchers.value( item->project(), nullptr );
++
++    // Before we create a new list job it's a good idea to
++    // walk the list backwards, checking for duplicates and aborting
++    // any previously started jobs loading the same directory.
++    const auto jobList = QList<FileManagerListJob*>(m_projectJobs[item->project()]);
++    auto jobListIt = jobList.constEnd();
++    auto jobListHead = jobList.constBegin();
++    const auto path = item->path().path();
++    while (jobListIt != jobListHead) {
++        auto job = *(--jobListIt);
++        // check the other jobs that are still running (baseItem() != NULL)
++        if (job->basePath().isValid()) {
++            if (job->basePath().path().startsWith(path)) {
++                // this job is already reloading @p item or one of its subdirs: abort it
++                // because the new job will provide a more up-to-date representation.
++                qCDebug(FILEMANAGER) << "aborting old job" << job << "before starting job for" << item->path();
++                m_projectJobs[item->project()].removeOne(job);
++                job->abort();
++            } else if (job->itemQueue().contains(item)) {
++                job->removeSubDir(item);
++                qCDebug(FILEMANAGER) << "unqueueing reload of old job" << job << "before starting one for" << item->path();
++            } else if (job->item() == item) {
++                qCWarning(FILEMANAGER) << "old job" << job << "is already reloading" << item->path();
++                // not much we can do here, we have to return a valid FileManagerListJob.
++            }
++        }
++    }
++
++    // FileManagerListJob detects KDEV_PROJECT_INTREE_DIRWATCHING_MODE itself
++    // this is safe as long as it's not feasible to change our own env. variables
+     FileManagerListJob* listJob = new FileManagerListJob( item );
+     m_projectJobs[ item->project() ] << listJob;
+     qCDebug(FILEMANAGER) << "adding job" << listJob << item << item->path() << "for project" << item->project();
+@@ -147,16 +187,23 @@ KIO::Job* AbstractFileManagerPluginPrivate::eventuallyReadFolder(ProjectFolderIt
+     q->connect( listJob, &FileManagerListJob::entries,
+                 q, [&] (FileManagerListJob* job, ProjectFolderItem* baseItem, const KIO::UDSEntryList& entries) {
+                     addJobItems(job, baseItem, entries); } );
++    if (!m_intreeDirWatching) {
++        q->connect( listJob, &FileManagerListJob::watchDir,
++                watcher, [watcher] (const QString& path) {
++                    watcher->addDir(path); } );
++    }
+ 
++    // set a relevant name (for listing in the runController)
++    listJob->setObjectName(i18n("Reload of %1:%2", item->project()->name(), item->path().toLocalFile()));
+     return listJob;
+ }
+ 
+ void AbstractFileManagerPluginPrivate::jobFinished(KJob* job)
+ {
+     FileManagerListJob* gmlJob = qobject_cast<FileManagerListJob*>(job);
+-    if (gmlJob) {
++    if (gmlJob && gmlJob->project()) {
+         ifDebug(qCDebug(FILEMANAGER) << job << gmlJob << gmlJob->item();)
+-        m_projectJobs[ gmlJob->item()->project() ].removeOne( gmlJob );
++        m_projectJobs[ gmlJob->project() ].removeOne( gmlJob );
+     } else {
+         // job emitted its finished signal from its destructor
+         // ensure we don't keep a dangling point in our list
+@@ -257,9 +304,13 @@ void AbstractFileManagerPluginPrivate::addJobItems(FileManagerListJob* job,
+     }
+ }
+ 
+-void AbstractFileManagerPluginPrivate::created(const QString& path_)
++void AbstractFileManagerPluginPrivate::dirty(const QString& path_, bool isCreated)
+ {
+-    qCDebug(FILEMANAGER) << "created:" << path_;
++    if (isCreated) {
++        qCDebug(FILEMANAGER) << "created:" << path_;
++    } else {
++        qCDebug(FILEMANAGER) << "dirty:" << path_;
++    }
+     QFileInfo info(path_);
+ 
+     ///FIXME: share memory with parent
+@@ -267,7 +318,7 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
+     const IndexedString indexedPath(path.pathOrUrl());
+     const IndexedString indexedParent(path.parent().pathOrUrl());
+ 
+-    QHashIterator<IProject*, KDirWatch*> it(m_watchers);
++    QHashIterator<IProject*, ProjectWatcher*> it(m_watchers);
+     while (it.hasNext()) {
+         const auto p = it.next().key();
+         if ( !p->projectItem()->model() ) {
+@@ -285,7 +336,7 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
+                 // or if we delete and remove folders consecutively https://bugs.kde.org/show_bug.cgi?id=260741
+                 qCDebug(FILEMANAGER) << "force reload of" << path << folder;
+                 auto job = eventuallyReadFolder( folder );
+-                job->start();
++                job->start(1000);
+                 found = true;
+             }
+             if ( found ) {
+@@ -295,18 +346,20 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
+             // also gets triggered for kate's backup files
+             continue;
+         }
+-        foreach ( ProjectFolderItem* parentItem, p->foldersForPath(indexedParent) ) {
+-            if ( info.isDir() ) {
+-                ProjectFolderItem* folder = q->createFolderItem( p, path, parentItem );
+-                if (folder) {
+-                    emit q->folderAdded( folder );
+-                    auto job = eventuallyReadFolder( folder );
+-                    job->start();
+-                }
+-            } else {
+-                ProjectFileItem* file = q->createFileItem( p, path, parentItem );
+-                if (file) {
+-                    emit q->fileAdded( file );
++        if (isCreated) {
++            foreach ( ProjectFolderItem* parentItem, p->foldersForPath(indexedParent) ) {
++                if ( info.isDir() ) {
++                    ProjectFolderItem* folder = q->createFolderItem( p, path, parentItem );
++                    if (folder) {
++                        emit q->folderAdded( folder );
++                        auto job = eventuallyReadFolder( folder );
++                        job->start(1000);
++                    }
++                } else {
++                    ProjectFileItem* file = q->createFileItem( p, path, parentItem );
++                    if (file) {
++                        emit q->fileAdded( file );
++                    }
+                 }
+             }
+         }
+@@ -330,7 +383,7 @@ void AbstractFileManagerPluginPrivate::deleted(const QString& path_)
+     const Path path(QUrl::fromLocalFile(path_));
+     const IndexedString indexed(path.pathOrUrl());
+ 
+-    QHashIterator<IProject*, KDirWatch*> it(m_watchers);
++    QHashIterator<IProject*, ProjectWatcher*> it(m_watchers);
+     while (it.hasNext()) {
+         const auto p = it.next().key();
+         if (path == p->path()) {
+@@ -440,12 +493,17 @@ void AbstractFileManagerPluginPrivate::removeFolder(ProjectFolderItem* folder)
+     foreach(FileManagerListJob* job, m_projectJobs[folder->project()]) {
+         if (isChildItem(folder, job->item())) {
+             qCDebug(FILEMANAGER) << "killing list job for removed folder" << job << folder->path();
++            m_projectJobs[folder->project()].removeOne(job);
+             job->abort();
+-            Q_ASSERT(!m_projectJobs.value(folder->project()).contains(job));
+         } else {
+             job->removeSubDir(folder);
+         }
+     }
++    if (!m_intreeDirWatching && folder->path().isLocalFile()) {
++        ProjectWatcher* watcher = m_watchers.value(folder->project(), nullptr);
++        Q_ASSERT(watcher);
++        watcher->removeDir(folder->path().toLocalFile());
++    }
+     folder->parent()->removeRow( folder->row() );
+ }
+ 
+@@ -487,14 +545,19 @@ ProjectFolderItem *AbstractFileManagerPlugin::import( IProject *project )
+ 
+     ///TODO: check if this works for remote files when something gets changed through another KDE app
+     if ( project->path().isLocalFile() ) {
+-        auto watcher = new KDirWatch( project );
++        auto watcher = new ProjectWatcher(project);
+ 
+-        // set up the signal handling
+-        connect(watcher, &KDirWatch::created,
+-                this, [&] (const QString& path_) { d->created(path_); });
++        // set up the signal handling; feeding the dirwatcher is handled by FileManagerListJob.
+         connect(watcher, &KDirWatch::deleted,
+                 this, [&] (const QString& path_) { d->deleted(path_); });
+-        watcher->addDir(project->path().toLocalFile(), KDirWatch::WatchSubDirs | KDirWatch:: WatchFiles );
++        if (d->m_intreeDirWatching) {
++            connect(watcher, &KDirWatch::created,
++                this, [&] (const QString& path_) { d->dirty(path_, true); });
++            watcher->addDir(project->path().toLocalFile(), KDirWatch::WatchSubDirs | KDirWatch:: WatchFiles );
++        } else {
++            connect(watcher, &KDirWatch::dirty,
++                this, [&] (const QString& path_) { d->dirty(path_); });
++        }
+         d->m_watchers[project] = watcher;
+     }
+ 
+diff --git kdevplatform/project/filemanagerlistjob.cpp kdevplatform/project/filemanagerlistjob.cpp
+index 30c89d3c2ab279b44ab2f036e09c5dd1d63d27b2..892a8aeae90c2ddddd4416e859d0964e4436f026 100644
+--- kdevplatform/project/filemanagerlistjob.cpp
++++ kdevplatform/project/filemanagerlistjob.cpp
+@@ -29,11 +29,66 @@
+ // Qt
+ #include <QtConcurrentRun>
+ #include <QDir>
++#include <QTimer>
++
++#include <interfaces/icore.h>
++#include <interfaces/iruncontroller.h>
+ 
+ using namespace KDevelop;
+ 
++class KDevelop::RunControllerProxy : public KJob
++{
++public:
++    RunControllerProxy(FileManagerListJob* proxied)
++        : KJob()
++        , m_proxied(proxied)
++    {
++        setCapabilities(KJob::Killable);
++        setObjectName(proxied->objectName());
++        ICore::self()->runController()->registerJob(this);
++    }
++
++    ~RunControllerProxy()
++    {
++        if (m_proxied) {
++            m_proxied->m_rcProxy = nullptr;
++            done();
++        }
++    }
++
++    // we don't run anything ourselves
++    void start()
++    {}
++
++    bool doKill()
++    {
++        if (m_proxied) {
++            qCWarning(PROJECT) << "Aborting" << m_proxied;
++            auto proxied = m_proxied;
++            done();
++            proxied->abort();
++        }
++        return true;
++    }
++
++    void done()
++    {
++        if (m_proxied) {
++            ICore::self()->runController()->unregisterJob(this);
++            m_proxied = nullptr;
++        }
++    }
++
++    FileManagerListJob* m_proxied;
++};
++
+ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
+-    : KIO::Job(), m_item(item), m_aborted(false)
++    : KIO::Job(), m_item(item), m_project(item->project())
++    // cache *a copy* of the item info, without parent info so we own it completely
++    , m_basePath(item->path())
++    , m_aborted(false)
++    , m_emitWatchDir(!qEnvironmentVariableIsSet("KDEV_PROJECT_INTREE_DIRWATCHING_MODE"))
++    , m_rcProxy(nullptr)
+ {
+     qRegisterMetaType<KIO::UDSEntryList>("KIO::UDSEntryList");
+     qRegisterMetaType<KIO::Job*>();
+@@ -51,13 +106,44 @@ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
+ #endif
+ }
+ 
++FileManagerListJob::~FileManagerListJob()
++{
++    if (m_rcProxy) {
++        m_rcProxy->done();
++        m_rcProxy->deleteLater();
++    }
++    m_item = nullptr;
++    m_project = nullptr;
++    m_rcProxy = nullptr;
++    m_basePath = Path();
++}
++
+ ProjectFolderItem* FileManagerListJob::item() const
+ {
+     return m_item;
+ }
+ 
++IProject* FileManagerListJob::project() const
++{
++    return m_project;
++}
++
++QQueue<ProjectFolderItem*> FileManagerListJob::itemQueue() const
++{
++    return m_listQueue;
++}
++
++Path FileManagerListJob::basePath() const
++{
++    return m_basePath;
++}
++
+ void FileManagerListJob::addSubDir( ProjectFolderItem* item )
+ {
++    if (m_aborted) {
++        return;
++    }
++
+     Q_ASSERT(!m_listQueue.contains(item));
+     Q_ASSERT(!m_item || m_item == item || m_item->path().isDirectParentOf(item->path()));
+ 
+@@ -66,6 +152,10 @@ void FileManagerListJob::addSubDir( ProjectFolderItem* item )
+ 
+ void FileManagerListJob::removeSubDir(ProjectFolderItem* item)
+ {
++    if (m_aborted) {
++        return;
++    }
++
+     m_listQueue.removeAll(item);
+ }
+ 
+@@ -86,6 +176,7 @@ void FileManagerListJob::startNextJob()
+ #endif
+ 
+     m_item = m_listQueue.dequeue();
++    m_project = m_item->project();
+     if (m_item->path().isLocalFile()) {
+         // optimized version for local projects using QDir directly
+         QtConcurrent::run([this] (const Path& path) {
+@@ -97,6 +188,10 @@ void FileManagerListJob::startNextJob()
+             if (m_aborted) {
+                 return;
+             }
++            if (m_emitWatchDir) {
++                // signal that this directory has to be watched
++                emit watchDir(path.toLocalFile());
++            }
+             KIO::UDSEntryList results;
+             std::transform(entries.begin(), entries.end(), std::back_inserter(results), [] (const QFileInfo& info) -> KIO::UDSEntry {
+                 KIO::UDSEntry entry;
+@@ -121,7 +216,9 @@ void FileManagerListJob::startNextJob()
+                 }
+                 return entry;
+             });
+-            QMetaObject::invokeMethod(this, "handleResults", Q_ARG(KIO::UDSEntryList, results));
++            if (!m_aborted) {
++                QMetaObject::invokeMethod(this, "handleResults", Q_ARG(KIO::UDSEntryList, results));
++            }
+         }, m_item->path());
+     } else {
+         KIO::ListJob* job = KIO::listDir( m_item->path().toUrl(), KIO::HideProgressInfo );
+@@ -165,7 +262,13 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
+     emit entries(this, m_item, entriesIn);
+ 
+     if( m_listQueue.isEmpty() ) {
++        m_basePath = Path();
+         emitResult();
++        if (m_rcProxy) {
++            m_rcProxy->done();
++        }
++        m_item = nullptr;
++        m_project = nullptr;
+ 
+ #ifdef TIME_IMPORT_JOB
+         qCDebug(PROJECT) << "TIME FOR LISTJOB:" << m_timer.elapsed();
+@@ -178,13 +281,39 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
+ void FileManagerListJob::abort()
+ {
+     m_aborted = true;
++    m_listQueue.clear();
++
++    if (m_rcProxy) {
++        m_rcProxy->done();
++    }
++
++    m_item = nullptr;
++    m_project = nullptr;
++    m_basePath = Path();
+ 
+     bool killed = kill();
++    m_killCount += 1;
++    if (!killed) {
++        // let's check if kill failures aren't because of trying to kill a corpse
++        qCWarning(PROJECT) << "failed to kill" << this << "kill count=" << m_killCount;
++    }
+     Q_ASSERT(killed);
+     Q_UNUSED(killed);
+ }
+ 
++void FileManagerListJob::start(int msDelay)
++{
++    if (msDelay > 0) {
++        QTimer::singleShot(msDelay, this, SLOT(start()));
++    } else {
++        start();
++    }
++}
++
+ void FileManagerListJob::start()
+ {
++    if (!m_rcProxy) {
++        m_rcProxy = new RunControllerProxy(this);
++    }
+     startNextJob();
+ }
+diff --git kdevplatform/project/filemanagerlistjob.h kdevplatform/project/filemanagerlistjob.h
+index 0d32c992c47ebc7d084a019badb64988f0be9ec0..ca4f7bf1b0df41d0bedeaf90489aa8dba1a073ad 100644
+--- kdevplatform/project/filemanagerlistjob.h
++++ kdevplatform/project/filemanagerlistjob.h
+@@ -30,9 +30,13 @@
+ #include <QElapsedTimer>
+ #endif
+ 
++#include "path.h"
++
+ namespace KDevelop
+ {
+     class ProjectFolderItem;
++    class RunControllerProxy;
++    class IProject;
+ 
+ class FileManagerListJob : public KIO::Job
+ {
+@@ -40,18 +44,24 @@ class FileManagerListJob : public KIO::Job
+ 
+ public:
+     explicit FileManagerListJob(ProjectFolderItem* item);
++    virtual ~FileManagerListJob();
+     ProjectFolderItem* item() const;
++    IProject* project() const;
++    QQueue<ProjectFolderItem*> itemQueue() const;
++    Path basePath() const;
+ 
+     void addSubDir(ProjectFolderItem* item);
+     void removeSubDir(ProjectFolderItem* item);
+ 
+     void abort();
+     void start() override;
++    void start(int msDelay);
+ 
+ Q_SIGNALS:
+     void entries(FileManagerListJob* job, ProjectFolderItem* baseItem,
+                  const KIO::UDSEntryList& entries);
+     void nextJob();
++    void watchDir(const QString& path);
+ 
+ private Q_SLOTS:
+     void slotEntries(KIO::Job* job, const KIO::UDSEntryList& entriesIn );
+@@ -64,6 +74,10 @@ private:
+     QQueue<ProjectFolderItem*> m_listQueue;
+     /// current base dir
+     ProjectFolderItem* m_item;
++    /// current project
++    IProject* m_project;
++    /// entrypoint
++    Path m_basePath;
+     KIO::UDSEntryList entryList;
+     // kill does not delete the job instantaniously
+     QAtomicInt m_aborted;
+@@ -73,6 +87,11 @@ private:
+     QElapsedTimer m_subTimer;
+     qint64 m_subWaited = 0;
+ #endif
++    bool m_emitWatchDir;
++    int m_killCount = 0;
++protected:
++    RunControllerProxy* m_rcProxy;
++    friend class RunControllerProxy;
+ };
+ 
+ }
+diff --git kdevplatform/project/projectmodel.cpp kdevplatform/project/projectmodel.cpp
+index 2aae7e1a28..aeb717e21d 100644
+--- kdevplatform/project/projectmodel.cpp
++++ kdevplatform/project/projectmodel.cpp
+@@ -414,7 +415,7 @@ bool ProjectBaseItem::pathLessThan(ProjectBaseItem* item1, ProjectBaseItem* item
+ IProject* ProjectBaseItem::project() const
+ {
+     Q_D(const ProjectBaseItem);
+-    return d->project;
++    return d ? d->project : nullptr;
+ }
+ 
+ void ProjectBaseItem::appendRow( ProjectBaseItem* item )
+@@ -447,7 +448,7 @@ void ProjectBaseItem::appendRow( ProjectBaseItem* item )
+ Path ProjectBaseItem::path() const
+ {
+     Q_D(const ProjectBaseItem);
+-    return d->m_path;
++    return d ? d->m_path : Path();
+ }
+ 
+ QString ProjectBaseItem::baseName() const
+diff --git kdevplatform/project/projectwatcher.cpp kdevplatform/project/projectwatcher.cpp
+new file mode 100644
+index 0000000000..9cb26665a4
+--- /dev/null
++++ kdevplatform/project/projectwatcher.cpp
+@@ -0,0 +1,81 @@
++/***************************************************************************
++ *   This file is part of KDevelop                                         *
++ *   Copyright 2017 René Bertin <rjvbertin@gmail.com>                      *
++ *                                                                         *
++ *   This program is free software; you can redistribute it and/or modify  *
++ *   it under the terms of the GNU Library General Public License as       *
++ *   published by the Free Software Foundation; either version 2 of the    *
++ *   License, or (at your option) any later version.                       *
++ *                                                                         *
++ *   This program is distributed in the hope that it will be useful,       *
++ *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
++ *   GNU General Public License for more details.                          *
++ *                                                                         *
++ *   You should have received a copy of the GNU Library General Public     *
++ *   License along with this program; if not, write to the                 *
++ *   Free Software Foundation, Inc.,                                       *
++ *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.         *
++ ***************************************************************************/
++
++#include "projectwatcher.h"
++#include "iproject.h"
++#include "projectfiltermanager.h"
++#include "path.h"
++
++#include <QApplication>
++#include <QDebug>
++
++#include <KDirWatch>
++
++using namespace KDevelop;
++
++KDevelop::ProjectWatcher::ProjectWatcher(IProject* project)
++    : KDirWatch(project)
++    , m_watchedCount(0)
++{
++    if (QCoreApplication::instance()) {
++        // stop monitoring project directories when the IDE is about to quit
++        // triggering a full project reload just before closing would be counterproductive.
++        connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &KDirWatch::stopScan);
++    }
++}
++
++void KDevelop::ProjectWatcher::addDir(const QString& path, WatchModes watchModes)
++{
++    if (!contains(path)) {
++        KDirWatch::addDir(path, watchModes);
++        m_watchedCount += 1;
++    }
++}
++
++void KDevelop::ProjectWatcher::removeDir(const QString& path)
++{
++    if (contains(path)) {
++        KDirWatch::removeDir(path);
++        m_watchedCount -= 1;
++    }
++}
++
++void KDevelop::ProjectWatcher::addFile(const QString& file)
++{
++    if (!contains(file)) {
++        qWarning() << "KDW::addFile" << file;
++        KDirWatch::addFile(file);
++        m_watchedCount += 1;
++    }
++}
++
++void KDevelop::ProjectWatcher::removeFile(const QString& file)
++{
++    if (contains(file)) {
++        KDirWatch::removeFile(file);
++        m_watchedCount -= 1;
++    }
++}
++
++int KDevelop::ProjectWatcher::size() const
++{
++    return m_watchedCount;
++}
++
+diff --git kdevplatform/project/projectwatcher.h kdevplatform/project/projectwatcher.h
+new file mode 100644
+index 0000000000..c38e6752af
+--- /dev/null
++++ kdevplatform/project/projectwatcher.h
+@@ -0,0 +1,66 @@
++/***************************************************************************
++ *   This file is part of KDevelop                                         *
++ *   Copyright 2017 René Bertin <rjvbertin@gmail.com>                      *
++ *                                                                         *
++ *   This program is free software; you can redistribute it and/or modify  *
++ *   it under the terms of the GNU Library General Public License as       *
++ *   published by the Free Software Foundation; either version 2 of the    *
++ *   License, or (at your option) any later version.                       *
++ *                                                                         *
++ *   This program is distributed in the hope that it will be useful,       *
++ *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
++ *   GNU General Public License for more details.                          *
++ *                                                                         *
++ *   You should have received a copy of the GNU Library General Public     *
++ *   License along with this program; if not, write to the                 *
++ *   Free Software Foundation, Inc.,                                       *
++ *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.         *
++ ***************************************************************************/
++
++#ifndef KDEVPLATFORM_PROJECTWATCHER_H
++#define KDEVPLATFORM_PROJECTWATCHER_H
++
++#include "projectexport.h"
++
++#include <KDirWatch>
++
++namespace KDevelop {
++
++class IProject;
++class ProjectFilterManager;
++
++class KDEVPLATFORMPROJECT_EXPORT ProjectWatcher : public KDirWatch
++{
++    Q_OBJECT
++public:
++    /**
++     * Create a dirwatcher for @p project based on KDirWatch but
++     * that will add or remove each directory only once.
++     */
++    explicit ProjectWatcher(IProject* project);
++
++    /**
++     * Add directory @p path to the project dirwatcher if it is not
++     * already being watched.
++     */
++    void addDir(const QString& path, WatchModes watchModes = WatchDirOnly);
++    void removeDir(const QString& path);
++    /**
++     * Add file @p file to the project dirwatcher if it is not
++     * already being watched.
++     */
++    void addFile(const QString& file);
++    void removeFile(const QString& file);
++
++    /**
++     * return the current number of directories being watched.
++     */
++    int size() const;
++
++private:
++    int m_watchedCount;
++};
++
++}
++#endif //KDEVPLATFORM_PROJECTWATCHER_H
+diff --git kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp
+index bae86c9d9106f4e0452d3947b0c54442b38e19a1..7cc5e301a43d322a6515cbed09e782078c09588e 100644
+--- kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp
++++ kdevplatform/project/tests/abstractfilemanagerpluginimportbenchmark.cpp
+@@ -23,6 +23,7 @@
+ 
+ #include <project/abstractfilemanagerplugin.h>
+ #include <project/projectmodel.h>
++#include <project/projectwatcher.h>
+ 
+ #include <shell/projectcontroller.h>
+ 
+@@ -110,8 +111,14 @@ private Q_SLOTS:
+     {
+         Q_UNUSED(job);
+         int elapsed = m_timer.elapsed();
++        // The number of items in the dirwatcher can be obtained as follows,
++        // provided dirs are added one by one and not with a recursive call
++        // to ProjectWatcher::addDir():
++        ProjectWatcher* watcher = qobject_cast<ProjectWatcher*>(m_manager->projectWatcher(m_project));
++        int watched = watcher ? watcher->size() : -1;
+         m_out << "importing " << m_project->fileSet().size()
+             << " items into project #" << m_projectNumber
++            << " with " << watched << " watched directories"
+             << " took " << elapsed / 1000.0 << " seconds" << endl;
+ 
+         s_numBenchmarksRunning -= 1;
+@@ -166,6 +173,20 @@ int main(int argc, char** argv)
+                                     << " seconds total\n";
+                                 QCoreApplication::instance()->quit();
+                              });
++            if (qEnvironmentVariableIsSet("BENCHMARK_ORIGINAL_DIRWATCHER")) {
++                // benchmark the creation and deletion of the original dirwatcher:
++                KDirWatch *watcher = new KDirWatch(benchmark->m_project);
++                qout << "Benchmarking KDirWatch for all of " << argv[i];
++                benchmark->m_timer.start();
++                watcher->addDir(benchmark->m_project->path().toLocalFile(), KDirWatch::WatchSubDirs | KDirWatch:: WatchFiles );
++                int elapsed = benchmark->m_timer.elapsed();
++                qout << "\tfeeding the watcher: " << elapsed / 1000.0 << " seconds\n";
++                benchmark->m_timer.restart();
++                delete watcher;
++                elapsed = benchmark->m_timer.elapsed();
++                qout << "\tdeleting the watcher: " << elapsed / 1000.0 << " seconds\n";
++                qout.flush();
++            }
+         }
+     }
+ 
