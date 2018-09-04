@@ -1,13 +1,13 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 #
-# This portgroup defines standard settings when using Qt5.
+# This portgroup defines standard settings when using Qt5 (the "stock" Qt5 port).
 #
 # Usage:
-# PortGroup     qt5 1.0
+# PortGroup     qt5-mac 1.0
 
 global available_qt_versions
 array set available_qt_versions {
-    qt5  {qt5-qtbase  5.10}
+    qt5  {qt5-qtbase  5.11}
     qt59 {qt59-qtbase 5.9}
     qt58 {qt58-qtbase 5.8}
     qt57 {qt57-qtbase 5.7}
