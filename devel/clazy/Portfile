@@ -69,9 +69,11 @@ foreach lv ${llvm_versions} {
         depends_run-append \
                 port:${name}_select
         patchfiles-append \
+                patch-versioned-libclanglazy+our-rpath.diff \
                 patch-wrapper.diff
         configure.args-append \
-                -DLLVM_ROOT=${prefix}/libexec/llvm-${lv}
+                -DLLVM_ROOT=${prefix}/libexec/llvm-${lv} \
+                -DCLANGLAZY=ClangLazy-${lv}
         if {![variant_isset system_cxx]} {
             configure.args-append \
                 -DCMAKE_C_COMPILER=${prefix}/bin/clang-mp-${lv} \
@@ -81,29 +83,12 @@ foreach lv ${llvm_versions} {
 #             configure.args-append \
 #                 -DCLAZY_BUILD_UTILS_LIB=ON
 #         }
-        if {${os.platform} eq "darwin"} {
-            configure.args-append \
+        configure.args-append \
                 -DCMAKE_INSTALL_LIBDIR=${prefix}/libexec/llvm-${lv}/lib
-        } else {
-            foreach v ${llvm_versions} {
-                if {${v} ne ${lv}} {
-                    conflicts-append ${name}-${v}
-                }
-            }
-            configure.args-append \
-                -DCMAKE_PREFIX_PATH=${prefix} \
-                -DCMAKE_INSTALL_LIBDIR=${prefix}/lib
-        }
-        post-build {
-            xinstall -m 755 ${filespath}/mp-clazy ${build.dir}/mp-${subport}
-        }
-        select.group clazy
-        select.file ${build.dir}/mp-${subport}
+        cmake.install_rpath-prepend \
+                ${prefix}/libexec/llvm-${lv}/lib
     }
 }
-
-# configure.args-append \
-#                     -DMAN_INSTALL_DIR=${prefix}/share/man/man1
 
 # subport ${name}-dev {
 #     PortGroup       obsolete 1.0
@@ -123,6 +108,7 @@ if {${subport} eq "${name}"} {
     select.group clazy
     select.file ${build.dir}/mp-${subport}
 } else {
+    set lv [string map [list "${name}-" ""] ${subport}]
     array set lip {
         clazy-3.6 libexec/llvm-3.6
         clazy-3.7 libexec/llvm-3.7
@@ -132,33 +118,14 @@ if {${subport} eq "${name}"} {
         clazy-5.0 libexec/llvm-5.0
         clazy-6.0 libexec/llvm-6.0
     }
-    array set cccc {
-        clazy-3.6 clang-mp-3.6
-        clazy-3.7 clang-mp-3.7
-        clazy-3.8 clang-mp-3.8
-        clazy-3.9 clang-mp-3.9
-        clazy-4.0 clang-mp-4.0
-        clazy-5.0 clang-mp-5.0
-        clazy-6.0 clang-mp-6.0
+
+    post-build {
+        xinstall -m 755 ${filespath}/mp-clazy ${build.dir}/mp-${subport}
+        reinplace "s|@VERSION@|${lv}|g" ${build.dir}/mp-${subport}
     }
-    array set ccxx {
-        clazy-3.6 clang++-mp-3.6
-        clazy-3.7 clang++-mp-3.7
-        clazy-3.8 clang++-mp-3.8
-        clazy-3.9 clang++-mp-3.9
-        clazy-4.0 clang++-mp-4.0
-        clazy-5.0 clang++-mp-5.0
-        clazy-6.0 clang++-mp-6.0
-    }
-    array set wrappername {
-        clazy-3.6 clazy-mp-3.6
-        clazy-3.7 clazy-mp-3.7
-        clazy-3.8 clazy-mp-3.8
-        clazy-3.9 clazy-mp-3.9
-        clazy-4.0 clazy-mp-4.0
-        clazy-5.0 clazy-mp-5.0
-        clazy-6.0 clazy-mp-6.0
-    }
+    select.group clazy
+    select.file ${build.dir}/mp-${subport}
+
     post-patch {
         # cmake's "find_package(clang ...)" command will provide an LLVM_INSTALL_PREFIX
         # variable, but that variable will be the normalised (resolved) full path if ever
@@ -173,31 +140,31 @@ if {${subport} eq "${name}"} {
                 ${worksrcpath}/CMakeLists.txt
         } else {
             # this should only happen when a subport for a clang version was added or removed
-            # above, and $lip wasn't updated.
+            # above, and $lip wasn't updated. Not really necessary anymore now that we redetermine
+            # ${lv} from ${subport}, but it adds another opportunity to catch issues.
             ui_error "post-patch for unknown subport ${subport}"
             return -code error "outdated Portfile"
         }
     }
     post-destroot {
         platform darwin {
-            system "install_name_tool -id ${prefix}/$lip(${subport})/lib/ClangLazy.dylib \
-                ${destroot}${prefix}/$lip(${subport})/lib/ClangLazy.dylib"
-            system "install_name_tool -change ${prefix}/lib/ClangLazy.dylib ${prefix}/$lip(${subport})/lib/ClangLazy.dylib \
+            system "install_name_tool -id ${prefix}/$lip(${subport})/lib/ClangLazy-${lv}.dylib \
+                ${destroot}${prefix}/$lip(${subport})/lib/ClangLazy-${lv}.dylib"
+            system "install_name_tool -change ${prefix}/lib/ClangLazy-${lv}.dylib ${prefix}/$lip(${subport})/lib/ClangLazy-${lv}.dylib \
                 ${destroot}${prefix}/bin/clazy-standalone"
         }
         # make a C wrapper
         xinstall -m 755 ${destroot}${prefix}/bin/clazy ${destroot}${prefix}/bin/cclazy
-        reinplace "s|clang++|$cccc(${subport})|g" ${destroot}${prefix}/bin/cclazy
-        reinplace "s|xCLANGPPx|$cccc(${subport})|g" ${destroot}${prefix}/bin/cclazy
-        reinplace "s|clang++|$ccxx(${subport})|g" ${destroot}${prefix}/bin/clazy
-        reinplace "s|xCLANGPPx|$ccxx(${subport})|g" ${destroot}${prefix}/bin/clazy
-        file rename ${destroot}${prefix}/bin/cclazy ${destroot}${prefix}/bin/[string map {clazy cclazy} $wrappername(${subport})]
-        file rename ${destroot}${prefix}/bin/clazy ${destroot}${prefix}/bin/$wrappername(${subport})
-        file rename ${destroot}${prefix}/bin/clazy-standalone \
-            ${destroot}${prefix}/bin/[strsed $wrappername(${subport}) "s/clazy/clazy-standalone/"]
+        reinplace "s|clang++|clang-mp-${lv}|g" ${destroot}${prefix}/bin/cclazy
+        reinplace "s|xCLANGPPx|clang-mp-${lv}|g" ${destroot}${prefix}/bin/cclazy
+        reinplace "s|clang++|clang++-mp-${lv}|g" ${destroot}${prefix}/bin/clazy
+        reinplace "s|xCLANGPPx|clang++-mp-${lv}|g" ${destroot}${prefix}/bin/clazy
+        file rename ${destroot}${prefix}/bin/cclazy ${destroot}${prefix}/bin/[string map {clazy cclazy} clazy-mp-${lv}]
+        file rename ${destroot}${prefix}/bin/clazy ${destroot}${prefix}/bin/clazy-mp-${lv}
+        file rename ${destroot}${prefix}/bin/clazy-standalone ${destroot}${prefix}/bin/clazy-standalone-mp-${lv}
         # manpage and docs could be installed via a noarch subport registered as our own runtime dependency.
         # I'm too lazy to figure out how to do that now
-        file rename ${destroot}${prefix}/share/man/man1/clazy.1 "${destroot}${prefix}/share/man/man1/$wrappername(${subport}).1"
+        file rename ${destroot}${prefix}/share/man/man1/clazy.1 "${destroot}${prefix}/share/man/man1/clazy-mp-${lv}.1"
         file rename ${destroot}${prefix}/share/doc/clazy ${destroot}${prefix}/share/doc/${subport}
         xinstall -m 644 ${worksrcpath}/README.md ${worksrcpath}/HOWTO \
             ${destroot}${prefix}/share/doc/${subport}
