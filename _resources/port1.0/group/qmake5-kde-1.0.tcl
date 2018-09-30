@@ -180,8 +180,8 @@ pre-configure {
     if {${qt5.unset_cxxflags} ne {}} {
         puts ${qt5::cache} "QMAKE_CXXFLAGS-=${qt5.unset_cxxflags}"
     }
-    puts ${qt5::cache} "QMAKE_CFLAGS+=${configure.cflags}"
-    puts ${qt5::cache} "QMAKE_CXXFLAGS+=${configure.cxxflags}"
+    puts ${qt5::cache} "QMAKE_CFLAGS+=${configure.cppflags} ${configure.cflags}"
+    puts ${qt5::cache} "QMAKE_CXXFLAGS+=${configure.cppflags} ${configure.cxxflags}"
 
     set qt5::qt_version [qt5.active_version]
 
