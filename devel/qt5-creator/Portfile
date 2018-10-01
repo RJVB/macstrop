@@ -61,13 +61,14 @@ subport ${name}-devel {
             set qbs.branch  760dc4ef7571e780489adcd51ddb80beb000bd21
             version         3.4.2-1.g3a8b52d
         } else {
-            git.branch      bcc550a4e25121c836ce5f6c83a80bcfa9973548
+            git.branch      c268ec846524a5825fec5b2e81109c8d018a19f2
             # corresponding qbs branch obtained from `git pull --recurse-submodules ; git submodule update`:
-            # (v1.10.0-2-g1ee4260):
-            set qbs.branch  1ee4260129336c83d7acab1e3e675f7f507ad46f
-            # v4.5.0-602-gbcc550a
-            version         4.5.82.602
+            # (v1.12.1):
+            set qbs.branch  4661759492c8dfc2830248f5d696a63365fc9e07
+            # v4.7.1-784-gc268ec8465
+            version         4.7.1.784
             # don't let QtCreator set up a global Mac-style menubar when using the xcb plugin
+            # also disables icons-in-menus.
             patchfiles-append \
                         devel/patch-show-menubar-with-xcb.diff
         }
@@ -87,7 +88,7 @@ subport ${name}-devel {
         patchfiles-append \
                         devel/patch-no_qtwebengine.diff \
                         devel/patch-no-nativehelp-xcb.diff \
-                        devel/patch-help-crash-on-exit.diff
+                        devel/patch-compat-109.diff
     }
 
     variant qtwebengine conflicts qtwebkit legacy description {build with QtWebengine support} {
@@ -96,7 +97,7 @@ subport ${name}-devel {
                         qtwebengine
     }
 
-    set lldversions {3.6 3.7 3.8 3.9 4.0 5.0}
+    set lldversions {5.0 6.0}
     # define the variants for the supported clang/llvm versions
     foreach ldv ${lldversions} {
         set llv [join [lrange [split ${ldv} .] 0 1] ""]
@@ -118,6 +119,11 @@ subport ${name}-devel {
             # (add depspec, set env. variables for configure and build steps)
             depends_lib-append \
                 port:llvm-${ldv} port:clang-${ldv}
+            if {${ldv} < 6.0} {
+                ui_warn "Build against LLVM 6.0 or better to get full functionality"
+                patchfiles-append \
+                    devel/patch-clang5-kludge.diff
+            }
             configure.env-append \
                 LLVM_INSTALL_DIR=${prefix}/libexec/llvm-${ldv}
             build.env-append \
@@ -182,8 +188,12 @@ if {[variant_isset legacy]} {
 } else {
     # don't set up a Dock menu when using the xcb plugin
     patchfiles-append \
-                    patch-no-dockmenu-xcb.diff \
+                    patch-no-dockmenu-xcb.diff
+    if {${subport} eq "${name}"} {
+        # icons-in-menus already disabled for the devel subport
+        patchfiles-append \
                     patch-no-icons-in-menus.diff
+    }
 }
 
 if {${os.platform} eq "darwin"} {
@@ -206,6 +216,8 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-devel" } {
     if {${os.platform} eq "darwin"} {
         depends_lib-append     port:botan
     }
+    depends_lib-append      port:qbs
+
     configure.args-append  "USE_SYSTEM_BOTAN=1"
     if {[variant_isset LTO]} {
         configure.args-append   -config ltcg
@@ -227,7 +239,12 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-devel" } {
             system "cd ${workpath}/${worksrcdir}/src/shared/qbs ; ${prefix}/bin/git checkout -q ${qbs.branch}"
         }
     }
-    configure.args-append   -r ../${worksrcdir}/qtcreator.pro
+
+    configure.args-append   QBS_INSTALL_DIR=${prefix} \
+                            -r ../${worksrcdir}/qtcreator.pro
+    configure.env-append    QTC_ENABLE_CLANG_LIBTOOLING=1
+    build.env-append        QTC_ENABLE_CLANG_LIBTOOLING=1
+
     default configure.dir   {${workpath}/build}
     default build.dir       {${workpath}/build}
     # Qt Creator has a different way of interpreting INSTALL_ROOT:
@@ -239,10 +256,11 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-devel" } {
                 # make install attempts to install command line tools into /bin, etc.
                 xinstall -m 755 -d ${destroot}${qt_apps_dir}
                 copy "${build.dir}/bin/${appname}" "${destroot}${qt_apps_dir}"
-                reinplace "s|/usr/local|${prefix}|g" \
-                    "${destroot}${qt_apps_dir}/${appname}/Contents/Resources/qbs/share/qbs/imports/qbs/Probes/PathProbe.qbs"
-                reinplace "s|/usr/local/lib|${qt_frameworks_dir}|g" \
-                    "${destroot}${qt_apps_dir}/${appname}/Contents/Resources/qbs/share/qbs/imports/qbs/Probes/FrameworkProbe.qbs"
+# TODO: move this to port:qbs!
+#                 reinplace "s|/usr/local|${prefix}|g" \
+#                     "${destroot}${qt_apps_dir}/${appname}/Contents/Resources/qbs/share/qbs/imports/qbs/Probes/PathProbe.qbs"
+#                 reinplace "s|/usr/local/lib|${qt_frameworks_dir}|g" \
+#                     "${destroot}${qt_apps_dir}/${appname}/Contents/Resources/qbs/share/qbs/imports/qbs/Probes/FrameworkProbe.qbs"
           }
         }
     } else {
@@ -253,9 +271,6 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-devel" } {
                 set adest ${destroot}-${arch}${qt_apps_dir}
                 xinstall -m 755 -d ${adest}
                 copy "${worksrcpath}-${arch}/bin/${appname}" "${adest}"
-                reinplace "s|/usr/local/|${prefix}/|g" \
-                    "${adest}/${appname}/Contents/Resources/qbs/share/qbs/imports/qbs/Probes/FrameworkProbe.qbs" \
-                    "${adest}/${appname}/Contents/Resources/qbs/share/qbs/imports/qbs/Probes/PathProbe.qbs"
             }
         }
     }
