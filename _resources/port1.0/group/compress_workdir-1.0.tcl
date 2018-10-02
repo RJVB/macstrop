@@ -45,8 +45,10 @@ namespace eval compress_workdir {
     variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
 }
 
-options compress.build_dir
+options compress.build_dir \
+        compress.in_applications_dir
 default compress.build_dir {${build.dir}}
+default compress.in_applications_dir {}
 
 platform darwin {
     # sadly we cannot rely on [file system <name>] to determine if we're on a
@@ -58,31 +60,44 @@ platform darwin {
             extract.post_args    "| ${prefix}/bin/bsdtar -x --hfsCompression"
         }
 
+        proc hfscompress {target} {
+            global use_parallel_build build.jobs prefix
+            if {${use_parallel_build}} {
+                set compjobs "-J${build.jobs}"
+            } else {
+                set compjobs ""
+            }
+            if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} -S -L ${target} 2>&1"} result context]} {
+                ui_info "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
+                if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${target} 2>&1"} result context]} {
+                    ui_error "Compression failed: ${result}, ${context}"
+                    return -code error "Compression failed"
+                } else {
+                    ui_debug "Compressed ${target}: ${result}"
+                }
+            } else {
+                ui_debug "Compressed ${target}: ${result}"
+            }
+            return 1
+        }
+
         post-build {
             if {[file exists ${prefix}/bin/afsctool] && [file exists ${compress.build_dir}]} {
                 ui_msg "--->  Compressing the build directory ..."
-                if {${use_parallel_build}} {
-                    set compjobs "-J${build.jobs}"
-                } else {
-                    set compjobs ""
-                }
-                if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} -S ${compress.build_dir} 2>&1"} result context]} {
-                    ui_info "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
-                    if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compress.build_dir} 2>&1"} result context]} {
-                        ui_error "Compression failed: ${result}, ${context}"
-                    }
-                } else {
-                    ui_debug "Compressing ${compress.build_dir}: ${result}"
+                if {![catch {hfscompress ${compress.build_dir}} result context]} {
                     if {[tbool configure.ccache]} {
                         ui_msg "--->  Compressing the ccache directory ..."
-                        if {![catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} -S ${ccache_dir} 2>&1"} result context]} {
-                            ui_debug "Compressing ${ccache_dir}: ${result}"
-                        }
+                        catch {hfscompress ${ccache_dir}}
                     }
                 }
             }
         }
-
+        post-activate {
+            if {[option compress.in_applications_dir] ne {}} {
+                ui_msg "--->  Compressing ${compress.in_applications_dir} ..."
+                catch {hfscompress ${compress.in_applications_dir}}
+            }
+        }
     }
 
 }
