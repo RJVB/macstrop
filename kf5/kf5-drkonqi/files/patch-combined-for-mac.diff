@@ -2,7 +2,7 @@ This is the combined patch to make DrKonqi functional on Mac
 https://phabricator.kde.org/D4929
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 364f90acd69abb6ae0976621b803f49f0c40a62c..240c5bdee91991c1d7eec92d396a48cfaa8ca768 100644
+index 364f90acd69abb6ae0976621b803f49f0c40a62c..276128127f217e78ab2c07c3fa034e6f20d92c6d 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -23,7 +23,9 @@ include(FeatureSummary)
@@ -16,18 +16,6 @@ index 364f90acd69abb6ae0976621b803f49f0c40a62c..240c5bdee91991c1d7eec92d396a48cf
  find_package(Qt5X11Extras ${QT_MIN_VERSION} CONFIG)
  set_package_properties(Qt5X11Extras PROPERTIES TYPE RECOMMENDED PURPOSE "Recommended for better integration on X11.")
  
-@@ -70,6 +72,11 @@ if (MINGW)
-         INTERFACE_COMPILE_DEFINITIONS "PACKAGE;PACKAGE_VERSION"
-     )
- endif()
-+if (APPLE)
-+    target_link_libraries(drkonqi
-+        KF5::WindowSystem
-+    )
-+endif()
- 
- include_directories("${CMAKE_CURRENT_BINARY_DIR}")
- configure_file(config-X11.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/config-X11.h)
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
 index 0f4cc51a9f3782ef673147f34f91e0723a90bbed..46b86d721bbe75f24fb667bc0699b5dc04196866 100644
 --- a/src/CMakeLists.txt
@@ -71,22 +59,16 @@ index 91986c455833eb9c7dfd35998a180f92a2439d47..02798abaee97855da308b0836a376c3a
  {
      m_parser = BacktraceParser::newParser(m_debugger.codeName(), this);
      m_parser->connectToGenerator(this);
-@@ -56,9 +57,12 @@ BacktraceGenerator::~BacktraceGenerator()
+@@ -56,6 +57,8 @@ BacktraceGenerator::~BacktraceGenerator()
          m_proc->terminate();
          if (!m_proc->waitForFinished(10000)) {
              m_proc->kill();
--            m_proc->waitForFinished();
-+            // lldb can become "stuck" on OS X; just mark m_proc as to be deleted later rather
-+            // than waiting a potentially very long time for it to heed the kill() request.
-+            m_proc->deleteLater();
-+        } else {
-+            delete m_proc;
++            // NB: lldb can get stuck here, a waitForFinished() without timeout is safe
++            // only if lldbrc's BatchCommand ends with something like "\nimport os ; os._exit(0)\nquit"
+             m_proc->waitForFinished();
          }
--        delete m_proc;
-         delete m_temp;
-     }
- }
-@@ -96,9 +100,17 @@ bool BacktraceGenerator::start()
+         delete m_proc;
+@@ -95,9 +98,17 @@ bool BacktraceGenerator::start()
      *m_proc << KShell::splitArgs(str);
      m_proc->setOutputChannelMode(KProcess::OnlyStdoutChannel);
      m_proc->setNextOpenMode(QIODevice::ReadWrite | QIODevice::Text);
@@ -104,7 +86,7 @@ index 91986c455833eb9c7dfd35998a180f92a2439d47..02798abaee97855da308b0836a376c3a
      m_proc->start();
      if (!m_proc->waitForStarted()) {
          //we mustn't keep these around...
-@@ -117,15 +129,31 @@ bool BacktraceGenerator::start()
+@@ -116,15 +127,34 @@ bool BacktraceGenerator::start()
  
  void BacktraceGenerator::slotReadInput()
  {
@@ -124,14 +106,17 @@ index 91986c455833eb9c7dfd35998a180f92a2439d47..02798abaee97855da308b0836a376c3a
          emit newLine(line);
 +        line = line.simplified();
 +        if (line.startsWith(QLatin1String("Process ")) && line.endsWith(QLatin1String(" detached"))) {
-+            // Anything following this line doesn't interest us, and lldb has been known
-+            // to turn into a zombie instead of exitting, thereby blocking us.
++            // Anything following this line doesn't interest us and shouldn't show in the backtrace.
 +            m_lldbDetached = true;
-+            m_proc->terminate();
++            // Also, lldb has been known to turn into a zombie instead of exitting, thereby blocking us.
++            // Recent versions should react correctly to the quit or else to the Python os._exit() commands
++            // in lldbrc and we will thus assume that the application has terminated.
++            // (see also http://stackoverflow.com/questions/26267289/how-can-i-exit-lldb-after-running-commands-with-o)
 +            if (!m_proc->waitForFinished(500)) {
 +                m_proc->kill();
 +            }
 +            slotProcessExited(0, QProcess::NormalExit);
++            // either way we should stop reading now.
 +            return;
 +        }
      }
@@ -213,13 +198,13 @@ index 43df28e469ae970ac7da32106a1a4b7a372fd174..653ba267ec1183fc8bdf9ca4c473725a
 @@ -1,2 +1,9 @@
  install(FILES mappings DESTINATION ${KDE_INSTALL_DATADIR}/drkonqi)
 -install(DIRECTORY debuggers DESTINATION ${KDE_INSTALL_DATADIR}/drkonqi PATTERN ".svn" EXCLUDE)
-+install(DIRECTORY debuggers/internal DESTINATION ${KDE_INSTALL_DATADIR}/src/debuggers PATTERN ".svn" EXCLUDE)
++install(DIRECTORY debuggers/internal DESTINATION ${KDE_INSTALL_DATADIR}/drkonqi/debuggers PATTERN ".svn" EXCLUDE)
 +if(APPLE)
 +    # note the trailing slash for external.mac; this copies the contents into the destination dir instead of external.mac itself!
-+    install(DIRECTORY debuggers/external.mac/ DESTINATION ${KDE_INSTALL_DATADIR}/src/debuggers/external PATTERN ".svn" EXCLUDE)
++    install(DIRECTORY debuggers/external.mac/ DESTINATION ${KDE_INSTALL_DATADIR}/drkonqi/debuggers/external PATTERN ".svn" EXCLUDE)
 +    install(PROGRAMS AppleTerminal DESTINATION ${KDE_INSTALL_BINDIR})
 +else()
-+    install(DIRECTORY debuggers/external DESTINATION ${KDE_INSTALL_DATADIR}/src/debuggers PATTERN ".svn" EXCLUDE)
++    install(DIRECTORY debuggers/external DESTINATION ${KDE_INSTALL_DATADIR}/drkonqi/debuggers PATTERN ".svn" EXCLUDE)
 +endif()
 diff --git a/src/data/debuggers/external.mac/gdbrc b/src/data/debuggers/external.mac/gdbrc
 new file mode 100644
@@ -488,7 +473,7 @@ index c9746a991e9620e5caf7dab3c60bf5f50491ad58..317fe22f5a33e2da25d5cb3a5caa7613
 +    // Gdb isn't available from OS X 10.8 onwards (and cannot work properly anyway);
 +    // the lldb version on OS X 10.7 and earlier is subpar to the system gdb still available
 +    // on those OS versions. Hence, only make lldb the default Mac debugger on 10.8+ .
-+    QString defaultDebuggerName = config.readEntry("Debugger", QString("lldb"));
++    QString defaultDebuggerName = config.readEntry("Debugger", QStringLiteral("lldb"));
 +#elif !defined(Q_OS_WIN)
      QString defaultDebuggerName = config.readEntry("Debugger", QStringLiteral("gdb"));
  #else
