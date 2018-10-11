@@ -1,0 +1,313 @@
+diff --git kdevplatform/shell/core.cpp kdevplatform/shell/core.cpp
+index c1fd662f89cf826baea3247bf90c5348aead7c00..70f22a6e174f587b70c601b286054daa5d68d457 100644
+--- kdevplatform/shell/core.cpp
++++ kdevplatform/shell/core.cpp
+@@ -50,41 +50,6 @@
+ 
+ #include <csignal>
+ 
+-namespace {
+-void shutdownGracefully(int sig)
+-{
+-    static volatile std::sig_atomic_t handlingSignal = 0;
+-
+-    if ( !handlingSignal ) {
+-        handlingSignal = 1;
+-        qCDebug(SHELL) << "signal " << sig << " received, shutting down gracefully";
+-        QCoreApplication* app = QCoreApplication::instance();
+-        if (QApplication* guiApp = qobject_cast<QApplication*>(app)) {
+-            guiApp->closeAllWindows();
+-        }
+-        app->quit();
+-        return;
+-    }
+-
+-    // re-raise signal with default handler and trigger program termination
+-    std::signal(sig, SIG_DFL);
+-    std::raise(sig);
+-}
+-
+-void installSignalHandler()
+-{
+-#ifdef SIGHUP
+-    std::signal(SIGHUP, shutdownGracefully);
+-#endif
+-#ifdef SIGINT
+-    std::signal(SIGINT, shutdownGracefully);
+-#endif
+-#ifdef SIGTERM
+-    std::signal(SIGTERM, shutdownGracefully);
+-#endif
+-}
+-}
+-
+ namespace KDevelop {
+ 
+ Core *Core::m_self = nullptr;
+@@ -120,9 +85,14 @@ KAboutData createAboutData()
+     return aboutData;
+ }
+ 
++Core* CorePrivate::s_core = nullptr;
++CorePrivate* CorePrivate::s_self = nullptr;
++
+ CorePrivate::CorePrivate(Core *core):
+-    m_aboutData( createAboutData() ), m_core(core), m_cleanedUp(false), m_shuttingDown(false)
++    QObject(nullptr),
++    m_aboutData( createAboutData() ), m_cleanedUp(false), m_shuttingDown(false)
+ {
++   s_core = core;
+ }
+ 
+ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
+@@ -133,7 +103,7 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
+ 
+     if( !sessionController )
+     {
+-        sessionController = new SessionController(m_core);
++        sessionController = new SessionController(s_core);
+     }
+     if( !workingSetController && !(mode & Core::NoUi) )
+     {
+@@ -142,13 +112,13 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
+     qCDebug(SHELL) << "Creating ui controller";
+     if( !uiController )
+     {
+-        uiController = new UiController(m_core);
++        uiController = new UiController(s_core);
+     }
+     qCDebug(SHELL) << "Creating plugin controller";
+ 
+     if( !pluginController )
+     {
+-        pluginController = new PluginController(m_core);
++        pluginController = new PluginController(s_core);
+         const auto pluginInfos = pluginController->allPluginInfos();
+         if (pluginInfos.isEmpty()) {
+             QMessageBox::critical(nullptr,
+@@ -163,34 +133,34 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
+     }
+     if( !partController && !(mode & Core::NoUi))
+     {
+-        partController = new PartController(m_core, uiController->defaultMainWindow());
++        partController = new PartController(s_core, uiController->defaultMainWindow());
+     }
+ 
+     if( !projectController )
+     {
+-        projectController = new ProjectController(m_core);
++        projectController = new ProjectController(s_core);
+     }
+ 
+     if( !documentController )
+     {
+-        documentController = new DocumentController(m_core);
++        documentController = new DocumentController(s_core);
+     }
+ 
+     if( !languageController )
+     {
+         // Must be initialized after documentController, because the background parser depends
+         // on the document controller.
+-        languageController = new LanguageController(m_core);
++        languageController = new LanguageController(s_core);
+     }
+ 
+     if( !runController )
+     {
+-        runController = new RunController(m_core);
++        runController = new RunController(s_core);
+     }
+ 
+     if( !sourceFormatterController )
+     {
+-        sourceFormatterController = new SourceFormatterController(m_core);
++        sourceFormatterController = new SourceFormatterController(s_core);
+     }
+ 
+     if ( !progressController)
+@@ -200,27 +170,27 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
+ 
+     if( !selectionController )
+     {
+-        selectionController = new SelectionController(m_core);
++        selectionController = new SelectionController(s_core);
+     }
+ 
+     if( !documentationController && !(mode & Core::NoUi) )
+     {
+-        documentationController = new DocumentationController(m_core);
++        documentationController = new DocumentationController(s_core);
+     }
+ 
+     if( !runtimeController )
+     {
+-        runtimeController = new RuntimeController(m_core);
++        runtimeController = new RuntimeController(s_core);
+     }
+ 
+     if( !debugController )
+     {
+-        debugController = new DebugController(m_core);
++        debugController = new DebugController(s_core);
+     }
+ 
+     if( !testController )
+     {
+-        testController = new TestController(m_core);
++        testController = new TestController(s_core);
+     }
+ 
+     qCDebug(SHELL) << "Done creating controllers";
+@@ -245,7 +215,7 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
+     // has been initialized. At that point we know whether there are projects loading
+     // which the background parser is handling internally to defer parse jobs
+     QObject::connect(projectController.data(), &ProjectController::initialized,
+-                     m_core, [this]() {
++                     s_core, [this]() {
+                          languageController->backgroundParser()->resume();
+                      });
+ 
+@@ -289,7 +259,33 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
+     testController->initialize();
+     runtimeController->initialize();
+ 
+-    installSignalHandler();
++//     A "proper" exit-on-signal approach:
++//     Open a pipe or an eventfd, then install your signal handler. In that signal
++//     handler, write anything to the writing end or write uint64_t(1) the eventfd.
++//     Create a QSocketNotifier on the reading end of the pipe or on the eventfd,
++//     connect its activation signal to a slot that does what you want.
++
++    if (!s_self) {
++        int pp[2];
++        if (pipe(pp)) {
++            qCWarning(SHELL) << "Error opening signal handler pipe" << strerror(errno);
++        } else {
++            m_signalPipeRead = pp[0];
++            m_signalPipeWrite = pp[1];
++            m_signalNotifier = new QSocketNotifier(m_signalPipeRead, QSocketNotifier::Read, this);
++            connect(m_signalNotifier, &QSocketNotifier::activated, this, &CorePrivate::shutdownGracefully);
++            s_self = this;
++#ifdef SIGHUP
++            std::signal(SIGHUP, signalHandler);
++#endif
++#ifdef SIGINT
++            std::signal(SIGINT, signalHandler);
++#endif
++#ifdef SIGTERM
++            std::signal(SIGTERM, signalHandler);
++#endif
++        }
++    }
+ 
+     qCDebug(SHELL) << "Done initializing controllers";
+ 
+@@ -328,8 +324,58 @@ CorePrivate::~CorePrivate()
+     workingSetController.clear();
+     testController.clear();
+     runtimeController.clear();
++
++    if (m_signalPipeWrite != -1) {
++       close(m_signalPipeWrite);
++    }
++    if (m_signalPipeRead != -1) {
++       close(m_signalPipeRead);
++    }
++}
++
++void CorePrivate::signalHandler(int sig)
++{
++    if (s_self->m_signalPipeWrite != -1) {
++        qCDebug(SHELL) << "signal " << sig << " received, shutting down gracefully";
++        write(s_self->m_signalPipeWrite, &sig, sizeof(sig));
++    }
++}
++
++void CorePrivate::shutdownGracefully(int sckt)
++{
++    static volatile std::sig_atomic_t handlingSignal = 0;
++
++    int sig = -1;
++    read(sckt, &sig, sizeof(sig));
++    // exit as quickly as possible when a SIGHUP is received.
++    if ( !handlingSignal
++#ifdef SIGHUP
++       && sig != SIGHUP
++#endif
++    ) {
++        handlingSignal = 1;
++        qCWarning(SHELL) << "Going down on signal " << sig;
++        QCoreApplication* app = QCoreApplication::instance();
++        if (QApplication* guiApp = qobject_cast<QApplication*>(app)) {
++            guiApp->closeAllWindows();
++        }
++        app->quit();
++        return;
++    }
++
++    if (s_core) {
++       // shutdown core functionality, in particular the DUChain subsystem
++       // in an effort to prevent cache corruption. It's only cache, but
++       // regenerating it can be very time-consuming.
++       s_core->shutdown();
++    }
++
++    // re-raise signal with default handler and trigger program termination
++    std::signal(sig, SIG_DFL);
++    std::raise(sig);
+ }
+ 
++
+ bool Core::initialize(Setup mode, const QString& session)
+ {
+     if (m_self)
+@@ -604,4 +650,3 @@ QString Core::version()
+ }
+ 
+ }
+-
+diff --git kdevplatform/shell/core_p.h kdevplatform/shell/core_p.h
+index d5ed3525cc9114642a2e18301bb98f60c0e0e98f..2d7a400a299905e12868f3d4bd6e7f2354fffb2d 100644
+--- kdevplatform/shell/core_p.h
++++ kdevplatform/shell/core_p.h
+@@ -26,6 +26,7 @@
+ #include <KAboutData>
+ 
+ #include <QPointer>
++#include <QSocketNotifier>
+ 
+ namespace KDevelop
+ {
+@@ -47,11 +48,15 @@ class WorkingSetController;
+ class TestController;
+ class RuntimeController;
+ 
+-class KDEVPLATFORMSHELL_EXPORT CorePrivate {
++class KDEVPLATFORMSHELL_EXPORT CorePrivate : public QObject {
++    Q_OBJECT
+ public:
+     explicit CorePrivate(Core *core);
+     ~CorePrivate();
+     bool initialize( Core::Setup mode, const QString& session );
++    void shutdownGracefully(int sckt);
++    static void signalHandler(int sig);
++
+     QPointer<PluginController> pluginController;
+     QPointer<UiController> uiController;
+     QPointer<ProjectController> projectController;
+@@ -70,10 +75,13 @@ public:
+     QPointer<RuntimeController> runtimeController;
+ 
+     const KAboutData m_aboutData;
+-    Core* const m_core;
++    static Core* s_core;
+     bool m_cleanedUp;
+     bool m_shuttingDown;
+     Core::Setup m_mode;
++    int m_signalPipeRead = -1, m_signalPipeWrite = -1;
++    QSocketNotifier* m_signalNotifier = nullptr;
++    static CorePrivate* s_self;
+ };
+ 
+ }
