@@ -1,8 +1,33 @@
+diff --git kdevplatform/shell/CMakeLists.txt kdevplatform/shell/CMakeLists.txt
+index 1e9fdade50668db75a75451770fa4de1f1688c0c..b6e780540f5d27867e7d125e5778361c0923b011 100644
+--- kdevplatform/shell/CMakeLists.txt
++++ kdevplatform/shell/CMakeLists.txt
+@@ -159,6 +159,10 @@ PRIVATE
+ if(APPLE)
+     target_link_libraries(KDevPlatformShell PRIVATE "-framework AppKit")
+ endif()
++if(UNIX)
++    target_link_libraries(KDevPlatformShell PRIVATE "-pthreads")
++endif()
++
+ 
+ install(FILES
+     mainwindow.h
 diff --git kdevplatform/shell/core.cpp kdevplatform/shell/core.cpp
-index c1fd662f89cf826baea3247bf90c5348aead7c00..70f22a6e174f587b70c601b286054daa5d68d457 100644
+index c1fd662f89cf826baea3247bf90c5348aead7c00..1a12c26caf2f34f26246b28eeb944d5ef8fab078 100644
 --- kdevplatform/shell/core.cpp
 +++ kdevplatform/shell/core.cpp
-@@ -50,41 +50,6 @@
+@@ -21,6 +21,9 @@
+ #include "core_p.h"
+ 
+ #include <QApplication>
++#ifndef USE_QSOCKETNOTIFIER
++#include <QtConcurrent>
++#endif
+ 
+ #include <KLocalizedString>
+ 
+@@ -50,40 +53,13 @@
  
  #include <csignal>
  
@@ -40,11 +65,17 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..70f22a6e174f587b70c601b286054daa
 -#endif
 -}
 -}
--
++#ifdef Q_OS_MACOS
++// Darwin doesn't have unnamed POSIX semaphores but can use MACH semaphores.
++#define sem_init(s,x,value)     semaphore_create(mach_task_self(), (s), SYNC_POLICY_FIFO, (value))
++#define sem_wait(s)             semaphore_wait(*(s))
++#define sem_post(s)             semaphore_signal(*(s))
++#define sem_destroy(s)          semaphore_destroy(mach_task_self(), *(s))
++#endif // Q_OS_MACOS
+ 
  namespace KDevelop {
  
- Core *Core::m_self = nullptr;
-@@ -120,9 +85,14 @@ KAboutData createAboutData()
+@@ -120,9 +96,14 @@ KAboutData createAboutData()
      return aboutData;
  }
  
@@ -60,7 +91,7 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..70f22a6e174f587b70c601b286054daa
  }
  
  bool CorePrivate::initialize(Core::Setup mode, const QString& session )
-@@ -133,7 +103,7 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
+@@ -133,7 +114,7 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
  
      if( !sessionController )
      {
@@ -69,7 +100,7 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..70f22a6e174f587b70c601b286054daa
      }
      if( !workingSetController && !(mode & Core::NoUi) )
      {
-@@ -142,13 +112,13 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
+@@ -142,13 +123,13 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
      qCDebug(SHELL) << "Creating ui controller";
      if( !uiController )
      {
@@ -85,7 +116,7 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..70f22a6e174f587b70c601b286054daa
          const auto pluginInfos = pluginController->allPluginInfos();
          if (pluginInfos.isEmpty()) {
              QMessageBox::critical(nullptr,
-@@ -163,34 +133,34 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
+@@ -163,34 +144,34 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
      }
      if( !partController && !(mode & Core::NoUi))
      {
@@ -126,7 +157,7 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..70f22a6e174f587b70c601b286054daa
      }
  
      if ( !progressController)
-@@ -200,27 +170,27 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
+@@ -200,27 +181,27 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
  
      if( !selectionController )
      {
@@ -159,7 +190,7 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..70f22a6e174f587b70c601b286054daa
      }
  
      qCDebug(SHELL) << "Done creating controllers";
-@@ -245,7 +215,7 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
+@@ -245,7 +226,7 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
      // has been initialized. At that point we know whether there are projects loading
      // which the background parser is handling internally to defer parse jobs
      QObject::connect(projectController.data(), &ProjectController::initialized,
@@ -168,7 +199,7 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..70f22a6e174f587b70c601b286054daa
                           languageController->backgroundParser()->resume();
                       });
  
-@@ -289,7 +259,33 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
+@@ -289,7 +270,71 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
      testController->initialize();
      runtimeController->initialize();
  
@@ -179,7 +210,9 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..70f22a6e174f587b70c601b286054daa
 +//     Create a QSocketNotifier on the reading end of the pipe or on the eventfd,
 +//     connect its activation signal to a slot that does what you want.
 +
++#if defined(SIGHUP) || defined(SIGINT) || defined(SIGTERM)
 +    if (!s_self) {
++#ifdef USE_QSOCKETNOTIFIER
 +        int pp[2];
 +        if (pipe(pp)) {
 +            qCWarning(SHELL) << "Error opening signal handler pipe" << strerror(errno);
@@ -188,7 +221,6 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..70f22a6e174f587b70c601b286054daa
 +            m_signalPipeWrite = pp[1];
 +            m_signalNotifier = new QSocketNotifier(m_signalPipeRead, QSocketNotifier::Read, this);
 +            connect(m_signalNotifier, &QSocketNotifier::activated, this, &CorePrivate::shutdownGracefully);
-+            s_self = this;
 +#ifdef SIGHUP
 +            std::signal(SIGHUP, signalHandler);
 +#endif
@@ -198,46 +230,96 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..70f22a6e174f587b70c601b286054daa
 +#ifdef SIGTERM
 +            std::signal(SIGTERM, signalHandler);
 +#endif
++            m_signalNotifier->setEnabled(true);
 +        }
++#else
++        if (!m_monitorSignals) {
++            if (sem_init(&m_sem, 0, 0) != -1) {
++                m_monitorSignals = true;
++                m_monitorHandle = QtConcurrent::run([=] (){
++                    int s;
++                    QThread::currentThread()->setObjectName(QStringLiteral("signal() monitor"));
++                    while (m_monitorSignals
++                        && (((s = sem_wait(&m_sem)) == -1 && errno == EINTR) || s == 0)) {
++                        if (m_monitorSignals) {
++                            if (s == 0) {
++                                // the semaphore was triggered
++                                emit interruptSignalReceived(m_signalReceived);
++                            }
++                        }
++                        continue; /* Restart if interrupted by handler */
++                    }
++                    sem_destroy(&m_sem);
++                });
++                connect(this, &CorePrivate::interruptSignalReceived, this, &CorePrivate::shutdownGracefully);
++#ifdef SIGHUP
++                std::signal(SIGHUP, signalHandler);
++#endif
++#ifdef SIGINT
++                std::signal(SIGINT, signalHandler);
++#endif
++#ifdef SIGTERM
++                std::signal(SIGTERM, signalHandler);
++#endif
++            } else {
++                qCCritical(SHELL) << "Couldn't create semaphore:" << strerror(errno);
++            }
++        }
++#endif
++        s_self = this;
 +    }
++#endif
  
      qCDebug(SHELL) << "Done initializing controllers";
  
-@@ -328,8 +324,58 @@ CorePrivate::~CorePrivate()
+@@ -328,8 +373,88 @@ CorePrivate::~CorePrivate()
      workingSetController.clear();
      testController.clear();
      runtimeController.clear();
 +
++#ifdef USE_QSOCKETNOTIFIER
 +    if (m_signalPipeWrite != -1) {
-+       close(m_signalPipeWrite);
++        close(m_signalPipeWrite);
 +    }
 +    if (m_signalPipeRead != -1) {
-+       close(m_signalPipeRead);
++        close(m_signalPipeRead);
 +    }
-+}
-+
++#else
++    if (m_monitorSignals) {
++        m_monitorSignals = false;
++        sem_post(&m_sem);
++    }
++#endif
+ }
+ 
 +void CorePrivate::signalHandler(int sig)
 +{
++    s_self->m_signalReceived = sig;
++#ifdef USE_QSOCKETNOTIFIER
 +    if (s_self->m_signalPipeWrite != -1) {
 +        qCDebug(SHELL) << "signal" << sig << " received, shutting down gracefully";
 +        write(s_self->m_signalPipeWrite, &sig, sizeof(sig));
 +    }
++#else
++    if (s_self->m_monitorSignals) {
++        qCWarning(SHELL) << "signal" << sig << " received, shutting down gracefully";
++        sem_post(&s_self->m_sem);
++    }
++#endif
 +}
 +
-+void CorePrivate::shutdownGracefully(int sckt)
++void CorePrivate::shutdownGracefully()
 +{
 +    static volatile std::sig_atomic_t handlingSignal = 0;
 +
-+    int sig = -1;
-+    read(sckt, &sig, sizeof(sig));
 +    // exit as quickly as possible when a SIGHUP is received.
 +    if ( !handlingSignal
 +#ifdef SIGHUP
-+       && sig != SIGHUP
++       && m_signalReceived != SIGHUP
 +#endif
 +    ) {
 +        handlingSignal = 1;
-+        qCWarning(SHELL) << "Going down on signal" << sig;
++        qCWarning(SHELL) << "Going down on signal" << m_signalReceived;
 +        QCoreApplication* app = QCoreApplication::instance();
 +        if (QApplication* guiApp = qobject_cast<QApplication*>(app)) {
 +            guiApp->closeAllWindows();
@@ -253,50 +335,84 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..70f22a6e174f587b70c601b286054daa
 +       s_core->shutdown();
 +    }
 +
++    int sig = m_signalReceived;
++    m_signalReceived = 0;
++
++#ifdef USE_QSOCKETNOTIFIER
++    m_signalNotifier->setEnabled(false);
++#else
++    // the default signal handlers bypass all dtors so we terminate the
++    // monitor in order to release our semaphore.
++    if (m_monitorSignals) {
++        m_monitorSignals = false;
++        sem_post(&m_sem);
++    }
++    if (m_monitorHandle.isRunning()) {
++        m_monitorHandle.waitForFinished();
++    }
++#endif
++
 +    // re-raise signal with default handler and trigger program termination
 +    std::signal(sig, SIG_DFL);
 +    std::raise(sig);
- }
- 
++}
++
 +
  bool Core::initialize(Setup mode, const QString& session)
  {
      if (m_self)
-@@ -604,4 +650,3 @@ QString Core::version()
+@@ -604,4 +729,3 @@ QString Core::version()
  }
  
  }
 -
 diff --git kdevplatform/shell/core_p.h kdevplatform/shell/core_p.h
-index d5ed3525cc9114642a2e18301bb98f60c0e0e98f..2d7a400a299905e12868f3d4bd6e7f2354fffb2d 100644
+index d5ed3525cc9114642a2e18301bb98f60c0e0e98f..3ac6fb3f9d932147ea56a229f3f21c8b85dfa2dc 100644
 --- kdevplatform/shell/core_p.h
 +++ kdevplatform/shell/core_p.h
-@@ -26,6 +26,7 @@
+@@ -26,6 +26,18 @@
  #include <KAboutData>
  
  #include <QPointer>
++#ifdef USE_QSOCKETNOTIFIER
 +#include <QSocketNotifier>
++#else
++#ifdef Q_OS_MACOS
++   #include <mach/mach.h>
++   typedef semaphore_t sem_t;
++#else
++   #include <semaphore.h>
++#endif // Q_OS_MACOS
++#include <QFuture>
++#include <csignal>
++#endif
  
  namespace KDevelop
  {
-@@ -47,11 +48,15 @@ class WorkingSetController;
+@@ -47,11 +59,21 @@ class WorkingSetController;
  class TestController;
  class RuntimeController;
  
 -class KDEVPLATFORMSHELL_EXPORT CorePrivate {
 +class KDEVPLATFORMSHELL_EXPORT CorePrivate : public QObject {
 +    Q_OBJECT
++
++#ifndef USE_QSOCKETNOTIFIER
++Q_SIGNALS:
++    void interruptSignalReceived(int sig);
++#endif
++
  public:
      explicit CorePrivate(Core *core);
      ~CorePrivate();
      bool initialize( Core::Setup mode, const QString& session );
-+    void shutdownGracefully(int sckt);
++    void shutdownGracefully();
 +    static void signalHandler(int sig);
 +
      QPointer<PluginController> pluginController;
      QPointer<UiController> uiController;
      QPointer<ProjectController> projectController;
-@@ -70,10 +75,13 @@ public:
+@@ -70,10 +92,21 @@ public:
      QPointer<RuntimeController> runtimeController;
  
      const KAboutData m_aboutData;
@@ -305,8 +421,16 @@ index d5ed3525cc9114642a2e18301bb98f60c0e0e98f..2d7a400a299905e12868f3d4bd6e7f23
      bool m_cleanedUp;
      bool m_shuttingDown;
      Core::Setup m_mode;
-+    int m_signalPipeRead = -1, m_signalPipeWrite = -1;
++#ifdef USE_QSOCKETNOTIFIER
++    int m_signalPipeRead = -1;
++    int m_signalPipeWrite = -1;
 +    QSocketNotifier* m_signalNotifier = nullptr;
++#else
++    sem_t m_sem;
++    sig_atomic_t m_monitorSignals = false;
++    QFuture<void> m_monitorHandle;
++#endif
++    sig_atomic_t m_signalReceived = 0;
 +    static CorePrivate* s_self;
  };
  
