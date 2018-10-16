@@ -7,7 +7,7 @@ cmake and qmake managers.
 Differential Revision: https://phabricator.kde.org/D9344
 
 diff --git kdevplatform/shell/openprojectdialog.cpp kdevplatform/shell/openprojectdialog.cpp
-index c16bc5e01ae45bf072e708d351cb84840a969c5f..cc0255ce7c8cb773a33921433b5756f5b2aac740 100644
+index b1eb13a5ca48b834428f8df25b27c8ec7fb64a1e..a214941ad2e4711eb8a9127eb0f1decaa7f5f391 100644
 --- kdevplatform/shell/openprojectdialog.cpp
 +++ kdevplatform/shell/openprojectdialog.cpp
 @@ -15,6 +15,7 @@
@@ -18,54 +18,54 @@ index c16bc5e01ae45bf072e708d351cb84840a969c5f..cc0255ce7c8cb773a33921433b5756f5
  
  #include <KColorScheme>
  #include <KIO/StatJob>
-@@ -73,6 +74,7 @@ OpenProjectDialog::OpenProjectDialog(bool fetch, const QUrl& startUrl,
-                                      const QUrl& repoUrl, IPlugin* vcsOrProviderPlugin,
-                                      QWidget* parent)
-     : KAssistantDialog( parent )
-+    , m_projectDirUrl(QUrl())
-     , m_urlIsDirectory(false)
-     , sourcePage(nullptr)
-     , openPage(nullptr)
-@@ -272,7 +278,9 @@ void OpenProjectDialog::validateOpenUrl( const QUrl& url_ )
+@@ -272,7 +273,13 @@ void OpenProjectDialog::validateOpenUrl( const QUrl& url_ )
              }
              page->populateProjectFileCombo(choices);
          }
 -        m_url.setPath( m_url.path() + QLatin1Char('/') + m_url.fileName() + QLatin1Char('.') + ShellExtension::getInstance()->projectFileExtension() );
++        // Turn m_url into the full path to the project filename (default: /path/to/projectSrc/projectSrc.kdev4).
++        // This is done only when m_url doesn't already point to such a file, typically because the user selected
++        // one in the project open dialog. Omitting this check could lead to project files of the form
++        // /path/to/projectSrc/SourceProject.kdev4/projectSrc.kdev4 .
 +        if (!m_url.toLocalFile().endsWith(QLatin1Char('.') + ShellExtension::getInstance()->projectFileExtension())) {
-+          m_url.setPath( m_url.path() + QLatin1Char('/') + m_url.fileName() + QLatin1Char('.') + ShellExtension::getInstance()->projectFileExtension() );
++            m_url.setPath( m_url.path() + QLatin1Char('/') + m_url.fileName() + QLatin1Char('.') + ShellExtension::getInstance()->projectFileExtension() );
 +        }
      } else {
          setAppropriate( projectInfoPage, false );
          m_url = url;
-@@ -310,7 +318,35 @@ void OpenProjectDialog::openPageAccepted()
+@@ -310,7 +317,39 @@ void OpenProjectDialog::openPageAccepted()
  
  void OpenProjectDialog::validateProjectName( const QString& name )
  {
 -    m_projectName = name;
 +    if (name != m_projectName) {
-+        bool settingName = currentPage() == projectInfoPage;
 +        m_projectName = name;
-+        if (m_projectDirUrl.isEmpty() && settingName) {
-+            // cache the selected project directory
-+            const auto urlInfo = ::urlInfo(m_url);
-+            if (urlInfo.isValid && urlInfo.isDir) {
-+                m_projectDirUrl = m_url.adjusted(QUrl::StripTrailingSlash);
-+            } else {
-+                // if !urlInfo.isValid the url almost certainly refers to a file that doesn't exist (yet)
-+                // With the Generic Makefile proj.manager it can be the project file url, for instance.
-+                m_projectDirUrl = m_url.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash);
-+            }
-+        }
-+        const QUrl url(m_projectDirUrl);
-+        // construct a version of the project name that's safe for use as a filename:
-+        // TODO: do an additional replace of QDir::separator() with "@"?
-+        QString safeName = m_projectName;
-+        safeName.replace(QRegularExpression(QStringLiteral("[\\\\/]")), QStringLiteral("@"));
-+        safeName = safeName.replace(QLatin1Char(':'), QLatin1Char('='));
-+        safeName = safeName.replace(QRegExp(QStringLiteral("\\s")), QStringLiteral("_"));
-+        safeName += QLatin1Char('.') + ShellExtension::getInstance()->projectFileExtension();
++        bool isEnteringProjectName = (currentPage() == projectInfoPage);
 +        // don't interfere with m_url when validateOpenUrl() is also likely to change it
-+        if (settingName) {
++        if (isEnteringProjectName) {
++            if (m_projectDirUrl.isEmpty()) {
++                // cache the selected project directory
++                const auto urlInfo = ::urlInfo(m_url);
++                if (urlInfo.isValid && urlInfo.isDir) {
++                    m_projectDirUrl = m_url.adjusted(QUrl::StripTrailingSlash);
++                } else {
++                    // if !urlInfo.isValid the url almost certainly refers to a file that doesn't exist (yet)
++                    // With the Generic Makefile proj.manager it can be the project file url, for instance.
++                    m_projectDirUrl = m_url.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash);
++                }
++            }
++
++            const QUrl url(m_projectDirUrl);
++            // construct a version of the project name that is safe for use as a filename, i.e.
++            // a version that does not contain characters that are illegal or are best avoided:
++            // replace square braces and dir separator-like characters with a '@' placeholder
++            // replace colons with '=' and whitespace with underscores.
++            QString safeName = m_projectName;
++            safeName.replace(QRegularExpression(QStringLiteral("[\\\\/]")), QStringLiteral("@"));
++            safeName = safeName.replace(QLatin1Char(':'), QLatin1Char('=')) \
++                .replace(QRegExp(QStringLiteral("\\s")), QStringLiteral("_"));
++            safeName += QLatin1Char('.') + ShellExtension::getInstance()->projectFileExtension();
++
 +            m_url.setPath(url.path() + QLatin1Char('/') + safeName);
 +            m_urlIsDirectory = false;
 +            qCDebug(SHELL) << "project name:" << m_projectName << "file name:" << safeName << "in" << url.path();
@@ -75,10 +75,25 @@ index c16bc5e01ae45bf072e708d351cb84840a969c5f..cc0255ce7c8cb773a33921433b5756f5
  }
  
 diff --git kdevplatform/shell/openprojectdialog.h kdevplatform/shell/openprojectdialog.h
-index b3c301f42ae47bd64d6db011d77764537d8e20f9..49573a28124575c6e44a0dd54371181cc415c235 100644
+index b3c301f42ae47bd64d6db011d77764537d8e20f9..3b8f53d2790fd93839c62a6157cbcd920789c9c6 100644
 --- kdevplatform/shell/openprojectdialog.h
 +++ kdevplatform/shell/openprojectdialog.h
-@@ -67,6 +67,7 @@ private Q_SLOTS:
+@@ -59,6 +59,14 @@ public:
+ private Q_SLOTS:
+     void validateSourcePage( bool );
+     void validateOpenUrl( const QUrl& );
++    /**
++    * Validates the name the user entered (or is entering) for the 
++    * project being opened and its project filename, sets that filename
++    * and then calls validateProjectInfo().
++    * The validation procedure ensures that the project filename obtained
++    * from the project name is valid filename by mapping illegal and
++    * potentially conflicting characters to placeholders.
++    */
+     void validateProjectName( const QString& );
+     void validateProjectManager( const QString&, const QString & );
+     void storeFileList(KIO::Job*, const KIO::UDSEntryList&);
+@@ -67,6 +75,7 @@ private Q_SLOTS:
  private:
      bool execNativeDialog();
      void validateProjectInfo();
@@ -87,7 +102,7 @@ index b3c301f42ae47bd64d6db011d77764537d8e20f9..49573a28124575c6e44a0dd54371181c
      QUrl m_selected;
      QString m_projectName;
 diff --git kdevplatform/shell/projectcontroller.cpp kdevplatform/shell/projectcontroller.cpp
-index d687c269d22d363652b599099b46999fd22b85cb..f6ca4412c788e91273e1c737716d50397e69b08c 100644
+index 8c80de6fd6544f65234a6a9c6f49c6aaa3b7b8f7..2ed26373c40f87f65aa85d71a4e5091069e5fbae 100644
 --- kdevplatform/shell/projectcontroller.cpp
 +++ kdevplatform/shell/projectcontroller.cpp
 @@ -423,6 +423,9 @@ bool equalProjectFile( const QString& configPath, OpenProjectDialog* dlg )
@@ -100,7 +115,7 @@ index d687c269d22d363652b599099b46999fd22b85cb..f6ca4412c788e91273e1c737716d5039
      return (grp.readEntry( "Name", QString() ) == dlg->projectName() || dlg->projectName() == defaultName) &&
             grp.readEntry( "Manager", QString() ) == dlg->projectManager();
  }
-@@ -438,7 +453,8 @@ QUrl ProjectDialogProvider::askProjectConfigLocation(bool fetch, const QUrl& sta
+@@ -438,7 +441,8 @@ QUrl ProjectDialogProvider::askProjectConfigLocation(bool fetch, const QUrl& sta
      }
  
      QUrl projectFileUrl = dlg->projectFileUrl();
@@ -110,7 +125,7 @@ index d687c269d22d363652b599099b46999fd22b85cb..f6ca4412c788e91273e1c737716d5039
      if ( dlg->projectManager() == QLatin1String("<built-in>") ) {
          return projectFileUrl;
      }
-@@ -447,10 +463,17 @@ QUrl ProjectDialogProvider::askProjectConfigLocation(bool fetch, const QUrl& sta
+@@ -447,10 +451,17 @@ QUrl ProjectDialogProvider::askProjectConfigLocation(bool fetch, const QUrl& sta
      bool writeProjectConfigToFile = true;
      if( projectFileExists( projectFileUrl ) )
      {
@@ -131,7 +146,7 @@ index d687c269d22d363652b599099b46999fd22b85cb..f6ca4412c788e91273e1c737716d5039
              if( projectFileUrl.isLocalFile() )
              {
                  shouldAsk = !equalProjectFile( projectFileUrl.toLocalFile(), dlg );
-@@ -490,18 +513,24 @@ QUrl ProjectDialogProvider::askProjectConfigLocation(bool fetch, const QUrl& sta
+@@ -490,18 +501,24 @@ QUrl ProjectDialogProvider::askProjectConfigLocation(bool fetch, const QUrl& sta
              } else if ( ret == KMessageBox::Cancel )
              {
                  return QUrl();
