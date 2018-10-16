@@ -524,6 +524,11 @@ if {${kf5::includecounter} == 0} {
                     } else {
                         set chmargs ""
                     }
+                    if {[file exists ${qt_bins_dir}/qhelpgeneratorng]} {
+                        set QHELPGENERATOR "${qt_bins_dir}/qhelpgeneratorng"
+                    } else {
+                        set QHELPGENERATOR "${qt_bins_dir}/qhelpgenerator"
+                    }
                     # this appears to be necessary, sometimes:
                     system "chmod 755 ${workpath}/apidocs"
                     if {[info exists kf5.framework]} {
@@ -532,7 +537,7 @@ if {${kf5::includecounter} == 0} {
                         xinstall -m 755 -d ${kapidox_dir}
                         if {[catch {system -W ${kapidox_dir} "kapidox_generate --qhp \
                             ${chmargs} \
-                            --qtdoc-dir ${qt_docs_dir} --qhelpgenerator ${qt_bins_dir}/qhelpgenerator \
+                            --qtdoc-dir ${qt_docs_dir} --qhelpgenerator ${QHELPGENERATOR} \
                             ${worksrcpath}"} result context]} {
                             ui_warn "Failure generating documentation: ${result}"
                         }
@@ -558,7 +563,7 @@ if {${kf5::includecounter} == 0} {
                         system -W ${build.dir} "kgenapidox --qhp --searchengine --api-searchbox \
                             ${chmargs} \
                             --qtdoc-dir ${qt_docs_dir} --kdedoc-dir ${kf5.docs_dir} \
-                            --qhelpgenerator ${qt_bins_dir}/qhelpgenerator ${worksrcpath}"
+                            --qhelpgenerator ${QHELPGENERATOR} ${worksrcpath}"
                         # after creating the destination, copy all generated qch documentation to it
                         foreach doc [glob -nocomplain ${build.dir}/apidocs/qch/*.qch  ${build.dir}/apidocs/html/*.chm] {
                             if {[file tail ${doc}] ne "None.qch"} {

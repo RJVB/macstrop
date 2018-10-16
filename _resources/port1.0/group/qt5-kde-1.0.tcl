@@ -948,6 +948,11 @@ post-activate {
             set needs_generate yes
         }
         if {${needs_generate}} {
+            if {[file exists ${qt_bins_dir}/qhelpgeneratorng]} {
+                set QHELPGENERATOR "${qt_bins_dir}/qhelpgeneratorng"
+            } else {
+                set QHELPGENERATOR "${qt_bins_dir}/qcollectiongenerator"
+            }
             # we only store documentation that's not from Qt in the generated collection file;
             # this appears to be necessary with Qt >= 5.8 to prevent indexing and too-many-open-files errors
             set candidates {}
@@ -978,7 +983,7 @@ post-activate {
                 puts ${fp} "  </docFiles>"
                 puts ${fp} "</QHelpCollectionProject>"
                 close ${fp}
-                catch {system -W ${qhcdir} "time ${qt_bins_dir}/qcollectiongenerator ${qhcpfile} -o ${qhcfile}"}
+                catch {system -W ${qhcdir} "time ${QHELPGENERATOR} ${qhcpfile} -o ${qhcfile}"}
                 file delete -force ${qhcdir}/${qhcpfile}
             } else {
                 ui_debug "cannot create ${qhcdir}/${qhcpfile}: ${err}"
