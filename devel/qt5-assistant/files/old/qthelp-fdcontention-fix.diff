@@ -1,0 +1,3183 @@
+commit 829f9dec6bff57e8b3f1afdc982778a9d573174f
+Author: Jarek Kobus <jaroslaw.kobus@qt.io>
+Date:   Fri Aug 25 17:02:29 2017 +0200
+
+    Store the copy of the index inside the help collection file
+    
+    This avoids having to open all .qch files at startup, which is slow
+    and can lead to contention on open file handles.
+    
+    This change is backward compatible. The old help lib
+    won't use the new tables. The new help lib will
+    generate the new tables on first run or regenerate them
+    when it detects they are not anymore in sync.
+    
+    Store also the timestamp info about the qch files and compare
+    it upon every startup. If it doesn't match then new tables' data
+    is regenerated. The case when running new Creator,
+    then running old Creator and reconfiguring doc set and then
+    running new Creator again should work properly.
+    
+    Task-number: QTCREATORBUG-18242
+    Change-Id: I7f656935ae2383b866b27e256eec23dab588efc5
+    Reviewed-by: Kai Koehne <kai.koehne@qt.io>
+
+diff --git a/src/assistant/assistant/helpenginewrapper.cpp b/src/assistant/assistant/helpenginewrapper.cpp
+index 20e6ff7f..73f3ace3 100644
+--- a/src/assistant/assistant/helpenginewrapper.cpp
++++ b/src/assistant/assistant/helpenginewrapper.cpp
+@@ -146,6 +146,7 @@ HelpEngineWrapper::HelpEngineWrapper(const QString &collectionFile)
+      * This call is reverted by initialDocSetupDone(), which must be
+      * called after the new docs have been installed.
+      */
++//  TODO: probably remove it
+     disconnect(d->m_helpEngine, &QHelpEngineCore::setupFinished,
+             searchEngine(), &QHelpSearchEngine::scheduleIndexDocumentation);
+ 
+@@ -175,6 +176,7 @@ HelpEngineWrapper::~HelpEngineWrapper()
+ void HelpEngineWrapper::initialDocSetupDone()
+ {
+     TRACE_OBJ
++//  TODO: probably remove it
+     connect(d->m_helpEngine, &QHelpEngineCore::setupFinished,
+             searchEngine(), &QHelpSearchEngine::scheduleIndexDocumentation);
+     setupData();
+diff --git a/src/assistant/help/qhelpcollectionhandler.cpp b/src/assistant/help/qhelpcollectionhandler.cpp
+index bf0eb9e9..ff2ac48e 100644
+--- a/src/assistant/help/qhelpcollectionhandler.cpp
++++ b/src/assistant/help/qhelpcollectionhandler.cpp
+@@ -41,16 +41,49 @@
+ #include "qhelp_global.h"
+ #include "qhelpdbreader_p.h"
+ 
+-#include <QtCore/QFile>
++#include <QtCore/QDateTime>
+ #include <QtCore/QDir>
++#include <QtCore/QFile>
+ #include <QtCore/QFileInfo>
+-#include <QtCore/QDebug>
++#include <QtCore/QTimer>
++#include <QtCore/QVector>
+ 
+ #include <QtSql/QSqlError>
+ #include <QtSql/QSqlDriver>
+ 
+ QT_BEGIN_NAMESPACE
+ 
++class Transaction
++{
++public:
++    Transaction(const QString &connectionName)
++        : m_db(QSqlDatabase::database(connectionName)),
++          m_inTransaction(m_db.driver()->hasFeature(QSqlDriver::Transactions))
++    {
++        if (m_inTransaction)
++            m_inTransaction = m_db.transaction();
++    }
++
++    ~Transaction()
++    {
++        if (m_inTransaction)
++            m_db.rollback();
++    }
++
++    void commit()
++    {
++        if (!m_inTransaction)
++            return;
++
++        m_db.commit();
++        m_inTransaction = false;
++    }
++
++private:
++    QSqlDatabase m_db;
++    bool m_inTransaction;
++};
++
+ QHelpCollectionHandler::QHelpCollectionHandler(const QString &collectionFile, QObject *parent)
+     : QObject(parent)
+     , m_collectionFile(collectionFile)
+@@ -65,7 +98,7 @@ QHelpCollectionHandler::~QHelpCollectionHandler()
+     closeDB();
+ }
+ 
+-bool QHelpCollectionHandler::isDBOpened()
++bool QHelpCollectionHandler::isDBOpened() const
+ {
+     if (m_query)
+         return true;
+@@ -123,7 +156,9 @@ bool QHelpCollectionHandler::openCollectionFile()
+     m_query->exec(QLatin1String("SELECT COUNT(*) FROM sqlite_master WHERE TYPE=\'table\' "
+                                 "AND Name=\'NamespaceTable\'"));
+     m_query->next();
+-    if (m_query->value(0).toInt() < 1) {
++
++    const bool tablesExist = m_query->value(0).toInt() > 0;
++    if (!tablesExist) {
+         if (!createTables(m_query)) {
+             closeDB();
+             emit error(tr("Cannot create tables in file %1.").arg(collectionFile()));
+@@ -131,9 +166,149 @@ bool QHelpCollectionHandler::openCollectionFile()
+         }
+     }
+ 
++    bool indexAndNamespaceFilterTablesMissing = false;
++
++    m_query->exec(QLatin1String("SELECT COUNT(*) FROM sqlite_master WHERE TYPE=\'table\' "
++                                "AND (Name=\'IndexTable\' "
++                                "OR Name=\'FileNameTable\' "
++                                "OR Name=\'ContentsTable\' "
++                                "OR Name=\'FileFilterTable\' "
++                                "OR Name=\'IndexFilterTable\' "
++                                "OR Name=\'ContentsFilterTable\' "
++                                "OR Name=\'FileAttributeSetTable\' "
++                                "OR Name=\'OptimizedFilterTable\' "
++                                "OR Name=\'TimeStampTable\')"));
++    m_query->next();
++    if (m_query->value(0).toInt() != 9) {
++        if (!createIndexAndNamespaceFilterTables(m_query)) {
++            emit error(tr("Cannot create index tables in file %1.").arg(collectionFile()));
++            return false;
++        }
++
++        // Old tables exist, index tables didn't, recreate index tables only in this case
++        indexAndNamespaceFilterTablesMissing = tablesExist;
++    }
++
++    const FileInfoList &docList = registeredDocumentations();
++    if (indexAndNamespaceFilterTablesMissing) {
++        for (const QHelpCollectionHandler::FileInfo &info : docList) {
++            if (!registerIndexAndNamespaceFilterTables(info.namespaceName))
++                return false;
++        }
++        return true;
++    }
++
++    QList<TimeStamp> timeStamps;
++    m_query->exec(QLatin1String("SELECT NamespaceId, FolderId, FilePath, Size, TimeStamp "
++                               "FROM TimeStampTable"));
++    while (m_query->next()) {
++        TimeStamp timeStamp;
++        timeStamp.namespaceId = m_query->value(0).toInt();
++        timeStamp.folderId    = m_query->value(1).toInt();
++        timeStamp.fileName    = m_query->value(2).toString();
++        timeStamp.size        = m_query->value(3).toInt();
++        timeStamp.timeStamp   = m_query->value(4).toString();
++        timeStamps.append(timeStamp);
++    }
++
++    QVector<TimeStamp> toRemove;
++    for (const TimeStamp &timeStamp : timeStamps) {
++        if (!isTimeStampCorrect(timeStamp))
++            toRemove.append(timeStamp);
++    }
++
++    // TODO: we may optimize when toRemove.size() == timeStamps.size().
++    // In this case we remove all records from tables.
++    Transaction transaction(m_connectionName);
++    for (const TimeStamp &timeStamp : toRemove) {
++        if (!unregisterIndexTable(timeStamp.namespaceId, timeStamp.folderId))
++            return false;
++    }
++    transaction.commit();
++
++    for (const QHelpCollectionHandler::FileInfo &info : docList) {
++        if (!hasTimeStampInfo(info.namespaceName)
++                && !registerIndexAndNamespaceFilterTables(info.namespaceName)) {
++            return false;
++        }
++    }
++
++    return true;
++}
++
++QString QHelpCollectionHandler::absoluteDocPath(const QString &fileName) const
++{
++    const QFileInfo fi(collectionFile());
++    return QDir::isAbsolutePath(fileName)
++            ? fileName
++            : QFileInfo(fi.absolutePath() + QLatin1Char('/') + fileName)
++              .absoluteFilePath();
++}
++
++bool QHelpCollectionHandler::isTimeStampCorrect(const TimeStamp &timeStamp) const
++{
++    const QFileInfo fi(absoluteDocPath(timeStamp.fileName));
++
++    if (!fi.exists())
++        return false;
++
++    if (fi.size() != timeStamp.size)
++        return false;
++
++    if (fi.lastModified().toString(Qt::ISODate) != timeStamp.timeStamp)
++        return false;
++
++    m_query->prepare(QLatin1String("SELECT FilePath "
++                                  "FROM NamespaceTable "
++                                  "WHERE Id = ?"));
++    m_query->bindValue(0, timeStamp.namespaceId);
++    if (!m_query->exec() || !m_query->next())
++        return false;
++
++    const QString oldFileName = m_query->value(0).toString();
++    if (oldFileName != timeStamp.fileName)
++        return false;
++
+     return true;
+ }
+ 
++bool QHelpCollectionHandler::hasTimeStampInfo(const QString &nameSpace) const
++{
++    m_query->prepare(QLatin1String("SELECT "
++                                      "TimeStampTable.NamespaceId "
++                                  "FROM "
++                                      "NamespaceTable, "
++                                      "TimeStampTable "
++                                  "WHERE NamespaceTable.Id = TimeStampTable.NamespaceId "
++                                  "AND NamespaceTable.Name = ? LIMIT 1"));
++    m_query->bindValue(0, nameSpace);
++    if (!m_query->exec())
++        return false;
++
++    if (!m_query->next())
++        return false;
++
++    return true;
++}
++
++void QHelpCollectionHandler::scheduleVacuum()
++{
++    if (m_vacuumScheduled)
++        return;
++
++    m_vacuumScheduled = true;
++    QTimer::singleShot(0, this, &QHelpCollectionHandler::execVacuum);
++}
++
++void QHelpCollectionHandler::execVacuum()
++{
++    if (!m_query)
++        return;
++
++    m_query->exec(QLatin1String("VACUUM"));
++    m_vacuumScheduled = false;
++}
++
+ bool QHelpCollectionHandler::copyCollectionFile(const QString &fileName)
+ {
+     if (!m_query)
+@@ -172,7 +347,7 @@ bool QHelpCollectionHandler::copyCollectionFile(const QString &fileName)
+     copyQuery->exec(QLatin1String("PRAGMA synchronous=OFF"));
+     copyQuery->exec(QLatin1String("PRAGMA cache_size=3000"));
+ 
+-    if (!createTables(copyQuery)) {
++    if (!createTables(copyQuery) || !createIndexAndNamespaceFilterTables(copyQuery)) {
+         emit error(tr("Cannot copy collection file: %1").arg(colFile));
+         return false;
+     }
+@@ -185,7 +360,7 @@ bool QHelpCollectionHandler::copyCollectionFile(const QString &fileName)
+         copyQuery->bindValue(0, m_query->value(0).toString());
+         QString oldFilePath = m_query->value(1).toString();
+         if (!QDir::isAbsolutePath(oldFilePath))
+-            oldFilePath = oldBaseDir + QDir::separator() + oldFilePath;
++            oldFilePath = oldBaseDir + QLatin1Char('/') + oldFilePath;
+         copyQuery->bindValue(1, newColFi.absoluteDir().relativeFilePath(oldFilePath));
+         copyQuery->exec();
+     }
+@@ -267,6 +442,55 @@ bool QHelpCollectionHandler::createTables(QSqlQuery *query)
+     return true;
+ }
+ 
++bool QHelpCollectionHandler::createIndexAndNamespaceFilterTables(QSqlQuery *query)
++{
++    const QStringList tables = QStringList()
++            << QLatin1String("CREATE TABLE FileNameTable ("
++                             "FolderId INTEGER, "
++                             "Name TEXT, "
++                             "FileId INTEGER PRIMARY KEY, "
++                             "Title TEXT)")
++            << QLatin1String("CREATE TABLE IndexTable ("
++                             "Id INTEGER PRIMARY KEY, "
++                             "Name TEXT, "
++                             "Identifier TEXT, "
++                             "NamespaceId INTEGER, "
++                             "FileId INTEGER, "
++                             "Anchor TEXT)")
++            << QLatin1String("CREATE TABLE ContentsTable ("
++                             "Id INTEGER PRIMARY KEY, "
++                             "NamespaceId INTEGER, "
++                             "Data BLOB)")
++            << QLatin1String("CREATE TABLE FileFilterTable ("
++                             "FilterAttributeId INTEGER, "
++                             "FileId INTEGER)")
++            << QLatin1String("CREATE TABLE IndexFilterTable ("
++                             "FilterAttributeId INTEGER, "
++                             "IndexId INTEGER)")
++            << QLatin1String("CREATE TABLE ContentsFilterTable ("
++                             "FilterAttributeId INTEGER, "
++                             "ContentsId INTEGER )")
++            << QLatin1String("CREATE TABLE FileAttributeSetTable ("
++                             "NamespaceId INTEGER, "
++                             "FilterAttributeSetId INTEGER, "
++                             "FilterAttributeId INTEGER)")
++            << QLatin1String("CREATE TABLE OptimizedFilterTable ("
++                             "NamespaceId INTEGER, "
++                             "FilterAttributeId INTEGER)")
++            << QLatin1String("CREATE TABLE TimeStampTable ("
++                             "NamespaceId INTEGER, "
++                             "FolderId INTEGER, "
++                             "FilePath TEXT, "
++                             "Size INTEGER, "
++                             "TimeStamp TEXT)");
++
++    for (const QString &q : tables) {
++        if (!query->exec(q))
++            return false;
++    }
++    return true;
++}
++
+ QStringList QHelpCollectionHandler::customFilters() const
+ {
+     QStringList list;
+@@ -323,10 +547,11 @@ bool QHelpCollectionHandler::addCustomFilter(const QString &filterName,
+     QStringList idsToInsert = attributes;
+     QMap<QString, int> attributeMap;
+     while (m_query->next()) {
+-        attributeMap.insert(m_query->value(1).toString(),
+-            m_query->value(0).toInt());
+-        if (idsToInsert.contains(m_query->value(1).toString()))
+-            idsToInsert.removeAll(m_query->value(1).toString());
++        // all old attributes
++        const QString attributeName = m_query->value(1).toString();
++        attributeMap.insert(attributeName, m_query->value(0).toInt());
++        if (idsToInsert.contains(attributeName))
++            idsToInsert.removeAll(attributeName);
+     }
+ 
+     for (const QString &id : qAsConst(idsToInsert)) {
+@@ -362,33 +587,57 @@ bool QHelpCollectionHandler::addCustomFilter(const QString &filterName,
+     return true;
+ }
+ 
+-QHelpCollectionHandler::DocInfoList QHelpCollectionHandler::registeredDocumentations(
++QHelpCollectionHandler::FileInfo QHelpCollectionHandler::registeredDocumentation(
+         const QString &namespaceName) const
+ {
+-    DocInfoList list;
++    FileInfo fileInfo;
+ 
+     if (!m_query)
+-        return list;
++        return fileInfo;
++
++    m_query->prepare(QLatin1String("SELECT "
++                                       "NamespaceTable.Name, "
++                                       "NamespaceTable.FilePath, "
++                                       "FolderTable.Name "
++                                   "FROM "
++                                       "NamespaceTable, "
++                                       "FolderTable "
++                                   "WHERE NamespaceTable.Id = FolderTable.NamespaceId "
++                                   "AND NamespaceTable.Name = ? LIMIT 1"));
++    m_query->bindValue(0, namespaceName);
++    if (!m_query->exec() || !m_query->next())
++        return fileInfo;
+ 
+-    static const QLatin1String baseQuery("SELECT a.Name, a.FilePath, b.Name "
+-                                         "FROM NamespaceTable a, FolderTable b "
+-                                         "WHERE a.Id=b.NamespaceId");
++    fileInfo.namespaceName = m_query->value(0).toString();
++    fileInfo.fileName = m_query->value(1).toString();
++    fileInfo.folderName = m_query->value(2).toString();
+ 
+-    if (namespaceName.isEmpty()) {
+-        m_query->prepare(baseQuery);
+-    } else {
+-        m_query->prepare(baseQuery + QLatin1String(" AND a.Name=? LIMIT 1"));
+-        m_query->bindValue(0, namespaceName);
+-    }
++    m_query->clear();
+ 
+-    m_query->exec();
++    return fileInfo;
++}
++
++QHelpCollectionHandler::FileInfoList QHelpCollectionHandler::registeredDocumentations() const
++{
++    FileInfoList list;
++    if (!m_query)
++        return list;
++
++    m_query->exec(QLatin1String("SELECT "
++                                    "NamespaceTable.Name, "
++                                    "NamespaceTable.FilePath, "
++                                    "FolderTable.Name "
++                                "FROM "
++                                    "NamespaceTable, "
++                                    "FolderTable "
++                                "WHERE NamespaceTable.Id = FolderTable.NamespaceId"));
+ 
+     while (m_query->next()) {
+-        DocInfo info;
+-        info.namespaceName = m_query->value(0).toString();
+-        info.fileName = m_query->value(1).toString();
+-        info.folderName = m_query->value(2).toString();
+-        list.append(info);
++        FileInfo fileInfo;
++        fileInfo.namespaceName = m_query->value(0).toString();
++        fileInfo.fileName = m_query->value(1).toString();
++        fileInfo.folderName = m_query->value(2).toString();
++        list.append(fileInfo);
+     }
+ 
+     return list;
+@@ -416,14 +665,16 @@ bool QHelpCollectionHandler::registerDocumentation(const QString &fileName)
+     if (nsId < 1)
+         return false;
+ 
+-    if (!registerVirtualFolder(reader.virtualFolder(), nsId))
++    const int vfId = registerVirtualFolder(reader.virtualFolder(), nsId);
++    if (vfId < 1)
+         return false;
+ 
+-    addFilterAttributes(reader.filterAttributes());
++    registerFilterAttributes(reader.filterAttributeSets(), nsId); // qset, what happens when removing documentation?
+     for (const QString &filterName : reader.customFilters())
+         addCustomFilter(filterName, reader.filterAttributes(filterName));
+ 
+-    optimizeDatabase(fileName);
++    if (!registerIndexTable(reader.indexTable(), nsId, vfId, registeredDocumentation(ns).fileName))
++        return false;
+ 
+     return true;
+ }
+@@ -444,6 +695,22 @@ bool QHelpCollectionHandler::unregisterDocumentation(const QString &namespaceNam
+ 
+     const int nsId = m_query->value(0).toInt();
+ 
++    m_query->prepare(QLatin1String("DELETE FROM NamespaceTable WHERE Id = ?"));
++    m_query->bindValue(0, nsId);
++    if (!m_query->exec())
++        return false;
++
++    m_query->prepare(QLatin1String("SELECT Id FROM FolderTable WHERE NamespaceId = ?"));
++    m_query->bindValue(0, nsId);
++    m_query->exec();
++
++    if (!m_query->next()) {
++        emit error(tr("The namespace %1 was not registered.").arg(namespaceName));
++        return false;
++    }
++
++    const int vfId = m_query->value(0).toInt();
++
+     m_query->prepare(QLatin1String("DELETE FROM NamespaceTable WHERE Id = ?"));
+     m_query->bindValue(0, nsId);
+     if (!m_query->exec())
+@@ -454,9 +721,331 @@ bool QHelpCollectionHandler::unregisterDocumentation(const QString &namespaceNam
+     if (!m_query->exec())
+         return false;
+ 
++    if (!unregisterIndexTable(nsId, vfId))
++        return false;
++
++    scheduleVacuum();
++
+     return true;
+ }
+ 
++static QHelpCollectionHandler::FileInfo extractFileInfo(const QUrl &url)
++{
++    QHelpCollectionHandler::FileInfo fileInfo;
++
++    if (!url.isValid() || url.toString().count(QLatin1Char('/')) < 4
++        || url.scheme() != QLatin1String("qthelp")) {
++        return fileInfo;
++    }
++
++    fileInfo.namespaceName = url.authority();
++    fileInfo.fileName = url.path();
++    if (fileInfo.fileName.startsWith(QLatin1Char('/')))
++        fileInfo.fileName = fileInfo.fileName.mid(1);
++    fileInfo.folderName = fileInfo.fileName.mid(0, fileInfo.fileName.indexOf(QLatin1Char('/'), 1));
++    fileInfo.fileName.remove(0, fileInfo.folderName.length() + 1);
++
++    return fileInfo;
++}
++
++bool QHelpCollectionHandler::fileExists(const QUrl &url) const
++{
++    if (!isDBOpened())
++        return false;
++
++    const FileInfo fileInfo = extractFileInfo(url);
++    if (fileInfo.namespaceName.isEmpty())
++        return false;
++
++    m_query->prepare(QLatin1String("SELECT COUNT (DISTINCT NamespaceTable.Id)"
++                                   "FROM"
++                                       "FileNameTable, "
++                                       "NamespaceTable, "
++                                       "FolderTable "
++                                   "WHERE FolderTable.Name = ? "
++                                   "AND FileNameTable.Name = ? "
++                                   "AND FileNameTable.FolderId = FolderTable.Id "
++                                   "AND FolderTable.NamespaceId = NamespaceTable.Id"));
++    m_query->bindValue(0, fileInfo.folderName);
++    m_query->bindValue(1, fileInfo.fileName);
++    if (!m_query->exec() || !m_query->next())
++        return false;
++
++    return m_query->value(0).toInt();
++}
++
++static QString prepareFilterQuery(int attributesCount,
++                                  const QString &idTableName,
++                                  const QString &idColumnName,
++                                  const QString &filterTableName,
++                                  const QString &filterColumnName)
++{
++    if (!attributesCount)
++        return QString();
++
++    QString filterQuery = QString::fromLatin1(" AND (%1.%2 IN (").arg(idTableName, idColumnName);
++
++    const QString filterQueryTemplate = QString::fromLatin1(
++                "SELECT %1.%2 "
++                "FROM %1, FilterAttributeTable "
++                "WHERE %1.FilterAttributeId = FilterAttributeTable.Id "
++                "AND FilterAttributeTable.Name = ?")
++            .arg(filterTableName, filterColumnName);
++
++    for (int i = 0; i < attributesCount; ++i) {
++        if (i > 0)
++            filterQuery.append(QLatin1String(" INTERSECT "));
++        filterQuery.append(filterQueryTemplate);
++    }
++
++    filterQuery.append(QLatin1String(") OR NamespaceTable.Id IN ("));
++
++    const QString optimizedFilterQueryTemplate = QLatin1String(
++                "SELECT OptimizedFilterTable.NamespaceId "
++                "FROM OptimizedFilterTable, FilterAttributeTable "
++                "WHERE OptimizedFilterTable.FilterAttributeId = FilterAttributeTable.Id "
++                "AND FilterAttributeTable.Name = ?");
++
++    for (int i = 0; i < attributesCount; ++i) {
++        if (i > 0)
++            filterQuery.append(QLatin1String(" INTERSECT "));
++        filterQuery.append(optimizedFilterQueryTemplate);
++    }
++
++    filterQuery.append(QLatin1String("))"));
++
++    return filterQuery;
++}
++
++void bindFilterQuery(QSqlQuery *query, int startingBindPos, const QStringList &filterAttributes)
++{
++    for (int i = 0; i < 2; ++i) {
++        for (int j = 0; j < filterAttributes.count(); j++) {
++            query->bindValue(i * filterAttributes.count() + j + startingBindPos,
++                             filterAttributes.at(j));
++        }
++    }
++}
++
++QString QHelpCollectionHandler::namespaceForFile(const QUrl &url,
++                                                 const QStringList &filterAttributes) const
++{
++    if (!isDBOpened())
++        return QString();
++
++    const FileInfo fileInfo = extractFileInfo(url);
++    if (fileInfo.namespaceName.isEmpty())
++        return QString();
++
++    const QString filterlessQuery = QLatin1String(
++                "SELECT DISTINCT "
++                    "NamespaceTable.Name "
++                "FROM "
++                    "FileNameTable, "
++                    "NamespaceTable, "
++                    "FolderTable "
++                "WHERE FolderTable.Name = ? "
++                "AND FileNameTable.Name = ? "
++                "AND FileNameTable.FolderId = FolderTable.Id "
++                "AND FolderTable.NamespaceId = NamespaceTable.Id");
++
++    const QString filterQuery = filterlessQuery
++            + prepareFilterQuery(filterAttributes.count(),
++                                 QLatin1String("FileNameTable"),
++                                 QLatin1String("FileId"),
++                                 QLatin1String("FileFilterTable"),
++                                 QLatin1String("FileId"));
++
++    m_query->prepare(filterQuery);
++    m_query->bindValue(0, fileInfo.folderName);
++    m_query->bindValue(1, fileInfo.fileName);
++    bindFilterQuery(m_query, 2, filterAttributes);
++
++    if (!m_query->exec())
++        return QString();
++
++    QVector<QString> namespaceList;
++    while (m_query->next())
++        namespaceList.append(m_query->value(0).toString());
++
++    if (namespaceList.isEmpty())
++        return QString();
++
++    return namespaceList.contains(fileInfo.namespaceName)
++            ? fileInfo.namespaceName
++            : namespaceList.first(); // TODO: version match heuristics
++}
++
++QStringList QHelpCollectionHandler::files(const QString &namespaceName,
++                                          const QStringList &filterAttributes,
++                                          const QString &extensionFilter) const
++{
++    if (!isDBOpened())
++        return QStringList();
++
++    const QString extensionQuery = extensionFilter.isEmpty()
++            ? QString() : QLatin1String(" AND FileNameTable.Name LIKE ?");
++    const QString filterlessQuery = QLatin1String(
++                "SELECT "
++                    "FolderTable.Name, "
++                    "FileNameTable.Name "
++                "FROM "
++                    "FileNameTable, "
++                    "FolderTable, "
++                    "NamespaceTable "
++                "WHERE FileNameTable.FolderId = FolderTable.Id "
++                "AND FolderTable.NamespaceId = NamespaceTable.Id "
++                "AND NamespaceTable.Name = ?") + extensionQuery;
++
++    const QString filterQuery = filterlessQuery
++            + prepareFilterQuery(filterAttributes.count(),
++                                 QLatin1String("FileNameTable"),
++                                 QLatin1String("FileId"),
++                                 QLatin1String("FileFilterTable"),
++                                 QLatin1String("FileId"));
++
++    m_query->prepare(filterQuery);
++    m_query->bindValue(0, namespaceName);
++    int bindCount = 1;
++    if (!extensionFilter.isEmpty()) {
++        m_query->bindValue(bindCount, QString::fromLatin1("%.%1").arg(extensionFilter));
++        ++bindCount;
++    }
++    bindFilterQuery(m_query, bindCount, filterAttributes);
++
++    if (!m_query->exec())
++        return QStringList();
++
++    QStringList fileNames;
++    while (m_query->next()) {
++        fileNames.append(m_query->value(0).toString()
++                         + QLatin1Char('/')
++                         + m_query->value(1).toString());
++    }
++
++    return fileNames;
++}
++
++QUrl QHelpCollectionHandler::findFile(const QUrl &url, const QStringList &filterAttributes) const
++{
++    if (!isDBOpened())
++        return QUrl();
++
++    const QString namespaceName = namespaceForFile(url, filterAttributes);
++    if (namespaceName.isEmpty())
++        return QUrl();
++
++    QUrl result = url;
++    result.setAuthority(namespaceName);
++    return result;
++}
++
++QByteArray QHelpCollectionHandler::fileData(const QUrl &url) const
++{
++    if (!isDBOpened())
++        return QByteArray();
++
++    const QString namespaceName = namespaceForFile(url);
++    if (namespaceName.isEmpty())
++        return QByteArray();
++
++    const FileInfo fileInfo = extractFileInfo(url);
++
++    const FileInfo docInfo = registeredDocumentation(namespaceName);
++    const QString absFileName = absoluteDocPath(docInfo.fileName);
++
++    QHelpDBReader reader(absFileName, QHelpGlobal::uniquifyConnectionName(
++                             docInfo.fileName, const_cast<QHelpCollectionHandler *>(this)), nullptr);
++    if (!reader.init())
++        return QByteArray();
++
++    return reader.fileData(fileInfo.folderName, fileInfo.fileName);
++}
++
++QStringList QHelpCollectionHandler::indicesForFilter(const QStringList &filterAttributes) const
++{
++    QStringList indices;
++
++    if (!isDBOpened())
++        return indices;
++
++    const QString filterlessQuery = QString::fromLatin1(
++                "SELECT DISTINCT "
++                    "IndexTable.Name "
++                "FROM "
++                    "IndexTable, "
++                    "FileNameTable, "
++                    "FolderTable, "
++                    "NamespaceTable "
++                "WHERE IndexTable.FileId = FileNameTable.FileId "
++                "AND FileNameTable.FolderId = FolderTable.Id "
++                "AND IndexTable.NamespaceId = NamespaceTable.Id");
++
++    const QString filterQuery = filterlessQuery
++            + prepareFilterQuery(filterAttributes.count(),
++                                 QLatin1String("IndexTable"),
++                                 QLatin1String("Id"),
++                                 QLatin1String("IndexFilterTable"),
++                                 QLatin1String("IndexId"))
++            + QLatin1String(" ORDER BY LOWER(IndexTable.Name), IndexTable.Name");
++    //  this doesn't work: ASC COLLATE NOCASE
++
++    m_query->prepare(filterQuery);
++    bindFilterQuery(m_query, 0, filterAttributes);
++
++    m_query->exec();
++
++    while (m_query->next())
++        indices.append(m_query->value(0).toString());
++
++    return indices;
++}
++
++QList<QHelpCollectionHandler::ContentsData> QHelpCollectionHandler::contentsForFilter(
++        const QStringList &filterAttributes) const
++{
++    if (!isDBOpened())
++        return QList<ContentsData>();
++
++    const QString filterlessQuery = QString::fromLatin1(
++                "SELECT DISTINCT "
++                    "NamespaceTable.Name, "
++                    "FolderTable.Name, "
++                    "ContentsTable.Data "
++                "FROM "
++                    "FolderTable, "
++                    "NamespaceTable, "
++                    "ContentsTable "
++                "WHERE ContentsTable.NamespaceId = NamespaceTable.Id "
++                "AND NamespaceTable.Id = FolderTable.NamespaceId "
++                "AND ContentsTable.NamespaceId = NamespaceTable.Id");
++
++    const QString filterQuery = filterlessQuery
++            + prepareFilterQuery(filterAttributes.count(),
++                                 QLatin1String("ContentsTable"),
++                                 QLatin1String("Id"),
++                                 QLatin1String("ContentsFilterTable"),
++                                 QLatin1String("ContentsId"));
++
++    m_query->prepare(filterQuery);
++    bindFilterQuery(m_query, 0, filterAttributes);
++
++    m_query->exec();
++
++    QMap<QString, ContentsData> contentsMap;
++
++    while (m_query->next()) {
++        const QString namespaceName = m_query->value(0).toString();
++        // get existing or insert a new one otherwise
++        ContentsData &contentsData = contentsMap[namespaceName];
++        contentsData.namespaceName = namespaceName;
++        contentsData.folderName = m_query->value(1).toString();
++        contentsData.contentsList.append(m_query->value(2).toByteArray());
++    }
++
++    return contentsMap.values();
++}
++
+ bool QHelpCollectionHandler::removeCustomValue(const QString &key)
+ {
+     if (!isDBOpened())
+@@ -513,7 +1102,8 @@ bool QHelpCollectionHandler::setCustomValue(const QString &key,
+     return m_query->exec();
+ }
+ 
+-bool QHelpCollectionHandler::addFilterAttributes(const QStringList &attributes)
++bool QHelpCollectionHandler::registerFilterAttributes(const QList<QStringList> &attributeSets,
++                                                      int nsId)
+ {
+     if (!isDBOpened())
+         return false;
+@@ -523,14 +1113,62 @@ bool QHelpCollectionHandler::addFilterAttributes(const QStringList &attributes)
+     while (m_query->next())
+         atts.insert(m_query->value(0).toString());
+ 
+-    for (const QString &s : attributes) {
+-        if (!atts.contains(s)) {
+-            m_query->prepare(QLatin1String("INSERT INTO FilterAttributeTable VALUES(NULL, ?)"));
+-            m_query->bindValue(0, s);
+-            m_query->exec();
++    for (const QStringList &attributeSet : attributeSets) {
++        for (const QString &attribute : attributeSet) {
++            if (!atts.contains(attribute)) {
++                m_query->prepare(QLatin1String("INSERT INTO FilterAttributeTable VALUES(NULL, ?)"));
++                m_query->bindValue(0, attribute);
++                m_query->exec();
++            }
+         }
+     }
+-    return true;
++    return registerFileAttributeSets(attributeSets, nsId);
++}
++
++bool QHelpCollectionHandler::registerFileAttributeSets(const QList<QStringList> &attributeSets,
++                                                       int nsId)
++{
++    if (!isDBOpened())
++        return false;
++
++    if (attributeSets.isEmpty())
++        return true;
++
++    QVariantList nsIds;
++    QVariantList attributeSetIds;
++    QVariantList filterAttributeIds;
++
++    if (!m_query->exec(QLatin1String("SELECT MAX(FilterAttributeSetId) FROM FileAttributeSetTable"))
++            || !m_query->next()) {
++        return false;
++    }
++
++    int attributeSetId = m_query->value(0).toInt();
++
++    for (const QStringList &attributeSet : attributeSets) {
++        ++attributeSetId;
++
++        for (const QString &attribute : attributeSet) {
++
++            m_query->prepare(QLatin1String("SELECT Id FROM FilterAttributeTable WHERE Name=?"));
++            m_query->bindValue(0, attribute);
++
++            if (!m_query->exec() || !m_query->next())
++                return false;
++
++            nsIds.append(nsId);
++            attributeSetIds.append(attributeSetId);
++            filterAttributeIds.append(m_query->value(0).toInt());
++        }
++    }
++
++    m_query->prepare(QLatin1String("INSERT INTO FileAttributeSetTable "
++                                  "(NamespaceId, FilterAttributeSetId, FilterAttributeId) "
++                                  "VALUES(?, ?, ?)"));
++    m_query->addBindValue(nsIds);
++    m_query->addBindValue(attributeSetIds);
++    m_query->addBindValue(filterAttributeIds);
++    return m_query->execBatch();
+ }
+ 
+ QStringList QHelpCollectionHandler::filterAttributes() const
+@@ -559,6 +1197,42 @@ QStringList QHelpCollectionHandler::filterAttributes(const QString &filterName)
+     return list;
+ }
+ 
++QList<QStringList> QHelpCollectionHandler::filterAttributeSets(const QString &namespaceName) const
++{
++    QList<QStringList> result;
++    if (!isDBOpened())
++        return result;
++
++    m_query->prepare(QLatin1String(
++                         "SELECT "
++                             "FileAttributeSetTable.FilterAttributeSetId, "
++                             "FilterAttributeTable.Name "
++                         "FROM "
++                             "FileAttributeSetTable, "
++                             "FilterAttributeTable, "
++                             "NamespaceTable "
++                         "WHERE FileAttributeSetTable.FilterAttributeId = FilterAttributeTable.Id "
++                         "AND FileAttributeSetTable.NamespaceId = NamespaceTable.Id "
++                         "AND NamespaceTable.Name = ? "
++                         "ORDER BY FileAttributeSetTable.FilterAttributeSetId"));
++    m_query->bindValue(0, namespaceName);
++    m_query->exec();
++    int oldId = -1;
++    while (m_query->next()) {
++        const int id = m_query->value(0).toInt();
++        if (id != oldId) {
++            result.append(QStringList());
++            oldId = id;
++        }
++        result.last().append(m_query->value(1).toString());
++    }
++
++    if (result.isEmpty())
++        result.append(QStringList());
++
++    return result;
++}
++
+ int QHelpCollectionHandler::registerNamespace(const QString &nspace, const QString &fileName)
+ {
+     const int errorValue = -1;
+@@ -589,7 +1263,7 @@ int QHelpCollectionHandler::registerNamespace(const QString &nspace, const QStri
+     return namespaceId;
+ }
+ 
+-bool QHelpCollectionHandler::registerVirtualFolder(const QString &folderName, int namespaceId)
++int QHelpCollectionHandler::registerVirtualFolder(const QString &folderName, int namespaceId)
+ {
+     if (!m_query)
+         return false;
+@@ -597,33 +1271,389 @@ bool QHelpCollectionHandler::registerVirtualFolder(const QString &folderName, in
+     m_query->prepare(QLatin1String("INSERT INTO FolderTable VALUES(NULL, ?, ?)"));
+     m_query->bindValue(0, namespaceId);
+     m_query->bindValue(1, folderName);
+-    return m_query->exec();
++
++    int virtualId = -1;
++    if (m_query->exec())
++        virtualId = m_query->lastInsertId().toInt();
++    if (virtualId < 1) {
++        emit error(tr("Cannot register virtual folder '%1'.").arg(folderName));
++        return -1;
++    }
++    return virtualId;
+ }
+ 
+-void QHelpCollectionHandler::optimizeDatabase(const QString &fileName)
++bool QHelpCollectionHandler::registerIndexAndNamespaceFilterTables(const QString &nameSpace)
+ {
+-    if (!QFile::exists(fileName))
+-        return;
++    if (!isDBOpened())
++        return false;
+ 
+-    {   // according to removeDatabase() documentation
+-        QSqlDatabase db = QSqlDatabase::addDatabase(QLatin1String("QSQLITE"), QLatin1String("optimize"));
+-        db.setDatabaseName(fileName);
+-        if (!db.open()) {
+-            QSqlDatabase::removeDatabase(QLatin1String("optimize"));
+-            emit error(tr("Cannot open database \"%1\" to optimize.").arg(fileName));
+-            return;
++    m_query->prepare(QLatin1String("SELECT Id, FilePath FROM NamespaceTable WHERE Name=?"));
++    m_query->bindValue(0, nameSpace);
++    m_query->exec();
++    if (!m_query->next())
++        return false;
++
++    const int nsId = m_query->value(0).toInt();
++    const QString fileName = m_query->value(1).toString();
++
++    m_query->prepare(QLatin1String("SELECT Id FROM FolderTable WHERE NamespaceId=?"));
++    m_query->bindValue(0, nsId);
++    m_query->exec();
++    if (!m_query->next())
++        return false;
++
++    const int vfId = m_query->value(0).toInt();
++
++    const QString absFileName = absoluteDocPath(fileName);
++    QHelpDBReader reader(absFileName, QHelpGlobal::uniquifyConnectionName(
++                             fileName, this), this);
++    if (!reader.init())
++        return false;
++
++    if (!registerFileAttributeSets(reader.filterAttributeSets(), nsId))
++        return false;
++
++    if (!registerIndexTable(reader.indexTable(), nsId, vfId, fileName))
++        return false;
++
++    return true;
++}
++
++bool QHelpCollectionHandler::registerIndexTable(const QHelpDBReader::IndexTable &indexTable,
++                                                int nsId, int vfId, const QString &fileName)
++{
++    Transaction transaction(m_connectionName);
++
++    QMap<QString, QVariantList> filterAttributeToNewFileId;
++
++    QVariantList fileFolderIds;
++    QVariantList fileNames;
++    QVariantList fileTitles;
++    const int fileSize = indexTable.fileItems.size();
++    fileFolderIds.reserve(fileSize);
++    fileNames.reserve(fileSize);
++    fileTitles.reserve(fileSize);
++
++    if (!m_query->exec(QLatin1String("SELECT MAX(FileId) FROM FileNameTable")) || !m_query->next())
++        return false;
++
++    const int maxFileId = m_query->value(0).toInt();
++
++    int newFileId = 0;
++    for (const QHelpDBReader::FileItem &item : indexTable.fileItems) {
++        fileFolderIds.append(vfId);
++        fileNames.append(item.name);
++        fileTitles.append(item.title);
++
++        for (const QString &filterAttribute : item.filterAttributes)
++            filterAttributeToNewFileId[filterAttribute].append(maxFileId + newFileId + 1);
++        ++newFileId;
++    }
++
++    m_query->prepare(QLatin1String("INSERT INTO FileNameTable VALUES(?, ?, NULL, ?)"));
++    m_query->addBindValue(fileFolderIds);
++    m_query->addBindValue(fileNames);
++    m_query->addBindValue(fileTitles);
++    if (!m_query->execBatch())
++        return false;
++
++    for (auto it = filterAttributeToNewFileId.cbegin(),
++         end = filterAttributeToNewFileId.cend(); it != end; ++it) {
++        const QString filterAttribute = it.key();
++        m_query->prepare(QLatin1String("SELECT Id From FilterAttributeTable WHERE Name = ?"));
++        m_query->bindValue(0, filterAttribute);
++        if (!m_query->exec() || !m_query->next())
++            return false;
++
++        const int attributeId = m_query->value(0).toInt();
++
++        QVariantList attributeIds;
++        for (int i = 0; i < it.value().count(); i++)
++            attributeIds.append(attributeId);
++
++        m_query->prepare(QLatin1String("INSERT INTO FileFilterTable VALUES(?, ?)"));
++        m_query->addBindValue(attributeIds);
++        m_query->addBindValue(it.value());
++        if (!m_query->execBatch())
++            return false;
++    }
++
++    QMap<QString, QVariantList> filterAttributeToNewIndexId;
++
++    if (!m_query->exec(QLatin1String("SELECT MAX(Id) FROM IndexTable")) || !m_query->next())
++        return false;
++
++    const int maxIndexId = m_query->value(0).toInt();
++    int newIndexId = 0;
++
++    QVariantList indexNames;
++    QVariantList indexIdentifiers;
++    QVariantList indexNamespaceIds;
++    QVariantList indexFileIds;
++    QVariantList indexAnchors;
++    const int indexSize = indexTable.indexItems.size();
++    indexNames.reserve(indexSize);
++    indexIdentifiers.reserve(indexSize);
++    indexNamespaceIds.reserve(indexSize);
++    indexFileIds.reserve(indexSize);
++    indexAnchors.reserve(indexSize);
++
++    for (const QHelpDBReader::IndexItem &item : indexTable.indexItems) {
++        indexNames.append(item.name);
++        indexIdentifiers.append(item.identifier);
++        indexNamespaceIds.append(nsId);
++        indexFileIds.append(maxFileId + item.fileId + 1);
++        indexAnchors.append(item.anchor);
++
++        for (const QString &filterAttribute : item.filterAttributes)
++            filterAttributeToNewIndexId[filterAttribute].append(maxIndexId + newIndexId + 1);
++        ++newIndexId;
++    }
++
++    m_query->prepare(QLatin1String("INSERT INTO IndexTable VALUES(NULL, ?, ?, ?, ?, ?)"));
++    m_query->addBindValue(indexNames);
++    m_query->addBindValue(indexIdentifiers);
++    m_query->addBindValue(indexNamespaceIds);
++    m_query->addBindValue(indexFileIds);
++    m_query->addBindValue(indexAnchors);
++    if (!m_query->execBatch())
++        return false;
++
++    for (auto it = filterAttributeToNewIndexId.cbegin(),
++         end = filterAttributeToNewIndexId.cend(); it != end; ++it) {
++        const QString filterAttribute = it.key();
++        m_query->prepare(QLatin1String("SELECT Id From FilterAttributeTable WHERE Name = ?"));
++        m_query->bindValue(0, filterAttribute);
++        if (!m_query->exec() || !m_query->next())
++            return false;
++
++        const int attributeId = m_query->value(0).toInt();
++
++        QVariantList attributeIds;
++        for (int i = 0; i < it.value().count(); i++)
++            attributeIds.append(attributeId);
++
++        m_query->prepare(QLatin1String("INSERT INTO IndexFilterTable VALUES(?, ?)"));
++        m_query->addBindValue(attributeIds);
++        m_query->addBindValue(it.value());
++        if (!m_query->execBatch())
++            return false;
++    }
++
++    QMap<QString, QVariantList> filterAttributeToNewContentsId;
++
++    QVariantList contentsNsIds;
++    QVariantList contentsData;
++    const int contentsSize = indexTable.contentsItems.size();
++    contentsNsIds.reserve(contentsSize);
++    contentsData.reserve(contentsSize);
++
++    if (!m_query->exec(QLatin1String("SELECT MAX(Id) FROM ContentsTable")) || !m_query->next())
++        return false;
++
++    const int maxContentsId = m_query->value(0).toInt();
++
++    int newContentsId = 0;
++    for (const QHelpDBReader::ContentsItem &item : indexTable.contentsItems) {
++        contentsNsIds.append(nsId);
++        contentsData.append(item.data);
++
++        for (const QString &filterAttribute : item.filterAttributes) {
++            filterAttributeToNewContentsId[filterAttribute]
++                    .append(maxContentsId + newContentsId + 1);
+         }
++        ++newContentsId;
++    }
+ 
+-        db.exec(QLatin1String("PRAGMA synchronous=OFF"));
+-        db.exec(QLatin1String("PRAGMA cache_size=3000"));
+-        db.exec(QLatin1String("CREATE INDEX IF NOT EXISTS NameIndex ON IndexTable(Name)"));
+-        db.exec(QLatin1String("CREATE INDEX IF NOT EXISTS FileNameIndex ON FileNameTable(Name)"));
+-        db.exec(QLatin1String("CREATE INDEX IF NOT EXISTS FileIdIndex ON FileNameTable(FileId)"));
++    m_query->prepare(QLatin1String("INSERT INTO ContentsTable VALUES(NULL, ?, ?)"));
++    m_query->addBindValue(contentsNsIds);
++    m_query->addBindValue(contentsData);
++    if (!m_query->execBatch())
++        return false;
+ 
+-        db.close();
++    for (auto it = filterAttributeToNewContentsId.cbegin(),
++         end = filterAttributeToNewContentsId.cend(); it != end; ++it) {
++        const QString filterAttribute = it.key();
++        m_query->prepare(QLatin1String("SELECT Id From FilterAttributeTable WHERE Name = ?"));
++        m_query->bindValue(0, filterAttribute);
++        if (!m_query->exec() || !m_query->next())
++            return false;
++
++        const int attributeId = m_query->value(0).toInt();
++
++        QVariantList attributeIds;
++        for (int i = 0; i < it.value().count(); i++)
++            attributeIds.append(attributeId);
++
++        m_query->prepare(QLatin1String("INSERT INTO ContentsFilterTable VALUES(?, ?)"));
++        m_query->addBindValue(attributeIds);
++        m_query->addBindValue(it.value());
++        if (!m_query->execBatch())
++            return false;
++    }
++
++    QVariantList filterNsIds;
++    QVariantList filterAttributeIds;
++    for (const QString &filterAttribute : indexTable.usedFilterAttributes) {
++        filterNsIds.append(nsId);
++
++        m_query->prepare(QLatin1String("SELECT Id From FilterAttributeTable WHERE Name = ?"));
++        m_query->bindValue(0, filterAttribute);
++        if (!m_query->exec() || !m_query->next())
++            return false;
++
++        filterAttributeIds.append(m_query->value(0).toInt());
+     }
+ 
+-    QSqlDatabase::removeDatabase(QLatin1String("optimize"));
++    m_query->prepare(QLatin1String("INSERT INTO OptimizedFilterTable "
++                                   "(NamespaceId, FilterAttributeId) VALUES(?, ?)"));
++    m_query->addBindValue(filterNsIds);
++    m_query->addBindValue(filterAttributeIds);
++    if (!m_query->execBatch())
++        return false;
++
++    m_query->prepare(QLatin1String("INSERT INTO TimeStampTable "
++                                   "(NamespaceId, FolderId, FilePath, Size, TimeStamp) "
++                                   "VALUES(?, ?, ?, ?, ?)"));
++    m_query->addBindValue(nsId);
++    m_query->addBindValue(vfId);
++    m_query->addBindValue(fileName);
++    const QFileInfo fi(absoluteDocPath(fileName));
++    m_query->addBindValue(fi.size());
++    m_query->addBindValue(fi.lastModified().toString(Qt::ISODate));
++    if (!m_query->exec())
++        return false;
++
++    transaction.commit();
++    return true;
++}
++
++bool QHelpCollectionHandler::unregisterIndexTable(int nsId, int vfId)
++{
++    m_query->prepare(QLatin1String("DELETE FROM IndexFilterTable WHERE IndexId IN "
++                                       "(SELECT Id FROM IndexTable WHERE NamespaceId = ?)"));
++    m_query->bindValue(0, nsId);
++    if (!m_query->exec())
++        return false;
++
++    m_query->prepare(QLatin1String("DELETE FROM IndexTable WHERE NamespaceId = ?"));
++    m_query->bindValue(0, nsId);
++    if (!m_query->exec())
++        return false;
++
++    m_query->prepare(QLatin1String("DELETE FROM FileFilterTable WHERE FileId IN "
++                                       "(SELECT FileId FROM FileNameTable WHERE FolderId = ?)"));
++    m_query->bindValue(0, vfId);
++    if (!m_query->exec())
++        return false;
++
++    m_query->prepare(QLatin1String("DELETE FROM FileNameTable WHERE FolderId = ?"));
++    m_query->bindValue(0, vfId);
++    if (!m_query->exec())
++        return false;
++
++    m_query->prepare(QLatin1String("DELETE FROM ContentsFilterTable WHERE ContentsId IN "
++                                       "(SELECT Id FROM ContentsTable WHERE NamespaceId = ?)"));
++    m_query->bindValue(0, nsId);
++    if (!m_query->exec())
++        return false;
++
++    m_query->prepare(QLatin1String("DELETE FROM ContentsTable WHERE NamespaceId = ?"));
++    m_query->bindValue(0, nsId);
++    if (!m_query->exec())
++        return false;
++
++    m_query->prepare(QLatin1String("DELETE FROM FileAttributeSetTable WHERE NamespaceId = ?"));
++    m_query->bindValue(0, nsId);
++    if (!m_query->exec())
++        return false;
++
++    m_query->prepare(QLatin1String("DELETE FROM OptimizedFilterTable WHERE NamespaceId = ?"));
++    m_query->bindValue(0, nsId);
++    if (!m_query->exec())
++        return false;
++
++    m_query->prepare(QLatin1String("DELETE FROM TimeStampTable WHERE NamespaceId = ?"));
++    m_query->bindValue(0, nsId);
++    if (!m_query->exec())
++        return false;
++
++    return true;
++}
++
++static QUrl buildQUrl(const QString &ns, const QString &folder,
++                      const QString &relFileName, const QString &anchor)
++{
++    QUrl url;
++    url.setScheme(QLatin1String("qthelp"));
++    url.setAuthority(ns);
++    url.setPath(QLatin1Char('/') + folder + QLatin1Char('/') + relFileName);
++    url.setFragment(anchor);
++    return url;
++}
++
++QMap<QString, QUrl> QHelpCollectionHandler::linksForIdentifier(const QString &id,
++                    const QStringList &filterAttributes) const
++{
++    return linksForField(QLatin1String("Identifier"), id, filterAttributes);
++}
++
++QMap<QString, QUrl> QHelpCollectionHandler::linksForKeyword(const QString &keyword,
++                    const QStringList &filterAttributes) const
++{
++    return linksForField(QLatin1String("Name"), keyword, filterAttributes);
++}
++
++QMap<QString, QUrl> QHelpCollectionHandler::linksForField(const QString &fieldName,
++                    const QString &fieldValue,
++                    const QStringList &filterAttributes) const
++{
++    QMap<QString, QUrl> linkMap;
++
++    if (!isDBOpened())
++        return linkMap;
++
++    const QString filterlessQuery = QString::fromLatin1(
++                "SELECT "
++                    "FileNameTable.Title, "
++                    "NamespaceTable.Name, "
++                    "FolderTable.Name, "
++                    "FileNameTable.Name, "
++                    "IndexTable.Anchor "
++                "FROM "
++                    "IndexTable, "
++                    "FileNameTable, "
++                    "FolderTable, "
++                    "NamespaceTable "
++                "WHERE IndexTable.FileId = FileNameTable.FileId "
++                "AND FileNameTable.FolderId = FolderTable.Id "
++                "AND IndexTable.NamespaceId = NamespaceTable.Id "
++                "AND IndexTable.%1 = ?").arg(fieldName);
++
++    const QString filterQuery = filterlessQuery
++            + prepareFilterQuery(filterAttributes.count(),
++                                 QLatin1String("IndexTable"),
++                                 QLatin1String("Id"),
++                                 QLatin1String("IndexFilterTable"),
++                                 QLatin1String("IndexId"));
++
++    m_query->prepare(filterQuery);
++    m_query->bindValue(0, fieldValue);
++    bindFilterQuery(m_query, 1, filterAttributes);
++
++    m_query->exec();
++
++    while (m_query->next()) {
++        QString title = m_query->value(0).toString();
++        if (title.isEmpty()) // generate a title + corresponding path
++            title = fieldValue + QLatin1String(" : ") + m_query->value(3).toString();
++
++        linkMap.insertMulti(title, buildQUrl(m_query->value(1).toString(),
++                                             m_query->value(2).toString(),
++                                             m_query->value(3).toString(),
++                                             m_query->value(4).toString()));
++    }
++    return linkMap;
+ }
+ 
+ QT_END_NAMESPACE
+diff --git a/src/assistant/help/qhelpcollectionhandler_p.h b/src/assistant/help/qhelpcollectionhandler_p.h
+index d804b3f0..d349a49f 100644
+--- a/src/assistant/help/qhelpcollectionhandler_p.h
++++ b/src/assistant/help/qhelpcollectionhandler_p.h
+@@ -59,6 +59,8 @@
+ 
+ #include <QtSql/QSqlQuery>
+ 
++#include "qhelpdbreader_p.h"
++
+ QT_BEGIN_NAMESPACE
+ 
+ class QHelpCollectionHandler : public QObject
+@@ -66,13 +68,29 @@ class QHelpCollectionHandler : public QObject
+     Q_OBJECT
+ 
+ public:
+-    struct DocInfo
++    struct FileInfo
+     {
+         QString fileName;
+         QString folderName;
+         QString namespaceName;
+     };
+-    typedef QList<DocInfo> DocInfoList;
++    typedef QList<FileInfo> FileInfoList;
++
++    struct TimeStamp
++    {
++        int namespaceId = -1;
++        int folderId = -1;
++        QString fileName;
++        int size = 0;
++        QString timeStamp;
++    };
++
++    struct ContentsData
++    {
++        QString namespaceName;
++        QString folderName;
++        QList<QByteArray> contentsList;
++    };
+ 
+     explicit QHelpCollectionHandler(const QString &collectionFile,
+         QObject *parent = 0);
+@@ -88,33 +106,67 @@ public:
+     bool addCustomFilter(const QString &filterName,
+         const QStringList &attributes);
+ 
+-    DocInfoList registeredDocumentations(const QString &namespaceName = QString()) const;
++    FileInfo registeredDocumentation(const QString &namespaceName) const;
++    FileInfoList registeredDocumentations() const;
+     bool registerDocumentation(const QString &fileName);
+     bool unregisterDocumentation(const QString &namespaceName);
+ 
++    bool fileExists(const QUrl &url) const;
++    QStringList files(const QString &namespaceName,
++                      const QStringList &filterAttributes = QStringList(),
++                      const QString &extensionFilter = QString()) const;
++    QString namespaceForFile(const QUrl &url,
++                             const QStringList &filterAttributes = QStringList()) const;
++    QUrl findFile(const QUrl &url,
++                  const QStringList &filterAttributes = QStringList()) const;
++    QByteArray fileData(const QUrl &url) const;
++
++    QStringList indicesForFilter(const QStringList &filterAttributes) const;
++    QList<ContentsData> contentsForFilter(const QStringList &filterAttributes) const;
++
+     bool removeCustomValue(const QString &key);
+     QVariant customValue(const QString &key, const QVariant &defaultValue) const;
+     bool setCustomValue(const QString &key, const QVariant &value);
+ 
+-    bool addFilterAttributes(const QStringList &attributes);
+     QStringList filterAttributes() const;
+     QStringList filterAttributes(const QString &filterName) const;
++    QList<QStringList> filterAttributeSets(const QString &namespaceName) const;
+ 
+     int registerNamespace(const QString &nspace, const QString &fileName);
+-    bool registerVirtualFolder(const QString &folderName, int namespaceId);
+-    void optimizeDatabase(const QString &fileName);
++    int registerVirtualFolder(const QString &folderName, int namespaceId);
++
++    QMap<QString, QUrl> linksForIdentifier(const QString &id,
++                                           const QStringList &filterAttributes) const;
++    QMap<QString, QUrl> linksForKeyword(const QString &keyword,
++                                        const QStringList &filterAttributes) const;
+ 
+ signals:
+-    void error(const QString &msg);
++    void error(const QString &msg) const;
+ 
+ private:
+-    bool isDBOpened();
+-    void closeDB();
++    QMap<QString, QUrl> linksForField(const QString &fieldName,
++                                      const QString &fieldValue,
++                                      const QStringList &filterAttributes) const;
++    bool isDBOpened() const;
+     bool createTables(QSqlQuery *query);
++    void closeDB();
++    bool createIndexAndNamespaceFilterTables(QSqlQuery *query);
++    bool registerIndexAndNamespaceFilterTables(const QString &nameSpace);
++    bool registerFilterAttributes(const QList<QStringList> &attributeSets, int nsId);
++    bool registerFileAttributeSets(const QList<QStringList> &attributeSets, int nsId);
++    bool registerIndexTable(const QHelpDBReader::IndexTable &indexTable,
++                            int nsId, int vfId, const QString &fileName);
++    bool unregisterIndexTable(int nsId, int vfId);
++    QString absoluteDocPath(const QString &fileName) const;
++    bool isTimeStampCorrect(const TimeStamp &timeStamp) const;
++    bool hasTimeStampInfo(const QString &nameSpace) const;
++    void scheduleVacuum();
++    void execVacuum();
+ 
+     QString m_collectionFile;
+     QString m_connectionName;
+     QSqlQuery *m_query = nullptr;
++    bool m_vacuumScheduled = false;
+ };
+ 
+ QT_END_NAMESPACE
+diff --git a/src/assistant/help/qhelpcontentwidget.cpp b/src/assistant/help/qhelpcontentwidget.cpp
+index ee7f974a..101da881 100644
+--- a/src/assistant/help/qhelpcontentwidget.cpp
++++ b/src/assistant/help/qhelpcontentwidget.cpp
+@@ -41,6 +41,7 @@
+ #include "qhelpenginecore.h"
+ #include "qhelpengine_p.h"
+ #include "qhelpdbreader_p.h"
++#include "qhelpcollectionhandler_p.h"
+ 
+ #include <QDir>
+ #include <QtCore/QStack>
+@@ -53,12 +54,10 @@ QT_BEGIN_NAMESPACE
+ class QHelpContentItemPrivate
+ {
+ public:
+-    QHelpContentItemPrivate(const QString &t, const QString &l,
+-                            QHelpDBReader *r, QHelpContentItem *p)
++    QHelpContentItemPrivate(const QString &t, const QUrl &l, QHelpContentItem *p)
+         : parent(p),
+           title(t),
+-          link(l),
+-          helpDBReader(r)
++          link(l)
+     {
+     }
+ 
+@@ -67,8 +66,7 @@ public:
+     QList<QHelpContentItem*> childItems;
+     QHelpContentItem *parent;
+     QString title;
+-    QString link;
+-    QHelpDBReader *helpDBReader;
++    QUrl link;
+ };
+ 
+ class QHelpContentProvider : public QThread
+@@ -91,7 +89,7 @@ private:
+     QStringList m_filterAttributes;
+     QQueue<QHelpContentItem*> m_rootItems;
+     QMutex m_mutex;
+-    bool m_abort;
++    bool m_abort = false;
+ };
+ 
+ class QHelpContentModelPrivate
+@@ -110,10 +108,9 @@ public:
+     \since 4.4
+ */
+ 
+-QHelpContentItem::QHelpContentItem(const QString &name, const QString &link,
+-                                   QHelpDBReader *reader, QHelpContentItem *parent)
++QHelpContentItem::QHelpContentItem(const QString &name, const QUrl &link, QHelpContentItem *parent)
+ {
+-    d = new QHelpContentItemPrivate(name, link, reader, parent);
++    d = new QHelpContentItemPrivate(name, link, parent);
+ }
+ 
+ /*!
+@@ -166,7 +163,7 @@ QString QHelpContentItem::title() const
+ */
+ QUrl QHelpContentItem::url() const
+ {
+-    return d->helpDBReader->urlOfPath(d->link);
++    return d->link;
+ }
+ 
+ /*!
+@@ -191,7 +188,6 @@ QHelpContentProvider::QHelpContentProvider(QHelpEnginePrivate *helpEngine)
+     : QThread(helpEngine)
+ {
+     m_helpEngine = helpEngine;
+-    m_abort = false;
+ }
+ 
+ QHelpContentProvider::~QHelpContentProvider()
+@@ -237,6 +233,28 @@ QHelpContentItem *QHelpContentProvider::rootItem()
+     return m_rootItems.dequeue();
+ }
+ 
++// TODO: this is a copy from helpcollectionhandler, make it common
++static QUrl buildQUrl(const QString &ns, const QString &folder,
++                      const QString &relFileName, const QString &anchor)
++{
++    QUrl url;
++    url.setScheme(QLatin1String("qthelp"));
++    url.setAuthority(ns);
++    url.setPath(QLatin1Char('/') + folder + QLatin1Char('/') + relFileName);
++    url.setFragment(anchor);
++    return url;
++}
++
++static QUrl constructUrl(const QString &namespaceName,
++                         const QString &folderName,
++                         const QString &relativePath)
++{
++    const int idx = relativePath.indexOf(QLatin1Char('#'));
++    const QString &rp = idx < 0 ? relativePath : relativePath.left(idx);
++    const QString anchor = idx < 0 ? QString() : relativePath.mid(idx + 1);
++    return buildQUrl(namespaceName, folderName, rp, anchor);
++}
++
+ void QHelpContentProvider::run()
+ {
+     QString title;
+@@ -246,11 +264,21 @@ void QHelpContentProvider::run()
+ 
+     m_mutex.lock();
+     QHelpContentItem * const rootItem = new QHelpContentItem(QString(), QString(), 0);
+-    QStringList atts = m_filterAttributes;
+-    const QStringList fileNames = m_helpEngine->orderedFileNameList;
++    const QStringList attributes = m_filterAttributes;
++    const QString collectionFile = m_helpEngine->collectionHandler->collectionFile();
+     m_mutex.unlock();
+ 
+-    for (const QString &dbFileName : fileNames) {
++    if (collectionFile.isEmpty())
++        return;
++
++    QHelpCollectionHandler collectionHandler(collectionFile);
++    if (!collectionHandler.openCollectionFile())
++        return;
++
++    const QList<QHelpCollectionHandler::ContentsData> result
++            = collectionHandler.contentsForFilter(attributes);
++
++    for (const auto &contentsData : result) {
+         m_mutex.lock();
+         if (m_abort) {
+             delete rootItem;
+@@ -259,32 +287,29 @@ void QHelpContentProvider::run()
+             return;
+         }
+         m_mutex.unlock();
+-        QHelpDBReader reader(dbFileName,
+-            QHelpGlobal::uniquifyConnectionName(dbFileName +
+-            QLatin1String("FromQHelpContentProvider"),
+-            QThread::currentThread()), 0);
+-        if (!reader.init())
+-            continue;
+-        for (const QByteArray &ba : reader.contentsForFilter(atts)) {
+-            if (ba.size() < 1)
++
++        const QString namespaceName = contentsData.namespaceName;
++        const QString folderName = contentsData.folderName;
++        for (const QByteArray &contents : contentsData.contentsList)  {
++            if (contents.size() < 1)
+                 continue;
+ 
+             int _depth = 0;
+             bool _root = false;
+             QStack<QHelpContentItem*> stack;
+ 
+-            QDataStream s(ba);
++            QDataStream s(contents);
+             for (;;) {
+                 s >> depth;
+                 s >> link;
+                 s >> title;
+                 if (title.isEmpty())
+                     break;
++                const QUrl url = constructUrl(namespaceName, folderName, link);
+ CHECK_DEPTH:
+                 if (depth == 0) {
+                     m_mutex.lock();
+-                    item = new QHelpContentItem(title, link,
+-                        m_helpEngine->fileNameReaderMap.value(dbFileName), rootItem);
++                    item = new QHelpContentItem(title, url, rootItem);
+                     rootItem->d->appendChild(item);
+                     m_mutex.unlock();
+                     stack.push(item);
+@@ -296,8 +321,7 @@ CHECK_DEPTH:
+                         stack.push(item);
+                     }
+                     if (depth == _depth) {
+-                        item = new QHelpContentItem(title, link,
+-                            m_helpEngine->fileNameReaderMap.value(dbFileName), stack.top());
++                        item = new QHelpContentItem(title, url, stack.top());
+                         stack.top()->d->appendChild(item);
+                     } else if (depth < _depth) {
+                         stack.pop();
+@@ -308,6 +332,7 @@ CHECK_DEPTH:
+             }
+         }
+     }
++
+     m_mutex.lock();
+     m_rootItems.enqueue(rootItem);
+     m_abort = false;
+@@ -315,8 +340,6 @@ CHECK_DEPTH:
+     emit finishedSuccessFully();
+ }
+ 
+-
+-
+ /*!
+     \class QHelpContentModel
+     \inmodule QtHelp
+diff --git a/src/assistant/help/qhelpcontentwidget.h b/src/assistant/help/qhelpcontentwidget.h
+index 45d9a5f2..efe31116 100644
+--- a/src/assistant/help/qhelpcontentwidget.h
++++ b/src/assistant/help/qhelpcontentwidget.h
+@@ -50,7 +50,6 @@ QT_BEGIN_NAMESPACE
+ 
+ 
+ class QHelpEnginePrivate;
+-class QHelpDBReader;
+ class QHelpContentItemPrivate;
+ class QHelpContentModelPrivate;
+ class QHelpEngine;
+@@ -70,8 +69,8 @@ public:
+     int childPosition(QHelpContentItem *child) const;
+ 
+ private:
+-    QHelpContentItem(const QString &name, const QString &link,
+-        QHelpDBReader *reader, QHelpContentItem *parent = nullptr);
++    QHelpContentItem(const QString &name, const QUrl &link,
++                     QHelpContentItem *parent = nullptr);
+ 
+     QHelpContentItemPrivate *d;
+     friend class QHelpContentProvider;
+diff --git a/src/assistant/help/qhelpdbreader.cpp b/src/assistant/help/qhelpdbreader.cpp
+index 0caf4ffd..ae687ebe 100644
+--- a/src/assistant/help/qhelpdbreader.cpp
++++ b/src/assistant/help/qhelpdbreader.cpp
+@@ -41,6 +41,7 @@
+ #include "qhelp_global.h"
+ 
+ #include <QtCore/QVariant>
++#include <QtCore/QVector>
+ #include <QtCore/QFile>
+ #include <QtSql/QSqlError>
+ #include <QtSql/QSqlQuery>
+@@ -105,16 +106,6 @@ bool QHelpDBReader::initDB()
+     return true;
+ }
+ 
+-QString QHelpDBReader::databaseName() const
+-{
+-    return m_dbName;
+-}
+-
+-QString QHelpDBReader::errorMessage() const
+-{
+-    return m_error;
+-}
+-
+ QString QHelpDBReader::namespaceName() const
+ {
+     if (!m_namespace.isEmpty())
+@@ -137,6 +128,202 @@ QString QHelpDBReader::virtualFolder() const
+     return QString();
+ }
+ 
++static bool isAttributeUsed(QSqlQuery *query, const QString &tableName, int attributeId)
++{
++    query->prepare(QString::fromLatin1("SELECT FilterAttributeId "
++                     "FROM %1 "
++                     "WHERE FilterAttributeId = ? "
++                     "LIMIT 1").arg(tableName));
++    query->bindValue(0, attributeId);
++    query->exec();
++    return query->next(); // if we got a result it means it was used
++}
++
++static int filterDataCount(QSqlQuery *query, const QString &tableName)
++{
++    query->exec(QString::fromLatin1("SELECT COUNT(*) FROM"
++              "(SELECT DISTINCT * FROM %1)").arg(tableName));
++    query->next();
++    return query->value(0).toInt();
++}
++
++QHelpDBReader::IndexTable QHelpDBReader::indexTable() const
++{
++    IndexTable table;
++    if (!m_query)
++        return table;
++
++    QMap<int, QString> attributeIds;
++    m_query->exec(QLatin1String("SELECT DISTINCT Id, Name FROM FilterAttributeTable ORDER BY Id"));
++    while (m_query->next())
++        attributeIds.insert(m_query->value(0).toInt(), m_query->value(1).toString());
++
++    // Maybe some are unused and specified erroneously in the named filter only,
++    // like it was in case of qtlocation.qch <= qt 5.9
++    QVector<int> usedAttributeIds;
++    for (auto it = attributeIds.cbegin(), end = attributeIds.cend(); it != end; ++it) {
++        const int attributeId = it.key();
++        if (isAttributeUsed(m_query, QLatin1String("IndexFilterTable"), attributeId)
++                || isAttributeUsed(m_query, QLatin1String("ContentsFilterTable"), attributeId)
++                || isAttributeUsed(m_query, QLatin1String("FileFilterTable"), attributeId)) {
++            usedAttributeIds.append(attributeId);
++        }
++    }
++
++    bool legacy = false;
++    m_query->exec(QLatin1String("SELECT * FROM pragma_table_info('IndexTable') "
++                                "WHERE name='ContextName'"));
++    if (m_query->next())
++        legacy = true;
++
++    const QString identifierColumnName = legacy
++            ? QLatin1String("ContextName")
++            : QLatin1String("Identifier");
++
++    const int usedAttributeCount = usedAttributeIds.count();
++
++    QMap<int, IndexItem> idToIndexItem;
++
++    m_query->exec(QString::fromLatin1("SELECT Name, %1, FileId, Anchor, Id "
++                                      "FROM IndexTable "
++                                      "ORDER BY Id").arg(identifierColumnName));
++    while (m_query->next()) {
++        IndexItem indexItem;
++        indexItem.name       = m_query->value(0).toString();
++        indexItem.identifier = m_query->value(1).toString();
++        indexItem.fileId     = m_query->value(2).toInt();
++        indexItem.anchor     = m_query->value(3).toString();
++        const int indexId    = m_query->value(4).toInt();
++
++        idToIndexItem.insert(indexId, indexItem);
++    }
++
++    QMap<int, FileItem> idToFileItem;
++    QMap<int, int> originalFileIdToNewFileId;
++
++    int filesCount = 0;
++    m_query->exec(QLatin1String("SELECT "
++                                    "FileNameTable.FileId, "
++                                    "FileNameTable.Name, "
++                                    "FileNameTable.Title "
++                                "FROM FileNameTable, FolderTable "
++                                "WHERE FileNameTable.FolderId = FolderTable.Id "
++                                "ORDER BY FileId"));
++    while (m_query->next()) {
++        const int fileId = m_query->value(0).toInt();
++        FileItem fileItem;
++        fileItem.name   = m_query->value(1).toString();
++        fileItem.title  = m_query->value(2).toString();
++
++        idToFileItem.insert(fileId, fileItem);
++        originalFileIdToNewFileId.insert(fileId, filesCount);
++        ++filesCount;
++    }
++
++    QMap<int, ContentsItem> idToContentsItem;
++
++    m_query->exec(QLatin1String("SELECT Data, Id "
++                                "FROM ContentsTable "
++                                "ORDER BY Id"));
++    while (m_query->next()) {
++        ContentsItem contentsItem;
++        contentsItem.data    = m_query->value(0).toByteArray();
++        const int contentsId = m_query->value(1).toInt();
++
++        idToContentsItem.insert(contentsId, contentsItem);
++    }
++
++    bool optimized = true;
++
++    if (usedAttributeCount) {
++        // May optimize only when all usedAttributes are attached to every
++        // index and file. It means the number of rows in the
++        // IndexTable multiplied by number of used attributes
++        // must equal the number of rows inside IndexFilterTable
++        // (yes, we have a combinatorial explosion of data in IndexFilterTable,
++        // which we want to optimize). The same with FileNameTable and
++        // FileFilterTable.
++
++        const bool mayOptimizeIndexTable
++                = filterDataCount(m_query, QLatin1String("IndexFilterTable"))
++                == idToIndexItem.count() * usedAttributeCount;
++        const bool mayOptimizeFileTable
++                = filterDataCount(m_query, QLatin1String("FileFilterTable"))
++                == idToFileItem.count() * usedAttributeCount;
++        const bool mayOptimizeContentsTable
++                = filterDataCount(m_query, QLatin1String("ContentsFilterTable"))
++                == idToContentsItem.count() * usedAttributeCount;
++        optimized = mayOptimizeIndexTable && mayOptimizeFileTable && mayOptimizeContentsTable;
++
++        if (!optimized) {
++            m_query->exec(QLatin1String(
++                              "SELECT "
++                                  "IndexFilterTable.IndexId, "
++                                  "FilterAttributeTable.Name "
++                              "FROM "
++                                  "IndexFilterTable, "
++                                  "FilterAttributeTable "
++                              "WHERE "
++                                  "IndexFilterTable.FilterAttributeId = FilterAttributeTable.Id"));
++            while (m_query->next()) {
++                const int indexId = m_query->value(0).toInt();
++                auto it = idToIndexItem.find(indexId);
++                if (it != idToIndexItem.end())
++                    it.value().filterAttributes.append(m_query->value(1).toString());
++            }
++
++            m_query->exec(QLatin1String(
++                              "SELECT "
++                                  "FileFilterTable.FileId, "
++                                  "FilterAttributeTable.Name "
++                              "FROM "
++                                  "FileFilterTable, "
++                                  "FilterAttributeTable "
++                              "WHERE "
++                                  "FileFilterTable.FilterAttributeId = FilterAttributeTable.Id"));
++            while (m_query->next()) {
++                const int fileId = m_query->value(0).toInt();
++                auto it = idToFileItem.find(fileId);
++                if (it != idToFileItem.end())
++                    it.value().filterAttributes.append(m_query->value(1).toString());
++            }
++
++            m_query->exec(QLatin1String(
++                              "SELECT "
++                                  "ContentsFilterTable.ContentsId, "
++                                  "FilterAttributeTable.Name "
++                              "FROM "
++                                  "ContentsFilterTable, "
++                                  "FilterAttributeTable "
++                              "WHERE "
++                                  "ContentsFilterTable.FilterAttributeId = FilterAttributeTable.Id"));
++            while (m_query->next()) {
++                const int contentsId = m_query->value(0).toInt();
++                auto it = idToContentsItem.find(contentsId);
++                if (it != idToContentsItem.end())
++                    it.value().filterAttributes.append(m_query->value(1).toString());
++            }
++        }
++    }
++
++    // reindex fileId references
++    for (auto it = idToIndexItem.cbegin(), end = idToIndexItem.cend(); it != end; ++it) {
++        IndexItem item = it.value();
++        item.fileId = originalFileIdToNewFileId.value(item.fileId);
++        table.indexItems.append(item);
++    }
++
++    table.fileItems = idToFileItem.values();
++    table.contentsItems = idToContentsItem.values();
++
++    if (optimized) {
++        for (int attributeId : usedAttributeIds)
++            table.usedFilterAttributes.append(attributeIds.value(attributeId));
++    }
++
++    return table;
++}
++
+ QList<QStringList> QHelpDBReader::filterAttributeSets() const
+ {
+     QList<QStringList> result;
+@@ -156,42 +343,6 @@ QList<QStringList> QHelpDBReader::filterAttributeSets() const
+     return result;
+ }
+ 
+-bool QHelpDBReader::fileExists(const QString &virtualFolder,
+-                               const QString &filePath,
+-                               const QStringList &filterAttributes) const
+-{
+-    if (virtualFolder.isEmpty() || filePath.isEmpty() || !m_query)
+-        return false;
+-
+-//SELECT COUNT(a.Name) FROM FileNameTable a, FolderTable b, FileFilterTable c, FilterAttributeTable d WHERE a.FolderId=b.Id AND b.Name='qtdoc' AND a.Name='qstring.html' AND a.FileId=c.FileId AND c.FilterAttributeId=d.Id AND d.Name='qtrefdoc'
+-
+-    QString query;
+-    namespaceName();
+-    if (filterAttributes.isEmpty()) {
+-        query = QString(QLatin1String("SELECT COUNT(a.Name) FROM FileNameTable a, FolderTable b "
+-            "WHERE a.FolderId=b.Id AND b.Name=\'%1\' AND a.Name=\'%2\'")).arg(quote(virtualFolder)).arg(quote(filePath));
+-    } else {
+-        query = QString(QLatin1String("SELECT COUNT(a.Name) FROM FileNameTable a, FolderTable b, "
+-            "FileFilterTable c, FilterAttributeTable d WHERE a.FolderId=b.Id "
+-            "AND b.Name=\'%1\' AND a.Name=\'%2\' AND a.FileId=c.FileId AND "
+-            "c.FilterAttributeId=d.Id AND d.Name=\'%3\'"))
+-            .arg(quote(virtualFolder)).arg(quote(filePath))
+-            .arg(quote(filterAttributes.first()));
+-        for (int i = 1; i < filterAttributes.count(); ++i) {
+-            query.append(QString(QLatin1String(" INTERSECT SELECT COUNT(a.Name) FROM FileNameTable a, "
+-                "FolderTable b, FileFilterTable c, FilterAttributeTable d WHERE a.FolderId=b.Id "
+-                "AND b.Name=\'%1\' AND a.Name=\'%2\' AND a.FileId=c.FileId AND "
+-                "c.FilterAttributeId=d.Id AND d.Name=\'%3\'"))
+-                .arg(quote(virtualFolder)).arg(quote(filePath))
+-                .arg(quote(filterAttributes.at(i))));
+-        }
+-    }
+-    m_query->exec(query);
+-    if (m_query->next() && m_query->isValid() && m_query->value(0).toInt())
+-        return true;
+-    return false;
+-}
+-
+ QByteArray QHelpDBReader::fileData(const QString &virtualFolder,
+                                    const QString &filePath) const
+ {
+@@ -243,252 +394,59 @@ QStringList QHelpDBReader::filterAttributes(const QString &filterName) const
+     return lst;
+ }
+ 
+-QStringList QHelpDBReader::indicesForFilter(const QStringList &filterAttributes) const
+-{
+-    QStringList indices;
+-    if (!m_query)
+-        return indices;
+-
+-    //SELECT DISTINCT a.Name FROM IndexTable a, IndexFilterTable b, FilterAttributeTable c WHERE a.Id=b.IndexId AND b.FilterAttributeId=c.Id AND c.Name in ('4.2.3', 'qt')
+-
+-    QString query;
+-    if (filterAttributes.isEmpty()) {
+-        query = QLatin1String("SELECT DISTINCT Name FROM IndexTable");
+-    } else {
+-        query = QString(QLatin1String("SELECT DISTINCT a.Name FROM IndexTable a, "
+-        "IndexFilterTable b, FilterAttributeTable c WHERE a.Id=b.IndexId "
+-        "AND b.FilterAttributeId=c.Id AND c.Name='%1'")).arg(quote(filterAttributes.first()));
+-        for (int i = 1; i < filterAttributes.count(); ++i) {
+-            query.append(QString(QLatin1String(" INTERSECT SELECT DISTINCT a.Name FROM IndexTable a, "
+-                "IndexFilterTable b, FilterAttributeTable c WHERE a.Id=b.IndexId "
+-                "AND b.FilterAttributeId=c.Id AND c.Name='%1'"))
+-                .arg(quote(filterAttributes.at(i))));
+-        }
+-    }
+-
+-    m_query->exec(query);
+-    while (m_query->next()) {
+-        if (!m_query->value(0).toString().isEmpty())
+-            indices.append(m_query->value(0).toString());
+-    }
+-    return indices;
+-}
+-
+-void QHelpDBReader::linksForKeyword(const QString &keyword,
+-                                    const QStringList &filterAttributes,
+-                                    QMap<QString, QUrl> *linkMap) const
+-{
+-    if (!m_query)
+-        return;
+-
+-    QString query;
+-    if (filterAttributes.isEmpty()) {
+-        query = QString(QLatin1String("SELECT d.Title, f.Name, e.Name, d.Name, a.Anchor "
+-            "FROM IndexTable a, FileNameTable d, "
+-            "FolderTable e, NamespaceTable f WHERE "
+-            "a.FileId=d.FileId AND d.FolderId=e.Id AND a.NamespaceId=f.Id "
+-            "AND a.Name='%1'")).arg(quote(keyword));
+-    } else if (m_useAttributesCache) {
+-        query = QString(QLatin1String("SELECT d.Title, f.Name, e.Name, d.Name, a.Anchor, a.Id "
+-            "FROM IndexTable a, "
+-            "FileNameTable d, FolderTable e, NamespaceTable f WHERE "
+-            "a.FileId=d.FileId AND d.FolderId=e.Id "
+-            "AND a.NamespaceId=f.Id AND a.Name='%1'"))
+-            .arg(quote(keyword));
+-        m_query->exec(query);
+-        while (m_query->next()) {
+-            if (m_indicesCache.contains(m_query->value(5).toInt())) {
+-                linkMap->insertMulti(m_query->value(0).toString(), buildQUrl(m_query->value(1).toString(),
+-                    m_query->value(2).toString(), m_query->value(3).toString(),
+-                    m_query->value(4).toString()));
+-            }
+-        }
+-        return;
+-    } else {
+-        query = QString(QLatin1String("SELECT d.Title, f.Name, e.Name, d.Name, a.Anchor "
+-            "FROM IndexTable a, IndexFilterTable b, FilterAttributeTable c, "
+-            "FileNameTable d, FolderTable e, NamespaceTable f "
+-            "WHERE a.FileId=d.FileId AND d.FolderId=e.Id "
+-            "AND a.NamespaceId=f.Id AND b.IndexId=a.Id AND b.FilterAttributeId=c.Id "
+-            "AND a.Name='%1' AND c.Name='%2'")).arg(quote(keyword))
+-            .arg(quote(filterAttributes.first()));
+-        for (int i = 1; i < filterAttributes.count(); ++i) {
+-            query.append(QString(QLatin1String(" INTERSECT SELECT d.Title, f.Name, e.Name, d.Name, a.Anchor "
+-                "FROM IndexTable a, IndexFilterTable b, FilterAttributeTable c, "
+-                "FileNameTable d, FolderTable e, NamespaceTable f "
+-                "WHERE a.FileId=d.FileId AND d.FolderId=e.Id "
+-                "AND a.NamespaceId=f.Id AND b.IndexId=a.Id AND b.FilterAttributeId=c.Id "
+-                "AND a.Name='%1' AND c.Name='%2'")).arg(quote(keyword))
+-                .arg(quote(filterAttributes.at(i))));
+-        }
+-    }
+-
+-    QString title;
+-    m_query->exec(query);
+-    while (m_query->next()) {
+-        title = m_query->value(0).toString();
+-        if (title.isEmpty()) // generate a title + corresponding path
+-            title = keyword + QLatin1String(" : ") + m_query->value(3).toString();
+-        linkMap->insertMulti(title, buildQUrl(m_query->value(1).toString(),
+-            m_query->value(2).toString(), m_query->value(3).toString(),
+-            m_query->value(4).toString()));
+-    }
+-}
+-
+-void QHelpDBReader::linksForIdentifier(const QString &id,
+-                                       const QStringList &filterAttributes,
+-                                       QMap<QString, QUrl> *linkMap) const
+-{
+-    if (!m_query)
+-        return;
+-
+-    QString query;
+-    if (filterAttributes.isEmpty()) {
+-        query = QString(QLatin1String("SELECT d.Title, f.Name, e.Name, d.Name, a.Anchor "
+-        "FROM IndexTable a, FileNameTable d, FolderTable e, "
+-        "NamespaceTable f WHERE a.FileId=d.FileId AND "
+-        "d.FolderId=e.Id AND a.NamespaceId=f.Id AND a.Identifier='%1'"))
+-        .arg(quote(id));
+-    } else if (m_useAttributesCache) {
+-        query = QString(QLatin1String("SELECT d.Title, f.Name, e.Name, d.Name, a.Anchor, a.Id "
+-            "FROM IndexTable a,"
+-            "FileNameTable d, FolderTable e, NamespaceTable f WHERE "
+-            "a.FileId=d.FileId AND d.FolderId=e.Id "
+-            "AND a.NamespaceId=f.Id AND a.Identifier='%1'"))
+-            .arg(quote(id));
+-        m_query->exec(query);
+-        while (m_query->next()) {
+-            if (m_indicesCache.contains(m_query->value(5).toInt())) {
+-                linkMap->insertMulti(m_query->value(0).toString(), buildQUrl(m_query->value(1).toString(),
+-                    m_query->value(2).toString(), m_query->value(3).toString(),
+-                    m_query->value(4).toString()));
+-            }
+-        }
+-        return;
+-    } else {
+-        query = QString(QLatin1String("SELECT d.Title, f.Name, e.Name, d.Name, a.Anchor "
+-            "FROM IndexTable a, IndexFilterTable b, FilterAttributeTable c, "
+-            "FileNameTable d, FolderTable e, NamespaceTable f "
+-            "WHERE a.FileId=d.FileId AND d.FolderId=e.Id "
+-            "AND a.NamespaceId=f.Id AND b.IndexId=a.Id AND b.FilterAttributeId=c.Id "
+-            "AND a.Identifier='%1' AND c.Name='%2'")).arg(quote(id))
+-            .arg(quote(filterAttributes.first()));
+-        for (int i = 0; i < filterAttributes.count(); ++i) {
+-            query.append(QString(QLatin1String(" INTERSECT SELECT d.Title, f.Name, e.Name, "
+-                "d.Name, a.Anchor FROM IndexTable a, IndexFilterTable b, "
+-                "FilterAttributeTable c, FileNameTable d, "
+-                "FolderTable e, NamespaceTable f WHERE "
+-                "a.FileId=d.FileId AND d.FolderId=e.Id AND a.NamespaceId=f.Id "
+-                "AND b.IndexId=a.Id AND b.FilterAttributeId=c.Id AND "
+-                "a.Identifier='%1' AND c.Name='%2'")).arg(quote(id))
+-                .arg(quote(filterAttributes.at(i))));
+-        }
+-    }
+-
+-    m_query->exec(query);
+-    while (m_query->next()) {
+-        linkMap->insertMulti(m_query->value(0).toString(), buildQUrl(m_query->value(1).toString(),
+-            m_query->value(2).toString(), m_query->value(3).toString(),
+-            m_query->value(4).toString()));
+-    }
+-}
+-
+-QUrl QHelpDBReader::buildQUrl(const QString &ns, const QString &folder,
+-                              const QString &relFileName, const QString &anchor) const
+-{
+-    QUrl url;
+-    url.setScheme(QLatin1String("qthelp"));
+-    url.setAuthority(ns);
+-    url.setPath(QLatin1Char('/') + folder + QLatin1Char('/') + relFileName);
+-    url.setFragment(anchor);
+-    return url;
+-}
+-
+-QList<QByteArray> QHelpDBReader::contentsForFilter(const QStringList &filterAttributes) const
+-{
+-    QList<QByteArray> contents;
+-    if (!m_query)
+-        return contents;
+-
+-    //SELECT DISTINCT a.Data FROM ContentsTable a, ContentsFilterTable b, FilterAttributeTable c WHERE a.Id=b.ContentsId AND b.FilterAttributeId=c.Id AND c.Name='qt' INTERSECT SELECT DISTINCT a.Data FROM ContentsTable a, ContentsFilterTable b, FilterAttributeTable c WHERE a.Id=b.ContentsId AND b.FilterAttributeId=c.Id AND c.Name='3.3.8';
+-
+-    QString query;
+-    if (filterAttributes.isEmpty()) {
+-        query = QLatin1String("SELECT Data from ContentsTable");
+-    } else {
+-        query = QString(QLatin1String("SELECT a.Data FROM ContentsTable a, "
+-            "ContentsFilterTable b, FilterAttributeTable c "
+-            "WHERE a.Id=b.ContentsId AND b.FilterAttributeId=c.Id "
+-            "AND c.Name='%1'")).arg(quote(filterAttributes.first()));
+-        for (int i = 1; i < filterAttributes.count(); ++i) {
+-            query.append(QString(QLatin1String(" INTERSECT SELECT a.Data FROM ContentsTable a, "
+-            "ContentsFilterTable b, FilterAttributeTable c "
+-            "WHERE a.Id=b.ContentsId AND b.FilterAttributeId=c.Id "
+-            "AND c.Name='%1'")).arg(quote(filterAttributes.at(i))));
+-        }
+-    }
+-
+-    m_query->exec(query);
+-    while (m_query->next())
+-        contents.append(m_query->value(0).toByteArray());
+-    return contents;
+-}
+-
+-QUrl QHelpDBReader::urlOfPath(const QString &relativePath) const
++QMap<QString, QByteArray> QHelpDBReader::filesData(
++        const QStringList &filterAttributes,
++        const QString &extensionFilter) const
+ {
++    QMap<QString, QByteArray> result;
+     if (!m_query)
+-        return QUrl();
+-
+-    m_query->exec(QLatin1String("SELECT a.Name, b.Name FROM NamespaceTable a, "
+-        "FolderTable b WHERE a.id=b.NamespaceId and a.Id=1"));
+-    if (!m_query->next())
+-        return QUrl();
+-
+-    const int idx = relativePath.indexOf(QLatin1Char('#'));
+-    const QString &rp = idx < 0 ? relativePath : relativePath.left(idx);
+-    const QString anchor = idx < 0 ? QString() : relativePath.mid(idx + 1);
+-    return buildQUrl(m_query->value(0).toString(),
+-                     m_query->value(1).toString(), rp, anchor);
+-}
+-
+-QStringList QHelpDBReader::files(const QStringList &filterAttributes,
+-                                 const QString &extensionFilter) const
+-{
+-    QStringList lst;
+-    if (!m_query)
+-        return lst;
++        return result;
+ 
+     QString query;
+     QString extension;
+     if (!extensionFilter.isEmpty())
+-        extension = QString(QLatin1String("AND b.Name like \'%.%1\'")).arg(extensionFilter);
++        extension = QString(QLatin1String("AND FileNameTable.Name "
++                                          "LIKE \'%.%1\'")).arg(extensionFilter);
+ 
+     if (filterAttributes.isEmpty()) {
+-        query = QString(QLatin1String("SELECT a.Name, b.Name FROM FolderTable a, "
+-            "FileNameTable b WHERE b.FolderId=a.Id %1"))
++        query = QString(QLatin1String("SELECT "
++                                          "FileNameTable.Name, "
++                                          "FileDataTable.Data "
++                                      "FROM "
++                                          "FolderTable, "
++                                          "FileNameTable, "
++                                          "FileDataTable "
++                                      "WHERE FileDataTable.Id = FileNameTable.FileId "
++                                      "AND FileNameTable.FolderId = FolderTable.Id %1"))
+             .arg(extension);
+     } else {
+-        query = QString(QLatin1String("SELECT a.Name, b.Name FROM FolderTable a, "
+-            "FileNameTable b, FileFilterTable c, FilterAttributeTable d "
+-            "WHERE b.FolderId=a.Id AND b.FileId=c.FileId "
+-            "AND c.FilterAttributeId=d.Id AND d.Name=\'%1\' %2"))
+-            .arg(quote(filterAttributes.first())).arg(extension);
+-        for (int i = 1; i < filterAttributes.count(); ++i) {
+-            query.append(QString(QLatin1String(" INTERSECT SELECT a.Name, b.Name FROM "
+-                "FolderTable a, FileNameTable b, FileFilterTable c, "
+-                "FilterAttributeTable d WHERE b.FolderId=a.Id AND "
+-                "b.FileId=c.FileId AND c.FilterAttributeId=d.Id AND "
+-                "d.Name=\'%1\' %2")).arg(quote(filterAttributes.at(i)))
+-                .arg(extension));
++        for (int i = 0; i < filterAttributes.count(); ++i) {
++            if (i > 0)
++                query.append(QLatin1String(" INTERSECT "));
++            query.append(QString(QLatin1String(
++                                     "SELECT "
++                                         "FileNameTable.Name, "
++                                         "FileDataTable.Data "
++                                     "FROM "
++                                         "FolderTable, "
++                                         "FileNameTable, "
++                                         "FileDataTable, "
++                                         "FileFilterTable, "
++                                         "FilterAttributeTable "
++                                     "WHERE FileDataTable.Id = FileNameTable.FileId "
++                                     "AND FileNameTable.FolderId = FolderTable.Id "
++                                     "AND FileNameTable.FileId = FileFilterTable.FileId "
++                                     "AND FileFilterTable.FilterAttributeId = FilterAttributeTable.Id "
++                                     "AND FilterAttributeTable.Name = \'%1\' %2"))
++                         .arg(quote(filterAttributes.at(i)))
++                         .arg(extension));
+         }
+     }
+     m_query->exec(query);
+-    while (m_query->next()) {
+-        lst.append(m_query->value(0).toString() + QLatin1Char('/')
+-            + m_query->value(1).toString());
+-    }
++    while (m_query->next())
++        result.insert(m_query->value(0).toString(), qUncompress(m_query->value(1).toByteArray()));
+ 
+-    return lst;
++    return result;
+ }
+ 
+ QVariant QHelpDBReader::metaData(const QString &name) const
+@@ -506,16 +464,6 @@ QVariant QHelpDBReader::metaData(const QString &name) const
+     return v;
+ }
+ 
+-QString QHelpDBReader::mergeList(const QStringList &list) const
+-{
+-    QString str;
+-    for (const QString &s : list)
+-        str.append(QLatin1Char('\'') + quote(s) + QLatin1String("\', "));
+-    if (str.endsWith(QLatin1String(", ")))
+-        str.chop(2);
+-    return str;
+-}
+-
+ QString QHelpDBReader::quote(const QString &string) const
+ {
+     QString s = string;
+@@ -523,55 +471,4 @@ QString QHelpDBReader::quote(const QString &string) const
+     return s;
+ }
+ 
+-QSet<int> QHelpDBReader::indexIds(const QStringList &attributes) const
+-{
+-    QSet<int> ids;
+-
+-    if (attributes.isEmpty())
+-        return ids;
+-
+-    QString query = QString(QLatin1String("SELECT a.IndexId FROM IndexFilterTable a, "
+-        "FilterAttributeTable b WHERE a.FilterAttributeId=b.Id "
+-        "AND b.Name='%1'")).arg(attributes.first());
+-    for (const QString &attribute : attributes) {
+-        query.append(QString(QLatin1String(" INTERSECT SELECT a.IndexId FROM "
+-            "IndexFilterTable a, FilterAttributeTable b WHERE "
+-            "a.FilterAttributeId=b.Id AND b.Name='%1'"))
+-            .arg(attribute));
+-    }
+-
+-    if (!m_query->exec(query))
+-            return ids;
+-
+-    while (m_query->next())
+-        ids.insert(m_query->value(0).toInt());
+-
+-    return ids;
+-}
+-
+-bool QHelpDBReader::createAttributesCache(const QStringList &attributes,
+-                                          const QSet<int> &indexIds)
+-{
+-    m_useAttributesCache = false;
+-
+-    if (attributes.count() < 2) {
+-        m_viewAttributes.clear();
+-        return true;
+-    }
+-
+-    const bool needUpdate = !m_viewAttributes.count();
+-
+-    for (const QString &s : attributes)
+-        m_viewAttributes.remove(s);
+-
+-    if (m_viewAttributes.count() || needUpdate) {
+-        m_viewAttributes.clear();
+-        m_indicesCache = indexIds;
+-    }
+-    for (const QString &s : attributes)
+-        m_viewAttributes.insert(s);
+-    m_useAttributesCache = true;
+-    return true;
+-}
+-
+ QT_END_NAMESPACE
+diff --git a/src/assistant/help/qhelpdbreader_p.h b/src/assistant/help/qhelpdbreader_p.h
+index aca4c8af..c0171549 100644
+--- a/src/assistant/help/qhelpdbreader_p.h
++++ b/src/assistant/help/qhelpdbreader_p.h
+@@ -66,6 +66,43 @@ class QHelpDBReader : public QObject
+     Q_OBJECT
+ 
+ public:
++    class IndexItem
++    {
++    public:
++        IndexItem() = default;
++        QString name;
++        QString identifier;
++        int fileId = 0;
++        QString anchor;
++        QStringList filterAttributes;
++    };
++
++    class FileItem
++    {
++    public:
++        FileItem() = default;
++        QString name;
++        QString title;
++        QStringList filterAttributes;
++    };
++
++    class ContentsItem
++    {
++    public:
++        ContentsItem() = default;
++        QByteArray data;
++        QStringList filterAttributes;
++    };
++
++    class IndexTable
++    {
++    public:
++        QList<IndexItem> indexItems;
++        QList<FileItem> fileItems;
++        QList<ContentsItem> contentsItems;
++        QStringList usedFilterAttributes;
++    };
++
+     QHelpDBReader(const QString &dbName);
+     QHelpDBReader(const QString &dbName, const QString &uniqueId,
+         QObject *parent);
+@@ -73,40 +110,21 @@ public:
+ 
+     bool init();
+ 
+-    QString errorMessage() const;
+-
+-    QString databaseName() const;
+     QString namespaceName() const;
+     QString virtualFolder() const;
++    IndexTable indexTable() const;
+     QList<QStringList> filterAttributeSets() const;
+-    QStringList files(const QStringList &filterAttributes,
++    QMap<QString, QByteArray> filesData(const QStringList &filterAttributes,
+         const QString &extensionFilter = QString()) const;
+-    bool fileExists(const QString &virtualFolder, const QString &filePath,
+-        const QStringList &filterAttributes = QStringList()) const;
+     QByteArray fileData(const QString &virtualFolder,
+         const QString &filePath) const;
+ 
+     QStringList customFilters() const;
+     QStringList filterAttributes(const QString &filterName = QString()) const;
+-    QStringList indicesForFilter(const QStringList &filterAttributes) const;
+-    void linksForKeyword(const QString &keyword, const QStringList &filterAttributes,
+-        QMap<QString, QUrl> *linkMap) const;
+-
+-    void linksForIdentifier(const QString &id, const QStringList &filterAttributes,
+-        QMap<QString, QUrl> *linkMap) const;
+-
+-    QList<QByteArray> contentsForFilter(const QStringList &filterAttributes) const;
+-    QUrl urlOfPath(const QString &relativePath) const;
+ 
+-    QSet<int> indexIds(const QStringList &attributes) const;
+-    bool createAttributesCache(const QStringList &attributes,
+-        const QSet<int> &indexIds);
+     QVariant metaData(const QString &name) const;
+ 
+ private:
+-    QUrl buildQUrl(const QString &ns, const QString &folder,
+-        const QString &relFileName, const QString &anchor) const;
+-    QString mergeList(const QStringList &list) const;
+     QString quote(const QString &string) const;
+     bool initDB();
+ 
+@@ -116,9 +134,6 @@ private:
+     QString m_error;
+     QSqlQuery *m_query = nullptr;
+     mutable QString m_namespace;
+-    QSet<QString> m_viewAttributes;
+-    bool m_useAttributesCache = false;
+-    QSet<int> m_indicesCache;
+ };
+ 
+ QT_END_NAMESPACE
+diff --git a/src/assistant/help/qhelpengine.cpp b/src/assistant/help/qhelpengine.cpp
+index 41ded85e..966c3335 100644
+--- a/src/assistant/help/qhelpengine.cpp
++++ b/src/assistant/help/qhelpengine.cpp
+@@ -48,6 +48,7 @@
+ #include <QtCore/QDir>
+ #include <QtCore/QFile>
+ #include <QtCore/QPluginLoader>
++#include <QtCore/QTimer>
+ #include <QtWidgets/QApplication>
+ #include <QtSql/QSqlQuery>
+ 
+@@ -64,15 +65,26 @@ void QHelpEnginePrivate::init(const QString &collectionFile,
+         indexModel = new QHelpIndexModel(this);
+ 
+     connect(helpEngineCore, &QHelpEngineCore::setupFinished,
+-            this, &QHelpEnginePrivate::applyCurrentFilter);
++            this, &QHelpEnginePrivate::scheduleApplyCurrentFilter);
+     connect(helpEngineCore, &QHelpEngineCore::currentFilterChanged,
+-            this, &QHelpEnginePrivate::applyCurrentFilter);
++            this, &QHelpEnginePrivate::scheduleApplyCurrentFilter);
+ }
+ 
+-void QHelpEnginePrivate::applyCurrentFilter()
++void QHelpEnginePrivate::scheduleApplyCurrentFilter()
+ {
+     if (!error.isEmpty())
+         return;
++
++    if (m_isApplyCurrentFilterScheduled)
++        return;
++
++    m_isApplyCurrentFilterScheduled = true;
++    QTimer::singleShot(0, this, &QHelpEnginePrivate::applyCurrentFilter);
++}
++
++void QHelpEnginePrivate::applyCurrentFilter()
++{
++    m_isApplyCurrentFilterScheduled = false;
+     contentModel->createContents(currentFilter);
+     indexModel->createIndex(currentFilter);
+ }
+diff --git a/src/assistant/help/qhelpengine_p.h b/src/assistant/help/qhelpengine_p.h
+index d56b5117..b1f986d2 100644
+--- a/src/assistant/help/qhelpengine_p.h
++++ b/src/assistant/help/qhelpengine_p.h
+@@ -79,14 +79,9 @@ public:
+     virtual void init(const QString &collectionFile,
+         QHelpEngineCore *helpEngineCore);
+ 
+-    void clearMaps();
++    void emitReadersAboutToBeInvalidated();
+     bool setup();
+ 
+-    QMap<QString, QHelpDBReader*> readerMap;
+-    QMap<QString, QHelpDBReader*> fileNameReaderMap;
+-    QMultiMap<QString, QHelpDBReader*> virtualFolderMap;
+-    QStringList orderedFileNameList;
+-
+     QHelpCollectionHandler *collectionHandler = nullptr;
+     QString currentFilter;
+     QString error;
+@@ -131,7 +126,12 @@ public slots:
+     void unsetIndexWidgetBusy();
+ 
+ private slots:
++    void scheduleApplyCurrentFilter();
+     void applyCurrentFilter();
++
++private:
++    bool m_isApplyCurrentFilterScheduled = false;
++
+ };
+ 
+ QT_END_NAMESPACE
+diff --git a/src/assistant/help/qhelpenginecore.cpp b/src/assistant/help/qhelpenginecore.cpp
+index e351c07d..de5981a0 100644
+--- a/src/assistant/help/qhelpenginecore.cpp
++++ b/src/assistant/help/qhelpenginecore.cpp
+@@ -65,20 +65,12 @@ void QHelpEngineCorePrivate::init(const QString &collectionFile,
+ QHelpEngineCorePrivate::~QHelpEngineCorePrivate()
+ {
+     delete collectionHandler;
+-    clearMaps();
++    emitReadersAboutToBeInvalidated();
+ }
+ 
+-void QHelpEngineCorePrivate::clearMaps()
++void QHelpEngineCorePrivate::emitReadersAboutToBeInvalidated()
+ {
+     emit q->readersAboutToBeInvalidated();
+-
+-    for (const QHelpDBReader *reader : qAsConst(readerMap))
+-        delete reader;
+-
+-    readerMap.clear();
+-    fileNameReaderMap.clear();
+-    virtualFolderMap.clear();
+-    orderedFileNameList.clear();
+ }
+ 
+ bool QHelpEngineCorePrivate::setup()
+@@ -89,39 +81,15 @@ bool QHelpEngineCorePrivate::setup()
+ 
+     needsSetup = false;
+     emit q->setupStarted();
+-    clearMaps();
++    emitReadersAboutToBeInvalidated();
+ 
+-    if (!collectionHandler->openCollectionFile()) {
+-        emit q->setupFinished();
+-        return false;
+-    }
++    const bool opened = collectionHandler->openCollectionFile();
++    if (opened)
++        q->currentFilter();
+ 
+-    const QHelpCollectionHandler::DocInfoList &docList =
+-            collectionHandler->registeredDocumentations();
+-    const QFileInfo fi(collectionHandler->collectionFile());
+-
+-    for (const QHelpCollectionHandler::DocInfo &info : docList) {
+-        const QString &absFileName = QDir::isAbsolutePath(info.fileName)
+-                ? info.fileName
+-                : QFileInfo(fi.absolutePath() + QDir::separator() + info.fileName)
+-                  .absoluteFilePath();
+-
+-        QHelpDBReader *reader = new QHelpDBReader(absFileName,
+-            QHelpGlobal::uniquifyConnectionName(info.fileName, this), this);
+-        if (!reader->init()) {
+-            emit q->warning(QHelpEngineCore::tr("Cannot open documentation file %1: %2.")
+-                            .arg(absFileName, reader->errorMessage()));
+-            continue;
+-        }
+-
+-        readerMap.insert(info.namespaceName, reader);
+-        fileNameReaderMap.insert(absFileName, reader);
+-        virtualFolderMap.insert(info.folderName, reader);
+-        orderedFileNameList.append(absFileName);
+-    }
+-    q->currentFilter();
+     emit q->setupFinished();
+-    return true;
++
++    return opened;
+ }
+ 
+ void QHelpEngineCorePrivate::errorReceived(const QString &msg)
+@@ -129,8 +97,6 @@ void QHelpEngineCorePrivate::errorReceived(const QString &msg)
+     error = msg;
+ }
+ 
+-
+-
+ /*!
+     \class QHelpEngineCore
+     \since 4.4
+@@ -252,7 +218,7 @@ void QHelpEngineCore::setCollectionFile(const QString &fileName)
+     if (d->collectionHandler) {
+         delete d->collectionHandler;
+         d->collectionHandler = 0;
+-        d->clearMaps();
++        d->emitReadersAboutToBeInvalidated();
+     }
+     d->init(fileName, this);
+     d->needsSetup = true;
+@@ -349,20 +315,20 @@ bool QHelpEngineCore::unregisterDocumentation(const QString &namespaceName)
+ */
+ QString QHelpEngineCore::documentationFileName(const QString &namespaceName)
+ {
+-    if (d->setup()) {
+-        const QHelpCollectionHandler::DocInfoList &docList =
+-            d->collectionHandler->registeredDocumentations(namespaceName);
+-        for (const QHelpCollectionHandler::DocInfo &info : docList) {
+-            if (info.namespaceName == namespaceName) {
+-                if (QDir::isAbsolutePath(info.fileName))
+-                    return info.fileName;
+-
+-                return QFileInfo(QFileInfo(d->collectionHandler->collectionFile()).absolutePath()
+-                                 + QDir::separator() + info.fileName).absoluteFilePath();
+-            }
+-        }
+-    }
+-    return QString();
++    if (!d->setup())
++        return QString();
++
++    const QHelpCollectionHandler::FileInfo fileInfo =
++            d->collectionHandler->registeredDocumentation(namespaceName);
++
++    if (fileInfo.namespaceName.isEmpty())
++        return QString();
++
++    if (QDir::isAbsolutePath(fileInfo.fileName))
++        return fileInfo.fileName;
++
++    return QFileInfo(QFileInfo(d->collectionHandler->collectionFile()).absolutePath()
++                     + QLatin1Char('/') + fileInfo.fileName).absoluteFilePath();
+ }
+ 
+ /*!
+@@ -374,8 +340,9 @@ QStringList QHelpEngineCore::registeredDocumentations() const
+     QStringList list;
+     if (!d->setup())
+         return list;
+-    const QHelpCollectionHandler::DocInfoList &docList = d->collectionHandler->registeredDocumentations();
+-    for (const QHelpCollectionHandler::DocInfo &info : docList)
++    const QHelpCollectionHandler::FileInfoList &docList
++            = d->collectionHandler->registeredDocumentations();
++    for (const QHelpCollectionHandler::FileInfo &info : docList)
+         list.append(info.namespaceName);
+     return list;
+ }
+@@ -488,15 +455,10 @@ void QHelpEngineCore::setCurrentFilter(const QString &filterName)
+ */
+ QList<QStringList> QHelpEngineCore::filterAttributeSets(const QString &namespaceName) const
+ {
+-    QList<QStringList> ret;
+-    if (d->setup()) {
+-        QHelpDBReader *reader = d->readerMap.value(namespaceName);
+-        if (reader)
+-            ret = reader->filterAttributeSets();
+-    }
+-    if (ret.isEmpty())
+-        ret.append(QStringList());
+-    return ret;
++    if (!d->setup())
++        return QList<QStringList>();
++
++    return d->collectionHandler->filterAttributeSets(namespaceName);
+ }
+ 
+ /*!
+@@ -511,17 +473,13 @@ QList<QUrl> QHelpEngineCore::files(const QString namespaceName,
+     QList<QUrl> res;
+     if (!d->setup())
+         return res;
+-    QHelpDBReader *reader = d->readerMap.value(namespaceName);
+-    if (!reader) {
+-        d->error = tr("The specified namespace does not exist.");
+-        return res;
+-    }
+ 
+     QUrl url;
+     url.setScheme(QLatin1String("qthelp"));
+     url.setAuthority(namespaceName);
+ 
+-    const QStringList &files = reader->files(filterAttributes, extensionFilter);
++    const QStringList &files = d->collectionHandler->files(
++                namespaceName, filterAttributes, extensionFilter);
+     for (const QString &file : files) {
+         url.setPath(QLatin1String("/") + file);
+         res.append(url);
+@@ -537,48 +495,19 @@ QList<QUrl> QHelpEngineCore::files(const QString namespaceName,
+ */
+ QUrl QHelpEngineCore::findFile(const QUrl &url) const
+ {
+-    QUrl res;
+-    if (!d->setup() || !url.isValid() || url.toString().count(QLatin1Char('/')) < 4
+-        || url.scheme() != QLatin1String("qthelp")) {
+-        return res;
+-    }
+-
+-    const QString &ns = url.authority();
+-    QString filePath = url.path();
+-    if (filePath.startsWith(QLatin1Char('/')))
+-        filePath = filePath.mid(1);
+-    const QString &virtualFolder = filePath.mid(0, filePath.indexOf(QLatin1Char('/'), 1));
+-    filePath.remove(0, virtualFolder.length() + 1);
+-
+-    QHelpDBReader *defaultReader = 0;
+-    if (d->readerMap.contains(ns)) {
+-        defaultReader = d->readerMap.value(ns);
+-        if (defaultReader->fileExists(virtualFolder, filePath))
+-            return url;
+-    }
++    if (!d->setup())
++        return url;
+ 
+     const QStringList &attributes = filterAttributes(currentFilter());
+-    for (const QHelpDBReader *reader : d->virtualFolderMap.values(virtualFolder)) {
+-        if (reader == defaultReader)
+-            continue;
+-        if (reader->fileExists(virtualFolder, filePath, attributes)) {
+-            res = url;
+-            res.setAuthority(reader->namespaceName());
+-            return res;
+-        }
+-    }
++    QUrl result = d->collectionHandler->findFile(url, attributes);
++    if (!result.isEmpty())
++        return result;
+ 
+-    for (const QHelpDBReader *reader : d->virtualFolderMap.values(virtualFolder)) {
+-        if (reader == defaultReader)
+-            continue;
+-        if (reader->fileExists(virtualFolder, filePath)) {
+-            res = url;
+-            res.setAuthority(reader->namespaceName());
+-            break;
+-        }
+-    }
++    result = d->collectionHandler->findFile(url);
++    if (!result.isEmpty())
++        return result;
+ 
+-    return res;
++    return url;
+ }
+ 
+ /*!
+@@ -589,35 +518,10 @@ QUrl QHelpEngineCore::findFile(const QUrl &url) const
+ */
+ QByteArray QHelpEngineCore::fileData(const QUrl &url) const
+ {
+-    if (!d->setup() || !url.isValid() || url.toString().count(QLatin1Char('/')) < 4
+-        || url.scheme() != QLatin1String("qthelp")) {
++    if (!d->setup())
+         return QByteArray();
+-    }
+-
+-    const QString &ns = url.authority();
+-    QString filePath = url.path();
+-    if (filePath.startsWith(QLatin1Char('/')))
+-        filePath = filePath.mid(1);
+-    const QString &virtualFolder = filePath.mid(0, filePath.indexOf(QLatin1Char('/'), 1));
+-    filePath.remove(0, virtualFolder.length() + 1);
+-
+-    QByteArray ba;
+-    QHelpDBReader *defaultReader = 0;
+-    if (d->readerMap.contains(ns)) {
+-        defaultReader = d->readerMap.value(ns);
+-        ba = defaultReader->fileData(virtualFolder, filePath);
+-    }
+ 
+-    if (ba.isEmpty()) {
+-        for (const QHelpDBReader *reader : d->virtualFolderMap.values(virtualFolder)) {
+-            if (reader == defaultReader)
+-                continue;
+-            ba = reader->fileData(virtualFolder, filePath);
+-            if (!ba.isEmpty())
+-                return ba;
+-        }
+-    }
+-    return ba;
++    return d->collectionHandler->fileData(url);
+ }
+ 
+ /*!
+@@ -628,15 +532,10 @@ QByteArray QHelpEngineCore::fileData(const QUrl &url) const
+ */
+ QMap<QString, QUrl> QHelpEngineCore::linksForIdentifier(const QString &id) const
+ {
+-    QMap<QString, QUrl> linkMap;
+     if (!d->setup())
+-        return linkMap;
+-
+-    const QStringList &attributes = filterAttributes(d->currentFilter);
+-    for (const QHelpDBReader *reader : qAsConst(d->readerMap))
+-        reader->linksForIdentifier(id, attributes, &linkMap);
++        return QMap<QString, QUrl>();
+ 
+-    return linkMap;
++    return d->collectionHandler->linksForIdentifier(id, filterAttributes(d->currentFilter));
+ }
+ 
+ /*!
+@@ -647,11 +546,10 @@ QMap<QString, QUrl> QHelpEngineCore::linksForIdentifier(const QString &id) const
+ */
+ QMap<QString, QUrl> QHelpEngineCore::linksForKeyword(const QString &keyword) const
+ {
+-    QMap<QString, QUrl> linkMap;
+-    const QStringList &attributes = filterAttributes(d->currentFilter);
+-    for (const QHelpDBReader *reader : qAsConst(d->readerMap))
+-        reader->linksForKeyword(keyword, attributes, &linkMap);
+-    return linkMap;
++    if (!d->setup())
++        return QMap<QString, QUrl>();
++
++    return d->collectionHandler->linksForKeyword(keyword, filterAttributes(d->currentFilter));
+ }
+ 
+ /*!
+diff --git a/src/assistant/help/qhelpgenerator.cpp b/src/assistant/help/qhelpgenerator.cpp
+index ac034421..690a983d 100644
+--- a/src/assistant/help/qhelpgenerator.cpp
++++ b/src/assistant/help/qhelpgenerator.cpp
+@@ -470,7 +470,6 @@ bool QHelpGenerator::insertFiles(const QStringList &files, const QString &rootPa
+ 
+     QString title;
+     QString charSet;
+-    FileNameTableData fileNameData;
+     QList<QByteArray> fileDataList;
+     QMap<int, QSet<int> > tmpFileFilterMap;
+     QList<FileNameTableData> fileNameDataList;
+@@ -508,6 +507,7 @@ bool QHelpGenerator::insertFiles(const QStringList &files, const QString &rootPa
+         if (it == d->fileMap.cend()) {
+             fileDataList.append(qCompress(data));
+ 
++            FileNameTableData fileNameData;
+             fileNameData.name = fileName;
+             fileNameData.fileId = tableFileId;
+             fileNameData.title = title;
+diff --git a/src/assistant/help/qhelpindexwidget.cpp b/src/assistant/help/qhelpindexwidget.cpp
+index fb65aceb..bc7ebe80 100644
+--- a/src/assistant/help/qhelpindexwidget.cpp
++++ b/src/assistant/help/qhelpindexwidget.cpp
+@@ -41,6 +41,7 @@
+ #include "qhelpenginecore.h"
+ #include "qhelpengine_p.h"
+ #include "qhelpdbreader_p.h"
++#include "qhelpcollectionhandler_p.h"
+ 
+ #include <QtCore/QThread>
+ #include <QtCore/QMutex>
+@@ -59,16 +60,12 @@ public:
+     void collectIndices(const QString &customFilterName);
+     void stopCollecting();
+     QStringList indices() const;
+-    QList<QHelpDBReader*> activeReaders() const;
+-    QSet<int> indexIds(QHelpDBReader *reader) const;
+ 
+ private:
+     void run() override;
+ 
+     QHelpEnginePrivate *m_helpEngine;
+     QStringList m_indices;
+-    QList<QHelpDBReader*> m_activeReaders;
+-    QMap<QHelpDBReader*, QSet<int> > m_indexIds;
+     QStringList m_filterAttributes;
+     mutable QMutex m_mutex;
+     bool m_abort = false;
+@@ -86,9 +83,6 @@ public:
+     QHelpEnginePrivate *helpEngine;
+     QHelpIndexProvider *indexProvider;
+     QStringList indices;
+-    int insertedRows = 0;
+-    QString currentFilter;
+-    QList<QHelpDBReader*> activeReaders;
+ };
+ 
+ QHelpIndexProvider::QHelpIndexProvider(QHelpEnginePrivate *helpEngine)
+@@ -132,63 +126,28 @@ QStringList QHelpIndexProvider::indices() const
+     return m_indices;
+ }
+ 
+-QList<QHelpDBReader*> QHelpIndexProvider::activeReaders() const
+-{
+-    QMutexLocker lck(&m_mutex);
+-    return m_activeReaders;
+-}
+-
+-QSet<int> QHelpIndexProvider::indexIds(QHelpDBReader *reader) const
+-{
+-    QMutexLocker lck(&m_mutex);
+-    return m_indexIds.value(reader);
+-}
+-
+ void QHelpIndexProvider::run()
+ {
+     m_mutex.lock();
+-    QStringList atts = m_filterAttributes;
+     m_indices.clear();
+-    m_activeReaders.clear();
+-    QSet<QString> indicesSet;
++    const QStringList attributes = m_filterAttributes;
++    const QString collectionFile = m_helpEngine->collectionHandler->collectionFile();
+     m_mutex.unlock();
+ 
+-    for (const QString &dbFileName : m_helpEngine->fileNameReaderMap.keys()) {
+-        m_mutex.lock();
+-        if (m_abort) {
+-            m_mutex.unlock();
+-            return;
+-        }
+-        m_mutex.unlock();
+-        QHelpDBReader reader(dbFileName,
+-            QHelpGlobal::uniquifyConnectionName(dbFileName +
+-            QLatin1String("FromIndexProvider"),
+-            QThread::currentThread()), 0);
+-        if (!reader.init())
+-            continue;
+-        const QStringList &list = reader.indicesForFilter(atts);
+-        if (!list.isEmpty()) {
+-            m_mutex.lock();
+-            for (const QString &s : list)
+-                indicesSet.insert(s);
+-            if (m_abort) {
+-                m_mutex.unlock();
+-                return;
+-            }
+-            QHelpDBReader *orgReader = m_helpEngine->fileNameReaderMap.value(dbFileName);
+-            m_indexIds.insert(orgReader, reader.indexIds(atts));
+-            m_activeReaders.append(orgReader);
+-            m_mutex.unlock();
+-        }
+-    }
++    if (collectionFile.isEmpty())
++        return;
++
++    QHelpCollectionHandler collectionHandler(collectionFile);
++    if (!collectionHandler.openCollectionFile())
++        return;
++
++    const QStringList result = collectionHandler.indicesForFilter(attributes);
++
+     m_mutex.lock();
+-    m_indices = indicesSet.values();
+-    m_indices.sort(Qt::CaseInsensitive);
++    m_indices = result;
+     m_mutex.unlock();
+ }
+ 
+-
+-
+ /*!
+     \class QHelpIndexModel
+     \since 4.4
+@@ -222,8 +181,6 @@ QHelpIndexModel::QHelpIndexModel(QHelpEnginePrivate *helpEngine)
+ 
+     connect(d->indexProvider, &QThread::finished,
+             this, &QHelpIndexModel::insertIndices);
+-    connect(helpEngine->q, &QHelpEngineCore::readersAboutToBeInvalidated,
+-            this, [this]() { invalidateIndex(); });
+ }
+ 
+ QHelpIndexModel::~QHelpIndexModel()
+@@ -233,14 +190,7 @@ QHelpIndexModel::~QHelpIndexModel()
+ 
+ void QHelpIndexModel::invalidateIndex(bool onShutDown)
+ {
+-    if (onShutDown) {
+-        disconnect(d->indexProvider, &QThread::finished,
+-                   this, &QHelpIndexModel::insertIndices);
+-    }
+-    d->indexProvider->stopCollecting();
+-    d->indices.clear();
+-    if (!onShutDown)
+-        filter(QString());
++    Q_UNUSED(onShutDown)
+ }
+ 
+ /*!
+@@ -249,7 +199,6 @@ void QHelpIndexModel::invalidateIndex(bool onShutDown)
+ */
+ void QHelpIndexModel::createIndex(const QString &customFilterName)
+ {
+-    d->currentFilter = customFilterName;
+     d->indexProvider->collectIndices(customFilterName);
+     emit indexCreationStarted();
+ }
+@@ -257,12 +206,6 @@ void QHelpIndexModel::createIndex(const QString &customFilterName)
+ void QHelpIndexModel::insertIndices()
+ {
+     d->indices = d->indexProvider->indices();
+-    d->activeReaders = d->indexProvider->activeReaders();
+-    const QStringList &attributes = d->helpEngine->q->filterAttributes(d->currentFilter);
+-    if (attributes.count() > 1) {
+-        for (QHelpDBReader *r : qAsConst(d->activeReaders))
+-            r->createAttributesCache(attributes, d->indexProvider->indexIds(r));
+-    }
+     filter(QString());
+     emit indexCreated();
+ }
+diff --git a/src/assistant/help/qhelpsearchindexwriter_default.cpp b/src/assistant/help/qhelpsearchindexwriter_default.cpp
+index 72e92eca..11d92ab5 100644
+--- a/src/assistant/help/qhelpsearchindexwriter_default.cpp
++++ b/src/assistant/help/qhelpsearchindexwriter_default.cpp
+@@ -40,6 +40,7 @@
+ #include "qhelpsearchindexwriter_default_p.h"
+ #include "qhelp_global.h"
+ #include "qhelpenginecore.h"
++#include "qhelpdbreader_p.h"
+ 
+ #include <QtCore/QDataStream>
+ #include <QtCore/QDateTime>
+@@ -362,14 +363,6 @@ static bool clearIndexMap(QHelpEngineCore *engine)
+     return engine->removeCustomValue(QLatin1String(IndexedNamespacesKey));
+ }
+ 
+-static QList<QUrl> indexableFiles(QHelpEngineCore *helpEngine,
+-    const QString &namespaceName, const QStringList &attributes)
+-{
+-    return helpEngine->files(namespaceName, attributes, QLatin1String("html"))
+-         + helpEngine->files(namespaceName, attributes, QLatin1String("htm"))
+-         + helpEngine->files(namespaceName, attributes, QLatin1String("txt"));
+-}
+-
+ void QHelpSearchIndexWriter::run()
+ {
+     QMutexLocker lock(&m_mutex);
+@@ -387,13 +380,6 @@ void QHelpSearchIndexWriter::run()
+     if (!engine.setupData())
+         return;
+ 
+-//    QFileInfo fInfo(indexPath);
+-//    if (fInfo.exists() && !fInfo.isWritable()) {
+-//        qWarning("Full Text Search, could not create index (missing permissions for '%s').",
+-//                 qPrintable(indexPath));
+-//        return;
+-//    }
+-
+     if (reindex)
+         clearIndexMap(&engine);
+ 
+@@ -458,27 +444,32 @@ void QHelpSearchIndexWriter::run()
+         if (indexMap.contains(namespaceName))
+             continue;
+ 
++        const QString fileName = engine.documentationFileName(namespaceName);
++        QHelpDBReader reader(fileName, QHelpGlobal::uniquifyConnectionName(
++                                 fileName, this), nullptr);
++        if (!reader.init())
++            continue;
++
++        const QString virtualFolder = reader.virtualFolder();
++
+         const QList<QStringList> &attributeSets =
+             engine.filterAttributeSets(namespaceName);
+ 
+         for (const QStringList &attributes : attributeSets) {
+             const QString &attributesString = attributes.join(QLatin1Char('|'));
+-            QSet<QString> documentsSet;
+-            const QList<QUrl> &docFiles = indexableFiles(&engine, namespaceName, attributes);
+-            for (QUrl url : docFiles) {
+-                // get rid of duplicated files
+-                if (url.hasFragment())
+-                    url.setFragment(QString());
+ 
+-                const QString &s = url.toString();
+-                if (s.endsWith(QLatin1String(".html"))
+-                    || s.endsWith(QLatin1String(".htm"))
+-                    || s.endsWith(QLatin1String(".txt")))
+-                    documentsSet.insert(s);
+-            }
++            const QMap<QString, QByteArray> htmlFiles
++                    = reader.filesData(attributes, QLatin1String("html"));
++            const QMap<QString, QByteArray> htmFiles
++                    = reader.filesData(attributes, QLatin1String("htm"));
++            const QMap<QString, QByteArray> txtFiles
++                    = reader.filesData(attributes, QLatin1String("txt"));
+ 
+-            const QStringList documentsList(documentsSet.toList());
+-            for (const QString &url : documentsList) {
++            QMap<QString, QByteArray> files = htmlFiles;
++            files.unite(htmFiles);
++            files.unite(txtFiles);
++
++            for (auto it = files.cbegin(), end = files.cend(); it != end ; ++it) {
+                 lock.relock();
+                 if (m_cancel) {
+                     // store what we have done so far
+@@ -489,10 +480,27 @@ void QHelpSearchIndexWriter::run()
+                 }
+                 lock.unlock();
+ 
+-                const QByteArray data(engine.fileData(url));
++                const QString &file = it.key();
++                const QByteArray &data = it.value();
++
+                 if (data.isEmpty())
+                     continue;
+ 
++                QUrl url;
++                url.setScheme(QLatin1String("qthelp"));
++                url.setAuthority(namespaceName);
++                url.setPath(QLatin1Char('/') + virtualFolder + QLatin1Char('/') + file);
++
++                if (url.hasFragment())
++                    url.setFragment(QString());
++
++                const QString &fullFileName = url.toString();
++                if (!fullFileName.endsWith(QLatin1String(".html"))
++                        && !fullFileName.endsWith(QLatin1String(".htm"))
++                        && !fullFileName.endsWith(QLatin1String(".txt"))) {
++                    continue;
++                }
++
+                 QTextStream s(data);
+                 const QString &en = QHelpGlobal::codecFromData(data);
+                 s.setCodec(QTextCodec::codecForName(en.toLatin1().constData()));
+@@ -503,8 +511,8 @@ void QHelpSearchIndexWriter::run()
+ 
+                 QString title;
+                 QString contents;
+-                if (url.endsWith(QLatin1String(".txt"))) {
+-                    title = url.mid(url.lastIndexOf(QLatin1Char('/')) + 1);
++                if (fullFileName.endsWith(QLatin1String(".txt"))) {
++                    title = fullFileName.mid(fullFileName.lastIndexOf(QLatin1Char('/')) + 1);
+                     contents = text.toHtmlEscaped();
+                 } else {
+                     QTextDocument doc;
+@@ -514,7 +522,7 @@ void QHelpSearchIndexWriter::run()
+                     contents = doc.toPlainText().toHtmlEscaped();
+                 }
+ 
+-                writer.insertDoc(namespaceName, attributesString, url, title, contents);
++                writer.insertDoc(namespaceName, attributesString, fullFileName, title, contents);
+             }
+         }
+         writer.flush();
+diff --git a/src/assistant/qcollectiongenerator/main.cpp b/src/assistant/qcollectiongenerator/main.cpp
+index 57aaac0f..a2968ecd 100644
+--- a/src/assistant/qcollectiongenerator/main.cpp
++++ b/src/assistant/qcollectiongenerator/main.cpp
+@@ -476,14 +476,15 @@ int main(int argc, char *argv[])
+             return -1;
+         }
+     }
+-    if (!config.filesToRegister().isEmpty())
++    if (!config.filesToRegister().isEmpty()) {
+         if (Q_UNLIKELY(qEnvironmentVariableIsSet("SOURCE_DATE_EPOCH"))) {
+             QDateTime dt;
+             dt.setSecsSinceEpoch(qEnvironmentVariableIntValue("SOURCE_DATE_EPOCH"));
+             CollectionConfiguration::updateLastRegisterTime(helpEngine, dt);
+-        }
+-        else
++        } else {
+             CollectionConfiguration::updateLastRegisterTime(helpEngine);
++        }
++    }
+ 
+     if (!config.title().isEmpty())
+         CollectionConfiguration::setWindowTitle(helpEngine, config.title());
+
+index 494355c5..713c229c 100644
+--- a/tests/auto/qhelpindexmodel/tst_qhelpindexmodel.cpp
++++ b/tests/auto/qhelpindexmodel/tst_qhelpindexmodel.cpp
+@@ -170,11 +170,11 @@ void tst_QHelpIndexModel::linksForIndex()
+     QCOMPARE(map.count(), 2);
+     QCOMPARE(map.contains("Test Manual"), true);
+     QCOMPARE(map.value("Test Manual"),
+-        QUrl("qthelp://trolltech.com.1.0.0.test/testFolder/test.html#foo"));
++        QUrl("qthelp://trolltech.com.1-0-0.test/testFolder/test.html#foo"));
+ 
+     QCOMPARE(map.contains("Fancy"), true);
+     QCOMPARE(map.value("Fancy"),
+-        QUrl("qthelp://trolltech.com.1.0.0.test/testFolder/fancy.html#foo"));
++        QUrl("qthelp://trolltech.com.1-0-0.test/testFolder/fancy.html#foo"));
+ 
+     map = m->linksForKeyword("foobar");
+     QCOMPARE(map.count(), 1);
+@@ -193,7 +193,7 @@ void tst_QHelpIndexModel::linksForIndex()
+     QCOMPARE(map.count(), 1);
+     QCOMPARE(map.contains("Test Manual"), true);
+     QCOMPARE(map.value("Test Manual"),
+-        QUrl("qthelp://trolltech.com.1.0.0.test/testFolder/test.html#foo"));
++        QUrl("qthelp://trolltech.com.1-0-0.test/testFolder/test.html#foo"));
+ }
+ 
+ QTEST_MAIN(tst_QHelpIndexModel)
