@@ -796,7 +796,11 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
                 set bundleexec ${bundlename}
             }
             puts ${fd} "export LD_LIBRARY_PATH=\$\{LD_LIBRARY_PATH\}:${prefix}/lib:${qt_libs_dir}"
-            puts ${fd} "exec \"${appdir}/${bundleexec}\" \"\$\@\""
+            if {[file dirname ${bundleexec}] eq "."} {
+                puts ${fd} "exec \"${appdir}/${bundleexec}\" \"\$\@\""
+            } else {
+                puts ${fd} "exec \"${bundleexec}\" \"\$\@\""
+            }
         }
         close ${fd}
         system "chmod 755 ${destroot}${prefix}/bin/${wrappername}"
