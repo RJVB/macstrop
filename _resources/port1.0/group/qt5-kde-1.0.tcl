@@ -778,7 +778,12 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
             if {${bundleexec} eq ""} {
                 set bundleexec [file tail ${bundlename}]
             }
-            puts ${fd} "exec \"${appdir}/${bundlename}.app/Contents/MacOS/${bundleexec}\" \"\$\@\""
+            if {[file dirname ${bundleexec}] eq "."} {
+                puts ${fd} "exec \"${appdir}/${bundlename}.app/Contents/MacOS/${bundleexec}\" \"\$\@\""
+            } else {
+                # fully qualified bundleexec, use "as is"
+                puts ${fd} "exec \"${bundleexec}\" \"\$\@\""
+            }
         } else {
             global qt_libs_dir
             # no app bundles on this platform, but provide the same API by pretending there are.
