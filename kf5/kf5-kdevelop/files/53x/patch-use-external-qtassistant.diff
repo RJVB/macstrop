@@ -803,18 +803,18 @@ index 0000000000000000000000000000000000000000..4e7dd3af04328ef4400f587f3c6cecbb
 +    return ret;
 +}
 diff --git plugins/qthelp/qthelpplugin.cpp plugins/qthelp/qthelpplugin.cpp
-index 02103b6a23ff520c813fd9eaa2047652cbc10481..613ac35e8d07b2f07d36ec1cbb4acb9ca9d657dd 100644
+index 7851f7494e201e44ebd0d7eb63c1a74245424f43..4b37305d2691bca9b6ca7df033a48a1880da9eac 100644
 --- plugins/qthelp/qthelpplugin.cpp
 +++ plugins/qthelp/qthelpplugin.cpp
-@@ -26,6 +26,7 @@
- #include <QDirIterator>
+@@ -24,6 +24,7 @@
+ #include <interfaces/idocumentationcontroller.h>
  #include "qthelpprovider.h"
  #include "qthelpqtdoc.h"
 +#include "qthelpexternalassistant.h"
  #include "qthelp_config_shared.h"
  #include "debug.h"
  #include "qthelpconfig.h"
-@@ -39,6 +40,7 @@ QtHelpPlugin::QtHelpPlugin(QObject* parent, const QVariantList& args)
+@@ -41,6 +42,7 @@ QtHelpPlugin::QtHelpPlugin(QObject* parent, const QVariantList& args)
      , m_qtHelpProviders()
      , m_qtDoc(new QtHelpQtDoc(this, QVariantList()))
      , m_loadSystemQtDoc(false)
@@ -822,7 +822,7 @@ index 02103b6a23ff520c813fd9eaa2047652cbc10481..613ac35e8d07b2f07d36ec1cbb4acb9c
  {
      Q_UNUSED(args);
      s_plugin = this;
-@@ -55,11 +57,18 @@ void QtHelpPlugin::readConfig()
+@@ -57,21 +59,30 @@ void QtHelpPlugin::readConfig()
  {
      QStringList iconList, nameList, pathList, ghnsList;
      QString searchDir;
@@ -842,7 +842,75 @@ index 02103b6a23ff520c813fd9eaa2047652cbc10481..613ac35e8d07b2f07d36ec1cbb4acb9c
  
      emit changedProvidersList();
  }
-@@ -159,6 +168,11 @@ bool QtHelpPlugin::isQtHelpQtDocLoaded() const
+ 
+ void QtHelpPlugin::loadQtDocumentation(bool loadQtDoc)
+ {
+-    if(!loadQtDoc){
+-        m_qtDoc->unloadDocumentation();
+-    } else if(loadQtDoc) {
+-        m_qtDoc->loadDocumentation();
++    if (!qEnvironmentVariableIsSet("KDEV_NO_QT_DOCUMENTATION")) {
++        if(!loadQtDoc ){
++            m_qtDoc->unloadDocumentation();
++        } else if(loadQtDoc) {
++            m_qtDoc->loadDocumentation();
++        }
+     }
+ }
+ 
+@@ -99,6 +110,9 @@ void QtHelpPlugin::loadQtHelpProvider(const QStringList& pathList, const QString
+ {
+     QList<QtHelpProvider*> oldList(m_qtHelpProviders);
+     m_qtHelpProviders.clear();
++    if (qEnvironmentVariableIsSet("KDEV_NO_QT_DOCUMENTATION")) {
++        return;
++    }
+     for(int i=0; i < pathList.length(); i++) {
+         // check if provider already exist
+         QString fileName = pathList.at(i);
+@@ -120,6 +134,11 @@ void QtHelpPlugin::loadQtHelpProvider(const QStringList& pathList, const QString
+                 provider->setName(name);
+                 provider->setIconName(iconName);
+             }
++            const QString error = provider->engine()->error();
++            if (!error.isEmpty() && !error.endsWith(QStringLiteral("already exists."))) {
++                qCCritical(QTHELP) << "QtHelp provider error for" << fileName << error;
++                goto bail;
++            }
+ 
+             bool exist = false;
+             foreach(QtHelpProvider* existingProvider, m_qtHelpProviders){
+@@ -134,7 +153,7 @@ void QtHelpPlugin::loadQtHelpProvider(const QStringList& pathList, const QString
+             }
+         }
+     }
+-
++bail:;
+     // delete unused providers
+     qDeleteAll(oldList);
+ }
+@@ -142,12 +161,14 @@ void QtHelpPlugin::loadQtHelpProvider(const QStringList& pathList, const QString
+ QList<KDevelop::IDocumentationProvider*> QtHelpPlugin::providers()
+ {
+     QList<KDevelop::IDocumentationProvider*> list;
+-    list.reserve(m_qtHelpProviders.size() + (m_loadSystemQtDoc?1:0));
+-    foreach(QtHelpProvider* provider, m_qtHelpProviders) {
+-        list.append(provider);
+-    }
+-    if(m_loadSystemQtDoc){
+-        list.append(m_qtDoc);
++    if (!qEnvironmentVariableIsSet("KDEV_NO_QT_DOCUMENTATION")) {
++        list.reserve(m_qtHelpProviders.size() + (m_loadSystemQtDoc?1:0));
++        foreach(QtHelpProvider* provider, m_qtHelpProviders) {
++            list.append(provider);
++        }
++        if(m_loadSystemQtDoc){
++            list.append(m_qtDoc);
++        }
+     }
+     return list;
+ }
+@@ -162,6 +183,11 @@ bool QtHelpPlugin::isQtHelpQtDocLoaded() const
      return m_loadSystemQtDoc;
  }
  
@@ -876,6 +944,35 @@ index 9c76abd40629a60649cdbe5ecb7ff7705d6a49f6..b1efa1d4068374274d3b226b89e088af
  };
  
  #endif // QTHELPPLUGIN_H
+diff --git plugins/qthelp/qthelpqtdoc.cpp plugins/qthelp/qthelpqtdoc.cpp
+index 8f9f8e12d96864e07a4a363bf7f35d6c6a4db874..71875d88de637175c5aa3f6473b8dae83f45429e 100644
+--- plugins/qthelp/qthelpqtdoc.cpp
++++ plugins/qthelp/qthelpqtdoc.cpp
+@@ -101,8 +101,10 @@ void QtHelpQtDoc::loadDocumentation()
+         QString fileNamespace = QHelpEngineCore::namespaceName(fileName);
+         if (!fileNamespace.isEmpty() && !m_engine.registeredDocumentations().contains(fileNamespace)) {
+             qCDebug(QTHELP) << "loading doc" << fileName << fileNamespace;
+-            if(!m_engine.registerDocumentation(fileName))
+-                qCCritical(QTHELP) << "error >> " << fileName << m_engine.error();
++            if(!m_engine.registerDocumentation(fileName)) {
++                qCCritical(QTHELP) << "error registering QtHelp file" << fileName << m_engine.error();
++                return;
++            }
+         }
+     }
+ }
+@@ -112,7 +114,10 @@ void QtHelpQtDoc::unloadDocumentation()
+     foreach(const QString &fileName, qchFiles()) {
+         QString fileNamespace = QHelpEngineCore::namespaceName(fileName);
+         if(!fileName.isEmpty() && m_engine.registeredDocumentations().contains(fileNamespace)) {
+-            m_engine.unregisterDocumentation(fileName);
++            if (!m_engine.unregisterDocumentation(fileName)) {
++                qCCritical(QTHELP) << "error unregistering QtHelp file" << fileName << m_engine.error();
++                return;
++            }
+         }
+     }
+ }
 diff --git plugins/qthelp/tests/CMakeLists.txt plugins/qthelp/tests/CMakeLists.txt
 index 06c751e8a2c254ba175e827fe9036fe635105d4c..bce551d62e5de047b66dcc41652b665258ef758d 100644
 --- plugins/qthelp/tests/CMakeLists.txt
