@@ -1,5 +1,5 @@
 diff --git kdevplatform/shell/core.cpp kdevplatform/shell/core.cpp
-index c1fd662f89cf826baea3247bf90c5348aead7c00..a3e14c63203e78e9e298a71f3fe76dd54783803d 100644
+index c1fd662f89cf826baea3247bf90c5348aead7c00..dec587cdf90cb70665b14ed81aa4807fb5eee891 100644
 --- kdevplatform/shell/core.cpp
 +++ kdevplatform/shell/core.cpp
 @@ -21,6 +21,7 @@
@@ -10,7 +10,7 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..a3e14c63203e78e9e298a71f3fe76dd5
  
  #include <KLocalizedString>
  
-@@ -51,37 +52,87 @@
+@@ -51,13 +52,36 @@
  #include <csignal>
  
  namespace {
@@ -24,46 +24,41 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..a3e14c63203e78e9e298a71f3fe76dd5
 +static KDevelop::CorePrivate *corePrivateInstance = nullptr;
 +static int signalPipeRead = -1;
 +static int signalPipeWrite = -1;
-+static std::sig_atomic_t signalReceived = 0;
 +static QSocketNotifier* signalNotifier = nullptr;
 +
 +void shutdownGracefully()
 +{
-+    // we can use std::atomic_bool here even if it is not lock_free
++    // we can use std::atomic<bool> here even if it is not lock_free
 +    // because we are not running as a signal handler in the strict
 +    // sense of the term.
-+    static std::atomic_bool handlingSignal(false);
-+    int sig = signalReceived;
++    static std::atomic<bool> handlingSignal(false);
 +
-+    signalReceived = 0;
-+
-+    // we do have to flush the read side of the pipe even if we don't
-+    // use the value read (which should be identical to signalReceived).
++    // Get the signal number that was written to the pipe in the actual
++    // signal handler. A bit awkward but we have to flush the read side
++    // of the pipe anyway.
 +    // Failure to flush can lead to repetitive signals from QSocketNotifier
 +    // as if it reacts to the presence of unread data rather than atomic
 +    // writes to the pipe (observed on Linux 4.14 with Qt 5.9.6).
-+    int dum;
-+    read(signalPipeRead, &dum, sizeof(dum));
++    int sig;
++    read(signalPipeRead, &sig, sizeof(sig));
 +
 +    // exit as quickly as possible when a SIGHUP is received.
-+    if (!handlingSignal
++    if (!handlingSignal.exchange(true)
 +#ifdef SIGHUP
 +       && sig != SIGHUP
 +#endif
 +    ) {
-+        handlingSignal = true;
 +        // the first time we see a signal we attempt to exit
 +        // as if the user initiated the procedure via the GUI.
 +        qCWarning(SHELL) << "Going down on signal" << sig;
          QCoreApplication* app = QCoreApplication::instance();
          if (QApplication* guiApp = qobject_cast<QApplication*>(app)) {
              guiApp->closeAllWindows();
-         }
+@@ -65,23 +89,38 @@ void shutdownGracefully(int sig)
          app->quit();
          return;
-+    } else {
-+        qCWarning(SHELL) << "Going down harder on signal" << sig;
      }
++    qCWarning(SHELL) << "Going down harder on signal" << sig;
  
 -    // re-raise signal with default handler and trigger program termination
 +    // we come here if a 2nd signal was received before the full exit
@@ -85,13 +80,6 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..a3e14c63203e78e9e298a71f3fe76dd5
  
 +void signalHandler(int sig)
 +{
-+    // NOTE: using signalReceived is not thread-safe. If a 2nd signal comes in
-+    // before the current signal has been processed, shutdownGracefully() will
-+    // see the new value. That is not a problem in this case; the result is that
-+    // the handler uses the last of a "signal burst", which is not unreasonable
-+    // given that this currently makes no difference at all in the graceful
-+    // shutdown behaviour.
-+    signalReceived = sig;
 +    if (signalPipeWrite != -1) {
 +        write(signalPipeWrite, &sig, sizeof(sig));
 +    }
@@ -115,7 +103,7 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..a3e14c63203e78e9e298a71f3fe76dd5
  }
  }
  
-@@ -121,6 +172,7 @@ KAboutData createAboutData()
+@@ -121,6 +160,7 @@ KAboutData createAboutData()
  }
  
  CorePrivate::CorePrivate(Core *core):
@@ -123,7 +111,7 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..a3e14c63203e78e9e298a71f3fe76dd5
      m_aboutData( createAboutData() ), m_core(core), m_cleanedUp(false), m_shuttingDown(false)
  {
  }
-@@ -289,7 +341,27 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
+@@ -289,7 +329,27 @@ bool CorePrivate::initialize(Core::Setup mode, const QString& session )
      testController->initialize();
      runtimeController->initialize();
  
@@ -152,7 +140,7 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..a3e14c63203e78e9e298a71f3fe76dd5
  
      qCDebug(SHELL) << "Done initializing controllers";
  
-@@ -328,8 +400,23 @@ CorePrivate::~CorePrivate()
+@@ -328,8 +388,23 @@ CorePrivate::~CorePrivate()
      workingSetController.clear();
      testController.clear();
      runtimeController.clear();
@@ -176,6 +164,32 @@ index c1fd662f89cf826baea3247bf90c5348aead7c00..a3e14c63203e78e9e298a71f3fe76dd5
  bool Core::initialize(Setup mode, const QString& session)
  {
      if (m_self)
+@@ -349,9 +424,25 @@ Core *KDevelop::Core::self()
+     return m_self;
+ }
+ 
++#include <sys/resource.h>
++#ifdef Q_OS_LINUX
++#include <linux/fs.h>
++#define OPEN_MAX INR_OPEN_MAX
++#elif defined(Q_OS_MACOS)
++#include <sys/syslimits.h>
++#endif
++
+ Core::Core(QObject *parent)
+     : ICore(parent)
+ {
++#ifdef OPEN_MAX
++    // set the maximum number of files
++    struct rlimit rlim;
++    getrlimit(RLIMIT_NOFILE, &rlim);
++    rlim.rlim_cur = qMin(rlim_t(OPEN_MAX), rlim.rlim_max);
++    setrlimit(RLIMIT_NOFILE, &rlim);
++#endif
++
+     d = new CorePrivate(this);
+ 
+     connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &Core::shutdown);
 diff --git kdevplatform/shell/core_p.h kdevplatform/shell/core_p.h
 index d5ed3525cc9114642a2e18301bb98f60c0e0e98f..f621dbad214455ea09059d2af33745b235ae4652 100644
 --- kdevplatform/shell/core_p.h
