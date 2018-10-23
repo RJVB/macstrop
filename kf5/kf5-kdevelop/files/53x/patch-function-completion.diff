@@ -1,0 +1,143 @@
+commit 4f2fc9e32452b3dc7f017d57c0bcc98b73cb0370
+Author: Amish Naidu <amhndu@gmail.com>
+Date:   Fri Oct 19 17:12:17 2018 +0530
+
+    Replace leading typed text when completing function implementation
+    
+    Summary:
+    When executing function-implementation auto-completion, this will now
+    replace and leading typed text that matches the proposed completion
+    instead of duplicating it.
+    
+    BUG: 384710
+    
+    Test Plan:
+    ```
+    int Foo(int thing);
+    struct Bar
+    {
+      void Method(int thing);
+    }
+    ```
+    Start typing `int Foo` or `Bar::Meth` and then execute the offered completion.
+    
+    Reviewers: #kdevelop, mwolff
+    
+    Reviewed By: #kdevelop, mwolff
+    
+    Subscribers: kfunk, brauch, mwolff, apol, kdevelop-devel
+    
+    Tags: #kdevelop
+    
+    Differential Revision: https://phabricator.kde.org/D16326
+
+diff --git kdevplatform/language/duchain/stringhelpers.cpp kdevplatform/language/duchain/stringhelpers.cpp
+index 9fbcf5a4f0..c45ec3e3f7 100644
+--- kdevplatform/language/duchain/stringhelpers.cpp
++++ kdevplatform/language/duchain/stringhelpers.cpp
+@@ -508,6 +508,12 @@ QString formatComment(const QString& comment)
+   return formatComment_impl<QString>(comment);
+ }
+ 
++QString removeWhitespace(const QString& str)
++{
++  return str.simplified().remove(QLatin1Char(' '));
++}
++
++
+ 
+ ParamIterator::~ParamIterator() = default;
+ 
+diff --git kdevplatform/language/duchain/stringhelpers.h kdevplatform/language/duchain/stringhelpers.h
+index 62866ddb68..f7102a3db0 100644
+--- kdevplatform/language/duchain/stringhelpers.h
++++ kdevplatform/language/duchain/stringhelpers.h
+@@ -97,6 +97,11 @@ int KDEVPLATFORMLANGUAGE_EXPORT rStrip( const QByteArray& str, QByteArray& from
+  */
+ int KDEVPLATFORMLANGUAGE_EXPORT strip( const QByteArray& str, QByteArray& from );
+ 
++/**
++ * Removes all whitespace from the string
++ */
++QString KDEVPLATFORMLANGUAGE_EXPORT removeWhitespace( const QString& str );
++
+ /**
+  * Can be used to iterate through different kinds of parameters, for example template-parameters
+  */
+diff --git plugins/clang/codecompletion/context.cpp plugins/clang/codecompletion/context.cpp
+index 6118f719f9..6254d2ec79 100644
+--- plugins/clang/codecompletion/context.cpp
++++ plugins/clang/codecompletion/context.cpp
+@@ -41,6 +41,7 @@
+ #include <language/duchain/types/pointertype.h>
+ #include <language/duchain/types/typealiastype.h>
+ #include <language/duchain/types/typeutils.h>
++#include <language/duchain/stringhelpers.h>
+ #include <language/codecompletion/codecompletionmodel.h>
+ #include <language/codecompletion/normaldeclarationcompletionitem.h>
+ #include <util/foregroundlock.h>
+@@ -55,6 +56,7 @@
+ #include "../duchain/navigationwidget.h"
+ #include "../clangsettings/clangsettingsmanager.h"
+ 
++#include <algorithm>
+ #include <functional>
+ #include <memory>
+ 
+@@ -338,7 +340,20 @@ public:
+ 
+     void execute(KTextEditor::View* view, const KTextEditor::Range& word) override
+     {
+-        view->document()->replaceText(word, m_replacement);
++        auto* const document = view->document();
++
++        // try and replace leading typed text that match the proposed implementation
++        const QString leading = document->line(word.end().line()).left(word.end().column());
++        const QString leadingNoSpace = removeWhitespace(leading);
++        if (!leadingNoSpace.isEmpty() && (removeWhitespace(m_display).startsWith(leadingNoSpace)
++            || removeWhitespace(m_replacement).startsWith(leadingNoSpace))) {
++            const int removeSize = leading.end() - std::find_if_not(leading.begin(), leading.end(),
++                                        [](QChar c){ return c.isSpace(); });
++            const KTextEditor::Cursor newStart = {word.end().line(), word.end().column() - removeSize};
++            document->replaceText({newStart, word.end()}, m_replacement);
++        } else {
++            document->replaceText(word, m_replacement);
++        }
+     }
+ };
+ 
+diff --git plugins/clang/tests/test_codecompletion.cpp plugins/clang/tests/test_codecompletion.cpp
+index cf45a6c262..da6cb8c725 100644
+--- plugins/clang/tests/test_codecompletion.cpp
++++ plugins/clang/tests/test_codecompletion.cpp
+@@ -1387,6 +1387,30 @@ void TestCodeCompletion::testCompleteFunction_data()
+         << CompletionItems({5, 0}, {"Test", "Test<X, B>::bar(B a)"})
+         << "Test<X, B>::bar(B a)"
+         << "template <template<class, int> class X, typename B>\nclass Test {\npublic:\nvoid bar(B a);\n};\ntemplate<template<typename, int> class X, typename B> void Test<X, B>::bar(B a)\n{\n}\n";
++
++    QTest::newRow("replace-leading-return-type")
++        << "void foo(int x);\nvoid "
++        << CompletionItems({1, 5}, {"foo(int x)"})
++        << "foo(int x)"
++        << "void foo(int x);\nvoid foo(int x)\n{\n}\n";
++
++    QTest::newRow("replace-leading-function-name")
++        << "void foo(int x);\nfoo"
++        << CompletionItems({1, 3}, {"foo(int x)"})
++        << "foo(int x)"
++        << "void foo(int x);\nvoid foo(int x)\n{\n}\n";
++
++    QTest::newRow("replace-leading-with-class-method")
++        << "class Foo { int bar(int x); };\nint "
++        << CompletionItems({1, 4}, {"Foo", "Foo::bar(int x)"})
++        << "Foo::bar(int x)"
++        << "class Foo { int bar(int x); };\nint Foo::bar(int x)\n{\n}\n";
++
++    QTest::newRow("replace-leading-whitespace-mismatch")
++        << "class Foo { int** bar(int x); };\nint * *"
++        << CompletionItems({1, 7}, {"** Foo::bar(int x)"})
++        << "** Foo::bar(int x)"
++        << "class Foo { int** bar(int x); };\nint ** Foo::bar(int x)\n{\n}\n";
+ }
+ 
+ void TestCodeCompletion::testIgnoreGccBuiltins()
