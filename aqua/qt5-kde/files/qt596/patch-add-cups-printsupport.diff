@@ -1,0 +1,1303 @@
+diff --git a/qtbase/src/plugins/printsupport/printsupport.pro b/qtbase/src/plugins/printsupport/printsupport.pro
+index 05cf1bc0b2ef72882330c04df525f375e40478e1..0b3795cc5bbb563af57926f5c72dd36f3dadda99 100644
+--- a/qtbase/src/plugins/printsupport/printsupport.pro
++++ b/qtbase/src/plugins/printsupport/printsupport.pro
+@@ -3,4 +3,4 @@ QT_FOR_CONFIG += printsupport-private
+ 
+ osx:   SUBDIRS += cocoa
+ win32: SUBDIRS += windows
+-unix:!darwin:qtConfig(cups): SUBDIRS += cups
++unix:qtConfig(cups): SUBDIRS += cups
+
+diff --git a/qtbase/src/printsupport/dialogs/dialogs.pri b/qtbase/src/printsupport/dialogs/dialogs.pri
+index 0a7b947c79ff2b47878e278778b71d272f821d8f..5871fc11f290be1c9deff7b3e8a3f8f3e3f63005 100644
+--- a/qtbase/src/printsupport/dialogs/dialogs.pri
++++ b/qtbase/src/printsupport/dialogs/dialogs.pri
+@@ -21,11 +21,14 @@ qtConfig(printdialog) {
+                    dialogs/qprintdialog_win.cpp
+     }
+ 
+-    unix:!darwin {
++    unix: {
+         INCLUDEPATH += $$QT_SOURCE_TREE/src/plugins/printsupport/cups
+-        HEADERS += dialogs/qpagesetupdialog_unix_p.h
++        HEADERS += dialogs/qpagesetupdialog_unix_p.h \
++                   dialogs/qcupspagesetupdialog.h \
++                   dialogs/qcupsprintdialog.h
+         SOURCES += dialogs/qprintdialog_unix.cpp \
+-                   dialogs/qpagesetupdialog_unix.cpp
++                   dialogs/qpagesetupdialog_unix.cpp \
++                   dialogs/qcupspagesetupdialog.cpp
+         FORMS += dialogs/qprintsettingsoutput.ui \
+         dialogs/qprintwidget.ui \
+         dialogs/qprintpropertieswidget.ui
+diff --git a/qtbase/src/printsupport/dialogs/qcupspagesetupdialog.cpp b/qtbase/src/printsupport/dialogs/qcupspagesetupdialog.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..cca156442c87d76370947f13af59e88c8cf32c04
+--- /dev/null
++++ b/qtbase/src/printsupport/dialogs/qcupspagesetupdialog.cpp
+@@ -0,0 +1,180 @@
++/****************************************************************************
++**
++** Copyright (C) 2016 The Qt Company Ltd.
++** Contact: https://www.qt.io/licensing/
++**
++** This file is part of the QtGui module of the Qt Toolkit.
++**
++** $QT_BEGIN_LICENSE:LGPL$
++** Commercial License Usage
++** Licensees holding valid commercial Qt licenses may use this file in
++** accordance with the commercial license agreement provided with the
++** Software or, alternatively, in accordance with the terms contained in
++** a written agreement between you and The Qt Company. For licensing terms
++** and conditions see https://www.qt.io/terms-conditions. For further
++** information use the contact form at https://www.qt.io/contact-us.
++**
++** GNU Lesser General Public License Usage
++** Alternatively, this file may be used under the terms of the GNU Lesser
++** General Public License version 3 as published by the Free Software
++** Foundation and appearing in the file LICENSE.LGPL3 included in the
++** packaging of this file. Please review the following information to
++** ensure the GNU Lesser General Public License version 3 requirements
++** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
++**
++** GNU General Public License Usage
++** Alternatively, this file may be used under the terms of the GNU
++** General Public License version 2.0 or (at your option) the GNU General
++** Public license version 3 or any later version approved by the KDE Free
++** Qt Foundation. The licenses are as published by the Free Software
++** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
++** included in the packaging of this file. Please review the following
++** information to ensure the GNU General Public License requirements will
++** be met: https://www.gnu.org/licenses/gpl-2.0.html and
++** https://www.gnu.org/licenses/gpl-3.0.html.
++**
++** $QT_END_LICENSE$
++**
++****************************************************************************/
++
++#include "qcupspagesetupdialog.h"
++#include <private/qpagesetupdialog_p.h>
++
++#include <QtPrintSupport/qprinter.h>
++
++QT_BEGIN_NAMESPACE
++
++/*!
++    \class QCupsPageSetupDialog
++
++    \brief The QCupsPageSetupDialog class provides a configuration dialog
++    for the page-related options on a printer.
++
++    \ingroup standard-dialogs
++    \ingroup printing
++    \inmodule QtPrintSupport
++
++    On Windows and \macos the page setup dialog is implemented using
++    the native page setup dialogs.
++
++    Note that on Windows and \macos custom paper sizes won't be
++    reflected in the native page setup dialogs. Additionally, custom
++    page margins set on a QPrinter won't show in the native \macos
++    page setup dialog.
++
++    \sa QPrinter, QPrintDialog
++*/
++
++
++/*!
++    \fn QCupsPageSetupDialog::QCupsPageSetupDialog(QPrinter *printer, QWidget *parent)
++
++    Constructs a page setup dialog that configures \a printer with \a
++    parent as the parent widget.
++*/
++
++/*!
++    \fn QCupsPageSetupDialog::~QCupsPageSetupDialog()
++
++    Destroys the page setup dialog.
++*/
++
++/*!
++    \since 4.5
++
++    \fn QCupsPageSetupDialog::QCupsPageSetupDialog(QWidget *parent)
++
++    Constructs a page setup dialog that configures a default-constructed
++    QPrinter with \a parent as the parent widget.
++
++    \sa printer()
++*/
++
++/*!
++    \fn QPrinter *QCupsPageSetupDialog::printer()
++
++    Returns the printer that was passed to the QCupsPageSetupDialog
++    constructor.
++*/
++
++QCupsPageSetupDialogPrivate::QCupsPageSetupDialogPrivate(QPrinter *prntr) : printer(0), ownsPrinter(false)
++{
++    setPrinter(prntr);
++}
++
++void QCupsPageSetupDialogPrivate::setPrinter(QPrinter *newPrinter)
++{
++    if (printer && ownsPrinter)
++        delete printer;
++
++    if (newPrinter) {
++        printer = newPrinter;
++        ownsPrinter = false;
++    } else {
++        printer = new QPrinter;
++        ownsPrinter = true;
++    }
++}
++
++/*!
++    \overload
++    \since 4.5
++
++    Opens the dialog and connects its accepted() signal to the slot specified
++    by \a receiver and \a member.
++
++    The signal will be disconnected from the slot when the dialog is closed.
++*/
++void QCupsPageSetupDialog::open(QObject *receiver, const char *member)
++{
++    Q_D(QCupsPageSetupDialog);
++    connect(this, SIGNAL(accepted()), receiver, member);
++    d->receiverToDisconnectOnClose = receiver;
++    d->memberToDisconnectOnClose = member;
++    QDialog::open();
++}
++
++#if defined(Q_OS_MAC) || defined(Q_OS_WIN)
++/*! \fn void QCupsPageSetupDialog::setVisible(bool visible)
++    \reimp
++*/
++#endif
++
++QCupsPageSetupDialog::~QCupsPageSetupDialog()
++{
++    Q_D(QCupsPageSetupDialog);
++    if (d->ownsPrinter)
++        delete d->printer;
++}
++
++QPrinter *QCupsPageSetupDialog::printer()
++{
++    Q_D(QCupsPageSetupDialog);
++    return d->printer;
++}
++
++/*!
++    \fn int QCupsPageSetupDialog::exec()
++
++    This virtual function is called to pop up the dialog. It must be
++    reimplemented in subclasses.
++*/
++
++/*!
++    \reimp
++*/
++void QCupsPageSetupDialog::done(int result)
++{
++    Q_D(QCupsPageSetupDialog);
++    QDialog::done(result);
++    if (d->receiverToDisconnectOnClose) {
++        disconnect(this, SIGNAL(accepted()),
++                   d->receiverToDisconnectOnClose, d->memberToDisconnectOnClose);
++        d->receiverToDisconnectOnClose = 0;
++    }
++    d->memberToDisconnectOnClose.clear();
++
++}
++
++QT_END_NAMESPACE
++
+diff --git a/qtbase/src/printsupport/dialogs/qcupspagesetupdialog.h b/qtbase/src/printsupport/dialogs/qcupspagesetupdialog.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..f9c25206474557e8e57952be4ae66b9b72d74fd2
+--- /dev/null
++++ b/qtbase/src/printsupport/dialogs/qcupspagesetupdialog.h
+@@ -0,0 +1,97 @@
++/****************************************************************************
++**
++** Copyright (C) 2016 The Qt Company Ltd.
++** Contact: https://www.qt.io/licensing/
++**
++** This file is part of the QtGui module of the Qt Toolkit.
++**
++** $QT_BEGIN_LICENSE:LGPL$
++** Commercial License Usage
++** Licensees holding valid commercial Qt licenses may use this file in
++** accordance with the commercial license agreement provided with the
++** Software or, alternatively, in accordance with the terms contained in
++** a written agreement between you and The Qt Company. For licensing terms
++** and conditions see https://www.qt.io/terms-conditions. For further
++** information use the contact form at https://www.qt.io/contact-us.
++**
++** GNU Lesser General Public License Usage
++** Alternatively, this file may be used under the terms of the GNU Lesser
++** General Public License version 3 as published by the Free Software
++** Foundation and appearing in the file LICENSE.LGPL3 included in the
++** packaging of this file. Please review the following information to
++** ensure the GNU Lesser General Public License version 3 requirements
++** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
++**
++** GNU General Public License Usage
++** Alternatively, this file may be used under the terms of the GNU
++** General Public License version 2.0 or (at your option) the GNU General
++** Public license version 3 or any later version approved by the KDE Free
++** Qt Foundation. The licenses are as published by the Free Software
++** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
++** included in the packaging of this file. Please review the following
++** information to ensure the GNU General Public License requirements will
++** be met: https://www.gnu.org/licenses/gpl-2.0.html and
++** https://www.gnu.org/licenses/gpl-3.0.html.
++**
++** $QT_END_LICENSE$
++**
++****************************************************************************/
++
++#ifndef QCUPSPAGESETUPDIALOG_H
++#define QCUPSPAGESETUPDIALOG_H
++
++#include <QtPrintSupport/qtprintsupportglobal.h>
++
++#include <QtWidgets/qdialog.h>
++
++#include <QtPrintSupport/private/qtprintsupportglobal_p.h>
++
++#include "private/qdialog_p.h"
++
++#include "qbytearray.h"
++#include "qpointer.h"
++
++QT_REQUIRE_CONFIG(printdialog);
++
++QT_BEGIN_NAMESPACE
++
++class QPrinter;
++
++class QCupsPageSetupDialogPrivate : public QDialogPrivate
++{
++//     Q_DECLARE_PUBLIC(QCupsPageSetupDialogPrivate)
++
++public:
++    QCupsPageSetupDialogPrivate(QPrinter *printer);
++
++    void setPrinter(QPrinter *newPrinter);
++
++    QPrinter *printer;
++    bool ownsPrinter;
++    QPointer<QObject> receiverToDisconnectOnClose;
++    QByteArray memberToDisconnectOnClose;
++};
++
++class Q_PRINTSUPPORT_EXPORT QCupsPageSetupDialog : public QDialog
++{
++    Q_OBJECT
++    Q_DECLARE_PRIVATE(QCupsPageSetupDialog)
++
++public:
++    explicit QCupsPageSetupDialog(QPrinter *printer, QWidget *parent = Q_NULLPTR);
++    explicit QCupsPageSetupDialog(QWidget *parent = Q_NULLPTR);
++    ~QCupsPageSetupDialog();
++
++    int exec() Q_DECL_OVERRIDE;
++
++    using QDialog::open;
++    void open(QObject *receiver, const char *member);
++
++    void done(int result) Q_DECL_OVERRIDE;
++
++    QPrinter *printer();
++};
++
++QT_END_NAMESPACE
++
++#endif // QCUPSPAGESETUPDIALOG_H
+diff --git a/qtbase/src/printsupport/dialogs/qcupsprintdialog.h b/qtbase/src/printsupport/dialogs/qcupsprintdialog.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..9bfa6345ff6c387bff3d9f6f3e2eba44a833687d
+--- /dev/null
++++ b/qtbase/src/printsupport/dialogs/qcupsprintdialog.h
+@@ -0,0 +1,102 @@
++/****************************************************************************
++**
++** Copyright (C) 2016 The Qt Company Ltd.
++** Contact: https://www.qt.io/licensing/
++**
++** This file is part of the QtGui module of the Qt Toolkit.
++**
++** $QT_BEGIN_LICENSE:LGPL$
++** Commercial License Usage
++** Licensees holding valid commercial Qt licenses may use this file in
++** accordance with the commercial license agreement provided with the
++** Software or, alternatively, in accordance with the terms contained in
++** a written agreement between you and The Qt Company. For licensing terms
++** and conditions see https://www.qt.io/terms-conditions. For further
++** information use the contact form at https://www.qt.io/contact-us.
++**
++** GNU Lesser General Public License Usage
++** Alternatively, this file may be used under the terms of the GNU Lesser
++** General Public License version 3 as published by the Free Software
++** Foundation and appearing in the file LICENSE.LGPL3 included in the
++** packaging of this file. Please review the following information to
++** ensure the GNU Lesser General Public License version 3 requirements
++** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
++**
++** GNU General Public License Usage
++** Alternatively, this file may be used under the terms of the GNU
++** General Public License version 2.0 or (at your option) the GNU General
++** Public license version 3 or any later version approved by the KDE Free
++** Qt Foundation. The licenses are as published by the Free Software
++** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
++** included in the packaging of this file. Please review the following
++** information to ensure the GNU General Public License requirements will
++** be met: https://www.gnu.org/licenses/gpl-2.0.html and
++** https://www.gnu.org/licenses/gpl-3.0.html.
++**
++** $QT_END_LICENSE$
++**
++****************************************************************************/
++
++#ifndef QCUPSPRINTDIALOG_H
++#define QCUPSPRINTDIALOG_H
++
++#include <QtPrintSupport/qtprintsupportglobal.h>
++
++#include <QtPrintSupport/qabstractprintdialog.h>
++
++QT_REQUIRE_CONFIG(printdialog);
++
++QT_BEGIN_NAMESPACE
++
++class QPushButton;
++class QPrinter;
++
++class QCupsPrintDialogPrivate;
++class Q_PRINTSUPPORT_EXPORT QCupsPrintDialog : public QAbstractPrintDialog
++{
++    Q_OBJECT
++    Q_DECLARE_PRIVATE(QCupsPrintDialog)
++//     Q_PROPERTY(PrintDialogOptions options READ options WRITE setOptions)
++
++public:
++    explicit QCupsPrintDialog(QPrinter *printer, QWidget *parent = Q_NULLPTR);
++    explicit QCupsPrintDialog(QWidget *parent = Q_NULLPTR);
++    ~QCupsPrintDialog();
++
++    int exec() Q_DECL_OVERRIDE;
++    virtual void accept() Q_DECL_OVERRIDE;
++    void done(int result) Q_DECL_OVERRIDE;
++
++    void setOption(PrintDialogOption option, bool on = true);
++    bool testOption(PrintDialogOption option) const;
++    void setOptions(PrintDialogOptions options);
++    PrintDialogOptions options() const;
++
++    void setVisible(bool visible) Q_DECL_OVERRIDE;
++
++    using QDialog::open;
++    void open(QObject *receiver, const char *member);
++
++#ifdef Q_QDOC
++    QPrinter *printer();
++#endif
++
++    using QDialog::accepted;
++
++Q_SIGNALS:
++    void accepted(QPrinter *printer);
++
++private:
++// #ifdef QPRINTDIALOG_UNIX_P_CPP
++    Q_PRIVATE_SLOT(d_func(), void _q_togglePageSetCombo(bool))
++    Q_PRIVATE_SLOT(d_func(), void _q_collapseOrExpandDialog())
++#if QT_CONFIG(messagebox)
++    Q_PRIVATE_SLOT(d_func(), void _q_checkFields())
++#endif // QT_CONFIG(messagebox)
++    friend class QUnixPrintWidget;
++// # endif // QPRINTDIALOG_UNIX_P_CPP
++};
++
++QT_END_NAMESPACE
++
++#endif // QCUPSPRINTDIALOG_H
+diff --git a/qtbase/src/printsupport/dialogs/qpagesetupdialog.cpp b/qtbase/src/printsupport/dialogs/qpagesetupdialog.cpp
+index 4acac2c5f142ac28bf75bc5b8cb1d242f73c0b56..5e35b1b3d70ff6121782aa767355836301f4f893 100644
+--- a/qtbase/src/printsupport/dialogs/qpagesetupdialog.cpp
++++ b/qtbase/src/printsupport/dialogs/qpagesetupdialog.cpp
+@@ -38,6 +38,9 @@
+ ****************************************************************************/
+ 
+ #include "qpagesetupdialog.h"
++#ifdef Q_OS_MACOS
++#include "qcupspagesetupdialog.h"
++#endif
+ #include <private/qpagesetupdialog_p.h>
+ 
+ #include <QtPrintSupport/qprinter.h>
+@@ -149,6 +152,11 @@ QPageSetupDialog::~QPageSetupDialog()
+     Q_D(QPageSetupDialog);
+     if (d->ownsPrinter)
+         delete d->printer;
++#ifdef Q_OS_MACOS
++    if (cupsDialog) {
++        delete cupsDialog;
++    }
++#endif
+ }
+ 
+ QPrinter *QPageSetupDialog::printer()
+diff --git a/qtbase/src/printsupport/dialogs/qpagesetupdialog.h b/qtbase/src/printsupport/dialogs/qpagesetupdialog.h
+index 3bd752a413e725195461932a873be1727d2135ce..deb5baf6a0eaffe1890808f830b5a90bc372f9fc 100644
+--- a/qtbase/src/printsupport/dialogs/qpagesetupdialog.h
++++ b/qtbase/src/printsupport/dialogs/qpagesetupdialog.h
+@@ -50,6 +50,9 @@ QT_BEGIN_NAMESPACE
+ 
+ class QPrinter;
+ class QPageSetupDialogPrivate;
++#ifdef Q_OS_MACOS
++class QCupsPageSetupDialog;
++#endif
+ 
+ class Q_PRINTSUPPORT_EXPORT QPageSetupDialog : public QDialog
+ {
+@@ -72,6 +75,11 @@ public:
+     void done(int result) Q_DECL_OVERRIDE;
+ 
+     QPrinter *printer();
++#ifdef Q_OS_MACOS
++private:
++    QCupsPageSetupDialog *cupsDialog = nullptr;
++    bool isCocoa;
++#endif
+ };
+ 
+ QT_END_NAMESPACE
+diff --git a/qtbase/src/printsupport/dialogs/qpagesetupdialog_mac.mm b/qtbase/src/printsupport/dialogs/qpagesetupdialog_mac.mm
+index 1e398452f712da3ebc39be236285098a81a231aa..60c1efda448f3a1f71d745e96162abfa7421c608 100644
+--- a/qtbase/src/printsupport/dialogs/qpagesetupdialog_mac.mm
++++ b/qtbase/src/printsupport/dialogs/qpagesetupdialog_mac.mm
+@@ -41,11 +41,15 @@
+ #include <AppKit/AppKit.h>
+ 
+ #include "qpagesetupdialog.h"
++#include "qcupspagesetupdialog.h"
+ 
+ #include "qpagesetupdialog_p.h"
+ 
+ #include <qpa/qplatformnativeinterface.h>
+ #include <QtPrintSupport/qprintengine.h>
++#ifdef Q_OS_MACOS
++#include <qguiapplication.h>
++#endif
+ 
+ QT_USE_NAMESPACE
+ 
+@@ -162,23 +166,37 @@ void QMacPageSetupDialogPrivate::closeCocoaPageLayout()
+ QPageSetupDialog::QPageSetupDialog(QPrinter *printer, QWidget *parent)
+     : QDialog(*(new QMacPageSetupDialogPrivate(printer)), parent)
+ {
++    Q_D(QPageSetupDialog);
+     setWindowTitle(QCoreApplication::translate("QPrintPreviewDialog", "Page Setup"));
+     setAttribute(Qt::WA_DontShowOnScreen);
++    isCocoa = QGuiApplication::platformName().contains(QLatin1String("cocoa"));
++    if (d->printer->outputFormat() != QPrinter::NativeFormat || !isCocoa) {
++        cupsDialog = new QCupsPageSetupDialog(printer, parent);
++    }
+ }
+ 
+ QPageSetupDialog::QPageSetupDialog(QWidget *parent)
+     : QDialog(*(new QMacPageSetupDialogPrivate(0)), parent)
+ {
++    Q_D(QPageSetupDialog);
+     setWindowTitle(QCoreApplication::translate("QPrintPreviewDialog", "Page Setup"));
+     setAttribute(Qt::WA_DontShowOnScreen);
++    isCocoa = QGuiApplication::platformName().contains(QLatin1String("cocoa"));
++    if (d->printer->outputFormat() != QPrinter::NativeFormat || !isCocoa) {
++        cupsDialog = new QCupsPageSetupDialog(parent);
++    }
+ }
+ 
+ void QPageSetupDialog::setVisible(bool visible)
+ {
+     Q_D(QPageSetupDialog);
+ 
+-    if (d->printer->outputFormat() != QPrinter::NativeFormat)
++    if (d->printer->outputFormat() != QPrinter::NativeFormat || !isCocoa) {
++        if (cupsDialog) {
++            cupsDialog->setVisible(visible);
++        }
+         return;
++    }
+ 
+     bool isCurrentlyVisible = (static_cast <QMacPageSetupDialogPrivate*>(d)->pageLayout != 0);
+     if (!visible == !isCurrentlyVisible)
+@@ -206,8 +224,12 @@ int QPageSetupDialog::exec()
+ {
+     Q_D(QPageSetupDialog);
+ 
+-    if (d->printer->outputFormat() != QPrinter::NativeFormat)
++    if (d->printer->outputFormat() != QPrinter::NativeFormat || !isCocoa) {
++        if (cupsDialog) {
++            return cupsDialog->exec();
++        }
+         return Rejected;
++    }
+ 
+     QDialog::setVisible(true);
+ 
+diff --git a/qtbase/src/printsupport/dialogs/qpagesetupdialog_unix.cpp b/qtbase/src/printsupport/dialogs/qpagesetupdialog_unix.cpp
+index b4ad718646f0f1d3fc6144e8a8c854b619ca33e0..d232da51d21ed6823dfe4f110338efc1e4006d35 100644
+--- a/qtbase/src/printsupport/dialogs/qpagesetupdialog_unix.cpp
++++ b/qtbase/src/printsupport/dialogs/qpagesetupdialog_unix.cpp
+@@ -37,11 +37,10 @@
+ **
+ ****************************************************************************/
+ 
+-#include "qpagesetupdialog.h"
++#include "qcupspagesetupdialog.h"
+ 
+ #include "qpagesetupdialog_unix_p.h"
+ 
+-#include <private/qpagesetupdialog_p.h>
+ #include <private/qprintdevice_p.h>
+ #if QT_CONFIG(cups)
+ #include <private/qcups_p.h>
+@@ -182,12 +181,12 @@ private:
+ 
+ 
+ // QUnixPageSetupDialogPrivate
+-// - Linux / Cups implementation of QPageSetupDialogPrivate
++// - Linux / Cups implementation of QCupsPageSetupDialogPrivate
+ // - Embeds QPageSetupWidget
+ 
+-class QUnixPageSetupDialogPrivate : public QPageSetupDialogPrivate
++class QUnixPageSetupDialogPrivate : public QCupsPageSetupDialogPrivate
+ {
+-    Q_DECLARE_PUBLIC(QPageSetupDialog)
++    Q_DECLARE_PUBLIC(QCupsPageSetupDialog)
+ 
+ public:
+     QUnixPageSetupDialogPrivate(QPrinter *printer);
+@@ -197,7 +196,7 @@ public:
+     QPageSetupWidget *widget;
+ };
+ 
+-QUnixPageSetupDialogPrivate::QUnixPageSetupDialogPrivate(QPrinter *printer) : QPageSetupDialogPrivate(printer)
++QUnixPageSetupDialogPrivate::QUnixPageSetupDialogPrivate(QPrinter *printer) : QCupsPageSetupDialogPrivate(printer)
+ {
+ }
+ 
+@@ -207,7 +206,7 @@ QUnixPageSetupDialogPrivate::~QUnixPageSetupDialogPrivate()
+ 
+ void QUnixPageSetupDialogPrivate::init()
+ {
+-    Q_Q(QPageSetupDialog);
++    Q_Q(QCupsPageSetupDialog);
+ 
+     widget = new QPageSetupWidget(q);
+     widget->setPrinter(printer);
+@@ -495,7 +494,7 @@ void QPageSetupWidget::updateWidget()
+ }
+ 
+ // Set the dialog chosen options on the QPrinter
+-// Normally only called when the QPrintDialog or QPageSetupDialog OK button is pressed
++// Normally only called when the QPrintDialog or QCupsPageSetupDialog OK button is pressed
+ void QPageSetupWidget::setupPrinter() const
+ {
+     m_printer->setPageLayout(m_pageLayout);
+@@ -611,28 +610,28 @@ void QPageSetupWidget::rightMarginChanged(double newValue)
+     m_pagePreview->setPageLayout(m_pageLayout);
+ }
+ 
+-// QPageSetupDialog
++// QCupsPageSetupDialog
+ // - Public Linux / CUPS class implementation
+ 
+-QPageSetupDialog::QPageSetupDialog(QPrinter *printer, QWidget *parent)
++QCupsPageSetupDialog::QCupsPageSetupDialog(QPrinter *printer, QWidget *parent)
+     : QDialog(*(new QUnixPageSetupDialogPrivate(printer)), parent)
+ {
+-    Q_D(QPageSetupDialog);
++    Q_D(QCupsPageSetupDialog);
+     setWindowTitle(QCoreApplication::translate("QPrintPreviewDialog", "Page Setup"));
+     static_cast<QUnixPageSetupDialogPrivate *>(d)->init();
+ }
+ 
+-QPageSetupDialog::QPageSetupDialog(QWidget *parent)
++QCupsPageSetupDialog::QCupsPageSetupDialog(QWidget *parent)
+     : QDialog(*(new QUnixPageSetupDialogPrivate(0)), parent)
+ {
+-    Q_D(QPageSetupDialog);
++    Q_D(QCupsPageSetupDialog);
+     setWindowTitle(QCoreApplication::translate("QPrintPreviewDialog", "Page Setup"));
+     static_cast<QUnixPageSetupDialogPrivate *>(d)->init();
+ }
+ 
+-int QPageSetupDialog::exec()
++int QCupsPageSetupDialog::exec()
+ {
+-    Q_D(QPageSetupDialog);
++    Q_D(QCupsPageSetupDialog);
+ 
+     int ret = QDialog::exec();
+     if (ret == Accepted)
+diff --git a/qtbase/src/printsupport/dialogs/qprintdialog.h b/qtbase/src/printsupport/dialogs/qprintdialog.h
+index 5b81440a3c0bf9ad2a69753ffe3d7f6696c4e0d4..c71f29184d99fbe4639d454ab5cb8272f967f281 100644
+--- a/qtbase/src/printsupport/dialogs/qprintdialog.h
++++ b/qtbase/src/printsupport/dialogs/qprintdialog.h
+@@ -51,6 +51,9 @@ QT_BEGIN_NAMESPACE
+ class QPrintDialogPrivate;
+ class QPushButton;
+ class QPrinter;
++#ifdef Q_OS_MACOS
++class QCupsPrintDialog;
++#endif
+ 
+ class Q_PRINTSUPPORT_EXPORT QPrintDialog : public QAbstractPrintDialog
+ {
+@@ -99,6 +102,10 @@ private:
+ #endif // QT_CONFIG(messagebox)
+     friend class QUnixPrintWidget;
+ # endif // Q_OS_UNIX
++#ifdef Q_OS_MACOS
++    QCupsPrintDialog *cupsDialog = nullptr;
++    bool isCocoa;
++#endif
+ };
+ 
+ QT_END_NAMESPACE
+diff --git a/qtbase/src/printsupport/dialogs/qprintdialog_mac.mm b/qtbase/src/printsupport/dialogs/qprintdialog_mac.mm
+index 854779977cfbf84730da00fbb0883b96066d22e4..aa8d4f87466676a461e5c0bbddd25468be97f6ea 100644
+--- a/qtbase/src/printsupport/dialogs/qprintdialog_mac.mm
++++ b/qtbase/src/printsupport/dialogs/qprintdialog_mac.mm
+@@ -40,6 +40,7 @@
+ #include <AppKit/AppKit.h>
+ 
+ #include "qprintdialog.h"
++#include "qcupsprintdialog.h"
+ #include "qabstractprintdialog_p.h"
+ 
+ #include <QtCore/private/qcore_mac_p.h>
+@@ -273,7 +274,7 @@ void QPrintDialogPrivate::closeCocoaPrintPanel()
+ static bool warnIfNotNative(QPrinter *printer)
+ {
+     if (printer->outputFormat() != QPrinter::NativeFormat) {
+-        qWarning("QPrintDialog: Cannot be used on non-native printers");
++        qWarning("QPrintDialog: Cocoa print dialog cannot be used on non-native printers");
+         return false;
+     }
+     return true;
+@@ -284,8 +285,11 @@ QPrintDialog::QPrintDialog(QPrinter *printer, QWidget *parent)
+     : QAbstractPrintDialog(*(new QPrintDialogPrivate), printer, parent)
+ {
+     Q_D(QPrintDialog);
+-    if (!warnIfNotNative(d->printer))
++    isCocoa = QGuiApplication::platformName().contains(QLatin1String("cocoa"));
++    if (!warnIfNotNative(d->printer) || !isCocoa) {
++        cupsDialog = new QCupsPrintDialog(printer, parent);
+         return;
++    }
+     setAttribute(Qt::WA_DontShowOnScreen);
+ }
+ 
+@@ -293,20 +297,30 @@ QPrintDialog::QPrintDialog(QWidget *parent)
+     : QAbstractPrintDialog(*(new QPrintDialogPrivate), 0, parent)
+ {
+     Q_D(QPrintDialog);
+-    if (!warnIfNotNative(d->printer))
++    isCocoa = QGuiApplication::platformName().contains(QLatin1String("cocoa"));
++    if (!warnIfNotNative(d->printer) || !isCocoa) {
++        cupsDialog = new QCupsPrintDialog(parent);
+         return;
++    }
+     setAttribute(Qt::WA_DontShowOnScreen);
+ }
+ 
+ QPrintDialog::~QPrintDialog()
+ {
++    if (cupsDialog) {
++        delete cupsDialog;
++    }
+ }
+ 
+ int QPrintDialog::exec()
+ {
+     Q_D(QPrintDialog);
+-    if (!warnIfNotNative(d->printer))
++    if (!warnIfNotNative(d->printer) || !isCocoa) {
++        if (cupsDialog) {
++            return cupsDialog->exec();
++        }
+         return QDialog::Rejected;
++    }
+ 
+     QDialog::setVisible(true);
+ 
+@@ -332,8 +346,12 @@ void QPrintDialog::setVisible(bool visible)
+     if (!visible == !isCurrentlyVisible)
+         return;
+ 
+-    if (d->printer->outputFormat() != QPrinter::NativeFormat)
++    if (d->printer->outputFormat() != QPrinter::NativeFormat || !isCocoa) {
++        if (cupsDialog) {
++            cupsDialog->setVisible(visible);
++        }
+         return;
++    }
+ 
+     QDialog::setVisible(visible);
+ 
+diff --git a/qtbase/src/printsupport/dialogs/qprintdialog_unix.cpp b/qtbase/src/printsupport/dialogs/qprintdialog_unix.cpp
+index a05c9ac83a0b93e94667c6619f5db24823cf38ef..2e9e31add4398008dd6ac847f78eb83538762db0 100644
+--- a/qtbase/src/printsupport/dialogs/qprintdialog_unix.cpp
++++ b/qtbase/src/printsupport/dialogs/qprintdialog_unix.cpp
+@@ -36,6 +36,7 @@
+ ** $QT_END_LICENSE$
+ **
+ ****************************************************************************/
++#define QPRINTDIALOG_UNIX_P_CPP
+ 
+ #include "qplatformdefs.h"
+ #include <QtPrintSupport/private/qtprintsupportglobal_p.h>
+@@ -44,7 +45,7 @@
+ #if QT_CONFIG(messagebox)
+ #include <QtWidgets/qmessagebox.h>
+ #endif
+-#include "qprintdialog.h"
++#include "qcupsprintdialog.h"
+ #if QT_CONFIG(filedialog)
+ #include "qfiledialog.h"
+ #endif
+@@ -81,7 +82,7 @@
+ 
+ Print dialog class declarations
+ 
+-    QPrintDialog:            The main Print Dialog, nothing really held here.
++    QCupsPrintDialog:            The main Print Dialog, nothing really held here.
+ 
+     QUnixPrintWidget:
+     QUnixPrintWidgetPrivate: The real Unix Print Dialog implementation.
+@@ -94,11 +95,11 @@ Print dialog class declarations
+                              QPrintPropertiesDialog
+ 
+                              Embeds the lower half from separate widget class
+-                             QPrintDialogPrivate
++                             QCupsPrintDialogPrivate
+ 
+                              Layout in qprintwidget.ui
+ 
+-    QPrintDialogPrivate:     The lower half of the Print Dialog containing the
++    QCupsPrintDialogPrivate:     The lower half of the Print Dialog containing the
+                              Copies and Options tabs that expands when the
+                              Options button is selected.
+ 
+@@ -154,7 +155,7 @@ public:
+     void updatePrinter();
+ 
+ private:
+-    friend class QPrintDialogPrivate;
++    friend class QCupsPrintDialogPrivate;
+     friend class QUnixPrintWidgetPrivate;
+     QUnixPrintWidgetPrivate *d;
+     Q_PRIVATE_SLOT(d, void _q_printerChanged(int))
+@@ -172,7 +173,7 @@ public:
+     void applyPrinterProperties();
+     bool checkFields();
+     void setupPrinter();
+-    void setOptionsPane(QPrintDialogPrivate *pane);
++    void setOptionsPane(QCupsPrintDialogPrivate *pane);
+     void setupPrinterProperties();
+ // slots
+     void _q_printerChanged(int index);
+@@ -189,18 +190,18 @@ public:
+     void updateWidget();
+ 
+ private:
+-    QPrintDialogPrivate *optionsPane;
++    QCupsPrintDialogPrivate *optionsPane;
+     bool filePrintersAdded;
+     bool propertiesDialogShown;
+ };
+ 
+-class QPrintDialogPrivate : public QAbstractPrintDialogPrivate
++class QCupsPrintDialogPrivate : public QAbstractPrintDialogPrivate
+ {
+-    Q_DECLARE_PUBLIC(QPrintDialog)
+-    Q_DECLARE_TR_FUNCTIONS(QPrintDialog)
++    Q_DECLARE_PUBLIC(QCupsPrintDialog)
++    Q_DECLARE_TR_FUNCTIONS(QCupsPrintDialog)
+ public:
+-    QPrintDialogPrivate();
+-    ~QPrintDialogPrivate();
++    QCupsPrintDialogPrivate();
++    ~QCupsPrintDialogPrivate();
+ 
+     void init();
+     /// copy printer properties to the widget
+@@ -291,25 +292,25 @@ void QPrintPropertiesDialog::selectPrinter(QPrinter::OutputFormat outputFormat,
+ 
+ /*
+ 
+-    QPrintDialogPrivate
++    QCupsPrintDialogPrivate
+ 
+     The lower half of the Print Dialog containing the Copies and Options
+     tabs that expands when the Options button is selected.
+ 
+ */
+-QPrintDialogPrivate::QPrintDialogPrivate()
++QCupsPrintDialogPrivate::QCupsPrintDialogPrivate()
+     : top(0), bottom(0), buttons(0), collapseButton(0)
+ {
+     initResources();
+ }
+ 
+-QPrintDialogPrivate::~QPrintDialogPrivate()
++QCupsPrintDialogPrivate::~QCupsPrintDialogPrivate()
+ {
+ }
+ 
+-void QPrintDialogPrivate::init()
++void QCupsPrintDialogPrivate::init()
+ {
+-    Q_Q(QPrintDialog);
++    Q_Q(QCupsPrintDialog);
+ 
+     top = new QUnixPrintWidget(q->printer(), q);
+     bottom = new QWidget(q);
+@@ -329,12 +330,12 @@ void QPrintDialogPrivate::init()
+     top->d->setOptionsPane(this);
+ 
+     buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, q);
+-    collapseButton = new QPushButton(QPrintDialog::tr("&Options >>"), buttons);
++    collapseButton = new QPushButton(QCupsPrintDialog::tr("&Options >>"), buttons);
+     buttons->addButton(collapseButton, QDialogButtonBox::ResetRole);
+     bottom->setVisible(false);
+ 
+     QPushButton *printButton = buttons->button(QDialogButtonBox::Ok);
+-    printButton->setText(QPrintDialog::tr("&Print"));
++    printButton->setText(QCupsPrintDialog::tr("&Print"));
+     printButton->setDefault(true);
+ 
+     QVBoxLayout *lay = new QVBoxLayout(q);
+@@ -360,9 +361,9 @@ void QPrintDialogPrivate::init()
+ }
+ 
+ // initialize printer options
+-void QPrintDialogPrivate::selectPrinter(const QPrinter::OutputFormat outputFormat)
++void QCupsPrintDialogPrivate::selectPrinter(const QPrinter::OutputFormat outputFormat)
+ {
+-        Q_Q(QPrintDialog);
++        Q_Q(QCupsPrintDialog);
+         QPrinter *p = q->printer();
+         printerOutputFormat = outputFormat;
+ 
+@@ -392,19 +393,19 @@ void QPrintDialogPrivate::selectPrinter(const QPrinter::OutputFormat outputForma
+             options.pageSetCombo->setEnabled(true);
+ }
+ 
+-void QPrintDialogPrivate::applyPrinterProperties()
++void QCupsPrintDialogPrivate::applyPrinterProperties()
+ {
+     // apply printer options to property dialog
+     top->d->applyPrinterProperties();
+ }
+ 
+-void QPrintDialogPrivate::setupPrinter()
++void QCupsPrintDialogPrivate::setupPrinter()
+ {
+     // First setup the requested OutputFormat, Printer and Page Size first
+     top->d->setupPrinter();
+ 
+     // Then setup Print Job options
+-    Q_Q(QPrintDialog);
++    Q_Q(QCupsPrintDialog);
+     QPrinter* p = q->printer();
+ 
+     if (options.duplex->isEnabled()) {
+@@ -430,7 +431,7 @@ void QPrintDialogPrivate::setupPrinter()
+         p->setPrintRange(QPrinter::CurrentPage);
+         p->setFromTo(0,0);
+     } else if (options.printRange->isChecked()) {
+-        if (q->isOptionEnabled(QPrintDialog::PrintPageRange)) {
++        if (q->isOptionEnabled(QCupsPrintDialog::PrintPageRange)) {
+             p->setPrintRange(QPrinter::PageRange);
+             p->setFromTo(options.from->value(), qMax(options.from->value(), options.to->value()));
+         } else {
+@@ -446,7 +447,7 @@ void QPrintDialogPrivate::setupPrinter()
+     if (p->printRange() == QPrinter::AllPages || p->printRange() == QPrinter::PageRange) {
+         //If the application is selecting pages and the first page number is even then need to adjust the odd-even accordingly
+         QCUPSSupport::PageSet pageSet = options.pageSetCombo->itemData(options.pageSetCombo->currentIndex()).value<QCUPSSupport::PageSet>();
+-        if (q->isOptionEnabled(QPrintDialog::PrintPageRange)
++        if (q->isOptionEnabled(QCupsPrintDialog::PrintPageRange)
+             && p->printRange() == QPrinter::PageRange
+             && (q->fromPage() % 2 == 0)) {
+ 
+@@ -466,7 +467,7 @@ void QPrintDialogPrivate::setupPrinter()
+ 
+         // server-side page range, since we set the page range on the printer to 0-0/AllPages above,
+         // we need to take the values directly from the widget as q->fromPage() will return 0
+-        if (!q->isOptionEnabled(QPrintDialog::PrintPageRange) && options.printRange->isChecked())
++        if (!q->isOptionEnabled(QCupsPrintDialog::PrintPageRange) && options.printRange->isChecked())
+             QCUPSSupport::setPageRange(p, options.from->value(), qMax(options.from->value(), options.to->value()));
+     }
+ #endif
+@@ -476,7 +477,7 @@ void QPrintDialogPrivate::setupPrinter()
+     p->setCollateCopies(options.collate->isChecked());
+ }
+ 
+-void QPrintDialogPrivate::_q_togglePageSetCombo(bool checked)
++void QCupsPrintDialogPrivate::_q_togglePageSetCombo(bool checked)
+ {
+     if (printerOutputFormat == QPrinter::PdfFormat)
+         return;
+@@ -484,17 +485,17 @@ void QPrintDialogPrivate::_q_togglePageSetCombo(bool checked)
+     options.pageSetCombo->setDisabled(checked);
+ }
+ 
+-void QPrintDialogPrivate::_q_collapseOrExpandDialog()
++void QCupsPrintDialogPrivate::_q_collapseOrExpandDialog()
+ {
+     int collapseHeight = 0;
+-    Q_Q(QPrintDialog);
++    Q_Q(QCupsPrintDialog);
+     QWidget *widgetToHide = bottom;
+     if (widgetToHide->isVisible()) {
+-        collapseButton->setText(QPrintDialog::tr("&Options >>"));
++        collapseButton->setText(QCupsPrintDialog::tr("&Options >>"));
+         collapseHeight = widgetToHide->y() + widgetToHide->height() - (top->y() + top->height());
+     }
+     else
+-        collapseButton->setText(QPrintDialog::tr("&Options <<"));
++        collapseButton->setText(QCupsPrintDialog::tr("&Options <<"));
+     widgetToHide->setVisible(! widgetToHide->isVisible());
+     if (! widgetToHide->isVisible()) { // make it shrink
+         q->layout()->activate();
+@@ -503,31 +504,31 @@ void QPrintDialogPrivate::_q_collapseOrExpandDialog()
+ }
+ 
+ #if QT_CONFIG(messagebox)
+-void QPrintDialogPrivate::_q_checkFields()
++void QCupsPrintDialogPrivate::_q_checkFields()
+ {
+-    Q_Q(QPrintDialog);
++    Q_Q(QCupsPrintDialog);
+     if (top->d->checkFields())
+         q->accept();
+ }
+ #endif // QT_CONFIG(messagebox)
+ 
+ 
+-void QPrintDialogPrivate::updateWidgets()
++void QCupsPrintDialogPrivate::updateWidgets()
+ {
+-    Q_Q(QPrintDialog);
+-    options.gbPrintRange->setVisible(q->isOptionEnabled(QPrintDialog::PrintPageRange) ||
+-                                     q->isOptionEnabled(QPrintDialog::PrintSelection) ||
+-                                     q->isOptionEnabled(QPrintDialog::PrintCurrentPage));
++    Q_Q(QCupsPrintDialog);
++    options.gbPrintRange->setVisible(q->isOptionEnabled(QCupsPrintDialog::PrintPageRange) ||
++                                     q->isOptionEnabled(QCupsPrintDialog::PrintSelection) ||
++                                     q->isOptionEnabled(QCupsPrintDialog::PrintCurrentPage));
+ 
+-    options.printRange->setEnabled(q->isOptionEnabled(QPrintDialog::PrintPageRange));
+-    options.printSelection->setVisible(q->isOptionEnabled(QPrintDialog::PrintSelection));
+-    options.printCurrentPage->setVisible(q->isOptionEnabled(QPrintDialog::PrintCurrentPage));
+-    options.collate->setVisible(q->isOptionEnabled(QPrintDialog::PrintCollateCopies));
++    options.printRange->setEnabled(q->isOptionEnabled(QCupsPrintDialog::PrintPageRange));
++    options.printSelection->setVisible(q->isOptionEnabled(QCupsPrintDialog::PrintSelection));
++    options.printCurrentPage->setVisible(q->isOptionEnabled(QCupsPrintDialog::PrintCurrentPage));
++    options.collate->setVisible(q->isOptionEnabled(QCupsPrintDialog::PrintCollateCopies));
+ 
+ #if QT_CONFIG(cups)
+     // Don't display Page Set if only Selection or Current Page are enabled
+-    if (!q->isOptionEnabled(QPrintDialog::PrintPageRange)
+-        && (q->isOptionEnabled(QPrintDialog::PrintSelection) || q->isOptionEnabled(QPrintDialog::PrintCurrentPage))) {
++    if (!q->isOptionEnabled(QCupsPrintDialog::PrintPageRange)
++        && (q->isOptionEnabled(QCupsPrintDialog::PrintSelection) || q->isOptionEnabled(QCupsPrintDialog::PrintCurrentPage))) {
+         options.pageSetCombo->setVisible(false);
+         options.pageSetLabel->setVisible(false);
+     } else {
+@@ -535,7 +536,7 @@ void QPrintDialogPrivate::updateWidgets()
+         options.pageSetLabel->setVisible(true);
+     }
+ 
+-    if (!q->isOptionEnabled(QPrintDialog::PrintPageRange)) {
++    if (!q->isOptionEnabled(QCupsPrintDialog::PrintPageRange)) {
+         // If we can do CUPS server side pages selection,
+         // display the page range widgets
+         options.gbPrintRange->setVisible(true);
+@@ -544,20 +545,20 @@ void QPrintDialogPrivate::updateWidgets()
+ #endif
+ 
+     switch (q->printRange()) {
+-    case QPrintDialog::AllPages:
++    case QCupsPrintDialog::AllPages:
+         options.printAll->setChecked(true);
+         options.pageSetCombo->setEnabled(true);
+         break;
+-    case QPrintDialog::Selection:
++    case QCupsPrintDialog::Selection:
+         options.printSelection->setChecked(true);
+         options.pageSetCombo->setEnabled(false);
+         break;
+-    case QPrintDialog::PageRange:
++    case QCupsPrintDialog::PageRange:
+         options.printRange->setChecked(true);
+         options.pageSetCombo->setEnabled(true);
+         break;
+-    case QPrintDialog::CurrentPage:
+-        if (q->isOptionEnabled(QPrintDialog::PrintCurrentPage)) {
++    case QCupsPrintDialog::CurrentPage:
++        if (q->isOptionEnabled(QCupsPrintDialog::PrintCurrentPage)) {
+             options.printCurrentPage->setChecked(true);
+             options.pageSetCombo->setEnabled(false);
+         }
+@@ -578,7 +579,7 @@ void QPrintDialogPrivate::updateWidgets()
+     top->d->updateWidget();
+ }
+ 
+-void QPrintDialogPrivate::setTabs(const QList<QWidget*> &tabWidgets)
++void QCupsPrintDialogPrivate::setTabs(const QList<QWidget*> &tabWidgets)
+ {
+     QList<QWidget*>::ConstIterator iter = tabWidgets.begin();
+     while(iter != tabWidgets.constEnd()) {
+@@ -593,36 +594,36 @@ void QPrintDialogPrivate::setTabs(const QList<QWidget*> &tabWidgets)
+ 
+ /*
+ 
+-    QPrintDialog
++    QCupsPrintDialog
+ 
+     The main Print Dialog.
+ 
+ */
+ 
+-QPrintDialog::QPrintDialog(QPrinter *printer, QWidget *parent)
+-    : QAbstractPrintDialog(*(new QPrintDialogPrivate), printer, parent)
++QCupsPrintDialog::QCupsPrintDialog(QPrinter *printer, QWidget *parent)
++    : QAbstractPrintDialog(*(new QCupsPrintDialogPrivate), printer, parent)
+ {
+-    Q_D(QPrintDialog);
++    Q_D(QCupsPrintDialog);
+     d->init();
+ }
+ 
+ /*!
+     Constructs a print dialog with the given \a parent.
+ */
+-QPrintDialog::QPrintDialog(QWidget *parent)
+-    : QAbstractPrintDialog(*(new QPrintDialogPrivate), 0, parent)
++QCupsPrintDialog::QCupsPrintDialog(QWidget *parent)
++    : QAbstractPrintDialog(*(new QCupsPrintDialogPrivate), 0, parent)
+ {
+-    Q_D(QPrintDialog);
++    Q_D(QCupsPrintDialog);
+     d->init();
+ }
+ 
+-QPrintDialog::~QPrintDialog()
++QCupsPrintDialog::~QCupsPrintDialog()
+ {
+ }
+ 
+-void QPrintDialog::setVisible(bool visible)
++void QCupsPrintDialog::setVisible(bool visible)
+ {
+-    Q_D(QPrintDialog);
++    Q_D(QCupsPrintDialog);
+ 
+     if (visible)
+         d->updateWidgets();
+@@ -630,18 +631,31 @@ void QPrintDialog::setVisible(bool visible)
+     QAbstractPrintDialog::setVisible(visible);
+ }
+ 
+-int QPrintDialog::exec()
++int QCupsPrintDialog::exec()
+ {
+     return QDialog::exec();
+ }
+ 
+-void QPrintDialog::accept()
++void QCupsPrintDialog::accept()
+ {
+-    Q_D(QPrintDialog);
++    Q_D(QCupsPrintDialog);
+     d->setupPrinter();
+     QDialog::accept();
+ }
+ 
++void QCupsPrintDialog::done(int result)
++{
++    Q_D(QCupsPrintDialog);
++    QDialog::done(result);
++    if (result == Accepted)
++        emit accepted(printer());
++    if (d->receiverToDisconnectOnClose) {
++        disconnect(this, SIGNAL(accepted(QPrinter*)),
++                   d->receiverToDisconnectOnClose, d->memberToDisconnectOnClose);
++        d->receiverToDisconnectOnClose = 0;
++    }
++    d->memberToDisconnectOnClose.clear();
++}
+ ////////////////////////////////////////////////////////////////////////////////
+ ////////////////////////////////////////////////////////////////////////////////
+ 
+@@ -701,11 +715,11 @@ QUnixPrintWidgetPrivate::QUnixPrintWidgetPrivate(QUnixPrintWidget *p, QPrinter *
+ 
+ void QUnixPrintWidgetPrivate::updateWidget()
+ {
+-    const bool printToFile = q == 0 || q->isOptionEnabled(QPrintDialog::PrintToFile);
++    const bool printToFile = q == 0 || q->isOptionEnabled(QCupsPrintDialog::PrintToFile);
+     if (printToFile && !filePrintersAdded) {
+         if (widget.printers->count())
+             widget.printers->insertSeparator(widget.printers->count());
+-        widget.printers->addItem(QPrintDialog::tr("Print to File (PDF)"));
++        widget.printers->addItem(QCupsPrintDialog::tr("Print to File (PDF)"));
+         filePrintersAdded = true;
+     }
+     if (!printToFile && filePrintersAdded) {
+@@ -753,8 +767,8 @@ void QUnixPrintWidgetPrivate::_q_printerChanged(int index)
+     if (filePrintersAdded) {
+         Q_ASSERT(index != printerCount - 2); // separator
+         if (index == printerCount - 1) { // PDF
+-            widget.location->setText(QPrintDialog::tr("Local file"));
+-            widget.type->setText(QPrintDialog::tr("Write PDF file"));
++            widget.location->setText(QCupsPrintDialog::tr("Local file"));
++            widget.type->setText(QCupsPrintDialog::tr("Write PDF file"));
+             widget.properties->setEnabled(true);
+             widget.filename->setEnabled(true);
+             QString filename = widget.filename->text();
+@@ -780,7 +794,7 @@ void QUnixPrintWidgetPrivate::_q_printerChanged(int index)
+     }
+ }
+ 
+-void QUnixPrintWidgetPrivate::setOptionsPane(QPrintDialogPrivate *pane)
++void QUnixPrintWidgetPrivate::setOptionsPane(QCupsPrintDialogPrivate *pane)
+ {
+     optionsPane = pane;
+     if (optionsPane)
+@@ -791,7 +805,7 @@ void QUnixPrintWidgetPrivate::_q_btnBrowseClicked()
+ {
+     QString filename = widget.filename->text();
+ #if QT_CONFIG(filedialog)
+-    filename = QFileDialog::getSaveFileName(parent, QPrintDialog::tr("Print To File ..."), filename,
++    filename = QFileDialog::getSaveFileName(parent, QCupsPrintDialog::tr("Print To File ..."), filename,
+                                             QString(), 0, QFileDialog::DontConfirmOverwrite);
+ #else
+     filename.clear();
+@@ -855,15 +869,15 @@ bool QUnixPrintWidgetPrivate::checkFields()
+         bool opened = false;
+         if (exists && fi.isDir()) {
+             QMessageBox::warning(q, q->windowTitle(),
+-                            QPrintDialog::tr("%1 is a directory.\nPlease choose a different file name.").arg(file));
++                            QCupsPrintDialog::tr("%1 is a directory.\nPlease choose a different file name.").arg(file));
+             return false;
+         } else if ((exists && !fi.isWritable()) || !(opened = f.open(QFile::Append))) {
+             QMessageBox::warning(q, q->windowTitle(),
+-                            QPrintDialog::tr("File %1 is not writable.\nPlease choose a different file name.").arg(file));
++                            QCupsPrintDialog::tr("File %1 is not writable.\nPlease choose a different file name.").arg(file));
+             return false;
+         } else if (exists) {
+             int ret = QMessageBox::question(q, q->windowTitle(),
+-                                            QPrintDialog::tr("%1 already exists.\nDo you want to overwrite it?").arg(file),
++                                            QCupsPrintDialog::tr("%1 already exists.\nDo you want to overwrite it?").arg(file),
+                                             QMessageBox::Yes|QMessageBox::No, QMessageBox::No);
+             if (ret == QMessageBox::No)
+                 return false;
+@@ -886,7 +900,7 @@ bool QUnixPrintWidgetPrivate::checkFields()
+         if (pagesPerSheet != QCUPSSupport::OnePagePerSheet
+             && pageSet != QCUPSSupport::AllPages) {
+             QMessageBox::warning(q, q->windowTitle(),
+-                                 QPrintDialog::tr("Options 'Pages Per Sheet' and 'Page Set' cannot be used together.\nPlease turn one of those options off."));
++                                 QCupsPrintDialog::tr("Options 'Pages Per Sheet' and 'Page Set' cannot be used together.\nPlease turn one of those options off."));
+             return false;
+         }
+     }
+@@ -908,7 +922,7 @@ void QUnixPrintWidgetPrivate::setupPrinterProperties()
+ 
+     propertiesDialog->applyPrinterProperties(q->printer());
+ 
+-    if (q->isOptionEnabled(QPrintDialog::PrintToFile)
++    if (q->isOptionEnabled(QCupsPrintDialog::PrintToFile)
+         && (widget.printers->currentIndex() == widget.printers->count() - 1)) {// PDF
+         propertiesDialog->selectPrinter(QPrinter::PdfFormat, QString());
+     }
+@@ -989,5 +1003,5 @@ void QUnixPrintWidget::updatePrinter()
+ 
+ QT_END_NAMESPACE
+ 
+-#include "moc_qprintdialog.cpp"
++#include "moc_qcupsprintdialog.cpp"
+ #include "qprintdialog_unix.moc"
+diff --git a/qtbase/src/printsupport/kernel/kernel.pri b/qtbase/src/printsupport/kernel/kernel.pri
+index ea7b4b9780797bbe9dd2aa722e234a811e124b4e..eaecd9f27c99227776c12c1f2c582eca29136321 100644
+--- a/qtbase/src/printsupport/kernel/kernel.pri
++++ b/qtbase/src/printsupport/kernel/kernel.pri
+@@ -36,7 +36,7 @@ win32 {
+         !winrt: LIBS_PRIVATE += -lwinspool -lcomdlg32 -lgdi32 -luser32
+ }
+ 
+-unix:!darwin:qtConfig(cups) {
++unix:qtConfig(cups) {
+         SOURCES += $$PWD/qcups.cpp
+         HEADERS += $$PWD/qcups_p.h
+ }
+diff --git a/qtbase/src/printsupport/kernel/qplatformprintplugin.cpp b/qtbase/src/printsupport/kernel/qplatformprintplugin.cpp
+index a80f36904047bb36cd2ab4c19b25c8b44577746c..7a345419b803bf66a01fb6486964c1a3075a0c59 100644
+--- a/qtbase/src/printsupport/kernel/qplatformprintplugin.cpp
++++ b/qtbase/src/printsupport/kernel/qplatformprintplugin.cpp
+@@ -42,6 +42,9 @@
+ #include "qprinterinfo.h"
+ #include "private/qfactoryloader_p.h"
+ #include <qcoreapplication.h>
++#ifdef Q_OS_MACOS
++#include <qguiapplication.h>
++#endif
+ #include <qdebug.h>
+ 
+ #ifndef QT_NO_PRINTER
+@@ -81,8 +84,21 @@ QPlatformPrinterSupport *QPlatformPrinterSupportPlugin::get()
+     if (!printerSupport) {
+         const QMultiMap<int, QString> keyMap = loader()->keyMap();
+         QMultiMap<int, QString>::const_iterator it = keyMap.cbegin();
++        QString module;
+         if (!qEnvironmentVariableIsEmpty("QT_PRINTER_MODULE")) {
+             QString module = QString::fromLocal8Bit(qgetenv("QT_PRINTER_MODULE"));
++        }
++#ifdef Q_OS_MACOS
++        else {
++            if (QGuiApplication::platformName().contains(QLatin1String("cocoa"))) {
++                module = QLatin1String("cocoaprintersupport");
++            } else {
++                qWarning() << "Attempting to load the CUPS printer plugin";
++                module = QLatin1String("cupsprintersupport");
++            }
++        }
++#endif
++        if (!module.isEmpty()) {
+             QMultiMap<int, QString>::const_iterator it2 = std::find_if(keyMap.cbegin(), keyMap.cend(), [module](const QString &value){ return value == module; });
+             if (it2 == keyMap.cend())
+                 qWarning() << "Unable to load printer plugin" << module;
+diff --git a/qtbase/src/printsupport/widgets/widgets.pri b/qtbase/src/printsupport/widgets/widgets.pri
+index 1b5f0aca34a13cf6faa12925f0021e8d27f46fa0..5b791695f409ebef6a911ab49b98af820584fb9c 100644
+--- a/qtbase/src/printsupport/widgets/widgets.pri
++++ b/qtbase/src/printsupport/widgets/widgets.pri
+@@ -3,7 +3,7 @@ qtConfig(printpreviewwidget) {
+     SOURCES += widgets/qprintpreviewwidget.cpp
+ }
+ 
+-unix:!darwin:qtConfig(cupsjobwidget) {
++unix:qtConfig(cupsjobwidget) {
+     HEADERS += widgets/qcupsjobwidget_p.h
+     SOURCES += widgets/qcupsjobwidget.cpp
+     FORMS += widgets/qcupsjobwidget.ui

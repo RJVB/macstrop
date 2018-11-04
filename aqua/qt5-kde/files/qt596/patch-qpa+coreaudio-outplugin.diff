@@ -1,0 +1,74 @@
+--- qt-everywhere-opensource-src-5.9.6/qtmultimedia/src/plugins/pulseaudio/orig.qaudiooutput_pulse.cpp	2018-08-03 14:54:34.447207000 +0200
++++ qt-everywhere-opensource-src-5.9.6/qtmultimedia/src/plugins/pulseaudio/qaudiooutput_pulse.cpp	2018-08-03 14:54:40.717207000 +0200
+@@ -473,6 +473,11 @@
+ 
+ qint64 QPulseAudioOutput::write(const char *data, qint64 len)
+ {
++    if (Q_UNLIKELY(!m_stream)) {
++        qWarning("QAudioOutput(pulseaudio): no stream");
++        return 0;
++    }
++
+     QPulseAudioEngine *pulseEngine = QPulseAudioEngine::instance();
+ 
+     pulseEngine->lock();
+diff --git a/qtmultimedia/src/plugins/coreaudio/coreaudiooutput.mm b/qtmultimedia/src/plugins/coreaudio/coreaudiooutput.mm
+index 900e34e16385d8d41f6ff32fa3c1a85b6b84e145..87e99a908325fe4d98162e4107d3f88260f26198 100644
+--- a/qtmultimedia/src/plugins/coreaudio/coreaudiooutput.mm
++++ b/qtmultimedia/src/plugins/coreaudio/coreaudiooutput.mm
+@@ -140,6 +140,9 @@ int CoreAudioOutputBuffer::available() const
+ void CoreAudioOutputBuffer::reset()
+ {
+     m_buffer->reset();
++    if (m_device) {
++        m_device->disconnect(this);
++    }
+     m_device = 0;
+     m_deviceError = false;
+ }
+@@ -147,9 +150,31 @@ void CoreAudioOutputBuffer::reset()
+ void CoreAudioOutputBuffer::setPrefetchDevice(QIODevice *device)
+ {
+     if (m_device != device) {
++        if (m_device) {
++            m_device->disconnect(this);
++        }
+         m_device = device;
+-        if (m_device != 0)
++        m_deviceError = false;
++        if (m_device != 0) {
++            // catch QIODevice::aboutToClose because we should stop reading at that time
++            connect(m_device, &QIODevice::aboutToClose, this, &CoreAudioOutputBuffer::deviceAboutToClose);
++            // also catch QIODevice::destroyed because we really shouldn't be reading after that anymore
++            connect(m_device, &QIODevice::destroyed, this, &CoreAudioOutputBuffer::deviceAboutToBeDeleted);
+             fillBuffer();
++        }
++    }
++}
++
++void CoreAudioOutputBuffer::deviceAboutToClose()
++{
++    m_deviceError = true;
++}
++
++void CoreAudioOutputBuffer::deviceAboutToBeDeleted(QObject *obj)
++{
++    if (obj == m_device) {
++        m_deviceError = true;
++        m_device = nullptr;
+     }
+ }
+ 
+diff --git a/qtmultimedia/src/plugins/coreaudio/coreaudiooutput.h b/qtmultimedia/src/plugins/coreaudio/coreaudiooutput.h
+index 9f62cd77dff243e1294cab3702b10143e4df2266..e94817365a0b501894e8f963ba0f769e14a4e08e 100644
+--- a/qtmultimedia/src/plugins/coreaudio/coreaudiooutput.h
++++ b/qtmultimedia/src/plugins/coreaudio/coreaudiooutput.h
+@@ -82,6 +82,8 @@ signals:
+ 
+ private slots:
+     void fillBuffer();
++    void deviceAboutToClose();
++    void deviceAboutToBeDeleted(QObject *obj);
+ 
+ private:
+     bool m_deviceError;
