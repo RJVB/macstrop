@@ -992,7 +992,7 @@ post-activate {
                 puts ${fp} "  </docFiles>"
                 puts ${fp} "</QHelpCollectionProject>"
                 close ${fp}
-                catch {system -W ${qhcdir} "time ${QHELPGENERATOR} ${qhcpfile} -o ${qhcfile}"}
+                catch {system -W ${qhcdir} "time ${QHELPGENERATOR} ${qhcpfile} -o ${qhcdir}/${qhcfile}"}
                 file delete -force ${qhcdir}/${qhcpfile}
             } else {
                 ui_debug "cannot create ${qhcdir}/${qhcpfile}: ${err}"
@@ -1000,7 +1000,7 @@ post-activate {
             if {[file exists "${qhcdir}/${qhcfile}"]} {
                 # (re)register all candidates
                 foreach q ${candidates} {
-                    catch {system -W ${qhcdir} "${prefix}/bin/assistant-qt5 -collectionFile ${qhcfile} -register [file normalize ${q}]"}
+                    catch {system -W ${qhcdir} "${prefix}/bin/assistant-qt5 -collectionFile ${qhcdir}/${qhcfile} -register [file normalize ${q}]"}
                 }
                 # be sure the file mdate is updated"
                 system "touch \"${qhcdir}/${qhcfile}\""
