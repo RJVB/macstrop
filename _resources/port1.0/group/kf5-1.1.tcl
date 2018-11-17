@@ -921,6 +921,15 @@ if {${kf5::includecounter} == 0} {
         cmake.save_configure_cmd
     }
 
+    if {[variant_exists LTO] && [variant_isset LTO]} {
+        if {[string match *clang++-mp* ${configure.cxx}]} {
+            configure.args-append   -DCMAKE_AR=[string map {"clang++" "llvm-ar"} ${configure.cxx}] \
+                                    -DCMAKE_RANLIB=[string map {"clang++" "llvm-ranlib"} ${configure.cxx}]
+        } elseif {[string match *clang-mp* ${configure.cc}]} {
+            configure.args-append   -DCMAKE_AR=[string map {"clang" "llvm-ar"} ${configure.cc}] \
+                                    -DCMAKE_RANLIB=[string map {"clang" "llvm-ranlib"} ${configure.cc}]
+        }
+    }
 }
 
 set kf5::includecounter [expr ${kf5::includecounter} + 1]
