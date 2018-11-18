@@ -454,7 +454,7 @@ proc kf5.set_project {project} {
                             ${kf5.release}
                     }
                     livecheck.url \
-                            http://download.kde.org/stable/${kf5.virtualPath}
+                            https://download.kde.org/stable/${kf5.virtualPath}
                     livecheck.regex \
                             (\\d+\\.\\d+\\.\\d)
                     set kf5::cat "KF5-Applications"
@@ -484,7 +484,7 @@ proc kf5.set_project {project} {
         }
         distname            ${project}-${kf5.version}.git
     } else {
-        master_sites        http://download.kde.org/${dbranch}/${f}
+        master_sites        https://download.kde.org/${dbranch}/${f}
     }
 }
 
@@ -603,10 +603,10 @@ if {${kf5::includecounter} == 0} {
         # specific for +docs and -docs !
         post-patch {
             if {[file exists ${worksrcpath}/CMakeLists.txt]} {
-                reinplace "/add_subdirectory.*(\[ ]*docs\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
-                reinplace "/add_subdirectory.*(\[ \]*doc\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
-                reinplace "/ADD_SUBDIRECTORY.*(\[ ]*docs\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
-                reinplace "/ADD_SUBDIRECTORY.*(\[ \]*doc\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
+                reinplace -q "/add_subdirectory.*(\[ ]*docs\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
+                reinplace -q "/add_subdirectory.*(\[ \]*doc\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
+                reinplace -q "/ADD_SUBDIRECTORY.*(\[ ]*docs\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
+                reinplace -q "/ADD_SUBDIRECTORY.*(\[ \]*doc\[ \]*)/d" ${worksrcpath}/CMakeLists.txt
             }
         }
     }
