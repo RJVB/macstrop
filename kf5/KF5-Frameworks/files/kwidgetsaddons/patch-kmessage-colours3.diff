@@ -1,7 +1,7 @@
-diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+diff --git src/CMakeLists.txt src/CMakeLists.txt
 index 7b643ac..fe8955e 100644
---- a/src/CMakeLists.txt
-+++ b/src/CMakeLists.txt
+--- src/CMakeLists.txt
++++ src/CMakeLists.txt
 @@ -77,6 +77,7 @@ set(kwidgetsaddons_SRCS
    ksplittercollapserbutton.cpp
    kstyleextensions.cpp
@@ -10,10 +10,10 @@ index 7b643ac..fe8955e 100644
    ${kwidgetsaddons_QM_LOADER}
    ${kwidgetsaddons_ICON_SRCS}
  )
-diff --git a/src/kmessagewidget.cpp b/src/kmessagewidget.cpp
-index 01a8e9f..0718320 100644
---- a/src/kmessagewidget.cpp
-+++ b/src/kmessagewidget.cpp
+diff --git src/kmessagewidget.cpp src/kmessagewidget.cpp
+index d017aec..189b8b2 100644
+--- src/kmessagewidget.cpp
++++ src/kmessagewidget.cpp
 @@ -19,6 +19,7 @@
   * 02110-1301  USA
   */
@@ -22,9 +22,9 @@ index 01a8e9f..0718320 100644
  
  #include <QAction>
  #include <QApplication>
-@@ -258,38 +259,56 @@ void KMessageWidget::setMessageType(KMessageWidget::MessageType type)
+@@ -168,38 +169,59 @@ void KMessageWidgetPrivate::createLayout()
+ void KMessageWidgetPrivate::applyStyleSheet()
  {
-     d->messageType = type;
      QColor bgBaseColor;
 +    const QPalette palette = QGuiApplication::palette();
  
@@ -33,26 +33,27 @@ index 01a8e9f..0718320 100644
 -    // The following RGB color values come from the "default" scheme in kcolorscheme.cpp
 +    // We cannot use KColorScheme here because KWidgetsAddons is a tier 1 framework
 +    // and therefore can't depend on any other KDE Frameworks. We thus try to get
-+    // the colours that interest us directly from the global settings store using QSettings.
-+    // It that fails we use hardcoded colours, or the highlight colour (for Information).
-+    // The hardcoded RGB color bgBaseColors come from the "default" scheme in kcolorscheme.cpp
++    // the RGB values that interest us directly from the theme definition for or from the
++    // global settings store, using KThemeSettings.
++    // If that fails we use hardcoded values (from kcolorscheme.cpp), or palette.highlight
++    // (for Information).
 +    KThemeSettings settings(QStringLiteral("Colors:Window"));
-     switch (type) {
-     case Positive:
+     switch (messageType) {
+     case KMessageWidget::Positive:
 -        bgBaseColor.setRgb(39, 174,  96); // Window: ForegroundPositive
-+        bgBaseColor = settings.readRGB(QStringLiteral("ForegroundPositive"), QColor(39, 174, 96));
++        bgBaseColor = settings.readRgb(QStringLiteral("ForegroundPositive"), QColor(39, 174, 96));
          break;
-     case Information:
+     case KMessageWidget::Information:
 -        bgBaseColor.setRgb(61, 174, 233); // Window: ForegroundActive
-+        bgBaseColor = settings.readRGB(QStringLiteral("ForegroundActive"), palette.highlight().color());
++        bgBaseColor = settings.readRgb(QStringLiteral("ForegroundActive"), palette.highlight().color());
          break;
-     case Warning:
+     case KMessageWidget::Warning:
 -        bgBaseColor.setRgb(246, 116, 0); // Window: ForegroundNeutral
-+        bgBaseColor = settings.readRGB(QStringLiteral("ForegroundNeutral"), QColor(246, 116, 0));
++        bgBaseColor = settings.readRgb(QStringLiteral("ForegroundNeutral"), QColor(246, 116, 0));
          break;
-     case Error:
+     case KMessageWidget::Error:
 -        bgBaseColor.setRgb(218, 68, 83); // Window: ForegroundNegative
-+        bgBaseColor = settings.readRGB(QStringLiteral("ForegroundNegative"), QColor(218, 68, 83));
++        bgBaseColor = settings.readRgb(QStringLiteral("ForegroundNegative"), QColor(218, 68, 83));
          break;
      }
      const qreal bgBaseColorAlpha = 0.2;
@@ -61,8 +62,10 @@ index 01a8e9f..0718320 100644
 -    const QPalette palette = QGuiApplication::palette();
 -    const QColor windowColor = palette.window().color();
 -    const QColor textColor = palette.text().color();
-+    const QColor windowColor = settings.readRGB(QStringLiteral("BackgroundNormal"), palette.window().color());
-+    QColor textColor = bgBaseColor;
++    // also get the window background from the theme first for consistency (and to avoid possible artefacts
++    // just after a runtime theme change with KMessageWidget instances visible).
++    const QColor windowColor = settings.readRgb(QStringLiteral("BackgroundNormal"), palette.window().color());
++    QColor textColor = settings.readRgb(QStringLiteral("ForegroundNormal"), palette.text().color()); //bgBaseColor;
      const QColor border = bgBaseColor;
  
 -    // Generate a final background color from overlaying bgBaseColor over windowColor
@@ -94,14 +97,14 @@ index 01a8e9f..0718320 100644
 +        }
 +    }
  
-     d->content->setStyleSheet(
+     content->setStyleSheet(
          QString::fromLatin1(".QFrame {"
-diff --git a/src/kthemesettings.cpp b/src/kthemesettings.cpp
+diff --git src/kthemesettings.cpp src/kthemesettings.cpp
 new file mode 100644
-index 0000000..6bdbfb5
+index 0000000..4c005f7
 --- /dev/null
-+++ b/src/kthemesettings.cpp
-@@ -0,0 +1,86 @@
++++ src/kthemesettings.cpp
+@@ -0,0 +1,88 @@
 +/* This file is part of the KDE libraries
 + *
 + * Copyright (c) 2018 René J.V. Bertin <rjvbertin@gmail.com>
@@ -124,6 +127,8 @@ index 0000000..6bdbfb5
 +
 +#include "kthemesettings_p.h"
 +
++#include <QStringList>
++#include <QStandardPaths>
 +#include <QCoreApplication>
 +
 +KThemeSettings::KThemeSettings(const QString &initialGroup)
@@ -131,24 +136,24 @@ index 0000000..6bdbfb5
 +    // Check if the KColorSchemeManager was used to activate a custom theme
 +    QString themePath = qApp->property("KDE_COLOR_SCHEME_PATH").toString();
 +    if (themePath.isEmpty()) {
-+        themePath = QStandardPaths::locate(QStandardPaths::ConfigLocation, QStringLiteral("kdeglobals"));
++        themePath = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QLatin1String("/kdeglobals");
 +    }
-+    if (!themePath.isEmpty()) {
-+        m_settings = new QSettings(themePath, QSettings::IniFormat);
++    if (themePath.isEmpty()) {
++        return;
 +    }
-+    if (m_settings && !initialGroup.isEmpty()){
++    m_settings.reset(new QSettings(themePath, QSettings::IniFormat));
++    if (m_settings && !initialGroup.isEmpty()) {
 +        if (m_settings->childGroups().contains(initialGroup)) {
 +            m_settings->beginGroup(initialGroup);
 +        } else {
-+            delete m_settings;
-+            m_settings = nullptr;
++            m_settings.reset();
 +        }
 +    }
 +}
 +
-+KThemeSettings::~KThemeSettings()
++bool KThemeSettings::isValid()
 +{
-+    delete m_settings;
++    return !m_settings.isNull();
 +}
 +
 +bool KThemeSettings::contains(const QString &key)
@@ -175,9 +180,9 @@ index 0000000..6bdbfb5
 +    }
 +}
 +
-+QColor KThemeSettings::readRGB(const QString &key, QColor defaultValue)
++QColor KThemeSettings::readRgb(const QString &key, QColor defaultValue)
 +{
-+    if (m_settings && m_settings->contains(key)) {
++    if (m_settings) {
 +        QStringList rgb = m_settings->value(key).toStringList();
 +        if (rgb.size() >= 3) {
 +            QColor newValue(rgb.at(0).toInt(), rgb.at(1).toInt(), rgb.at(2).toInt());
@@ -188,12 +193,12 @@ index 0000000..6bdbfb5
 +    }
 +    return defaultValue;
 +}
-diff --git a/src/kthemesettings_p.h b/src/kthemesettings_p.h
+diff --git src/kthemesettings_p.h src/kthemesettings_p.h
 new file mode 100644
-index 0000000..6921b5e
+index 0000000..18c320f
 --- /dev/null
-+++ b/src/kthemesettings_p.h
-@@ -0,0 +1,91 @@
++++ src/kthemesettings_p.h
+@@ -0,0 +1,97 @@
 +/* This file is part of the KDE libraries
 + *
 + * Copyright (c) 2018 René J.V. Bertin <rjvbertin@gmail.com>
@@ -217,10 +222,11 @@ index 0000000..6921b5e
 +#ifndef KTHEMESETTINGS_P_H
 +#define KTHEMESETTINGS_P_H
 +
-+#include <QStringList>
-+#include <QStandardPaths>
-+#include <QSettings>
 +#include <QColor>
++#include <QScopedPointer>
++#include <QSettings>
++
++class QStringList;
 +
 +/**
 + * @class KThemeSettings
@@ -253,7 +259,12 @@ index 0000000..6921b5e
 +     */
 +    KThemeSettings(const QString &initialGroup = QString());
 +
-+    virtual ~KThemeSettings();
++    /**
++     * returns true if this instance refers to a valid QSettings store
++     * Note that this will return false for instances created with
++     * an inexistent initial group.
++     */
++    bool isValid();
 +
 +    /**
 +     * exposes QSettings::contains(@p key)
@@ -278,10 +289,10 @@ index 0000000..6921b5e
 +    /**
 +     * read and return the RGB definition for @p key, or @p defaultValue on failure.
 +     */
-+    QColor readRGB(const QString &key, QColor defaultValue = QColor());
++    QColor readRgb(const QString &key, QColor defaultValue = QColor());
 +
 +private:
-+    QSettings *m_settings = nullptr;
++    QScopedPointer<QSettings> m_settings;
 +};
 +
 +#endif
