@@ -84,28 +84,112 @@ index 38477b8..d1fb9ad 100644
      }
  }
  
+diff --git kdevplatform/shell/textdocument.h kdevplatform/shell/textdocument.h
+index 04d12abfca11f276ae475fd02dd873901a95133c..b9c1fdb3f01288224dd792d852c333804f07d757 100644
+--- kdevplatform/shell/textdocument.h
++++ kdevplatform/shell/textdocument.h
+@@ -85,7 +85,6 @@ private:
+     Q_PRIVATE_SLOT(d, void modifiedOnDisk(KTextEditor::Document *, bool, KTextEditor::ModificationInterface::ModifiedOnDiskReason))
+ 
+     void newDocumentStatus(KTextEditor::Document*);
+-    void populateContextMenu(KTextEditor::View*, QMenu*);
+     void textChanged(KTextEditor::Document*);
+     void documentUrlChanged(KTextEditor::Document*);
+     void slotDocumentLoaded();
 diff --git kdevplatform/shell/textdocument.cpp kdevplatform/shell/textdocument.cpp
-index e5f92beee45e5fec5823447d727b34b4069339bd..199899a686df2db569d436e82399c10e80829baa 100644
+index e5f92beee45e5fec5823447d727b34b4069339bd..8fc7aa201acd6601887b0d4fc5eb13c25d23781a 100644
 --- kdevplatform/shell/textdocument.cpp
 +++ kdevplatform/shell/textdocument.cpp
-@@ -231,10 +231,14 @@ public:
+@@ -76,19 +76,69 @@ static void selectAndReveal( KTextEditor::View* view, const KTextEditor::Range&
+     }
+ }
+ 
++class TextDocumentContextMenuData : public QObject
++{
++    Q_OBJECT
++public:
++    TextDocumentContextMenuData()
++    {
++    }
++
++    ~TextDocumentContextMenuData()
++    {
++        delete addedContextMenu;
++        addedContextMenu = nullptr;
++
++        lastShowMenu = nullptr;
++    }
++
++    void populateContextMenu( KTextEditor::View* v, QMenu* menu )
++    {
++        if (lastShowMenu) {
++            foreach ( QAction* action, addedContextMenu->actions() ) {
++                lastShowMenu->removeAction(action);
++            }
++        }
++
++        delete addedContextMenu;
++        addedContextMenu = new QMenu();
++
++        EditorContext c(v, v->cursorPosition());
++        auto extensions = Core::self()->pluginController()->queryPluginsForContextMenuExtensions(&c, addedContextMenu);
++
++        ContextMenuExtension::populateMenu(addedContextMenu, extensions);
++
++        foreach ( QAction* action, addedContextMenu->actions() ) {
++            menu->addAction(action);
++        }
++        lastShowMenu = menu;
++
++        menu->setTearOffEnabled(true);
++    }
++
++    // we want to remove the previously added stuff before
++    // the menu shows again.
++    // This has to be a static instance because multiple views
++    // can share the same context menu instance.
++    QMenu* addedContextMenu = nullptr;
++    QMenu* lastShowMenu = nullptr;
++};
++
+ class TextDocumentPrivate
+ {
+ public:
+     explicit TextDocumentPrivate(TextDocument *textDocument)
+         : q(textDocument)
+     {
++        if (!contextMenuData) {
++            contextMenuData = new TextDocumentContextMenuData;
++        }
+     }
+ 
+     ~TextDocumentPrivate()
+     {
+-        delete addedContextMenu;
+-        addedContextMenu = nullptr;
+-
++        delete contextMenuData;
++        contextMenuData = nullptr;
+         saveSessionConfig();
+         delete document;
+     }
+@@ -231,10 +281,13 @@ public:
      IDocument::DocumentState state = IDocument::Clean;
      QString encoding;
      bool loaded = false;
 -    // we want to remove the added stuff when the menu hides
 -    QMenu* addedContextMenu = nullptr;
-+    // we want to remove the added stuff when the menu hides.
-+    // This has to be a static instance because multiple views
-+    // can share the same context menu instance.
-+    static QMenu* addedContextMenu;
++    // there is only a single contextmenu at a time so use a single (static)
++    // instance of the class keeping track of added menu actions.
++    static TextDocumentContextMenuData* contextMenuData;
  };
  
-+QMenu* TextDocumentPrivate::addedContextMenu = nullptr;
++TextDocumentContextMenuData* TextDocumentPrivate::contextMenuData = nullptr;
 +
  class TextViewPrivate
  {
  public:
-@@ -259,7 +259,7 @@ bool TextDocument::isTextDocument() const
+@@ -259,7 +310,7 @@ bool TextDocument::isTextDocument() const
      {
          /// @todo Somehow it can happen that d->document is zero, which makes
          /// code relying on "isTextDocument() == (bool)textDocument()" crash
@@ -114,6 +198,48 @@ index e5f92beee45e5fec5823447d727b34b4069339bd..199899a686df2db569d436e82399c10e
          return false;
      }
  
+@@ -345,7 +396,7 @@ QWidget *TextDocument::createViewWidget(QWidget *parent)
+ 
+     view->setStatusBarEnabled(Core::self()->partControllerInternal()->showTextEditorStatusBar());
+ 
+-    connect(view, &KTextEditor::View::contextMenuAboutToShow, this, &TextDocument::populateContextMenu);
++    connect(view, &KTextEditor::View::contextMenuAboutToShow, d->contextMenuData, &TextDocumentContextMenuData::populateContextMenu);
+ 
+     if (KTextEditor::CodeCompletionInterface* cc = dynamic_cast<KTextEditor::CodeCompletionInterface*>(view))
+         cc->setAutomaticInvocationEnabled(core()->languageController()->completionSettings()->automaticCompletionEnabled());
+@@ -670,27 +721,6 @@ void KDevelop::TextDocument::textChanged(KTextEditor::Document *document)
+     notifyContentChanged();
+ }
+ 
+-void KDevelop::TextDocument::populateContextMenu( KTextEditor::View* v, QMenu* menu )
+-{
+-    if (d->addedContextMenu) {
+-        foreach ( QAction* action, d->addedContextMenu->actions() ) {
+-            menu->removeAction(action);
+-        }
+-        delete d->addedContextMenu;
+-    }
+-
+-    d->addedContextMenu = new QMenu();
+-
+-    EditorContext c(v, v->cursorPosition());
+-    auto extensions = Core::self()->pluginController()->queryPluginsForContextMenuExtensions(&c, d->addedContextMenu);
+-
+-    ContextMenuExtension::populateMenu(d->addedContextMenu, extensions);
+-
+-    foreach ( QAction* action, d->addedContextMenu->actions() ) {
+-        menu->addAction(action);
+-    }
+-}
+-
+ void KDevelop::TextDocument::repositoryCheckFinished(bool canRecreate) {
+     if ( d->state != IDocument::Dirty && d->state != IDocument::DirtyAndModified ) {
+         // document is not dirty for whatever reason, nothing to do.
+@@ -737,3 +767,4 @@ void KDevelop::TextDocument::documentUrlChanged(KTextEditor::Document* document)
+ }
+ 
+ #include "moc_textdocument.cpp"
++#include "textdocument.moc"
 diff --git kdevplatform/vcs/dvcs/dvcsjob.cpp kdevplatform/vcs/dvcs/dvcsjob.cpp
 index 3bacd59..8b409f2 100644
 --- kdevplatform/vcs/dvcs/dvcsjob.cpp
