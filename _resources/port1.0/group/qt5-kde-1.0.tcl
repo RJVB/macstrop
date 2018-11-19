@@ -795,7 +795,11 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
             if {${bundleexec} eq ""} {
                 set bundleexec ${bundlename}
             }
-            puts ${fd} "export LD_LIBRARY_PATH=\$\{LD_LIBRARY_PATH\}:${prefix}/lib:${qt_libs_dir}"
+            puts ${fd} "if \[ \"\$\{LD_LIBRARY_PATH\}\" = \"\" \] \;then"
+            puts ${fd} "    export LD_LIBRARY_PATH=${prefix}/lib:${qt_libs_dir}"
+            puts ${fd} "else"
+            puts ${fd} "    export LD_LIBRARY_PATH=\$\{LD_LIBRARY_PATH\}:${prefix}/lib:${qt_libs_dir}"
+            puts ${fd} "fi"
             if {[file dirname ${bundleexec}] eq "."} {
                 puts ${fd} "exec \"${appdir}/${bundleexec}\" \"\$\@\""
             } else {
