@@ -997,6 +997,8 @@ post-activate {
                 puts ${fp} "</QHelpCollectionProject>"
                 close ${fp}
                 catch {system -W ${qhcdir} "time ${QHELPGENERATOR} ${qhcpfile} -o ${qhcdir}/${qhcfile}"}
+                # this file has to be world-writable, annoyingly
+                file attributes permissions ugo+rw ${qhcdir}/${qhcfile}
                 file delete -force ${qhcdir}/${qhcpfile}
             } else {
                 ui_debug "cannot create ${qhcdir}/${qhcpfile}: ${err}"
