@@ -998,7 +998,7 @@ post-activate {
                 close ${fp}
                 catch {system -W ${qhcdir} "time ${QHELPGENERATOR} ${qhcpfile} -o ${qhcdir}/${qhcfile}"}
                 # this file has to be world-writable, annoyingly
-                file attributes permissions ugo+rw ${qhcdir}/${qhcfile}
+                file attributes ${qhcdir}/${qhcfile} -permissions ugo+rw
                 file delete -force ${qhcdir}/${qhcpfile}
             } else {
                 ui_debug "cannot create ${qhcdir}/${qhcpfile}: ${err}"
