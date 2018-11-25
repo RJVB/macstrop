@@ -49,7 +49,7 @@
 # Note that care should be taken (in a post-activate block) that the activation procedure
 # doesn't abort.
 
-proc codesign {app {sign_identity 0} {sign_user ""}} {
+proc codesign {app {sign_identity 0} {sign_user ""} {preserve ""}} {
     global prefix
 #     if {[file exists ${prefix}/etc/macports/codesign-identity.tcl]} {
 #         if {[catch {source "${prefix}/etc/macports/codesign-identity.tcl"} err]} {
@@ -78,20 +78,25 @@ proc codesign {app {sign_identity 0} {sign_user ""}} {
         set user ${sign_user}
         ui_info "Set sign user from arguments; ${user}"
     }
+    if {${preserve} ne ""} {
+        set preserveoption "--preserve-metadata=${preserve}"
+    } else {
+        set preserveoption "--preserve-metadata"
+    }
     platform darwin {
         if {[info exists identity] && (${identity} ne "")} {
             if {[file exists ${app}]} {
                 if {[info exists user] && ${user} ne ""} {
                     set home [glob "~${user}"]
                     ui_info "Signing ${app} with ${identity} from ${user}'s keychains under HOME=${home}"
-                    if {[catch {system "env HOME=${home} codesign -s ${identity} --preserve-metadata -f -vvv --deep ${app}"} err]} {
+                    if {[catch {system "env HOME=${home} codesign -s ${identity} ${preserveoption} -f -vvv --deep ${app}"} err]} {
                         ui_error "Signing ${app} with ${identity} from ${user}'s keychains under HOME=${home}: ${err}"
                     } else {
                         return 0
                     }
                 } else {
                     ui_info "Signing ${app} with ${identity}"
-                    if {[catch {system "codesign -s ${identity} --preserve-metadata -f -vvv --deep ${app}"} err]} {
+                    if {[catch {system "codesign -s ${identity} ${preserveoption} -f -vvv --deep ${app}"} err]} {
                         ui_error "Signing ${app} with ${identity}: ${err}"
                         ui_msg "You will probably need to set the user option to your own username in ${codesigning_conf}"
                     }
