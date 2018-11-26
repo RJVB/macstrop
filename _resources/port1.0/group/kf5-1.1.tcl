@@ -48,6 +48,13 @@ if {${kf5::includecounter} == 0} {
     PortGroup           qt5 1.0
     PortGroup           active_variants 1.1
 
+    pre-fetch {
+        if {${os.platform} eq "darwin" && ${os.major} < 13} {
+            ui_error "KF5 no longer supports Mac OS versions older than 10.9"
+            return -code error "KF5 requires 10.9 or newer"
+        }
+    }
+
     if {![info exists qt5.using_kde] || !${qt5.using_kde}} {
         pre-fetch {
             ui_warn "It is strongly advised to install KF5 ports against port:qt5-kde or port:qt5-kde-devel; any other configuration is not supported."
