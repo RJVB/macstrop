@@ -1,0 +1,552 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 364f90acd69abb6ae0976621b803f49f0c40a62c..276128127f217e78ab2c07c3fa034e6f20d92c6d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -23,7 +23,9 @@ include(FeatureSummary)
+ find_package(Qt5 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS Core Widgets Test DBus Concurrent)
+ 
+ find_package(KF5 ${KF5_MIN_VERSION} REQUIRED COMPONENTS I18n CoreAddons Service ConfigWidgets JobWidgets KIO Crash Completion XmlRpcClient WidgetsAddons Wallet Notifications IdleTime)
+-
++if(APPLE)
++    find_package(KF5 ${KF5_MIN_VERSION} REQUIRED COMPONENTS WindowSystem)
++endif()
+ find_package(Qt5X11Extras ${QT_MIN_VERSION} CONFIG)
+ set_package_properties(Qt5X11Extras PROPERTIES TYPE RECOMMENDED PURPOSE "Recommended for better integration on X11.")
+ 
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 0f4cc51a9f3782ef673147f34f91e0723a90bbed..46b86d721bbe75f24fb667bc0699b5dc04196866 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -111,6 +111,11 @@ if (${Qt5X11Extras_FOUND})
+         Qt5::X11Extras
+     )
+ endif()
++if (APPLE)
++    target_link_libraries(drkonqi
++        KF5::WindowSystem
++    )
++endif()
+ 
+ if (WIN32)
+     target_link_libraries(drkonqi kdewin)
+diff --git a/src/aboutbugreportingdialog.cpp b/src/aboutbugreportingdialog.cpp
+index 51335bcc07f5246b786a629bc2d4a1310e95fd2e..56d2059681f5aee8c9597f2067bff5832b9b7ab4 100644
+--- a/src/aboutbugreportingdialog.cpp
++++ b/src/aboutbugreportingdialog.cpp
+@@ -36,7 +36,7 @@ AboutBugReportingDialog::AboutBugReportingDialog(QWidget * parent):
+ {
+     setAttribute(Qt::WA_DeleteOnClose, true);
+ 
+-    setWindowIcon(QIcon::fromTheme(QStringLiteral("help-hint")));
++    setWindowIcon(QIcon::fromTheme(QStringLiteral("help-hint"), windowIcon()));
+     setWindowTitle(i18nc("@title title of the dialog", "About Bug Reporting - Help"));
+ 
+     QVBoxLayout* layout = new QVBoxLayout(this);
+diff --git a/src/backtracegenerator.cpp b/src/backtracegenerator.cpp
+index 91986c455833eb9c7dfd35998a180f92a2439d47..02798abaee97855da308b0836a376c3a06e80b74 100644
+--- a/src/backtracegenerator.cpp
++++ b/src/backtracegenerator.cpp
+@@ -37,7 +37,8 @@
+ BacktraceGenerator::BacktraceGenerator(const Debugger & debugger, QObject *parent)
+         : QObject(parent),
+           m_debugger(debugger), m_proc(nullptr),
+-          m_temp(nullptr), m_state(NotLoaded)
++          m_temp(nullptr), m_state(NotLoaded),
++          m_lldbDetached(false)
+ {
+     m_parser = BacktraceParser::newParser(m_debugger.codeName(), this);
+     m_parser->connectToGenerator(this);
+@@ -56,9 +57,12 @@ BacktraceGenerator::~BacktraceGenerator()
+         m_proc->terminate();
+         if (!m_proc->waitForFinished(10000)) {
+             m_proc->kill();
+-            m_proc->waitForFinished();
++            // lldb can become "stuck" on OS X; just mark m_proc as to be deleted later rather
++            // than waiting a potentially very long time for it to heed the kill() request.
++            m_proc->deleteLater();
++        } else {
++            delete m_proc;
+         }
+-        delete m_proc;
+         delete m_temp;
+     }
+ }
+@@ -96,9 +100,17 @@ bool BacktraceGenerator::start()
+     *m_proc << KShell::splitArgs(str);
+     m_proc->setOutputChannelMode(KProcess::OnlyStdoutChannel);
+     m_proc->setNextOpenMode(QIODevice::ReadWrite | QIODevice::Text);
++    // check if the debugger should take its input from a file we'll generate,
++    // and take the appropriate steps if so
++    QString stdinFile = m_debugger.backendValueOfParameter(QStringLiteral("ExecInputFile"));
++    Debugger::expandString(stdinFile, Debugger::ExpansionUsageShell, m_temp->fileName());
++    if (!stdinFile.isEmpty() && QFile::exists(stdinFile)) {
++        m_proc->setStandardInputFile(stdinFile);
++    }
+     connect(m_proc, &KProcess::readyReadStandardOutput, this, &BacktraceGenerator::slotReadInput);
+     connect(m_proc, static_cast<void (KProcess::*)(int, QProcess::ExitStatus)>(&KProcess::finished), this, &BacktraceGenerator::slotProcessExited);
+ 
++    m_lldbDetached = false;
+     m_proc->start();
+     if (!m_proc->waitForStarted()) {
+         //we mustn't keep these around...
+@@ -117,15 +129,31 @@ bool BacktraceGenerator::start()
+ 
+ void BacktraceGenerator::slotReadInput()
+ {
++    if (m_lldbDetached) {
++        return;
++    }
++
+     // we do not know if the output array ends in the middle of an utf-8 sequence
+     m_output += m_proc->readAllStandardOutput();
+ 
+     int pos;
+-    while ((pos = m_output.indexOf('\n')) != -1) {
++    while ((pos = m_output.indexOf('\n')) != -1 && m_proc->state() == QProcess::Running) {
+         QString line = QString::fromLocal8Bit(m_output.constData(), pos + 1);
+         m_output.remove(0, pos + 1);
+ 
+         emit newLine(line);
++        line = line.simplified();
++        if (line.startsWith(QLatin1String("Process ")) && line.endsWith(QLatin1String(" detached"))) {
++            // Anything following this line doesn't interest us, and lldb has been known
++            // to turn into a zombie instead of exitting, thereby blocking us.
++            m_lldbDetached = true;
++            m_proc->terminate();
++            if (!m_proc->waitForFinished(500)) {
++                m_proc->kill();
++            }
++            slotProcessExited(0, QProcess::NormalExit);
++            return;
++        }
+     }
+ }
+ 
+diff --git a/src/backtracegenerator.h b/src/backtracegenerator.h
+index 924afb1af28e48dd1d7d27e5c689832d0f5b291a..b1977fefc365e12d436b36098a5459d6aab16edd 100644
+--- a/src/backtracegenerator.h
++++ b/src/backtracegenerator.h
+@@ -84,6 +84,7 @@ private:
+     State             m_state;
+     BacktraceParser * m_parser = nullptr;
+     QString           m_parsedBacktrace;
++    bool              m_lldbDetached;
+ 
+ #ifdef BACKTRACE_PARSER_DEBUG
+     BacktraceParser * m_debugParser = nullptr;
+diff --git a/src/backtracewidget.cpp b/src/backtracewidget.cpp
+index 6c4d73579d833009085b60a0783b2bf4a832f2ad..add7067755eb4095e03a2f7728c84bb42b04d7d9 100644
+--- a/src/backtracewidget.cpp
++++ b/src/backtracewidget.cpp
+@@ -205,6 +205,9 @@ void BacktraceWidget::loadData()
+ 
+         // scroll to crash
+         QTextCursor crashCursor = ui.m_backtraceEdit->document()->find(QStringLiteral("[KCrash Handler]"));
++        if (crashCursor.isNull()) {
++            crashCursor = ui.m_backtraceEdit->document()->find(QStringLiteral("KCrash::defaultCrashHandler"));
++        }
+         if (!crashCursor.isNull()) {
+             crashCursor.movePosition(QTextCursor::Up, QTextCursor::MoveAnchor);
+             ui.m_backtraceEdit->verticalScrollBar()->setValue(ui.m_backtraceEdit->cursorRect(crashCursor).top());
+diff --git a/src/bugzillaintegration/reportassistantdialog.cpp b/src/bugzillaintegration/reportassistantdialog.cpp
+index 8ef91b111608b8fc345ea0a80596ec03851a3e8e..de5174b8b7574ec4fe22924b2c7343163ef0271f 100644
+--- a/src/bugzillaintegration/reportassistantdialog.cpp
++++ b/src/bugzillaintegration/reportassistantdialog.cpp
+@@ -50,7 +50,7 @@ ReportAssistantDialog::ReportAssistantDialog(QWidget * parent) :
+ 
+     //Set window properties
+     setWindowTitle(i18nc("@title:window","Crash Reporting Assistant"));
+-    setWindowIcon(QIcon::fromTheme(QStringLiteral("tools-report-bug")));
++    setWindowIcon(QIcon::fromTheme(QStringLiteral("tools-report-bug"), windowIcon()));
+ 
+     connect(this, &ReportAssistantDialog::currentPageChanged, this, &ReportAssistantDialog::currentPageChanged_slot);
+     connect(button(QDialogButtonBox::Help), &QPushButton::clicked, this, &ReportAssistantDialog::showHelp);
+diff --git a/src/data/debuggers/external.mac/lldbrc b/src/data/debuggers/external.mac/lldbrc
+new file mode 100644
+index 0000000000000000000000000000000000000000..65d7945b9858755e77df2ebd48df0e830c91dfb0
+--- /dev/null
++++ b/src/data/debuggers/external.mac/lldbrc
+@@ -0,0 +1,8 @@
++[General]
++Name=lldb
++TryExec=lldb
++Backends=KCrash
++
++[KCrash]
++Exec=AppleTerminal lldb -p %pid
++Terminal=true
+diff --git a/src/data/debuggers/external/lldbrc b/src/data/debuggers/external/lldbrc
+new file mode 100644
+index 0000000000000000000000000000000000000000..65d7945b9858755e77df2ebd48df0e830c91dfb0
+--- /dev/null
++++ b/src/data/debuggers/external/lldbrc
+@@ -0,0 +1,8 @@
++[General]
++Name=lldb
++TryExec=lldb
++Backends=KCrash
++
++[KCrash]
++Exec=AppleTerminal lldb -p %pid
++Terminal=true
+diff --git a/src/data/debuggers/internal/lldbrc b/src/data/debuggers/internal/lldbrc
+new file mode 100644
+index 0000000000000000000000000000000000000000..0606f8f516e33e61f95f7e1b22acddf880acd00e
+--- /dev/null
++++ b/src/data/debuggers/internal/lldbrc
+@@ -0,0 +1,9 @@
++[General]
++Name=lldb
++TryExec=lldb
++Backends=KCrash
++
++[KCrash]
++Exec=lldb -p %pid
++ExecInputFile=%tempfile
++BatchCommands=set term-width 200\nthread info\nbt all\ndetach
+diff --git a/src/debugger.cpp b/src/debugger.cpp
+index 7e833f0ffde43fdcc79e36379803d8e2e6cfdbf2..9f86dfc9b07e9d2ab4555f6786fe6254edb9d69b 100644
+--- a/src/debugger.cpp
++++ b/src/debugger.cpp
+@@ -105,6 +105,15 @@ bool Debugger::runInTerminal() const
+     }
+ }
+ 
++QString Debugger::backendValueOfParameter(const QString &key) const
++{
++    if (!isValid() || !m_config->hasGroup(m_backend)) {
++        return QString();
++    } else {
++        return m_config->group(m_backend).readEntry(key, QString());
++    }
++}
++
+ //static
+ void Debugger::expandString(QString & str, ExpandStringUsage usage, const QString & tempFile)
+ {
+diff --git a/src/debugger.h b/src/debugger.h
+index 878911b5814cac4637953da0d7e4988518a60efb..485d89cc28aff3f997d0554e9363cc1446e30a1b 100644
+--- a/src/debugger.h
++++ b/src/debugger.h
+@@ -70,6 +70,8 @@ public:
+     /** If this is an external debugger, it returns whether it should be run in a terminal or not */
+     bool runInTerminal() const;
+ 
++    /** Returns the value of the arbitrary configuration parameter @param key, or an empty QString if @param key isn't defined */
++    QString backendValueOfParameter(const QString &key) const;
+ 
+     enum ExpandStringUsage {
+         ExpansionUsagePlainText,
+diff --git a/src/drkonqibackends.cpp b/src/drkonqibackends.cpp
+index c9746a991e9620e5caf7dab3c60bf5f50491ad58..7a30ca2189101d581696a5cb2e00a8babf48cc27 100644
+--- a/src/drkonqibackends.cpp
++++ b/src/drkonqibackends.cpp
+@@ -36,6 +36,10 @@
+ #include "backtracegenerator.h"
+ #include "drkonqi.h"
+ 
++#ifdef Q_OS_MACOS
++#include <AvailabilityMacros.h>
++#endif
++
+ AbstractDrKonqiBackend::~AbstractDrKonqiBackend()
+ {
+ }
+@@ -158,7 +162,9 @@ DebuggerManager *KCrashBackend::constructDebuggerManager()
+ {
+     QList<Debugger> internalDebuggers = Debugger::availableInternalDebuggers(QStringLiteral("KCrash"));
+     KConfigGroup config(KSharedConfig::openConfig(), "DrKonqi");
+-#ifndef Q_OS_WIN
++#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED > 1070
++    QString defaultDebuggerName = config.readEntry("Debugger", QStringLiteral("lldb"));
++#elif !defined(Q_OS_WIN)
+     QString defaultDebuggerName = config.readEntry("Debugger", QStringLiteral("gdb"));
+ #else
+     QString defaultDebuggerName = config.readEntry("Debugger", QStringLiteral("kdbgwin"));
+diff --git a/src/drkonqidialog.cpp b/src/drkonqidialog.cpp
+index bfda9a22107a50f0950b0f216936819f6589bc77..01e03c5d055be330e273329a442112123673066e 100644
+--- a/src/drkonqidialog.cpp
++++ b/src/drkonqidialog.cpp
+@@ -55,7 +55,7 @@ DrKonqiDialog::DrKonqiDialog(QWidget * parent) :
+ 
+     //Setting dialog title and icon
+     setWindowTitle(DrKonqi::crashedApplication()->name());
+-    setWindowIcon(QIcon::fromTheme(QStringLiteral("tools-report-bug")));
++    setWindowIcon(QIcon::fromTheme(QStringLiteral("tools-report-bug"), windowIcon()));
+ 
+     QVBoxLayout* l = new QVBoxLayout(this);
+     m_tabWidget = new QTabWidget(this);
+diff --git a/src/main.cpp b/src/main.cpp
+index 77197d414ff0ccffd40947d580e8efda6c0919c4..7c87ec5dcea49e690d8f5c669765ed37c5894b80 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -38,6 +38,9 @@
+ #if HAVE_X11
+ #include <QX11Info>
+ #endif
++#ifdef Q_OS_MACOS
++#include <KWindowSystem>
++#endif
+ 
+ #include "drkonqi.h"
+ #include "drkonqidialog.h"
+@@ -81,7 +84,7 @@ int main(int argc, char* argv[])
+                          QStringLiteral("gkiagia@users.sourceforge.net"));
+     aboutData.addAuthor(i18nc("@info:credit","A. L. Spehr"), QString(),
+                          QStringLiteral("spehr@kde.org"));
+-    qa.setWindowIcon(QIcon::fromTheme(QStringLiteral("tools-report-bug")));
++    qa.setWindowIcon(QIcon::fromTheme(QStringLiteral("tools-report-bug"), qa.windowIcon()));
+     qa.setDesktopFileName(QStringLiteral("org.kde.drkonqi"));
+ 
+     QCommandLineParser parser;
+@@ -152,6 +155,9 @@ int main(int argc, char* argv[])
+         DrKonqiDialog *w = new DrKonqiDialog();
+         QObject::connect(w, &DrKonqiDialog::rejected, &qa, &QApplication::quit);
+         w->show();
++#ifdef Q_OS_MACOS
++        KWindowSystem::forceActiveWindow(w->winId());
++#endif
+     };
+ 
+     bool restarted = parser.isSet(restartedOption);
+diff --git a/src/parser/CMakeLists.txt b/src/parser/CMakeLists.txt
+index d6c9baced7e1719915f3c863c8ee2601ae980bcd..9910585fd18b8dd2a274c9d53565c204f48130a2 100644
+--- a/src/parser/CMakeLists.txt
++++ b/src/parser/CMakeLists.txt
+@@ -3,6 +3,7 @@ set(BACKTRACEPARSER_SRCS
+     backtraceparsergdb.cpp
+     backtraceparserkdbgwin.cpp
+     backtraceparsernull.cpp
++    backtraceparserlldb.cpp
+ )
+ 
+ ecm_qt_declare_logging_category(BACKTRACEPARSER_SRCS HEADER drkonqi_parser_debug.h IDENTIFIER DRKONQI_PARSER_LOG CATEGORY_NAME org.kde.drkonqi.parser)
+diff --git a/src/parser/backtraceparser.cpp b/src/parser/backtraceparser.cpp
+index 94883ce126f4104799b0c19f4f938b25019185f1..9abd03c687c88831f516904918338d7ac5f5d710 100644
+--- a/src/parser/backtraceparser.cpp
++++ b/src/parser/backtraceparser.cpp
+@@ -18,6 +18,7 @@
+ #include "backtraceparser_p.h"
+ #include "backtraceparsergdb.h"
+ #include "backtraceparserkdbgwin.h"
++#include "backtraceparserlldb.h"
+ #include "backtraceparsernull.h"
+ #include "drkonqi_parser_debug.h"
+ #include <QRegExp>
+@@ -31,6 +32,8 @@ BacktraceParser *BacktraceParser::newParser(const QString & debuggerName, QObjec
+         return new BacktraceParserGdb(parent);
+     } else if (debuggerName == QLatin1String("kdbgwin")) {
+         return new BacktraceParserKdbgwin(parent);
++    } else if (debuggerName == QLatin1String("lldb")) {
++        return new BacktraceParserLldb(parent);
+     } else {
+         return new BacktraceParserNull(parent);
+     }
+@@ -198,6 +201,10 @@ static bool lineShouldBeIgnored(const BacktraceLine & line)
+         || line.functionName().startsWith(QLatin1String("*__GI_")) //glibc2.9 uses *__GI_ as prefix
+         || line.libraryName().contains(QStringLiteral("libpthread.so"))
+         || line.libraryName().contains(QStringLiteral("libglib-2.0.so"))
++#ifdef Q_OS_MACOS
++        || (line.libraryName().startsWith(QStringLiteral("libsystem_")) && line.libraryName().endsWith(QStringLiteral(".dylib")))
++        || line.libraryName().contains(QStringLiteral("Foundation`"))
++#endif
+         || line.libraryName().contains(QStringLiteral("ntdll.dll"))
+         || line.libraryName().contains(QStringLiteral("kernel32.dll"))
+         || line.functionName().contains(QStringLiteral("_tmain"))
+diff --git a/src/parser/backtraceparserlldb.cpp b/src/parser/backtraceparserlldb.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..2c72ca561bb12bef67fe4974c782b80c32dacb09
+--- /dev/null
++++ b/src/parser/backtraceparserlldb.cpp
+@@ -0,0 +1,57 @@
++/*
++    Copyright (C) 2014 René J.V. Bertin <rjvbertin@gmail.com>
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License along
++    with this program; if not, write to the Free Software Foundation, Inc.,
++    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++*/
++#include "backtraceparserlldb.h"
++#include "backtraceparser_p.h"
++
++//BEGIN BacktraceParserLldb
++
++class BacktraceLineLldb : public BacktraceLine
++{
++public:
++    BacktraceLineLldb(const QString & line);
++};
++
++BacktraceLineLldb::BacktraceLineLldb(const QString & line)
++    : BacktraceLine()
++{
++    d->m_line = line;
++    // For now we'll have faith that lldb provides useful information, and that it would
++    // be unwarranted to give it a rating of "MissingEverything".
++    d->m_rating = Good;
++}
++
++//END BacktraceLineLldb
++
++//BEGIN BacktraceParserLldb
++
++BacktraceParserLldb::BacktraceParserLldb(QObject *parent) : BacktraceParser(parent) {}
++
++BacktraceParserPrivate *BacktraceParserLldb::constructPrivate() const
++{
++    BacktraceParserPrivate *d = BacktraceParser::constructPrivate();
++    d->m_usefulness = MayBeUseful;
++    return d;
++}
++
++void BacktraceParserLldb::newLine(const QString & lineStr)
++{
++    d_ptr->m_linesList.append(BacktraceLineLldb(lineStr));
++}
++
++
++//END BacktraceParserLldb
+diff --git a/src/parser/backtraceparserlldb.h b/src/parser/backtraceparserlldb.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..ab07ec6ed05262860a26cd2e4e05b8f0b6c49cff
+--- /dev/null
++++ b/src/parser/backtraceparserlldb.h
+@@ -0,0 +1,37 @@
++/*
++    Copyright (C) 2014-2016 René J.V. Bertin <rjvbertin@gmail.com>
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License along
++    with this program; if not, write to the Free Software Foundation, Inc.,
++    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++*/
++#ifndef BACKTRACEPARSERLLDB_H
++#define BACKTRACEPARSERLLDB_H
++
++#include "backtraceparser.h"
++
++class BacktraceParserLldb : public BacktraceParser
++{
++    Q_OBJECT
++    Q_DECLARE_PRIVATE(BacktraceParser)
++public:
++    explicit BacktraceParserLldb(QObject *parent = 0);
++
++protected Q_SLOTS:
++    virtual void newLine(const QString & lineStr);
++
++protected:
++    virtual BacktraceParserPrivate *constructPrivate() const;
++};
++
++#endif // BACKTRACEPARSERLLDB_H
+diff --git a/src/tests/CMakeLists.txt b/src/tests/CMakeLists.txt
+index cb9d3919b1cbcdb0552249f4bf3e09342f429e87..83c0da92902dd7c4a141be8e221c932cf515396e 100644
+--- a/src/tests/CMakeLists.txt
++++ b/src/tests/CMakeLists.txt
+@@ -4,45 +4,47 @@ if(KF5XmlRpcClient_FOUND)
+     add_subdirectory(bugzillalibtest)
+ endif()
+ 
+-if(NOT RUBY_EXECTUABLE)
+-    find_program(RUBY_EXECUTABLE ruby)
+-endif()
+-if(RUBY_EXECUTABLE)
+-    execute_process(COMMAND ${RUBY_EXECUTABLE} -e "require 'atspi'"
+-        RESULT_VARIABLE RUBY_ATSPI)
+-    execute_process(COMMAND ${RUBY_EXECUTABLE} -e "require 'xmlrpc/server'"
+-        RESULT_VARIABLE RUBY_XMLRPC)
+-endif()
+-if(NOT GDB_EXECUTABLE)
+-    # Needed so drkonqi can actually trace something.
+-    find_program(GDB_EXECUTABLE gdb)
+-endif()
+-if(NOT XVFB_RUN_EXECTUABLE)
+-    find_program(XVFB_RUN_EXECTUABLE xvfb-run)
+-endif()
++if(NOT APPLE)
++    if(NOT RUBY_EXECTUABLE)
++        find_program(RUBY_EXECUTABLE ruby)
++    endif()
++    if(RUBY_EXECUTABLE)
++        execute_process(COMMAND ${RUBY_EXECUTABLE} -e "require 'atspi'"
++            RESULT_VARIABLE RUBY_ATSPI)
++        execute_process(COMMAND ${RUBY_EXECUTABLE} -e "require 'xmlrpc/server'"
++            RESULT_VARIABLE RUBY_XMLRPC)
++    endif()
++    if(NOT GDB_EXECUTABLE)
++        # Needed so drkonqi can actually trace something.
++        find_program(GDB_EXECUTABLE gdb)
++    endif()
++    if(NOT XVFB_RUN_EXECTUABLE)
++        find_program(XVFB_RUN_EXECTUABLE xvfb-run)
++    endif()
+ 
+-set(ATSPI_PATHS
+-    /usr/lib/at-spi2-core/ # debians
+-    /usr/lib/at-spi2/      # suses
+-)
+-if(NOT ATSPI_BUS_LAUNCHER_EXECUTABLE)
+-    find_program(ATSPI_BUS_LAUNCHER_EXECUTABLE
+-        NAMES at-spi-bus-launcher
+-        PATHS ${ATSPI_PATHS}
+-        DOC "AT-SPI accessibility dbus launcher")
+-endif()
+-if(NOT ATSPI_REGISTRYD_EXECUTABLE)
+-    find_program(ATSPI_REGISTRYD_EXECUTABLE
+-        NAMES at-spi2-registryd
+-        PATHS ${ATSPI_PATHS}
+-        DOC "AT-SPI accessibility registry daemon")
+-endif()
++    set(ATSPI_PATHS
++        /usr/lib/at-spi2-core/ # debians
++        /usr/lib/at-spi2/      # suses
++    )
++    if(NOT ATSPI_BUS_LAUNCHER_EXECUTABLE)
++        find_program(ATSPI_BUS_LAUNCHER_EXECUTABLE
++            NAMES at-spi-bus-launcher
++            PATHS ${ATSPI_PATHS}
++            DOC "AT-SPI accessibility dbus launcher")
++    endif()
++    if(NOT ATSPI_REGISTRYD_EXECUTABLE)
++        find_program(ATSPI_REGISTRYD_EXECUTABLE
++            NAMES at-spi2-registryd
++            PATHS ${ATSPI_PATHS}
++            DOC "AT-SPI accessibility registry daemon")
++    endif()
+ 
+-if(RUBY_EXECUTABLE AND XVFB_RUN_EXECTUABLE AND ATSPI_BUS_LAUNCHER_EXECUTABLE
+-   AND ATSPI_REGISTRYD_EXECUTABLE AND GDB_EXECUTABLE
+-   AND RUBY_ATSPI EQUAL 0 AND RUBY_XMLRPC EQUAL 0)
+-    set(WITH_DRKONI_INTEGRATION_TESTING TRUE)
+-    add_subdirectory(integration)
++    if(RUBY_EXECUTABLE AND XVFB_RUN_EXECTUABLE AND ATSPI_BUS_LAUNCHER_EXECUTABLE
++       AND ATSPI_REGISTRYD_EXECUTABLE AND GDB_EXECUTABLE
++       AND RUBY_ATSPI EQUAL 0 AND RUBY_XMLRPC EQUAL 0)
++        set(WITH_DRKONI_INTEGRATION_TESTING TRUE)
++        add_subdirectory(integration)
++    endif()
++    add_feature_info(DrKonqiIntegrationTesting WITH_DRKONI_INTEGRATION_TESTING
++        "Needs Ruby, functional atspi and xmlrpc gems, gdb, as well as xvfb-run.")
+ endif()
+-add_feature_info(DrKonqiIntegrationTesting WITH_DRKONI_INTEGRATION_TESTING
+-    "Needs Ruby, functional atspi and xmlrpc gems, gdb, as well as xvfb-run.")
