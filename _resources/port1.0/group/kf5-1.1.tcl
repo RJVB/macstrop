@@ -166,6 +166,13 @@ if {${kf5::includecounter} == 0} {
         if {![variant_isset nativeQSP]} {
             configure.cppflags-append \
                             -DQT_USE_EXTSTANDARDPATHS -DQT_EXTSTANDARDPATHS_ALT_DEFAULT=true
+            # experimental:
+            configure.args-append \
+                            -DAPPLE_FORCE_UNIX_DIRS=ON -DAPPLE_SUPPRESS_INSTALLDIRS_WARNING=OFF
+        } else {
+            # experimental:
+            configure.args-append \
+                            -DAPPLE_FORCE_UNIX_DIRS=OFF -DAPPLE_SUPPRESS_INSTALLDIRS_WARNING=ON
         }
     }
 
