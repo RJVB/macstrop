@@ -377,6 +377,10 @@ pre-configure {
             configure.args-append \
                                 -DCMAKE_AR=[string map {"clang++" "llvm-ar"} ${configure.cxx}]
         }
+        if {[string first "DCMAKE_NM=" ${configure.args}] eq -1} {
+            configure.args-append \
+                                -DCMAKE_NM=[string map {"clang++" "llvm-nm"} ${configure.cxx}]
+        }
         if {[string first "DCMAKE_RANLIB=" ${configure.args}] eq -1} {
             configure.args-append \
                                 -DCMAKE_RANLIB=[string map {"clang++" "llvm-ranlib"} ${configure.cxx}]
@@ -385,6 +389,10 @@ pre-configure {
         if {[string first "DCMAKE_AR=" ${configure.args}] eq -1} {
             configure.args-append \
                                 -DCMAKE_AR=[string map {"clang" "llvm-ar"} ${configure.cc}]
+        }
+        if {[string first "DCMAKE_NM=" ${configure.args}] eq -1} {
+            configure.args-append \
+                                -DCMAKE_NM=[string map {"clang" "llvm-nm"} ${configure.cc}]
         }
         if {[string first "DCMAKE_RANLIB=" ${configure.args}] eq -1} {
             configure.args-append \
