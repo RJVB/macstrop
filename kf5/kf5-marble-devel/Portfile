@@ -1,0 +1,149 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+# Copyright (c) 2015, 2016 R.J.V. Bertin
+
+PortSystem          1.0
+
+set kf5.project     marble
+set kf5.virtualPath applications
+set kf5.category    development
+PortGroup           kf5 1.1
+PortGroup           active_variants 1.1
+
+maintainers         gmail.com:rjvbertin openmaintainer
+
+installs_libs       yes
+
+conflicts           ${name}
+name                ${name}-devel
+
+description         Virtual Globe, KF5 version.
+long_description    KDE virtual globe and world atlas. This is the KF5 version.
+
+fetch.type          git
+git.url             git://anongit.kde.org/marble
+# v18.07.80-40-g1da9ca8f2
+git.branch          1da9ca8f2ecf666fd0b37d900dbc99d8b3dbaecb
+version             18.07.80.40
+worksrcdir          ${kf5.project}-git
+distname            ${kf5.project}-git
+
+if {![catch {set result [active_variants marble kf5compat ""]}]} {
+    if {!${result}} {
+        conflicts-append \
+                    marble
+    }
+}
+
+kf5.depends_qt5_components \
+                    qtsvg qtdeclarative qtlocation qtserialport
+
+kf5.depends_build_frameworks \
+                    kdoctools
+kf5.depends_frameworks \
+                    kauth kconfig kcoreaddons kcrash kdoctools ki18n kio \
+                    knewstuff kpackage kparts krunner kservice \
+                    ktextwidgets kwallet plasma-framework
+
+depends_lib-append  port:shapelib \
+                    port:phonon-qt5 \
+                    port:zlib \
+                    port:protobuf-cpp \
+                    port:shared-mime-info
+
+variant stock description {do a stock build; purely experimental and for testing purposes} {}
+
+variant gps description {include support for communicating with a GPS} {}
+if {[variant_isset gps]} {
+    platform darwin {
+        depends_lib-append \
+                    port:gpsd
+    }
+    configure.args-append \
+                    -DCMAKE_DISABLE_FIND_PACKAGE_libgps=OFF
+} else {
+    configure.args-append \
+                    -DCMAKE_DISABLE_FIND_PACKAGE_libgps=ON
+}
+
+variant libs_only description {build only the libraries} {}
+
+variant qtwebengine description {use qtwebengine} {}
+if {[variant_isset qtwebengine]} {
+    kf5.depends_qt5_components \
+                    qtwebengine qtwebchannel
+    configure.args-append \
+                    -DCMAKE_DISABLE_FIND_PACKAGE_Qt5WebEngineWidgets=OFF \
+                    -DCMAKE_DISABLE_FIND_PACKAGE_Qt5WebEngine=OFF
+} else {
+    configure.args-append \
+                    -DCMAKE_DISABLE_FIND_PACKAGE_Qt5WebEngineWidgets=ON \
+                    -DCMAKE_DISABLE_FIND_PACKAGE_Qt5WebEngine=ON
+}
+
+patch.pre_args      -Np1
+
+if {![variant_isset stock]} {
+    patchfiles-append \
+                    patch-build-for-macports-git.diff
+}
+
+pre-configure {
+    if {([string first "-Ofast" ${configure.optflags}] >= 0) || ([string first "-Ofast" ${configure.cxxflags}] >= 0)} {
+        ui_error "Marble won't run when built with -Ofast"
+        return -code error "Incompatible optimisation level"
+    }
+}
+
+if {![variant_isset stock]} {
+    if {[variant_isset nativeQSP]} {
+        configure.args-append \
+                    -DAPPLE_STANDALONE_BUNDLE:BOOL=ON
+    } else {
+        configure.args-append \
+                    -DAPPLE_STANDALONE_BUNDLE:BOOL=OFF
+    }
+}
+
+configure.args-append \
+                    -DBUILD_MARBLE_TESTS=OFF \
+                    -DBUILD_WITH_DBUS=ON \
+                    -DWITH_DESIGNER_PLUGIN=OFF \
+                    -DBUILD_MARBLE_EXAMPLES=OFF
+
+if {[variant_isset libs_only]} {
+    configure.args-append \
+                    -DBUILD_MARBLE_TOOLS=OFF \
+                    -DBUILD_MARBLE_APPS=OFF
+} else {
+    configure.args-append \
+                    -DBUILD_MARBLE_TOOLS=ON \
+                    -DBUILD_MARBLE_APPS=ON
+}
+
+kf5.allow_apidocs_generation no
+
+ifplatform darwin {
+    post-destroot {
+        if {![variant_isset nativeQSP]} {
+            if {![variant_isset libs_only]} {
+                file rename ${destroot}${prefix}/bin/marble-qt ${destroot}${prefix}/bin/marble-qt5
+                kf5.add_app_wrapper marble5 marble
+            }
+            # there appears to be no ABI change, for now:
+            ln -s libmarblewidget-qt5.28.dylib ${destroot}${prefix}/lib/libmarblewidget-qt5.27.dylib
+        } else {
+            xinstall -m 755 -d ${destroot}${qt_apps_dir}
+            file rename ${destroot}${prefix}/Marble.app ${destroot}${qt_apps_dir}/Marble.app
+        }
+    }
+} else {
+    depends_build-append \
+                    port:protobuf-cpp-dev
+    post-destroot {
+        if {![variant_isset libs_only]} {
+            kf5.add_app_wrapper marble5 marble
+        }
+        # there appears to be no ABI change, for now:
+        ln -s libmarblewidget-qt5.so.28 ${destroot}${prefix}/lib/libmarblewidget-qt5.so.27
+    }
+}
