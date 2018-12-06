@@ -10,28 +10,52 @@ fi
 
 echo "> `du -hs ${PWD}/.git/`"
 
-# use a bit of a hack to determine if our stamp exists and is the newest entry in .git
-# (using grep to filter out the . and .. entries)
-LASTFILE="`ls -1tra ./.git/ | grep -v '^\.[\.]*$' | tail -1`"
-if [ "${LASTFILE}" = ".eradicated" ] ;then
-	echo "Nothing changed since last `basename $0` - skipping"
-	exit 0
+if [ -e ./.git/.dont-eradicate ] ;then
+	echo ".git/.dont-eradicate exists - repository ignored by `basename $0`"
+else
+	# use a bit of a hack to determine if our stamp exists and is the newest entry in .git
+	# (using grep to filter out the . and .. entries)
+	#LASTFILE="`ls -1tra ./.git/objects | grep -v '^\.[\.]*$' | tail -1`"
+	#if [ "${LASTFILE}" = ".eradicated" ] ;then
+	if [ ./.git/.eradicated -nt ./.git/objects ] ;then
+		echo "Nothing changed since last `basename $0` - skipping"
+	else
+
+		gfilter () {
+			echo git filter-branch -f  --index-filter "git rm --force --cached --ignore-unmatch \"$1\"" -- --all
+			git filter-branch -f  --index-filter "git rm --force --cached --ignore-unmatch \"$1\"" -- --all
+		}
+
+		gc () {
+		    git reflog expire --expire=now --all && \
+		    git gc --aggressive --prune=now
+		}
+
+		for f in $@ ;do
+			gfilter "$f"
+		done
+
+		#rm -Rf .git/refs/original && \
+		#    git reflog expire --expire=now --all && \
+		#    git gc --aggressive && git prune
+		rm -Rf .git/refs/original
+		gc
+		# process any submodules. There should be a more
+		# elegant way to obtain the list of submodule dirs...
+		submodules="`git submodule status | cut -d ' ' -f 3`"
+		for f in $submodules ;do
+			if [ -d $f ] ;then
+				echo "submodule $f"
+				(cd $f ; gc)
+			fi
+		done
+
+		echo "< `du -hs .git/`" | tee -a .git/.eradicated
+		sleep 1
+		date > .git/.eradicated
+	fi
 fi
 
-gfilter () {
-	echo git filter-branch -f  --index-filter "git rm --force --cached --ignore-unmatch \"$1\"" -- --all
-	git filter-branch -f  --index-filter "git rm --force --cached --ignore-unmatch \"$1\"" -- --all
-}
-
-for f in $@ ;do
-	gfilter "$f"
-done
-
-rm -Rf .git/refs/original && \
-    git reflog expire --expire=now --all && \
-    git gc --aggressive && \
-    git prune
-
-date > .git/.eradicated
-sync ; sleep 1 ; sync ; sleep 1
-echo "< `du -hs .git/`" | tee -a .git/.eradicated
+if [ -x /opt/local/bin/afsctool ] ;then
+	/opt/local/bin/afsctool -cfvv -8 -J4 -L .
+fi
