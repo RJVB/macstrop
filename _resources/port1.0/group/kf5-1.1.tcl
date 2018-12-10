@@ -772,6 +772,9 @@ if {${kf5::includecounter} == 0} {
         foreach df [glob -nocomplain ${destroot}${prefix}/share/applications/*${bundlename}*.desktop] {
             reinplace -q "s|Exec=${bundlename}|Exec=${prefix}/bin/${wrappername}|g" ${df}
         }
+        foreach df [glob -nocomplain ${destroot}${prefix}/share/metainfo/*.${bundlename}.appdata.xml] {
+            reinplace "s|<binary>${bundlename}</binary>|<binary>${prefix}/bin/${wrappername}</binary>|g" ${df}
+        }
     }
 
     # procedure to record a conflict with a KDE4 port if kde4compat isn't active. This procedure
