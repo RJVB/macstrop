@@ -98,14 +98,20 @@ configure.pre_args-append       "CONFIG+=release"
 default destroot.destdir        "INSTALL_ROOT=${destroot}"
 
 pre-configure {
+    #
+    # -spec specifies build configuration (compiler, 32-bit/64-bit, etc.)
+    #
     if {[tbool qt5.add_spec]} {
-        if {[variant_exists universal] && [variant_isset universal]} {
-            set merger_configure_args(i386) \
-                                    "CONFIG+=\"x86\" -spec ${qt_qmake_spec_32}"
-            set merger_configure_args(x86_64) \
-                                        "-spec ${qt_qmake_spec_64}"
-        } elseif {${qt_qmake_spec} ne ""} {
-            configure.args-append   -spec ${qt_qmake_spec}
+        if {[vercmp ${qt5.version} 5.9] >=0 } {
+            configure.args-append "${qt5.spec_cmd}${qt_qmake_spec}"
+        } else {
+            if {[variant_exists universal] && [variant_isset universal]} {
+                global merger_configure_args
+                lappend merger_configure_args(i386)   {*}${qt5.spec_cmd}${qt_qmake_spec_32}
+                lappend merger_configure_args(x86_64) {*}${qt5.spec_cmd}${qt_qmake_spec_64}
+            } else {
+                configure.args-append "${qt5.spec_cmd}${qt_qmake_spec}"
+            }
         }
     }
 
