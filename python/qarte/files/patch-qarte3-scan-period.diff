@@ -1,26 +1,6 @@
-=== modified file 'data.py'
---- data.py.old	2017-02-08 08:52:59 +0000
-+++ data.py	2017-02-22 15:20:24 +0000
-@@ -22,6 +22,7 @@
-                 'load_pages': [True, False],
-                 'videos_folder': None, 
-                 'music_folder': None,
-+                'day_range': 14,
-                 'add_date': False,
-                 'pitch_plus': True,
-                 'pitch_plus_unique': 1, 
-@@ -60,6 +61,7 @@
-            "http://www.arte.tv/guide/fr/plus7/toutes-les-videos?date=j-11&country=FR",
-            "http://www.arte.tv/guide/fr/plus7/toutes-les-videos?date=j-12&country=FR",
-            "http://www.arte.tv/guide/fr/plus7/toutes-les-videos?date=j-13&country=FR"]
-+ARTE_TV_BASE_URL = "http://www.arte.tv/guide/fr/plus7/toutes-les-videos"
- 
- DAYS_FR = [u'Dimanche', u'Lundi', u'Mardi', u'Mercredi', u'Jeudi',
-                     u'Vendredi', u'Samedi', u'Tous les jours']
-
 === modified file 'artetv.py'
---- artetv.py.old	2017-02-08 07:42:03 +0000
-+++ artetv.py	2017-02-22 15:22:59 +0000
+--- old/artetv.py	2018-08-16 07:04:44 +0000
++++ new/artetv.py	2018-12-18 15:16:01 +0000
 @@ -32,7 +32,7 @@
  from PyQt5.QtGui import QFont, QTextCharFormat
  from PyQt5.QtCore import QObject, QCoreApplication, pyqtSignal, QLocale, QSize
@@ -30,63 +10,67 @@
  from tvdownloadingconfig import TvDownloadingConfig
  from loader import Loader
  from gui.warning import WarningBox
-@@ -96,7 +96,7 @@
-         lgg.info("Read video's data")
-         self.videos = self.read_video_data()
-         if len(self.indexes) != len(self.videos):
--            # File corrupted
-+            # File corrupted or not there
-             self.indexes = ["0"]
-             self.videos = []
+@@ -87,7 +87,7 @@
+         """
+         self.load_summaries_index()
+         links = self.get_site_pages()
+-        self.parser = Parser(ARTE_TV.replace('fr', self.lang))
++        self.parser = Parser(ARTE_TV.replace('fr', self.lang), self.core)
+         Thread(target=self.run_parser).start()
  
-@@ -387,7 +387,7 @@
-     def save_videos_data(self):
-         lgg.info('Save tv guide data')
-         txt = ";".join(self.indexes)
--        path = "%s_%s" %(self.core.workspace['tv_index'], self.lang)
-+        path = "%s_%s_%s" %(self.core.workspace['tv_index'], self.lang, self.core.cfg['day_range'])
-         try:
-             with open(path, 'w') as outf:
-                 outf.write(txt)
-@@ -405,7 +405,7 @@
-             lgg.warning("Reason: %s" % why)
+     def run_parser(self):
+@@ -99,7 +99,7 @@
+         videos = self.parser.videos
+         self.videos = [TVItem(item) for item in videos]
+         self.indexes = self.parser.indexes
+-        for i in range(10):
++        for i in range(self.core.cfg['day_range']):
+             vids, idxs = self.parser.get_next_page()
+             self.sort_videos(vids, idxs)
  
-     def read_video_indexes(self):
--        path = "%s_%s" %(self.core.workspace['tv_index'], self.lang)
-+        path = "%s_%s_%s" %(self.core.workspace['tv_index'], self.lang, self.core.cfg['day_range'])
-         if os.path.isfile(path):
-             with open(path, 'r') as inf:
-                 return inf.readline().split(';')
-@@ -428,10 +428,14 @@
+@@ -420,6 +420,10 @@
          """Returns the list of the arte TV Guide web pages.
  
          """
-+        atv = [ARTE_TV_BASE_URL + "?sort=recent&country=FR"]
-+        days = self.core.cfg['day_range']
-+        for i in range(1,days):
-+            atv.append(ARTE_TV_BASE_URL + "?date=j-%s&country=FR" %i)
++        #atv = [ARTE_TV_BASE_URL + "?sort=recent&country=FR"]
++        #days = self.core.cfg['day_range']
++        #for i in range(1,days):
++            #atv.append(ARTE_TV_BASE_URL + "?date=j-%s&country=FR" %i)
          if self.lang == 'fr':
--            return ARTE_TV
-+            return atv
+             return ARTE_TV
  
--        return [l.replace('/fr/', '/de/').replace('FR', 'DE') for l in ARTE_TV]
-+        return [l.replace('/fr/', '/de/').replace('FR', 'DE') for l in atv]
+@@ -857,11 +861,13 @@
+             lgg.info("Thumbnail saved")
  
-     def clean_thumbnails(self):
-         """Remove old thumbnails from the folder 'plusPreviews'.
-@@ -843,6 +847,8 @@
-             content = self.fetch_page(page)
-             if content:
-                 self.feed(content)
+ class Parser:
+-    def __init__(self, url):
++    def __init__(self, url, core):
+         self.url = url
++        self.core = core
+         self.videos = []
+         self.indexes = []
+-        diff = timedelta(days=10)
++        # RJVB: this would be the new "day_range" ?
++        diff = timedelta(days=self.core.cfg['day_range'])
+         last = date.today() - diff
+         #now = last.strftime("%y-%m-%d")
+         now = last.strftime("%Y%m%d")
+@@ -885,6 +891,10 @@
+                         if video:
+                             self.videos.insert(0, video)
+                             self.indexes.insert(0, video['id'])
++                else:
++                    lgg.warning(page + " returned no content")
 +            else:
-+                lgg.warning(page + " returned no content")
++                lgg.warning(page + " returned no json content")
  
-             self.first = False
  
+     def get_day_before(self, start):
+
 === modified file 'core.py'
---- core.py.old	2017-02-09 08:23:48 +0000
-+++ core.py	2017-02-22 16:24:40 +0000
-@@ -105,8 +105,11 @@
+--- old/core.py	2018-07-30 10:52:52 +0000
++++ new/core.py	2018-12-18 09:23:13 +0000
+@@ -110,8 +110,11 @@
  
          cfg['version'] = VERSION
          cfg['live_quality'] = 'HTTP_EQ_1'
@@ -100,9 +84,30 @@
  
      def create_config(self):
 
+=== modified file 'data.py'
+--- old/data.py	2018-09-21 06:18:57 +0000
++++ new/data.py	2018-12-18 09:32:52 +0000
+@@ -22,6 +22,7 @@
+                 'load_pages': [True, False],
+                 'videos_folder': None, 
+                 'music_folder': None,
++                'day_range': 14,
+                 'add_date': False,
+                 'pitch_plus': True,
+                 'pitch_plus_unique': 1, 
+@@ -47,6 +48,8 @@
+                 'filter_keys': []}
+ 
+ ARTE_TV = "https://www.arte.tv/fr/guide/DAY/"
++# obsolete:
++ARTE_TV_BASE_URL = "http://www.arte.tv/guide/fr/plus7/toutes-les-videos"
+ 
+ DAYS_FR = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi',
+                     'Vendredi', 'Samedi', 'Tous les jours']
+
 === modified file 'settings.py'
---- settings.py.old	2017-02-08 09:01:11 +0000
-+++ settings.py	2017-02-22 16:29:23 +0000
+--- old/settings.py	2018-05-16 06:10:46 +0000
++++ new/settings.py	2018-12-18 09:23:13 +0000
 @@ -20,7 +20,7 @@
  from PyQt5.QtWidgets import (QDialog, QGridLayout, QVBoxLayout, QHBoxLayout,
                               QLabel, QComboBox, QCheckBox, QSpacerItem,
@@ -110,9 +115,9 @@
 -                             QFrame, QFileDialog, )
 +                             QFrame, QFileDialog, QSpinBox, )
  
+ from data import VERSION_STR
  
- class Settings(QDialog):
-@@ -76,6 +76,16 @@
+@@ -72,6 +72,16 @@
          self.warning_lbl.hide()
          hl5.addWidget(self.warning_lbl)
          vl.addLayout(hl5)
@@ -129,7 +134,7 @@
          hl15 = QHBoxLayout()
          self.add_date_chb = QCheckBox(self)
          self.add_date_chb.setText(_("Add the date to the file name"))
-@@ -175,6 +185,7 @@
+@@ -169,6 +179,7 @@
              self.summary_chb.setEnabled(True)
          if cfg['pitch_live']:
              self.summary1_chb.setEnabled(True)
@@ -137,7 +142,7 @@
  
          self.folder_led.editingFinished.connect(self.on_videos_fld_changed)
          self.folder1_led.editingFinished.connect(self.on_music_fld_changed)
-@@ -256,6 +267,7 @@
+@@ -255,6 +266,7 @@
          self.cfg['pitch_live'] = self.summary1_chb.isChecked()
          self.cfg['pitch_live_unique'] = self.summary1_cmb.currentIndex()
          self.cfg['copythumb_live'] = self.copy_thumbs1_chb.isChecked()
