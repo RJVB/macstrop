@@ -274,6 +274,9 @@ global qt5_is_concurrent
 # }
 set qt5_is_concurrent       1
 
+# NB: these have all already been set by the mainstream Qt5 PG (qt5-mac-1.0.tcl)
+# that port family's layout is different so we have to reset everything here.
+# NB: That means we have to keep the variable list in sync!
 set qt_dir                  ${prefix}/libexec/${qt_name}
 set qt_dir_rel              libexec/${qt_name}
 set qt_includes_dir         ${prefix}/include/${qt_name}
