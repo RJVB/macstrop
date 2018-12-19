@@ -58,7 +58,7 @@
 # define all available port:qt5* versions
 global available_qt5_versions
 set available_qt5_versions {
-    qt5  {qt5-kde  5.8}
+    qt5  {qt5-kde  5.9}
     qt58 {qt58-kde 5.8}
     qt56 {qt56-kde 5.6}
     qt54 {qt54-kde 5.4}
@@ -124,24 +124,6 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10
     return
 }
 
-# # this shouldn't be necessary (already done by qt5-1.0.tcl and impossible here if we return immediately after loading that file):
-# if {![tbool qt5.using_kde]} {
-#     # we're back from `PortGroup qt5 1.0`, add some finishing touches and then return
-#     if {[info exists qt5.prefer_kde]} {
-#         # this is a port that prefers port:qt5-kde and thus expects most of Qt5 to be installed
-#         # through that single port rather than enumerate all components it depends on.
-#         depends_lib-append  port:qt5
-#     }
-#     if {![info exists qt_cmake_defines]} {
-#         # the Qt5 PortGroups used to define a variable that is no longer provided by qt5-mac-1.0.tcl;
-#         # set it to an empty value so that it can be referenced without side-effects.
-#         global qt_cmake_defines
-#         set qt_cmake_defines ""
-#     }
-#     # we're done now.
-#     return
-# }
-
 ######### checks that should never trigger #########
 if {[file exists ${prefix}/libexec/qt5/plugins/platforms/libqcocoa.dylib]
     && [file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
@@ -180,6 +162,9 @@ namespace eval qt5 {
     # our directory:
     variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
 }
+
+options qt5.min_version
+default qt5.min_version 5.0
 
 # Ports that want to provide a universal variant need to use the muniversal PortGroup explicitly.
 universal_variant no
@@ -266,6 +251,10 @@ if {[info exists qt5::rootname]} {
     global qt_lupdate_cmd
 # location of a simple, dedicated install registry:
     global qt_install_registry
+# standard PKGCONFIG path
+    global qt_pkg_config_dir
+# data used by qmake
+    global qt_host_data_dir
 
 global qt5_is_concurrent
 # check if we're building qt5 itself. We're aiming to phase out exclusive installs, but we
@@ -317,6 +306,38 @@ if {${os.platform} eq "darwin"} {
 }
 set qt_examples_dir         ${qt_apps_dir}/examples
 set qt_demos_dir            ${qt_apps_dir}/demos
+
+set qt_pkg_config_dir       ${prefix}/lib/pkgconfig
+set qt_host_data_dir        ${prefix}/share/${qt_name}
+
+# ui_debug "qt_dir=${qt_dir}"
+# ui_debug "qt_dir_rel=${qt_dir_rel}"
+# ui_debug "qt_includes_dir=${qt_includes_dir}"
+# ui_debug "qt_libs_dir=${qt_libs_dir}"
+# ui_debug "qt_frameworks_dir=${qt_frameworks_dir}"
+# ui_debug "qt_frameworks_dir_rel=${qt_frameworks_dir_rel}"
+# ui_debug "qt_bins_dir=${qt_bins_dir}"
+# ui_debug "qt_cmake_module_dir=${qt_cmake_module_dir}"
+# ui_debug "qt_archdata_dir=${qt_archdata_dir}"
+# ui_debug "qt_sysconf_dir=${qt_sysconf_dir}"
+# ui_debug "qt_data_dir=${qt_data_dir}"
+# ui_debug "qt_plugins_dir=${qt_plugins_dir}"
+# ui_debug "qt_mkspecs_dir=${qt_mkspecs_dir}"
+# ui_debug "qt_imports_dir=${qt_imports_dir}"
+# ui_debug "qt_qml_dir=${qt_qml_dir}"
+# ui_debug "qt_translations_dir=${qt_translations_dir}"
+# ui_debug "qt_tests_dir=${qt_tests_dir}"
+# ui_debug "qt_docs_dir=${qt_docs_dir}"
+# ui_debug "qt_qmake_cmd=${qt_qmake_cmd}"
+# ui_debug "qt_moc_cmd=${qt_moc_cmd}"
+# ui_debug "qt_uic_cmd=${qt_uic_cmd}"
+# ui_debug "qt_lrelease_cmd=${qt_lrelease_cmd}"
+# ui_debug "qt_lupdate_cmd=${qt_lupdate_cmd}"
+# ui_debug "qt_apps_dir=${qt_apps_dir}"
+# ui_debug "qt_examples_dir=${qt_examples_dir}"
+# ui_debug "qt_demos_dir=${qt_demos_dir}"
+# ui_debug "qt_pkg_config_dir=${qt_pkg_config_dir}"
+# ui_debug "qt_host_data_dir=${qt_host_data_dir}"
 
 set qt_install_registry     ${qt_dir}/registry
 
@@ -431,14 +452,6 @@ default qt_qmake_spec           {[qt5::get_default_spec]}
 #     ui_warn "Port: ${subport}"
 # }
 
-# standard PKGCONFIG path
-global qt_pkg_config_dir
-set qt_pkg_config_dir   ${prefix}/lib/pkgconfig
-
-# data used by qmake
-global qt_host_data_dir
-set qt_host_data_dir   ${prefix}/share/${qt_name} 
-
 # standard cmake info for Qt5
 global qt_cmake_defines
 set qt_cmake_defines    \
@@ -477,6 +490,19 @@ proc qt5.active_version {} {
     } else {
         return 0.0.0
     }
+}
+
+proc qt5.active_branch {} {
+    global prefix
+    namespace upvar ::qt5 active_branch ab
+    if {[info exists ab]} {
+        return ${ab}
+    }
+    set ab [join [lrange [split [qt5.active_version] .] 0 1] .]
+    if {${ab} == 0.0} {
+        set ab 5
+    }
+    return ${ab}
 }
 
 ## NB
@@ -614,59 +640,45 @@ if {![info exists building_qt5]} {
     }
 }
 
-# standard configure environment, when not building qt5
+# standard configure, build and destroot environment, when not building qt5
 if {![info exists building_qt5]} {
-#     configure.env-append \
-#         QTDIR=${qt_dir} \
-#         QMAKE=${qt_qmake_cmd} \
-#         MOC=${qt_moc_cmd}
-#
-#     if { ![option universal_variant] || ![variant_isset universal] } {
-#         if {${qt_qmake_spec} ne ""} {
-#             configure.env-append QMAKESPEC=${qt_qmake_spec}
-#         }
-#     } else {
-#         set merger_configure_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
-#         set merger_configure_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
-#         set merger_arch_flag             yes
-#         set merger_arch_compiler         yes
-#     }
-
     # make sure the Qt binaries' directory is in the path, if it is
     # not the current prefix
 
     if {${qt_dir} ne ${prefix}} {
-        configure.env-append PATH=${qt_dir}/bin:$env(PATH)
+        configure.env-append    PATH=${qt_dir}/bin:$env(PATH)
+        build.env-append        PATH=${qt_dir}/bin:$env(PATH)
+        destroot.env-append     PATH=${qt_dir}/bin:$env(PATH)
     }
 } else {
     configure.env-append QMAKE_NO_DEFAULTS=""
 }
 
-# standard build environment, when not building qt5
-if {![info exists building_qt5]} {
-#     build.env-append \
-#         QTDIR=${qt_dir} \
-#         QMAKE=${qt_qmake_cmd} \
-#         MOC=${qt_moc_cmd}
+# # standard build environment, when not building qt5
+# if {![info exists building_qt5]} {
+# #     build.env-append \
+# #         QTDIR=${qt_dir} \
+# #         QMAKE=${qt_qmake_cmd} \
+# #         MOC=${qt_moc_cmd}
+# #
+# #     if { ![option universal_variant] || ![variant_isset universal] } {
+# #         if {${qt_qmake_spec} ne ""} {
+# #             build.env-append QMAKESPEC=${qt_qmake_spec}
+# #         }
+# #     } else {
+# #         set merger_build_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
+# #         set merger_build_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
+# #         set merger_arch_flag             yes
+# #         set merger_arch_compiler         yes
+# #     }
 #
-#     if { ![option universal_variant] || ![variant_isset universal] } {
-#         if {${qt_qmake_spec} ne ""} {
-#             build.env-append QMAKESPEC=${qt_qmake_spec}
-#         }
-#     } else {
-#         set merger_build_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
-#         set merger_build_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
-#         set merger_arch_flag             yes
-#         set merger_arch_compiler         yes
+#     # make sure the Qt binaries' directory is in the path, if it is
+#     # not the current prefix
+#
+#     if {${qt_dir} ne ${prefix}} {
+#         build.env-append    PATH=${qt_dir}/bin:$env(PATH)
 #     }
-
-    # make sure the Qt binaries' directory is in the path, if it is
-    # not the current prefix
-
-    if {${qt_dir} ne ${prefix}} {
-        build.env-append    PATH=${qt_dir}/bin:$env(PATH)
-    }
-}
+# }
 
 # use PKGCONFIG for Qt discovery in configure scripts
 depends_build-append    port:pkgconfig
@@ -683,29 +695,29 @@ pre-destroot {
     }
 }
 
-# standard destroot environment, when not building qt5
-if {![info exists building_qt5]} {
-#     destroot.env-append \
-#         QTDIR=${qt_dir} \
-#         QMAKE=${qt_qmake_cmd} \
-#         MOC=${qt_moc_cmd}
+# # standard destroot environment, when not building qt5
+# if {![info exists building_qt5]} {
+# #     destroot.env-append \
+# #         QTDIR=${qt_dir} \
+# #         QMAKE=${qt_qmake_cmd} \
+# #         MOC=${qt_moc_cmd}
+# #
+# #     if { ![option universal_variant] || ![variant_isset universal] } {
+# #         if {${qt_qmake_spec} ne ""} {
+# #             build.env-append QMAKESPEC=${qt_qmake_spec}
+# #         }
+# #     } else {
+# #         set destroot_build_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
+# #         set destroot_build_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
+# #     }
 #
-#     if { ![option universal_variant] || ![variant_isset universal] } {
-#         if {${qt_qmake_spec} ne ""} {
-#             build.env-append QMAKESPEC=${qt_qmake_spec}
-#         }
-#     } else {
-#         set destroot_build_env(i386)   "QMAKESPEC=${qt_qmake_spec_32}"
-#         set destroot_build_env(x86_64) "QMAKESPEC=${qt_qmake_spec_64}"
+#     # make sure the Qt binaries' directory is in the path, if it is
+#     # not the current prefix
+#
+#     if {${qt_dir} ne ${prefix}} {
+#         destroot.env-append PATH=${qt_dir}/bin:$env(PATH)
 #     }
-
-    # make sure the Qt binaries' directory is in the path, if it is
-    # not the current prefix
-
-    if {${qt_dir} ne ${prefix}} {
-        destroot.env-append PATH=${qt_dir}/bin:$env(PATH)
-    }
-}
+# }
 
 # provide a variant to prune provided translations
 # make this optional so the locale_select portgroup doesn't need to be made public/official
@@ -854,7 +866,7 @@ set qt5::component2pathspec(webkit)     $qt5::component2pathspec(qtwebkit)
 # into the appropriate subports for the Qt5 flavour installed
 # e.g. qt5.depends_component qtbase qtsvg qtdeclarative
 proc qt5::depends_component_p {deptype args} {
-    global qt5::component2pathspec qt5.using_kde os.major qt5.kde_stubports version qt5::pprefix
+    global qt5::component2pathspec qt5.using_kde os.major qt5.kde_stubports version qt5::pprefix qt5.version qt5.min_version
     # select the Qt5 port prefix, depending on which Qt5 port is installed
     if {![info exists qt5.kde_stubports]} {
         # FIXME!
@@ -862,19 +874,38 @@ proc qt5::depends_component_p {deptype args} {
         return -code error "Unsupported qt5.depends_component usage"
     }
     set is_qt5kde [tbool qt5.using_kde]
-    if {!${is_qt5kde}} {
-        switch ${os.major} {
-            "11" {
-                set qt5::pprefix    "qt55"
-            }
-            default {
-                set qt5::pprefix    "qt5"
+    platform darwin {
+        if {!${is_qt5kde}} {
+            ui_warn "Emulating port:qt5's OS/version matcher - we shouldn't be here!"
+            switch ${os.major} {
+                "10" {
+                    set qt5::pprefix    "qt55"
+                }
+                "11" {
+                    set qt5::pprefix    "qt56"
+                }
+                "12" {
+                    set qt5::pprefix    "qt57"
+                }
+                "13" {
+                    set qt5::pprefix    "qt58"
+                }
+                "14" {
+                    set qt5::pprefix    "qt59"
+                }
+                "15" {
+                    set qt5::pprefix    "qt511"
+                }
+                default {
+                    set qt5::pprefix    "qt5"
+                }
             }
         }
     }
-    ui_debug "qt5::depends_component_p, deptype=${deptype} args=$args is_qt5kde=${is_qt5kde}"
+    qt5.active_branch
+    ui_debug "qt5::depends_component_p, deptype=${deptype} args=$args is_qt5kde=${is_qt5kde} branch=${qt5::active_branch}"
     foreach comp $args {
-        set done true
+        set done false
         set portname "${qt5::pprefix}-${comp}"
         switch ${comp} {
             "qt5" {
@@ -887,26 +918,35 @@ proc qt5::depends_component_p {deptype args} {
                 } else {
                     ${deptype}-append port:${qt5::pprefix}
                 }
+                set done true
             }
             "qtwebkit" -
             "webkit" {
                 # this refers to the new version-agnostic port:qt5-webkit
                 set portname "qt5-webkit"
-                set done false
             }
             "qtwebengine" -
             "qtwebview" {
                 # these components are never stub subports (or possibly so, in the case of QtWebKit)
-                set done false
             }
             default {
                 # these components are included port:qt5-kde (and provided as additional stub subports)
                 if {${is_qt5kde} == 0 || [lsearch -exact ${qt5.kde_stubports} ${comp}] < 0} {
-                    set done false
+                    #set done false
+                } else {
+                    set done true
                 }
             }
         }
         if {!${done}} {
+            if { [info exists qt5pg::qt5_component_lib(${comp})] } {
+                set min_version [lindex $qt5pg::qt5_component_lib(${comp}) 0]
+                if {[vercmp ${qt5::active_branch} ${min_version}] < 0} {
+                    # the mainstream Qt5 port prints warnings for this, meaning also during portindex operations
+                    # I prefer to log an informational message that doesn't appear all the time.
+                    ui_info "Component ${comp} does not exist in ${qt5::pprefix} ${qt5::active_branch} (needs Qt${min_version} or better)"
+                }
+            }
             if {[info exists qt5::component2pathspec] && [info exists qt5::component2pathspec(${comp})]} {
                 # an explicit dependency pattern was given, e.g. path:foo
                 ui_debug "component ${comp} -> port ${portname} and depspec $qt5::component2pathspec(${comp})"
