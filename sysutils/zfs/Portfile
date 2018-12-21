@@ -39,12 +39,10 @@ subport ${name}-devel {
 
 # ensure we can load from ${prefix}/Library/Extensions
 patchfiles-append   patch-kextloading.diff 
-# hopefully temporary
-# patchfiles-append   patch-remove-rootvnode-dependency-zfs.diff
 
 if {${subport} eq "${name}-devel"} {
     conflicts       ${name}
-    version         1.8.1.12
+    version         1.8.1.12 ; revision 1
     epoch           1
     # spl-1.7.3
 #    set spl_commit  5e6f9ebfe116680307811e341a39ea8033f2956f
@@ -271,9 +269,25 @@ post-destroot {
     xinstall -m 755 ${filespath}/zfs_kexts_loaded.sh ${destroot}${prefix}/sbin/zfs_kexts_loaded.sh
 }
 
+# keep this in sync with the list in etc/launchd/daemons/launchd-daemons.am
+# but exclude the import-all plist as well as the zed plist which causes the
+# kexts to load.
+set launchddaemon_DATA {org.openzfsonosx.zconfigd.plist \
+                        org.openzfsonosx.InvariantDisks.plist}
+
 pre-deactivate {
     if {[catch {exec ${prefix}/sbin/zfs_kexts_loaded.sh} result]} {
         ui_debug "ZFS and SPL kexts aren't loaded: allowing deactivation"
+        foreach p ${launchddaemon_DATA} {
+            # unload the plists just as the standard install process does
+            # (keep in sync whenever patchfile:patch-dont-invoke-launchctl.diff needs refactoring!)
+            set pl "${prefix}/Library/LaunchDaemons/${p}"
+            if {[file exists ${pl}]} {
+                if {[catch {system "launchctl unload -F ${pl}"} err]} {
+                    ui_warn "error unloading ${pl}: ${err}"
+                }
+            }
+        }
     } else {
         ui_error ${result}
         ui_error "Unmount all ZFS pools and then invoke zfs_unload_kexts.sh before deactivating port:${subport}"
@@ -281,6 +295,28 @@ pre-deactivate {
         set thePid [pid]
         # but the only way to interrupt deactivation ATM is to send ourselves a SIGKILL
         system "kill -9 ${thePid}"
+    }
+}
+
+post-activate {
+    # do a diag run of the kext we just installed, but catch any errors!
+    if {[catch {exec kextutil -n -print-diagnostics -v 6 \
+        -d ${prefix}/Library/Extensions/spl.kext ${prefix}/Library/Extensions/zfs.kext} result]} {
+        ui_msg "Checking zfs.kext:\n${result}"
+        foreach p ${launchddaemon_DATA} {
+            # load the plists just as the standard install process does
+            # (keep in sync whenever patchfile:patch-dont-invoke-launchctl.diff needs refactoring!)
+            set pl "${prefix}/Library/LaunchDaemons/${p}"
+            if {[file exists ${pl}]} {
+                if {[catch {system "launchctl load -wF ${pl}"} err]} {
+                    ui_warn "error loading ${pl}: ${err}"
+                } else {
+                    ui_msg "Loaded ${pl} (${err})"
+                }
+            }
+        }
+    } else {
+        ui_error "Error checking zfs.kext:\n${result}"
     }
 }
 
@@ -308,22 +344,8 @@ zpool import -d /path/to tank \n\
 # to see all available pools on the connected storage devices:\n\
 zpool import -d /dev \n\
 \n\
-See ${homepage} for more information about ZFS and its OS X implementation \n\
-\n\
-You may want to execute the following command so that any tuning you define in\n\
-${prefix}/etc/zfs/zsysctl.conf are applied automatically:\n\
-sudo launchctl load -w ${prefix}/Library/LaunchDaemons/org.openzfsonosx.zconfigd.plist
+See ${homepage} for more information about ZFS and its OS X implementation.
 "
-
-post-activate {
-    # do a diag run of the kext we just installed, but catch any errors!
-    if {[catch {exec kextutil -n -print-diagnostics -v 6 \
-        -d ${prefix}/Library/Extensions/spl.kext ${prefix}/Library/Extensions/zfs.kext} result]} {
-        ui_msg "Checking zfs.kext:\n${result}"
-    } else {
-        ui_error "Error checking zfs.kext:\n${result}"
-    }
-}
 
 livecheck.url   http://openzfsonosx.org/wiki/Downloads
 livecheck.regex OpenZFS_on_OS_X_(\\d+(\\.\\d+)+)
