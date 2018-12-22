@@ -24,10 +24,10 @@
 
 options universal_archs_supported merger_must_run_binaries merger_no_3_archs merger_arch_flag merger_arch_compiler
 default universal_archs_supported {${universal_archs}}
-default merger_must_run_binaries {no}
-default merger_no_3_archs {no}
-default merger_arch_flag {yes}
-default merger_arch_compiler {no}
+default merger_must_run_binaries no
+default merger_no_3_archs no
+default merger_arch_flag yes
+default merger_arch_compiler no
 
 proc muniversal_arch_flag_supported {args} {
     global configure.compiler
@@ -103,6 +103,10 @@ variant universal {
     if {${supported_archs} eq "noarch"} {
         ui_warn "Port ${subport} is architecture-agnostic and shouldn't have nor use the +universal variant"
         return
+    }
+
+    if {[string match macports-clang* ${configure.compiler}]} {
+        depends_build-append    port:cctools
     }
 
     foreach arch ${universal_archs} {
@@ -205,7 +209,7 @@ variant universal {
                 configure.env-append        {*}$merger_configure_env(${arch})
             }
             if { [info exists merger_configure_cppflags(${arch})] } {
-                configure.cppflags-append   {*}$merger_configure_cppflags(${arch})
+                configure.cppflags-prepend  {*}$merger_configure_cppflags(${arch})
             }
             if { [info exists merger_configure_cflags(${arch})] } {
                 configure.cflags-append     {*}$merger_configure_cflags(${arch})
@@ -552,9 +556,19 @@ variant universal {
         #    merger_dont_diff: list of files for which /usr/bin/diff ${diffFormat} will not merge correctly
         #          diffFormat: format used by diff to merge two text files
         proc merge2Dir {base1 base2 base prefixDir arch1 arch2 merger_dont_diff diffFormat} {
+            global configure.compiler prefix
+
             set dir1  ${base1}/${prefixDir}
             set dir2  ${base2}/${prefixDir}
             set dir   ${base}/${prefixDir}
+
+            if {[string match macports-clang* ${configure.compiler}]} {
+                set lipo_cmd            ${prefix}/bin/lipo
+                set libtool_cmd         ${prefix}/bin/libtool
+            } else {
+                set lipo_cmd            /usr/bin/lipo
+                set libtool_cmd         /usr/bin/libtool
+            }
 
             xinstall -d -m 0755 ${dir}
 
@@ -606,10 +620,10 @@ variant universal {
                         } else {
                             # Actually try to merge the files
                             # First try lipo, then libtool
-                            if { ! [catch {system "/usr/bin/lipo -create \"${dir1}/${fl}\" \"${dir2}/${fl}\" -output \"${dir}/${fl}\""}] } {
+                            if { ! [catch {system "${lipo_cmd} -create \"${dir1}/${fl}\" \"${dir2}/${fl}\" -output \"${dir}/${fl}\""}] } {
                                 # lipo worked
                                 ui_debug "universal: merge: lipo created ${prefixDir}/${fl}"
-                            } elseif { ! [catch {system "/usr/bin/libtool \"${dir1}/${fl}\" \"${dir2}/${fl}\" -o \"${dir}/${fl}\""}] } {
+                            } elseif { ! [catch {system "${libtool_cmd} \"${dir1}/${fl}\" \"${dir2}/${fl}\" -o \"${dir}/${fl}\""}] } {
                                 # libtool worked
                                 ui_debug "universal: merge: libtool created ${prefixDir}/${fl}"
                             } else {
