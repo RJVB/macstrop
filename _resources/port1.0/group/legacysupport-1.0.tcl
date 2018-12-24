@@ -29,13 +29,15 @@ proc add_legacysupport {} {
         depends_lib-append path:lib/libMacportsLegacySupport.dylib:legacy-support
         
         # Add to configure options
-        configure.ldflags-append  ${AddLDFlag}
-        configure.cflags-append   ${AddCFlag} 
-        configure.cppflags-append ${AddCFlag}
-        
+        configure.ldflags-append    ${AddLDFlag}
+        configure.cflags-append     ${AddCFlag}
+        configure.objcflags-append  ${AddCFlag}
+        configure.cxxflags-append   ${AddCFlag}
+        configure.objcxxflags-append ${AddCFlag}
+
         # Set env vars so gcc/clang add legacy include dir to default search paths
         # Note using C_INCLUDE_PATH and CPLUS_INCLUDE_PATH to avoid conflicts
-        # eith MacPorts setting of CPATH
+        # with MacPorts setting of CPATH
         configure.env-append ${AddCIncPath} ${AddCppIncPath}
         build.env-append     ${AddCIncPath} ${AddCppIncPath}
         
