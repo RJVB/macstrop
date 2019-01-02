@@ -203,8 +203,10 @@ proc cmake::handle_generator {option action args} {
                 depends_build-append \
                                 port:ninja
                 build.cmd       ninja
-                # force Ninja to use the exact number of requested build jobs
-                build.post_args -j${build.jobs} -v
+                # force Ninja not to exceed the probably-expected CPU load by too much;
+                # for larger projects one can reach as much as build.jobs*2 CPU load otherwise.
+                # inspired by the old guideline as many compile jobs as you have CPUs, plus 1.
+                build.post_args -l[expr ${build.jobs} + 1] -v
                 destroot.target install
                 # ninja needs the DESTDIR argument in the environment
                 destroot.destdir
