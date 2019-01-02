@@ -1,0 +1,131 @@
+diff --git a/Source/JavaScriptCore/shell/PlatformQt.cmake b/Source/JavaScriptCore/shell/PlatformQt.cmake
+index 55640eb3a801..8d4b260c1ba4 100644
+--- a/Source/JavaScriptCore/shell/PlatformQt.cmake
++++ b/Source/JavaScriptCore/shell/PlatformQt.cmake
+@@ -1,5 +1,5 @@
+ if (QT_STATIC_BUILD)
+     list(APPEND JSC_LIBRARIES
+-        ${DEPEND_STATIC_LIBS}
++        ${STATIC_LIB_DEPENDENCIES}
+     )
+ endif ()
+diff --git a/Source/WebCore/PlatformQt.cmake b/Source/WebCore/PlatformQt.cmake
+index 49c76a8de7cb..8414d21e50f1 100644
+--- a/Source/WebCore/PlatformQt.cmake
++++ b/Source/WebCore/PlatformQt.cmake
+@@ -446,6 +446,11 @@ endif ()
+ # From PlatformWin.cmake
+ 
+ if (WIN32)
++    # Eliminate C2139 errors
++    if (MSVC)
++        add_compile_options(/D_ENABLE_EXTENDED_ALIGNED_STORAGE)
++    endif ()
++
+     if (${JavaScriptCore_LIBRARY_TYPE} MATCHES STATIC)
+         add_definitions(-DSTATICALLY_LINKED_WITH_WTF -DSTATICALLY_LINKED_WITH_JavaScriptCore)
+     endif ()
+diff --git a/Source/WebKit2/UIProcess/Launcher/qt/ProcessLauncherQt.cpp b/Source/WebKit2/UIProcess/Launcher/qt/ProcessLauncherQt.cpp
+index 51a3ffbba478..97c48b73d3fc 100644
+--- a/Source/WebKit2/UIProcess/Launcher/qt/ProcessLauncherQt.cpp
++++ b/Source/WebKit2/UIProcess/Launcher/qt/ProcessLauncherQt.cpp
+@@ -126,7 +126,7 @@ void ProcessLauncher::launchProcess()
+ #if ENABLE(DATABASE_PROCESS)
+     } else if (m_launchOptions.processType == ProcessType::Database) {
+         commandLine = QLatin1String("%1 \"%2\" %3 %4");
+-        QByteArray processPrefix = qgetenv("QT_WEBKIT2_DP_CMD_PREFIX");
++        QByteArray processPrefix = qgetenv("QT_WEBKIT2_SP_CMD_PREFIX");
+         commandLine = commandLine.arg(QLatin1String(processPrefix.constData())).arg(QString(executablePathOfDatabaseProcess()));
+ #endif
+     } else {
+diff --git a/Source/cmake/OptionsWin.cmake b/Source/cmake/OptionsWin.cmake
+index be36d92d3599..a568258d945e 100644
+--- a/Source/cmake/OptionsWin.cmake
++++ b/Source/cmake/OptionsWin.cmake
+@@ -128,6 +128,9 @@ if (MSVC)
+         /wd6255 /wd6387
+     )
+ 
++    # Eliminate C2139 errors
++    add_compile_options(/D_ENABLE_EXTENDED_ALIGNED_STORAGE)
++
+     # Create pdb files for debugging purposes, also for Release builds
+     add_compile_options(/Zi /GS)
+ 
+diff --git a/Source/qtwebkit.qdocconf b/Source/qtwebkit.qdocconf
+index 5142b0776008..8e4edbd755b8 100644
+--- a/Source/qtwebkit.qdocconf
++++ b/Source/qtwebkit.qdocconf
+@@ -35,3 +35,5 @@ exampledirs = WebKit/qt/docs
+ imagedirs = WebKit/qt/docs
+ 
+ depends += qtcore qtwidgets qtgui qtscript qtdoc qtprintsupport qtxml qtwebkitexamples qtquickcontrols
++
++tagfile = qtwebkit.tags
+diff --git a/Tools/QtTestBrowser/mainwindow.cpp b/Tools/QtTestBrowser/mainwindow.cpp
+index d342147ac1f8..d2f634654640 100644
+--- a/Tools/QtTestBrowser/mainwindow.cpp
++++ b/Tools/QtTestBrowser/mainwindow.cpp
+@@ -43,6 +43,8 @@
+ #include <QFileDialog>
+ #endif
+ #include <QMenuBar>
++#include <QMessageBox>
++#include <QNetworkReply>
+ 
+ MainWindow::MainWindow()
+     : m_page(new WebPage(this))
+@@ -85,6 +87,7 @@ void MainWindow::buildUI()
+     connect(page()->mainFrame(), SIGNAL(loadStarted()), this, SLOT(onLoadStarted()));
+     connect(page()->mainFrame(), SIGNAL(iconChanged()), this, SLOT(onIconChanged()));
+     connect(page()->mainFrame(), SIGNAL(titleChanged(QString)), this, SLOT(onTitleChanged(QString)));
++    connect(page()->networkAccessManager(), SIGNAL(sslErrors(QNetworkReply*, const QList<QSslError>&)), this, SLOT(onSSLErrors(QNetworkReply*, const QList<QSslError>&)));
+     connect(page(), SIGNAL(windowCloseRequested()), this, SLOT(close()));
+ 
+ #ifndef QT_NO_SHORTCUT
+@@ -249,3 +252,20 @@ void MainWindow::onTitleChanged(const QString& title)
+     else
+         setWindowTitle(QString::fromLatin1("%1 - %2").arg(title).arg(QCoreApplication::applicationName()));
+ }
++
++void MainWindow::onSSLErrors(QNetworkReply* reply,const QList<QSslError>& errors)
++{
++    QString errorStrings = "<ul>";
++    for (const QSslError& error : errors)
++        errorStrings += "<li>" + error.errorString() + "</li>";
++    errorStrings += "</ul>";
++
++    QMessageBox sslWarningBox;
++    sslWarningBox.setText("SSL handshake problem");
++    sslWarningBox.setInformativeText(errorStrings);
++    sslWarningBox.setStandardButtons(QMessageBox::Abort | QMessageBox::Ignore);
++    sslWarningBox.setDefaultButton(QMessageBox::Abort);
++    sslWarningBox.setIcon(QMessageBox::Warning);
++    if (sslWarningBox.exec() == QMessageBox::Ignore)
++        reply->ignoreSslErrors();
++}
+diff --git a/Tools/QtTestBrowser/mainwindow.h b/Tools/QtTestBrowser/mainwindow.h
+index 6e978576e606..7ce1483e24ff 100644
+--- a/Tools/QtTestBrowser/mainwindow.h
++++ b/Tools/QtTestBrowser/mainwindow.h
+@@ -66,6 +66,7 @@ protected Q_SLOTS:
+     void onIconChanged();
+     void onLoadStarted();
+     void onTitleChanged(const QString&);
++    void onSSLErrors(QNetworkReply*, const QList<QSslError>&);
+ 
+ protected:
+     QString addressUrl() const;
+diff --git a/Tools/TestWebKitAPI/PlatformQt.cmake b/Tools/TestWebKitAPI/PlatformQt.cmake
+index fe3808685b68..eb643c321337 100644
+--- a/Tools/TestWebKitAPI/PlatformQt.cmake
++++ b/Tools/TestWebKitAPI/PlatformQt.cmake
+@@ -35,7 +35,7 @@ set(test_webcore_LIBRARIES
+     WebCore
+     gtest
+     ${Qt5Gui_LIBRARIES}
+-    ${DEPEND_STATIC_LIBS}
++    ${STATIC_LIB_DEPENDENCIES}
+ )
+ 
+ add_executable(TestWebCore
