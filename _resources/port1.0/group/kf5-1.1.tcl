@@ -770,7 +770,7 @@ if {${kf5::includecounter} == 0} {
         qt5.add_app_wrapper ${wrappername} ${bundlename} ${bundleexec} ${kf5.applications_dir}
         # modify the Exec entry in the port's .desktop files
         foreach df [glob -nocomplain ${destroot}${prefix}/share/applications/*${bundlename}*.desktop] {
-            reinplace -q "s|Exec=${bundlename}|Exec=${prefix}/bin/${wrappername}|g" ${df}
+            reinplace -q "s|Exec=${bundlename} |Exec=${prefix}/bin/${wrappername} |g" ${df}
         }
         foreach df [glob -nocomplain ${destroot}${prefix}/share/metainfo/*.${bundlename}.appdata.xml] {
             reinplace "s|<binary>${bundlename}</binary>|<binary>${prefix}/bin/${wrappername}</binary>|g" ${df}
