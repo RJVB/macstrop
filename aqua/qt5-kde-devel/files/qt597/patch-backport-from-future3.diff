@@ -1,0 +1,505 @@
+diff --git a/qtbase/src/corelib/kernel/qmetaobject.cpp b/qtbase/src/corelib/kernel/qmetaobject.cpp
+index a8003f7e46d2caaa041a51352456897242e103e5..5c97bc68510271471996cca56755b8b6c1a173d2 100644
+--- a/qtbase/src/corelib/kernel/qmetaobject.cpp
++++ b/qtbase/src/corelib/kernel/qmetaobject.cpp
+@@ -1489,6 +1489,57 @@ bool QMetaObject::invokeMethod(QObject *obj,
+                          val0, val1, val2, val3, val4, val5, val6, val7, val8, val9);
+ }
+ 
++bool QMetaObject::invokeMethodImpl(QObject *object, QtPrivate::QSlotObjectBase *slot, Qt::ConnectionType type, void *ret)
++{
++    struct Holder {
++        QtPrivate::QSlotObjectBase *obj;
++        ~Holder() { obj->destroyIfLastRef(); }
++    } holder = { slot };
++    Q_UNUSED(holder);
++
++    if (! object)
++        return false;
++
++    QThread *currentThread = QThread::currentThread();
++    QThread *objectThread = object->thread();
++    if (type == Qt::AutoConnection)
++        type = (currentThread == objectThread) ? Qt::DirectConnection : Qt::QueuedConnection;
++
++    void *argv[] = { ret };
++
++    if (type == Qt::DirectConnection) {
++        slot->call(object, argv);
++    } else if (type == Qt::QueuedConnection) {
++        if (argv[0]) {
++            qWarning("QMetaObject::invokeMethod: Unable to invoke methods with return values in "
++                     "queued connections");
++            return false;
++        }
++
++        // args and typesCopy will be deallocated by ~QMetaCallEvent() using free()
++        void **args = static_cast<void **>(calloc(1, sizeof(void *)));
++        Q_CHECK_PTR(args);
++
++        int *types = static_cast<int *>(calloc(1, sizeof(int)));
++        Q_CHECK_PTR(types);
++
++        QCoreApplication::postEvent(object, new QMetaCallEvent(slot, 0, -1, 1, types, args));
++    } else if (type == Qt::BlockingQueuedConnection) {
++#ifndef QT_NO_THREAD
++        if (currentThread == objectThread)
++            qWarning("QMetaObject::invokeMethod: Dead lock detected");
++
++        QSemaphore semaphore;
++        QCoreApplication::postEvent(object, new QMetaCallEvent(slot, 0, -1, 0, 0, argv, &semaphore));
++        semaphore.acquire();
++#endif // QT_NO_THREAD
++    } else {
++        qWarning("QMetaObject::invokeMethod: Unknown connection type");
++        return false;
++    }
++    return true;
++}
++
+ /*! \fn bool QMetaObject::invokeMethod(QObject *obj, const char *member,
+                                        QGenericReturnArgument ret,
+                                        QGenericArgument val0 = QGenericArgument(0),
+@@ -1543,6 +1594,44 @@ bool QMetaObject::invokeMethod(QObject *obj,
+     ignores return values.
+ */
+ 
++/*!
++    \fn bool QMetaObject::invokeMethod(QObject *receiver, PointerToMemberFunction function, Qt::ConnectionType type = Qt::AutoConnection, MemberFunctionReturnType *ret = Q_NULLPTR)
++
++    \since 5.10
++
++    \overload
++*/
++
++/*!
++    \fn bool QMetaObject::invokeMethod(QObject *receiver, PointerToMemberFunction function, MemberFunctionReturnType *ret)
++
++    \since 5.10
++
++    \overload
++
++    This overload invokes the member function using the connection type Qt::AutoConnection.
++*/
++
++/*!
++    \fn bool QMetaObject::invokeMethod(QObject *context, Functor function, Qt::ConnectionType type = Qt::AutoConnection, FunctorReturnType *ret = Q_NULLPTR)
++
++    \since 5.10
++
++    \overload
++
++    Call the functor in the event loop of \a context.
++*/
++
++/*!
++    \fn bool QMetaObject::invokeMethod(QObject *context, Functor function, FunctorReturnType *ret = Q_NULLPTR)
++
++    \since 5.10
++
++    \overload
++
++    Call the functor in the event loop of \a context using the connection type Qt::AutoConnection.
++*/
++
+ /*!
+     \fn QMetaObject::Connection::Connection(const Connection &other)
+ 
+diff --git a/qtbase/src/corelib/kernel/qmetaobject_p.h b/qtbase/src/corelib/kernel/qmetaobject_p.h
+index e247c48703eabad36634a6238327701ec85cc3a0..434ef84808204a52f78c0fb4aace251c7b46c5dd 100644
+--- a/qtbase/src/corelib/kernel/qmetaobject_p.h
++++ b/qtbase/src/corelib/kernel/qmetaobject_p.h
+@@ -111,7 +111,8 @@ enum MetaObjectFlags {
+ 
+ enum MetaDataFlags {
+     IsUnresolvedType = 0x80000000,
+-    TypeNameIndexMask = 0x7FFFFFFF
++    TypeNameIndexMask = 0x7FFFFFFF,
++    IsUnresolvedSignal = 0x70000000
+ };
+ 
+ enum EnumFlags {
+diff --git a/qtbase/src/corelib/kernel/qobject_impl.h b/qtbase/src/corelib/kernel/qobject_impl.h
+index d7ae63a98c2d72a6adee2d64dd77f136179676e6..c233d8632f50d4298ca659af1b236f853fda7be6 100644
+--- a/qtbase/src/corelib/kernel/qobject_impl.h
++++ b/qtbase/src/corelib/kernel/qobject_impl.h
+@@ -74,60 +74,60 @@ namespace QtPrivate {
+     template <typename... Args> struct ConnectionTypes<List<Args...>, true>
+     { static const int *types() { static const int t[sizeof...(Args) + 1] = { (QtPrivate::QMetaTypeIdHelper<Args>::qt_metatype_id())..., 0 }; return t; } };
+ 
+-    // internal base class (interface) containing functions required to call a slot managed by a pointer to function.
+-    class QSlotObjectBase {
+-        QAtomicInt m_ref;
+-        // don't use virtual functions here; we don't want the
+-        // compiler to create tons of per-polymorphic-class stuff that
+-        // we'll never need. We just use one function pointer.
+-        typedef void (*ImplFn)(int which, QSlotObjectBase* this_, QObject *receiver, void **args, bool *ret);
+-        const ImplFn m_impl;
+-    protected:
+-        enum Operation {
+-            Destroy,
+-            Call,
+-            Compare,
+-
+-            NumOperations
+-        };
+-    public:
+-        explicit QSlotObjectBase(ImplFn fn) : m_ref(1), m_impl(fn) {}
+-
+-        inline int ref() Q_DECL_NOTHROW { return m_ref.ref(); }
+-        inline void destroyIfLastRef() Q_DECL_NOTHROW
+-        { if (!m_ref.deref()) m_impl(Destroy, this, Q_NULLPTR, Q_NULLPTR, Q_NULLPTR); }
+-
+-        inline bool compare(void **a) { bool ret = false; m_impl(Compare, this, Q_NULLPTR, a, &ret); return ret; }
+-        inline void call(QObject *r, void **a)  { m_impl(Call,    this, r, a, Q_NULLPTR); }
+-    protected:
+-        ~QSlotObjectBase() {}
+-    private:
+-        Q_DISABLE_COPY(QSlotObjectBase)
+-    };
++//     // internal base class (interface) containing functions required to call a slot managed by a pointer to function.
++//     class QSlotObjectBase {
++//         QAtomicInt m_ref;
++//         // don't use virtual functions here; we don't want the
++//         // compiler to create tons of per-polymorphic-class stuff that
++//         // we'll never need. We just use one function pointer.
++//         typedef void (*ImplFn)(int which, QSlotObjectBase* this_, QObject *receiver, void **args, bool *ret);
++//         const ImplFn m_impl;
++//     protected:
++//         enum Operation {
++//             Destroy,
++//             Call,
++//             Compare,
++// 
++//             NumOperations
++//         };
++//     public:
++//         explicit QSlotObjectBase(ImplFn fn) : m_ref(1), m_impl(fn) {}
++// 
++//         inline int ref() Q_DECL_NOTHROW { return m_ref.ref(); }
++//         inline void destroyIfLastRef() Q_DECL_NOTHROW
++//         { if (!m_ref.deref()) m_impl(Destroy, this, Q_NULLPTR, Q_NULLPTR, Q_NULLPTR); }
++// 
++//         inline bool compare(void **a) { bool ret = false; m_impl(Compare, this, Q_NULLPTR, a, &ret); return ret; }
++//         inline void call(QObject *r, void **a)  { m_impl(Call,    this, r, a, Q_NULLPTR); }
++//     protected:
++//         ~QSlotObjectBase() {}
++//     private:
++//         Q_DISABLE_COPY(QSlotObjectBase)
++//     };
+     // implementation of QSlotObjectBase for which the slot is a pointer to member function of a QObject
+     // Args and R are the List of arguments and the returntype of the signal to which the slot is connected.
+-    template<typename Func, typename Args, typename R> class QSlotObject : public QSlotObjectBase
+-    {
+-        typedef QtPrivate::FunctionPointer<Func> FuncType;
+-        Func function;
+-        static void impl(int which, QSlotObjectBase *this_, QObject *r, void **a, bool *ret)
+-        {
+-            switch (which) {
+-            case Destroy:
+-                delete static_cast<QSlotObject*>(this_);
+-                break;
+-            case Call:
+-                FuncType::template call<Args, R>(static_cast<QSlotObject*>(this_)->function, static_cast<typename FuncType::Object *>(r), a);
+-                break;
+-            case Compare:
+-                *ret = *reinterpret_cast<Func *>(a) == static_cast<QSlotObject*>(this_)->function;
+-                break;
+-            case NumOperations: ;
+-            }
+-        }
+-    public:
+-        explicit QSlotObject(Func f) : QSlotObjectBase(&impl), function(f) {}
+-    };
++//     template<typename Func, typename Args, typename R> class QSlotObject : public QSlotObjectBase
++//     {
++//         typedef QtPrivate::FunctionPointer<Func> FuncType;
++//         Func function;
++//         static void impl(int which, QSlotObjectBase *this_, QObject *r, void **a, bool *ret)
++//         {
++//             switch (which) {
++//             case Destroy:
++//                 delete static_cast<QSlotObject*>(this_);
++//                 break;
++//             case Call:
++//                 FuncType::template call<Args, R>(static_cast<QSlotObject*>(this_)->function, static_cast<typename FuncType::Object *>(r), a);
++//                 break;
++//             case Compare:
++//                 *ret = *reinterpret_cast<Func *>(a) == static_cast<QSlotObject*>(this_)->function;
++//                 break;
++//             case NumOperations: ;
++//             }
++//         }
++//     public:
++//         explicit QSlotObject(Func f) : QSlotObjectBase(&impl), function(f) {}
++//     };
+     // implementation of QSlotObjectBase for which the slot is a static function
+     // Args and R are the List of arguments and the returntype of the signal to which the slot is connected.
+     template<typename Func, typename Args, typename R> class QStaticSlotObject : public QSlotObjectBase
+@@ -154,27 +154,27 @@ namespace QtPrivate {
+     // implementation of QSlotObjectBase for which the slot is a functor (or lambda)
+     // N is the number of arguments
+     // Args and R are the List of arguments and the returntype of the signal to which the slot is connected.
+-    template<typename Func, int N, typename Args, typename R> class QFunctorSlotObject : public QSlotObjectBase
+-    {
+-        typedef QtPrivate::Functor<Func, N> FuncType;
+-        Func function;
+-        static void impl(int which, QSlotObjectBase *this_, QObject *r, void **a, bool *ret)
+-        {
+-            switch (which) {
+-            case Destroy:
+-                delete static_cast<QFunctorSlotObject*>(this_);
+-                break;
+-            case Call:
+-                FuncType::template call<Args, R>(static_cast<QFunctorSlotObject*>(this_)->function, r, a);
+-                break;
+-            case Compare: // not implemented
+-            case NumOperations:
+-                Q_UNUSED(ret);
+-            }
+-        }
+-    public:
+-        explicit QFunctorSlotObject(const Func &f) : QSlotObjectBase(&impl), function(f) {}
+-    };
++//     template<typename Func, int N, typename Args, typename R> class QFunctorSlotObject : public QSlotObjectBase
++//     {
++//         typedef QtPrivate::Functor<Func, N> FuncType;
++//         Func function;
++//         static void impl(int which, QSlotObjectBase *this_, QObject *r, void **a, bool *ret)
++//         {
++//             switch (which) {
++//             case Destroy:
++//                 delete static_cast<QFunctorSlotObject*>(this_);
++//                 break;
++//             case Call:
++//                 FuncType::template call<Args, R>(static_cast<QFunctorSlotObject*>(this_)->function, r, a);
++//                 break;
++//             case Compare: // not implemented
++//             case NumOperations:
++//                 Q_UNUSED(ret);
++//             }
++//         }
++//     public:
++//         explicit QFunctorSlotObject(const Func &f) : QSlotObjectBase(&impl), function(f) {}
++//     };
+ }
+ 
+ 
+diff --git a/qtbase/src/corelib/kernel/qobjectdefs.h b/qtbase/src/corelib/kernel/qobjectdefs.h
+index cec822ad14783aa7cbec2d3ee27d29baf56856a3..25f3247f804433547c6c7291b48761174c7d5c89 100644
+--- a/qtbase/src/corelib/kernel/qobjectdefs.h
++++ b/qtbase/src/corelib/kernel/qobjectdefs.h
+@@ -467,6 +467,91 @@ struct Q_CORE_EXPORT QMetaObject
+                 val1, val2, val3, val4, val5, val6, val7, val8, val9);
+     }
+ 
++#ifdef Q_QDOC
++    template<typename PointerToMemberFunction, typename MemberFunctionReturnType>
++    static bool invokeMethod(QObject *receiver, PointerToMemberFunction function, Qt::ConnectionType type = Qt::AutoConnection, MemberFunctionReturnType *ret = nullptr);
++    template<typename PointerToMemberFunction, typename MemberFunctionReturnType>
++    static bool invokeMethod(QObject *receiver, PointerToMemberFunction function, MemberFunctionReturnType *ret);
++    template<typename Functor, typename FunctorReturnType>
++    static bool invokeMethod(QObject *context, Functor function, Qt::ConnectionType type = Qt::AutoConnection, FunctorReturnType *ret = nullptr);
++    template<typename Functor, typename FunctorReturnType>
++    static bool invokeMethod(QObject *context, Functor function, FunctorReturnType *ret);
++#else
++
++    // invokeMethod() for member function pointer
++    template <typename Func>
++    static typename std::enable_if<QtPrivate::FunctionPointer<Func>::IsPointerToMemberFunction
++                                   && !std::is_convertible<Func, const char*>::value
++                                   && QtPrivate::FunctionPointer<Func>::ArgumentCount == 0, bool>::type
++    invokeMethod(typename QtPrivate::FunctionPointer<Func>::Object *object,
++                 Func function,
++                 Qt::ConnectionType type = Qt::AutoConnection,
++                 typename QtPrivate::FunctionPointer<Func>::ReturnType *ret = nullptr)
++    {
++        return invokeMethodImpl(object, new QtPrivate::QSlotObjectWithNoArgs<Func>(function), type, ret);
++    }
++
++    template <typename Func>
++    static typename std::enable_if<QtPrivate::FunctionPointer<Func>::IsPointerToMemberFunction
++                                   && !std::is_convertible<Func, const char*>::value
++                                   && QtPrivate::FunctionPointer<Func>::ArgumentCount == 0, bool>::type
++    invokeMethod(typename QtPrivate::FunctionPointer<Func>::Object *object,
++                 Func function,
++                 typename QtPrivate::FunctionPointer<Func>::ReturnType *ret)
++    {
++        return invokeMethodImpl(object, new QtPrivate::QSlotObjectWithNoArgs<Func>(function), Qt::AutoConnection, ret);
++    }
++
++    // invokeMethod() for function pointer (not member)
++    template <typename Func>
++    static typename std::enable_if<!QtPrivate::FunctionPointer<Func>::IsPointerToMemberFunction
++                                   && !std::is_convertible<Func, const char*>::value
++                                   && QtPrivate::FunctionPointer<Func>::ArgumentCount == 0, bool>::type
++    invokeMethod(QObject *context, Func function,
++                 Qt::ConnectionType type = Qt::AutoConnection,
++                 typename QtPrivate::FunctionPointer<Func>::ReturnType *ret = nullptr)
++    {
++        return invokeMethodImpl(context, new QtPrivate::QFunctorSlotObjectWithNoArgsImplicitReturn<Func>(function), type, ret);
++    }
++
++    template <typename Func>
++    static typename std::enable_if<!QtPrivate::FunctionPointer<Func>::IsPointerToMemberFunction
++                                   && !std::is_convertible<Func, const char*>::value
++                                   && QtPrivate::FunctionPointer<Func>::ArgumentCount == 0, bool>::type
++    invokeMethod(QObject *context, Func function,
++                 typename QtPrivate::FunctionPointer<Func>::ReturnType *ret)
++    {
++        return invokeMethodImpl(context, new QtPrivate::QFunctorSlotObjectWithNoArgsImplicitReturn<Func>(function), Qt::AutoConnection, ret);
++    }
++
++    // invokeMethod() for Functor
++    template <typename Func>
++    static typename std::enable_if<!QtPrivate::FunctionPointer<Func>::IsPointerToMemberFunction
++                                   && QtPrivate::FunctionPointer<Func>::ArgumentCount == -1
++                                   && !std::is_convertible<Func, const char*>::value, bool>::type
++    invokeMethod(QObject *context, Func function,
++                 Qt::ConnectionType type = Qt::AutoConnection, decltype(function()) *ret = nullptr)
++    {
++        return invokeMethodImpl(context,
++                                new QtPrivate::QFunctorSlotObjectWithNoArgs<Func, decltype(function())>(function),
++                                type,
++                                ret);
++    }
++
++    template <typename Func>
++    static typename std::enable_if<!QtPrivate::FunctionPointer<Func>::IsPointerToMemberFunction
++                                   && QtPrivate::FunctionPointer<Func>::ArgumentCount == -1
++                                   && !std::is_convertible<Func, const char*>::value, bool>::type
++    invokeMethod(QObject *context, Func function, typename std::result_of<Func()>::type *ret)
++    {
++        return invokeMethodImpl(context,
++                                new QtPrivate::QFunctorSlotObjectWithNoArgs<Func, decltype(function())>(function),
++                                Qt::AutoConnection,
++                                ret);
++    }
++
++#endif
++
+     QObject *newInstance(QGenericArgument val0 = QGenericArgument(Q_NULLPTR),
+                          QGenericArgument val1 = QGenericArgument(),
+                          QGenericArgument val2 = QGenericArgument(),
+@@ -506,6 +591,9 @@ struct Q_CORE_EXPORT QMetaObject
+         const QMetaObject * const *relatedMetaObjects;
+         void *extradata; //reserved for future use
+     } d;
++
++private:
++    static bool invokeMethodImpl(QObject *object, QtPrivate::QSlotObjectBase *slot, Qt::ConnectionType type, void *ret);
+ };
+ 
+ class Q_CORE_EXPORT QMetaObject::Connection {
+diff --git a/qtbase/src/corelib/kernel/qobjectdefs_impl.h b/qtbase/src/corelib/kernel/qobjectdefs_impl.h
+index 29ab77b26955010ae59ee61a6062637ff6cd7a7b..b9f2e47e3296362afdc53451afacbf85ae99504a 100644
+--- a/qtbase/src/corelib/kernel/qobjectdefs_impl.h
++++ b/qtbase/src/corelib/kernel/qobjectdefs_impl.h
+@@ -51,7 +51,7 @@
+ #endif
+ 
+ QT_BEGIN_NAMESPACE
+-
++class QObject;
+ 
+ namespace QtPrivate {
+     template <typename T> struct RemoveRef { typedef T Type; };
+@@ -350,6 +350,98 @@ namespace QtPrivate {
+         template <typename D> static D dummy();
+         typedef decltype(dummy<Functor>().operator()((dummy<ArgList>())...)) Value;
+     };
++
++    // internal base class (interface) containing functions required to call a slot managed by a pointer to function.
++    class QSlotObjectBase {
++        QAtomicInt m_ref;
++        // don't use virtual functions here; we don't want the
++        // compiler to create tons of per-polymorphic-class stuff that
++        // we'll never need. We just use one function pointer.
++        typedef void (*ImplFn)(int which, QSlotObjectBase* this_, QObject *receiver, void **args, bool *ret);
++        const ImplFn m_impl;
++    protected:
++        enum Operation {
++            Destroy,
++            Call,
++            Compare,
++
++            NumOperations
++        };
++    public:
++        explicit QSlotObjectBase(ImplFn fn) : m_ref(1), m_impl(fn) {}
++
++        inline int ref() Q_DECL_NOTHROW { return m_ref.ref(); }
++        inline void destroyIfLastRef() Q_DECL_NOTHROW
++        { if (!m_ref.deref()) m_impl(Destroy, this, Q_NULLPTR, Q_NULLPTR, Q_NULLPTR); }
++
++        inline bool compare(void **a) { bool ret = false; m_impl(Compare, this, Q_NULLPTR, a, &ret); return ret; }
++        inline void call(QObject *r, void **a)  { m_impl(Call,    this, r, a, Q_NULLPTR); }
++    protected:
++        ~QSlotObjectBase() {}
++    private:
++        Q_DISABLE_COPY(QSlotObjectBase)
++    };
++
++    // implementation of QSlotObjectBase for which the slot is a pointer to member function of a QObject
++    // Args and R are the List of arguments and the returntype of the signal to which the slot is connected.
++    template<typename Func, typename Args, typename R> class QSlotObject : public QSlotObjectBase
++    {
++        typedef QtPrivate::FunctionPointer<Func> FuncType;
++        Func function;
++        static void impl(int which, QSlotObjectBase *this_, QObject *r, void **a, bool *ret)
++        {
++            switch (which) {
++            case Destroy:
++                delete static_cast<QSlotObject*>(this_);
++                break;
++            case Call:
++                FuncType::template call<Args, R>(static_cast<QSlotObject*>(this_)->function, static_cast<typename FuncType::Object *>(r), a);
++                break;
++            case Compare:
++                *ret = *reinterpret_cast<Func *>(a) == static_cast<QSlotObject*>(this_)->function;
++                break;
++            case NumOperations: ;
++            }
++        }
++    public:
++        explicit QSlotObject(Func f) : QSlotObjectBase(&impl), function(f) {}
++    };
++    // implementation of QSlotObjectBase for which the slot is a functor (or lambda)
++    // N is the number of arguments
++    // Args and R are the List of arguments and the returntype of the signal to which the slot is connected.
++    template<typename Func, int N, typename Args, typename R> class QFunctorSlotObject : public QSlotObjectBase
++    {
++        typedef QtPrivate::Functor<Func, N> FuncType;
++        Func function;
++        static void impl(int which, QSlotObjectBase *this_, QObject *r, void **a, bool *ret)
++        {
++            switch (which) {
++            case Destroy:
++                delete static_cast<QFunctorSlotObject*>(this_);
++                break;
++            case Call:
++                FuncType::template call<Args, R>(static_cast<QFunctorSlotObject*>(this_)->function, r, a);
++                break;
++            case Compare: // not implemented
++            case NumOperations:
++                Q_UNUSED(ret);
++            }
++        }
++    public:
++        explicit QFunctorSlotObject(Func f) : QSlotObjectBase(&impl), function(std::move(f)) {}
++    };
++
++    // typedefs for readability for when there are no parameters
++    template <typename Func>
++    using QSlotObjectWithNoArgs = QSlotObject<Func,
++                                              QtPrivate::List<>,
++                                              typename QtPrivate::FunctionPointer<Func>::ReturnType>;
++
++    template <typename Func, typename R>
++    using QFunctorSlotObjectWithNoArgs = QFunctorSlotObject<Func, 0, QtPrivate::List<>, R>;
++
++    template <typename Func>
++    using QFunctorSlotObjectWithNoArgsImplicitReturn = QFunctorSlotObjectWithNoArgs<Func, typename QtPrivate::FunctionPointer<Func>::ReturnType>;
+ }
+ 
+ QT_END_NAMESPACE
