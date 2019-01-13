@@ -486,9 +486,20 @@ proc cmake.save_configure_cmd {{save_log_too ""}} {
                 puts ${fd} "OBJCXXFLAGS=\"${configure.objcxxflags}\""
             }
             puts ${fd} "LDFLAGS=\"${configure.ldflags}\""
+            puts ${fd} "# Commandline configure options:"
             if {${configure.optflags} ne ""} {
-                puts ${fd} "configure.optflags=\"${configure.optflags}\""
+                puts -nonewline ${fd} " configure.optflags=\"${configure.optflags}\""
             }
+            if {${configure.compiler} ne ""} {
+                puts -nonewline ${fd} " configure.compiler=\"${configure.compiler}\""
+            }
+            if {${configure.cxx_stdlib} ne ""} {
+                puts -nonewline ${fd} " configure.cxx_stdlib=\"${configure.cxx_stdlib}\""
+            }
+            if {${configureccache} ne ""} {
+                puts -nonewline ${fd} " configureccache=\"${configureccache}\""
+            }
+            puts ${fd} ""
             puts ${fd} "\ncd ${worksrcpath}"
             puts ${fd} "${configure.cmd} [join ${configure.pre_args}] [join ${configure.args}] [join ${configure.post_args}]"
             close ${fd}
