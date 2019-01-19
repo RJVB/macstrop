@@ -1,7 +1,29 @@
-diff --git src/filewidgets/kdiroperatordetailview.cpp src/filewidgets/kdiroperatordetailview.cpp
-index fa8094f8e19a9323184ce124e1582ad394586cba..fd00a9567b93044dc7fc11eae935b01a1fe8fdcf 100644
---- src/filewidgets/kdiroperatordetailview.cpp
-+++ src/filewidgets/kdiroperatordetailview.cpp
+KIO: make file dialog columns resizable again
+
+File dialog detailed view columns were made fixed-size in commit #e504bc1fd56412ee7e9748a0dfafa537977ec1b5, leading to bug 401506.
+
+This patch restores the interactive mode users expect in detailed file list views but preserves the "ideal" column sizing.
+
+Qt doesn't allow combining modes (`QHeaderView::Stretch|QHeaderView::Interactive`) so a bit of a ruse is required to activate interactive mode after the definitive sizes have been set. This patch achieves that as follows:
+
+1 A slot is connected to `QHeaderView::sectionResized` when a Polish event is received, and state member variables are initialised.
+2 The handler (slot) stores new, positive sizes for individual columns (sections) under condition that the QTreeView contains entries. No attempt i made to change the QHeaderView settings directly from here. All this happens before the widget will be drawn (evidently(?)).
+3 The state information is checked just before the widget is to be drawn (when the 1st Paint event is received); if sizing information is available the corresponding columns are resized to their respective stored sizes explicitly, and the entire QHeaderView is set to interactive resize mode.
+
+In my testing the first paint event always comes after the final column sizes have been determined, and it is not too late to change resize mode here.
+
+Currently the handler slot from 1) is a lambda insteead of a member function. A member function could be disconnected once the required information is obtained and acted upon but handler overhead is negligible and file dialogs are typically not long-lived.
+
+Possible and welcome future development: save and restore user-defined column sizes. The resize handler would have to remain in place for that (and track new sizes signalled when resizeMode==Interactive).
+
+BUG: 401506
+
+==========================
+
+diff --git a/src/filewidgets/kdiroperatordetailview.cpp b/src/filewidgets/kdiroperatordetailview.cpp
+index fa8094f8e19a9323184ce124e1582ad394586cba..4ae4cb25d941c418769d79e09d9baec93203eb96 100644
+--- a/src/filewidgets/kdiroperatordetailview.cpp
++++ b/src/filewidgets/kdiroperatordetailview.cpp
 @@ -19,7 +19,6 @@
  #include "kdiroperatordetailview_p.h"
  
@@ -10,7 +32,7 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..fd00a9567b93044dc7fc11eae935b01a
  #include <QDebug>
  
  #include <QEvent>
-@@ -85,25 +84,66 @@ bool KDirOperatorDetailView::setViewMode(KFile::FileView viewMode)
+@@ -85,25 +84,72 @@ bool KDirOperatorDetailView::setViewMode(KFile::FileView viewMode)
  
  bool KDirOperatorDetailView::event(QEvent *event)
  {
@@ -32,7 +54,8 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..fd00a9567b93044dc7fc11eae935b01a
 -        // A wheel movement will scroll 4 items
 -        if (model()->rowCount()) {
 -            verticalScrollBar()->setSingleStep((sizeHintForRow(0) / 3) * 4);
-+    switch (event->type()) {
++    switch (auto type = event->type()) {
++        case QEvent::Resize:
 +        case QEvent::Polish: {
 +            QHeaderView *headerView = header();
 +            headerView->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -51,21 +74,21 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..fd00a9567b93044dc7fc11eae935b01a
 +            for (int i = 0 ; i < KDirModel::ColumnCount ; ++i) {
 +                m_currentColumnWidth[i] = -1;
 +            }
-+            connect(header(), &QHeaderView::sectionResized,
-+                [=](int column, int, int newSize) {
-+                    if (newSize > 0 && model()->rowCount() > 0) {
-+//                         qDebug() << "Section" << column << "resized to" << newSize
-+//                            << "count=" << model()->rowCount();
-+                        // store the new width; note that we may be called multiple times
-+                        // for columns in Stretch mode, with increasingly accurate sizes.
-+                        m_currentColumnWidth[column] = newSize;
-+                        // for some reason making a selective ResizeMode setting here 
-+                        // has no effect; we need to set interactive mode on all sections
-+                        // at a later stage. Queue that now, and don't touch any
-+                        // section settings directly.
-+                        m_setInteractiveResizeMode = true;
-+                    }
-+                });
++            if (type == QEvent::Polish) {
++                connect(headerView, &QHeaderView::sectionResized,
++                    [=](int column, int, int newSize) {
++                        if (newSize > 0 && model()->rowCount() > 0) {
++                            // store the new width; note that we may be called multiple times
++                            // for columns in Stretch mode, with increasingly accurate sizes.
++                            m_currentColumnWidth[column] = newSize;
++                            // for some reason making a selective ResizeMode setting here 
++                            // has no effect; we need to set interactive mode on all sections
++                            // at a later stage. Queue that now, and don't touch any
++                            // section settings directly.
++                            m_setInteractiveResizeMode = true;
++                        }
++                    });
++            }
 +            break;
          }
 +        case QEvent::UpdateRequest:
@@ -76,16 +99,21 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..fd00a9567b93044dc7fc11eae935b01a
 +            break;
 +        case QEvent::Paint:
 +            // event analysis confirms that the 1st paint event arrives after all headers have
-+            // had a size set, so we can now activate interactive mode.
++            // had a size set, so we can now set the definitive section size explicitly and
++            // activate interactive mode. The results is that section size is set once according
++            // to the principles defined above (Polish case) but can then be adapted by the user,
++            // for instance when navigating to a different directory.
 +            if (m_setInteractiveResizeMode) {
++                header()->setSectionResizeMode(QHeaderView::Interactive);
 +                for (int i = 0 ; i < KDirModel::ColumnCount ; ++i) {
 +                    if (m_currentColumnWidth[i] > 0) {
 +                        // set the obtained width explicitly
 +                        header()->resizeSection(i, m_currentColumnWidth[i]);
 +                    }
 +                }
-+                header()->setSectionResizeMode(QHeaderView::Interactive);
++                header()->setSectionsMovable(true);
 +                // we only do this once after each Polish event which reset the column size mode.
++                // (In practice this events seems to arrive only once.)
 +                m_setInteractiveResizeMode = false;
 +            }
 +            break;
