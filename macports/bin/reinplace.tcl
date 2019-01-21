@@ -87,6 +87,7 @@ set args $argv
     mportinit ui_options global_options global_variations
     #set os_platform [string tolower $tcl_platform(os)]
     set os_platform ${macports::os_platform}
+    set os_subplatform {}
     set macosx_version ${macports::macosx_version}
     set os_version ${macports::os_version}
     set os_arch ${macports::os_arch}
