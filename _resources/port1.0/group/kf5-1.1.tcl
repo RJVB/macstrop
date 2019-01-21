@@ -233,6 +233,13 @@ if {${kf5::includecounter} == 0} {
                 configure.ldflags-append \
                                 -stdlib=libc++
             }
+        } else {
+            if {[variant_isset libcxx]} {
+                ui_warn "+libcxx is supported only with g++ from port:gcc7+libcxxXY!"
+                pre-configure {
+                    return -code error "${subport}: Illegal variant requested"
+                }
+            }
         }
         # 20160914: may need to set -DCMAKE_POLICY_DEFAULT_CMP0042=NEW
     } elseif {${os.platform} eq "linux"} {
@@ -253,8 +260,7 @@ if {${kf5::includecounter} == 0} {
                 configure.cxx_stdlib \
                                 libc++
             }
-        }
-        if {[string match *g*-mp-7* ${configure.cxx}]} {
+        } elseif {[string match *g*-mp-7* ${configure.cxx}]} {
             variant libcxx description {highly experimental option to build against libc++. \
                     Requires using port:gcc7+libcxx and an independently provided libc++ installation.} {}
             if {[variant_isset libcxx]} {
@@ -263,7 +269,15 @@ if {${kf5::includecounter} == 0} {
                 configure.ldflags-append \
                                 -stdlib=libc++
             }
+        } else {
+            if {[variant_isset libcxx]} {
+                ui_warn "+libcxx is supported only with clang or with g++ from port:gcc7+libcxxXY!"
+                pre-configure {
+                    return -code error "${subport}: Illegal variant requested"
+                }
+            }
         }
+
     }
     configure.args-append   -DSYSCONF_INSTALL_DIR="${prefix}/etc"
     set kf5.docs_dir        ${prefix}/share/doc/kf5
