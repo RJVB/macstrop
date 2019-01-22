@@ -21,7 +21,7 @@ BUG: 401506
 ==========================
 
 diff --git src/filewidgets/kdiroperatordetailview.cpp src/filewidgets/kdiroperatordetailview.cpp
-index fa8094f8e19a9323184ce124e1582ad394586cba..d12523ddca41b7dc63b5c6f7b421ac81d105b04e 100644
+index fa8094f8e19a9323184ce124e1582ad394586cba..d96c150673975ee2eb6df9da66e4be82cba9dcb8 100644
 --- src/filewidgets/kdiroperatordetailview.cpp
 +++ src/filewidgets/kdiroperatordetailview.cpp
 @@ -19,7 +19,6 @@
@@ -32,7 +32,101 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..d12523ddca41b7dc63b5c6f7b421ac81
  #include <QDebug>
  
  #include <QEvent>
-@@ -85,25 +84,111 @@ bool KDirOperatorDetailView::setViewMode(KFile::FileView viewMode)
+@@ -32,6 +31,84 @@
+ #include <QResizeEvent>
+ #include <QScrollBar>
+ 
++class KDirHeaderView : public QHeaderView
++{
++    Q_OBJECT
++public:
++    explicit KDirHeaderView(KDirOperatorDetailView *view, Qt::Orientation orientation, QWidget *parent = nullptr)
++        : QHeaderView(orientation, parent),
++        q(view),
++        m_minimalNameColumnWidth(-1),
++        m_setInteractiveResizeMode(false),
++        m_checkMinimalNameColumnWidth(false)
++    {
++        for (int i = 0 ; i < KDirModel::ColumnCount ; ++i) {
++            m_currentColumnWidth[i] = -1;
++        }
++        auto pw = view->parentWidget();
++        for (int pn = 0; pw && pn < 3; ++pn) {
++            pw = pw->parentWidget();
++        }
++        m_isFileWidget = pw ? strcmp(pw->metaObject()->className(), "KFileWidget") == 0 : false;
++    }
++
++    void resetWidthTracking(bool all)
++    {
++        m_setInteractiveResizeMode = false;
++        m_checkMinimalNameColumnWidth = true;
++        if (all) {
++            for (int i = 0 ; i < KDirModel::ColumnCount ; ++i) {
++                m_currentColumnWidth[i] = -1;
++            }
++            m_minimalNameColumnWidth = -1;
++        }
++    }
++
++    void setMinimumNameColumnWidth()
++    {
++        if (m_minimalNameColumnWidth < 0) {
++            m_minimalNameColumnWidth = sectionSize(2) * 1.33 + 0.5;
++        }
++    }
++
++    virtual QSize sectionSizeFromContents(int logicalIndex) const
++    {
++        auto size = QHeaderView::sectionSizeFromContents(logicalIndex);
++        if (logicalIndex == 0 && size.width() < m_minimalNameColumnWidth) {
++            size.setWidth(m_minimalNameColumnWidth);
++        }
++        return size;
++    }
++
++    void sectionResizeHandler(int column, int, int newSize)
++    {
++        if (newSize > 0 && model()->rowCount() > 0) {
++            if (column == 0 && newSize < m_minimalNameColumnWidth) {
++                resizeSection(0, m_minimalNameColumnWidth);
++            } else {
++                // store the new width; note that we may be called multiple times
++                // for columns in Stretch mode, with increasingly accurate sizes.
++                m_currentColumnWidth[column] = newSize;
++            }
++            // for some reason making a selective ResizeMode setting here 
++            // has no effect; we need to set interactive mode on all sections
++            // at a later stage. Queue that now, and don't touch any
++            // section settings directly.
++            m_setInteractiveResizeMode = true;
++            // also set this flag here because we may be called even if the
++            // user isn't resizing the parent widget.
++            m_checkMinimalNameColumnWidth = true;
++        }
++    }
++
++    KDirOperatorDetailView* q;
++    int m_currentColumnWidth[KDirModel::ColumnCount];
++    int m_minimalNameColumnWidth;
++    bool m_setInteractiveResizeMode;
++    bool m_checkMinimalNameColumnWidth;
++    bool m_isFileWidget;
++};
++
+ KDirOperatorDetailView::KDirOperatorDetailView(QWidget *parent) :
+     QTreeView(parent),
+     m_hideDetailColumns(false)
+@@ -44,6 +121,8 @@ KDirOperatorDetailView::KDirOperatorDetailView(QWidget *parent) :
+     setEditTriggers(QAbstractItemView::NoEditTriggers);
+     setVerticalScrollMode(QListView::ScrollPerPixel);
+     setHorizontalScrollMode(QListView::ScrollPerPixel);
++    const auto currentHeader = header();
++    setHeader(new KDirHeaderView(this, currentHeader->orientation(), currentHeader->parentWidget()));
+ }
+ 
+ KDirOperatorDetailView::~KDirOperatorDetailView()
+@@ -85,27 +164,91 @@ bool KDirOperatorDetailView::setViewMode(KFile::FileView viewMode)
  
  bool KDirOperatorDetailView::event(QEvent *event)
  {
@@ -55,11 +149,20 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..d12523ddca41b7dc63b5c6f7b421ac81
 -        if (model()->rowCount()) {
 -            verticalScrollBar()->setSingleStep((sizeHintForRow(0) / 3) * 4);
 -        }
-+    QHeaderView *headerView = header();
-+    auto fnt = font();
+-    }
++    KDirHeaderView *headerView = qobject_cast<KDirHeaderView*>(header());
 +    switch (auto type = event->type()) {
 +        case QEvent::Resize:
 +        case QEvent::Polish:
++            if (type == QEvent::Polish) {
++                // the polish event seems to arrive only once during our lifetime so
++                // this is a good moment for some JIT initialisation.
++                headerView->resetWidthTracking(true);
++                // install the section resize handler
++                connect(headerView, &QHeaderView::sectionResized, headerView, &KDirHeaderView::sectionResizeHandler);
++            } else {
++                headerView->resetWidthTracking(false);
++            }
 +            headerView->setSectionResizeMode(0, QHeaderView::Stretch);
 +            headerView->setSectionResizeMode(1, QHeaderView::ResizeToContents);
 +            headerView->setSectionResizeMode(2, QHeaderView::ResizeToContents);
@@ -72,30 +175,15 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..d12523ddca41b7dc63b5c6f7b421ac81
 +            hideColumn(KDirModel::Permissions);
 +            hideColumn(KDirModel::Owner);
 +            hideColumn(KDirModel::Group);
-+            m_setInteractiveResizeMode = false;
-+            fnt.setLetterSpacing(QFont::PercentageSpacing, 100);
-+            setFont(fnt);
-+            if (type == QEvent::Polish) {
-+                // the polish event seems to arrive only once during our lifetime so
-+                // this is a good moment for some JIT initialisation.
-+                for (int i = 0 ; i < KDirModel::ColumnCount ; ++i) {
-+                    m_currentColumnWidth[i] = -1;
-+                }
-+                m_minNameColumnWidth = -1;
-+                // install the section resize handler
-+                connect(headerView, &QHeaderView::sectionResized,
-+                    [=](int column, int, int newSize) {
-+                        if (newSize > 0 && model()->rowCount() > 0) {
-+                            // store the new width; note that we may be called multiple times
-+                            // for columns in Stretch mode, with increasingly accurate sizes.
-+                            m_currentColumnWidth[column] = newSize;
-+                            // for some reason making a selective ResizeMode setting here 
-+                            // has no effect; we need to set interactive mode on all sections
-+                            // at a later stage. Queue that now, and don't touch any
-+                            // section settings directly.
-+                            m_setInteractiveResizeMode = true;
-+                        }
-+                    });
++            if (type == QEvent::Resize && !headerView->m_isFileWidget) {
++                // force an explicit resize here for column 0; without that,
++                // this column could be resized to and shown at a width less
++                // than m_minimalNameColumnWidth. This can happen outside of
++                // our control when resizing Kate's file browser sidebar in
++                // detailed tree view. It doesn't happen in KFileWidgets
++                // (open/save dialogs) which are common enough to detect them
++                // and skip this potentially expensive operation.
++                resizeColumnToContents(0);
 +            }
 +            break;
 +        case QEvent::UpdateRequest:
@@ -110,61 +198,54 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..d12523ddca41b7dc63b5c6f7b421ac81
 +            // activate interactive mode. The results is that section size is set once according
 +            // to the principles defined above (Polish case) but can then be adapted by the user,
 +            // for instance when navigating to a different directory.
-+            if (m_setInteractiveResizeMode) {
+ 
++            // define a minimum width for the name column when we have the 1st valid reference, 
++            // here a third more than the width of the date column.
++            if (headerView->m_setInteractiveResizeMode) {
++                headerView->setMinimumNameColumnWidth();
 +                headerView->setSectionResizeMode(QHeaderView::Interactive);
-+                // define a minimum width for the name column, here a
-+                // a third more than the width of the date column.
-+                if (m_minNameColumnWidth < 0) {
-+                    m_minNameColumnWidth = headerView->sectionSize(2) * 1.33 + 0.5;
-+                }
-+                // compensation for very narrow views: impose a minimum name column width and
-+                // reduce letterspacing by a small amount. NB: here we use sectionSize() to obtain
-+                // current widths.
-+                if (headerView->sectionSize(0) > 0 && headerView->sectionSize(0) < m_minNameColumnWidth) {
-+                    m_currentColumnWidth[0] = m_minNameColumnWidth;
-+                    const int fntSpacing = 90;
-+                    // determine how much space we will gain in the date column; its contents follow the
-+                    // same pattern with the same number of spaces in the entire column.
-+                    const auto mdl = model();
-+                    const QString& content = mdl->data(mdl->index(0, 2)).toString();
-+                    // regular width
-+                    const double dateWidthA = QFontMetrics(fnt).size(Qt::TextSingleLine, content).width();
-+                    fnt.setLetterSpacing(QFont::PercentageSpacing, fntSpacing);
-+                    // gain = condensed width / regular width
-+                    double spaceGain = QFontMetrics(fnt).size(Qt::TextSingleLine, content).width() / dateWidthA;
-+                    // reduce the size and date columns by half as much
-+                    spaceGain = 0.5 + fntSpacing / 200.0;
-+                    auto oldWidth = headerView->sectionSize(2);
-+                    m_currentColumnWidth[2] = oldWidth * spaceGain + 0.5;
-+                    const auto comp2 = oldWidth - m_currentColumnWidth[2];
-+                    oldWidth = headerView->sectionSize(1);
-+                    m_currentColumnWidth[1] = oldWidth * spaceGain + 0.5;
-+                    const auto comp1 = oldWidth - m_currentColumnWidth[1];
-+                    // the name column gets the intended size plus the space gained on the other columns
-+                    m_currentColumnWidth[0] += comp1 + comp2;
-+                    setFont(fnt);
-+                }
-+                // set the values we want to set explicitly
-+                for (int i = 0 ; i < KDirModel::ColumnCount ; ++i) {
-+                    if (m_currentColumnWidth[i] > 0) {
-+                        // set the obtained width explicitly
-+                        headerView->resizeSection(i, m_currentColumnWidth[i]);
-+                    }
-+                }
 +                headerView->setSectionsMovable(true);
 +                // we only do this once after receiving a Polish or Resize event,
 +                // both of which reset the column size mode.
-+                m_setInteractiveResizeMode = false;
++                headerView->m_setInteractiveResizeMode = false;
 +            }
++            if (headerView->m_checkMinimalNameColumnWidth) {
++                // compensation for very narrow views: impose a minimum name column width and
++                // reduce letterspacing by a small amount. NB: here we use sectionSize() to obtain
++                // current widths.
++                if (headerView->sectionSize(0) > 0 && headerView->sectionSize(0) < headerView->m_minimalNameColumnWidth) {
++                    headerView->m_checkMinimalNameColumnWidth = false;
++                    headerView->m_currentColumnWidth[0] = headerView->m_minimalNameColumnWidth;
++                }
++            }
++            // set the values we want to set explicitly
++            for (int i = 0 ; i < KDirModel::ColumnCount ; ++i) {
++                if (headerView->m_currentColumnWidth[i] > 0) {
++                    headerView->setSectionResizeMode(i, QHeaderView::Interactive);
++                    headerView->resizeSection(i, headerView->m_currentColumnWidth[i]);
++                }
++            }
++            if (headerView->m_currentColumnWidth[0] > 0 && headerView->sectionResizeMode(0) != QHeaderView::Interactive) {
++                qWarning() << "!!!";
++            }
++            // if ever we get still non-resizable sections we could make them resizable
++            // here if columns 1-3 have been resized explicitly.
 +            break;
 +        default:
 +            // noop
 +            break;
-     }
- 
++    }
      return QTreeView::event(event);
+ }
+ 
+@@ -133,3 +276,5 @@ void KDirOperatorDetailView::currentChanged(const QModelIndex &current, const QM
+ {
+     QTreeView::currentChanged(current, previous);
+ }
++
++#include "kdiroperatordetailview.moc"
 diff --git src/filewidgets/kdiroperatordetailview_p.h src/filewidgets/kdiroperatordetailview_p.h
-index 2f177cd50cbfe2db1827d3836bd4052041c69911..5559f74afa1b907a260a9f06d169fa2d5c65a243 100644
+index 2f177cd50cbfe2db1827d3836bd4052041c69911..57fcb16712340186619fb8f694513fc8cdf0f2d7 100644
 --- src/filewidgets/kdiroperatordetailview_p.h
 +++ src/filewidgets/kdiroperatordetailview_p.h
 @@ -22,6 +22,7 @@
@@ -175,13 +256,3 @@ index 2f177cd50cbfe2db1827d3836bd4052041c69911..5559f74afa1b907a260a9f06d169fa2d
  
  class QAbstractItemModel;
  
-@@ -50,6 +51,9 @@ protected:
- 
- private:
-     bool m_hideDetailColumns;
-+    bool m_setInteractiveResizeMode;
-+    int m_currentColumnWidth[KDirModel::ColumnCount];
-+    int m_minNameColumnWidth;
- };
- 
- #endif
