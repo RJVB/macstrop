@@ -20,19 +20,11 @@ BUG: 401506
 
 ==========================
 
-diff --git src/filewidgets/kdiroperatordetailview.cpp src/filewidgets/kdiroperatordetailview.cpp
-index fa8094f8e19a9323184ce124e1582ad394586cba..d96c150673975ee2eb6df9da66e4be82cba9dcb8 100644
---- src/filewidgets/kdiroperatordetailview.cpp
-+++ src/filewidgets/kdiroperatordetailview.cpp
-@@ -19,7 +19,6 @@
- #include "kdiroperatordetailview_p.h"
- 
- #include <kdirlister.h>
--#include <kdirmodel.h>
- #include <QDebug>
- 
- #include <QEvent>
-@@ -32,6 +31,84 @@
+diff --git a/src/filewidgets/kdiroperatordetailview.cpp b/src/filewidgets/kdiroperatordetailview.cpp
+index fa8094f8e19a9323184ce124e1582ad394586cba..6e73a2a0df2832a0e5d06b3adff017c0e9842742 100644
+--- a/src/filewidgets/kdiroperatordetailview.cpp
++++ b/src/filewidgets/kdiroperatordetailview.cpp
+@@ -32,6 +32,88 @@
  #include <QResizeEvent>
  #include <QScrollBar>
  
@@ -45,7 +37,8 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..d96c150673975ee2eb6df9da66e4be82
 +        q(view),
 +        m_minimalNameColumnWidth(-1),
 +        m_setInteractiveResizeMode(false),
-+        m_checkMinimalNameColumnWidth(false)
++        m_checkMinimalNameColumnWidth(false),
++        m_narrowMode(false)
 +    {
 +        for (int i = 0 ; i < KDirModel::ColumnCount ; ++i) {
 +            m_currentColumnWidth[i] = -1;
@@ -55,6 +48,8 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..d96c150673975ee2eb6df9da66e4be82
 +            pw = pw->parentWidget();
 +        }
 +        m_isFileWidget = pw ? strcmp(pw->metaObject()->className(), "KFileWidget") == 0 : false;
++        // install the section resize handler
++        connect(this, &QHeaderView::sectionResized, this, &KDirHeaderView::sectionResizeHandler);
 +    }
 +
 +    void resetWidthTracking(bool all)
@@ -112,12 +107,13 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..d96c150673975ee2eb6df9da66e4be82
 +    bool m_setInteractiveResizeMode;
 +    bool m_checkMinimalNameColumnWidth;
 +    bool m_isFileWidget;
++    bool m_narrowMode;
 +};
 +
  KDirOperatorDetailView::KDirOperatorDetailView(QWidget *parent) :
      QTreeView(parent),
      m_hideDetailColumns(false)
-@@ -44,6 +121,8 @@ KDirOperatorDetailView::KDirOperatorDetailView(QWidget *parent) :
+@@ -44,6 +125,8 @@ KDirOperatorDetailView::KDirOperatorDetailView(QWidget *parent) :
      setEditTriggers(QAbstractItemView::NoEditTriggers);
      setVerticalScrollMode(QListView::ScrollPerPixel);
      setHorizontalScrollMode(QListView::ScrollPerPixel);
@@ -126,7 +122,7 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..d96c150673975ee2eb6df9da66e4be82
  }
  
  KDirOperatorDetailView::~KDirOperatorDetailView()
-@@ -85,27 +164,91 @@ bool KDirOperatorDetailView::setViewMode(KFile::FileView viewMode)
+@@ -85,27 +168,102 @@ bool KDirOperatorDetailView::setViewMode(KFile::FileView viewMode)
  
  bool KDirOperatorDetailView::event(QEvent *event)
  {
@@ -158,8 +154,7 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..d96c150673975ee2eb6df9da66e4be82
 +                // the polish event seems to arrive only once during our lifetime so
 +                // this is a good moment for some JIT initialisation.
 +                headerView->resetWidthTracking(true);
-+                // install the section resize handler
-+                connect(headerView, &QHeaderView::sectionResized, headerView, &KDirHeaderView::sectionResizeHandler);
++
 +            } else {
 +                headerView->resetWidthTracking(false);
 +            }
@@ -168,7 +163,7 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..d96c150673975ee2eb6df9da66e4be82
 +            headerView->setSectionResizeMode(2, QHeaderView::ResizeToContents);
 +            headerView->setStretchLastSection(false);
 +            headerView->setSectionsMovable(false);
-+
+ 
 +            setColumnHidden(KDirModel::Size, m_hideDetailColumns);
 +            setColumnHidden(KDirModel::ModifiedTime, m_hideDetailColumns);
 +            hideColumn(KDirModel::Type);
@@ -198,7 +193,7 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..d96c150673975ee2eb6df9da66e4be82
 +            // activate interactive mode. The results is that section size is set once according
 +            // to the principles defined above (Polish case) but can then be adapted by the user,
 +            // for instance when navigating to a different directory.
- 
++
 +            // define a minimum width for the name column when we have the 1st valid reference, 
 +            // here a third more than the width of the date column.
 +            if (headerView->m_setInteractiveResizeMode) {
@@ -213,9 +208,21 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..d96c150673975ee2eb6df9da66e4be82
 +                // compensation for very narrow views: impose a minimum name column width and
 +                // reduce letterspacing by a small amount. NB: here we use sectionSize() to obtain
 +                // current widths.
-+                if (headerView->sectionSize(0) > 0 && headerView->sectionSize(0) < headerView->m_minimalNameColumnWidth) {
-+                    headerView->m_checkMinimalNameColumnWidth = false;
-+                    headerView->m_currentColumnWidth[0] = headerView->m_minimalNameColumnWidth;
++                if (headerView->sectionSize(0) > 0) {
++                    if (headerView->sectionSize(0) < headerView->m_minimalNameColumnWidth) {
++                        headerView->m_checkMinimalNameColumnWidth = false;
++                        headerView->m_currentColumnWidth[0] = headerView->m_minimalNameColumnWidth;
++                        headerView->m_narrowMode = true;
++                    } else if (headerView->m_narrowMode) {
++                        // sometimes Qt finds a better (larger) width for the name column even
++                        // when in narrow mode; use it.
++                        if (headerView->sectionSize(0) > headerView->m_minimalNameColumnWidth) {
++                            headerView->m_minimalNameColumnWidth = headerView->sectionSize(0);
++                            qDebug() << "KDirOperatorDetailView: narrow mode off - minimalNameColumnWidth now"
++                                << headerView->m_minimalNameColumnWidth;
++                        }
++                        headerView->m_narrowMode = false;
++                    }
 +                }
 +            }
 +            // set the values we want to set explicitly
@@ -238,21 +245,9 @@ index fa8094f8e19a9323184ce124e1582ad394586cba..d96c150673975ee2eb6df9da66e4be82
      return QTreeView::event(event);
  }
  
-@@ -133,3 +276,5 @@ void KDirOperatorDetailView::currentChanged(const QModelIndex &current, const QM
+@@ -133,3 +291,5 @@ void KDirOperatorDetailView::currentChanged(const QModelIndex &current, const QM
  {
      QTreeView::currentChanged(current, previous);
  }
 +
 +#include "kdiroperatordetailview.moc"
-diff --git src/filewidgets/kdiroperatordetailview_p.h src/filewidgets/kdiroperatordetailview_p.h
-index 2f177cd50cbfe2db1827d3836bd4052041c69911..57fcb16712340186619fb8f694513fc8cdf0f2d7 100644
---- src/filewidgets/kdiroperatordetailview_p.h
-+++ src/filewidgets/kdiroperatordetailview_p.h
-@@ -22,6 +22,7 @@
- #include <QTreeView>
- 
- #include <kfile.h>
-+#include <kdirmodel.h>
- 
- class QAbstractItemModel;
- 
