@@ -1,0 +1,119 @@
+commit 7a16881ec33f4af2028593c2b3da7c1e20bf53c6
+Author: Aleix Pol <aleixpol@kde.org>
+Date:   Tue Jan 15 03:46:57 2019 +0100
+
+    cmake: make use of QSharedPointer<CMakeServer> from the start
+    
+    Don't start using the sharedpointer at some random point in the lifetime
+    of the object.
+    Make sure we don't parent it, as QSharedPointer will try to delete it
+    eventually as well.
+
+diff --git plugins/cmake/cmakemanager.cpp plugins/cmake/cmakemanager.cpp
+index aec7b97ccf..65b17bfade 100644
+--- plugins/cmake/cmakemanager.cpp
++++ plugins/cmake/cmakemanager.cpp
+@@ -149,9 +149,9 @@ public:
+     }
+ 
+     void start() override {
+-        server.reset(new CMakeServer(project));
+-        connect(server.data(), &CMakeServer::connected, this, &ChooseCMakeInterfaceJob::successfulConnection);
+-        connect(server.data(), &CMakeServer::finished, this, &ChooseCMakeInterfaceJob::failedConnection);
++        server = new CMakeServer(project);
++        connect(server, &CMakeServer::connected, this, &ChooseCMakeInterfaceJob::successfulConnection);
++        connect(server, &CMakeServer::finished, this, &ChooseCMakeInterfaceJob::failedConnection);
+     }
+ 
+ private:
+@@ -192,7 +192,7 @@ private:
+         ExecuteCompositeJob::start();
+     }
+ 
+-    QSharedPointer<CMakeServer> server;
++    CMakeServer* server = nullptr;
+     IProject* const project;
+     CMakeManager* const manager;
+ };
+diff --git plugins/cmake/cmakeserver.cpp plugins/cmake/cmakeserver.cpp
+index 84fabfdbe6..cddc3ea1bf 100644
+--- plugins/cmake/cmakeserver.cpp
++++ plugins/cmake/cmakeserver.cpp
+@@ -35,8 +35,8 @@
+ #include <QTemporaryFile>
+ #include "debug.h"
+ 
+-CMakeServer::CMakeServer(KDevelop::IProject* project)
+-    : QObject()
++CMakeServer::CMakeServer(QObject* parent)
++    : QObject(parent)
+     , m_localSocket(new QLocalSocket(this))
+ {
+     QString path;
+@@ -81,7 +81,7 @@ CMakeServer::CMakeServer(KDevelop::IProject* project)
+     });
+     // we're called with the importing project as our parent, so we can fetch configured
+     // cmake executable (project-specific or kdevelop-wide) rather than the system version.
+-    m_process.setProgram(CMake::currentCMakeExecutable(project).toLocalFile());
++    m_process.setProgram(CMake::currentCMakeExecutable(dynamic_cast<KDevelop::IProject*>(parent)).toLocalFile());
+     m_process.setArguments({QStringLiteral("-E"), QStringLiteral("server"), QStringLiteral("--experimental"), QLatin1String("--pipe=") + path});
+     KDevelop::ICore::self()->runtimeController()->currentRuntime()->startProcess(&m_process);
+ }
+diff --git plugins/cmake/cmakeserver.h plugins/cmake/cmakeserver.h
+index 85f2a96e82..df44b5833d 100644
+--- plugins/cmake/cmakeserver.h
++++ plugins/cmake/cmakeserver.h
+@@ -26,13 +26,11 @@
+ #include <QLocalSocket>
+ #include "cmakecommonexport.h"
+ 
+-namespace KDevelop { class IProject; }
+-
+ class KDEVCMAKECOMMON_EXPORT CMakeServer : public QObject
+ {
+ Q_OBJECT
+ public:
+-    explicit CMakeServer(KDevelop::IProject* project);
++    explicit CMakeServer(QObject* parent = nullptr);
+     ~CMakeServer() override;
+ 
+     bool isServerAvailable();
+diff --git plugins/cmake/cmakeserverimportjob.cpp plugins/cmake/cmakeserverimportjob.cpp
+index f46596d280..e6c7d6bc24 100644
+--- plugins/cmake/cmakeserverimportjob.cpp
++++ plugins/cmake/cmakeserverimportjob.cpp
+@@ -160,7 +160,7 @@ void CMakeServerImportJob::processCodeModel(const QJsonObject &response, CMakePr
+     }
+ }
+ 
+-CMakeServerImportJob::CMakeServerImportJob(KDevelop::IProject* project, const QSharedPointer<CMakeServer> &server, QObject* parent)
++CMakeServerImportJob::CMakeServerImportJob(KDevelop::IProject* project, CMakeServer* server, QObject* parent)
+     : KJob(parent)
+     , m_server(server)
+     , m_project(project)
+diff --git plugins/cmake/cmakeserverimportjob.h plugins/cmake/cmakeserverimportjob.h
+index a03abcd4e6..946647020a 100644
+--- plugins/cmake/cmakeserverimportjob.h
++++ plugins/cmake/cmakeserverimportjob.h
+@@ -34,7 +34,7 @@ class CMakeServerImportJob : public KJob
+ {
+     Q_OBJECT
+ public:
+-    CMakeServerImportJob(KDevelop::IProject* project, const QSharedPointer<CMakeServer> &server, QObject* parent);
++    CMakeServerImportJob(KDevelop::IProject* project, CMakeServer* server, QObject* parent);
+ 
+     enum Error { NoError, UnexpectedDisconnect, ErrorResponse };
+ 
+diff --git plugins/cmake/tests/test_cmakeserver.cpp plugins/cmake/tests/test_cmakeserver.cpp
+index c24b7bc50c..3aa2672a41 100644
+--- plugins/cmake/tests/test_cmakeserver.cpp
++++ plugins/cmake/tests/test_cmakeserver.cpp
+@@ -63,7 +63,7 @@ private Q_SLOTS:
+ 
+     void testRun()
+     {
+-        CMakeServer server(nullptr);
++        CMakeServer server(this);
+         QSignalSpy spyConnected(&server, &CMakeServer::connected);
+         QVERIFY(server.isServerAvailable() || spyConnected.wait());
+ 
