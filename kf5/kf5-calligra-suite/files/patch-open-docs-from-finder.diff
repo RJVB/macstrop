@@ -1,51 +1,202 @@
-diff --git a/libs/main/KoPart.cpp b/libs/main/KoPart.cpp
-index 27dc8e24aa393e6c18eb8db3dc03e94161c7b655..4c3400aaea1c554782a2f18160a9335f48a2e2ca 100644
---- a/libs/main/KoPart.cpp
-+++ b/libs/main/KoPart.cpp
-@@ -51,11 +51,16 @@
- #include "KoPartAdaptor.h"
+diff --git a/libs/main/KoApplication.cpp b/libs/main/KoApplication.cpp
+index fae530f7dcde81fe0777cdac82647c344add0f3c..c29fab7397d02218dc2e688146201f426b2622e3 100644
+--- a/libs/main/KoApplication.cpp
++++ b/libs/main/KoApplication.cpp
+@@ -41,6 +41,8 @@
+ #include <KoConfig.h>
+ #include <KoResourcePaths.h>
+ #include <KoComponentData.h>
++#include "KoDocument.h"
++#include "KoView.h"
+ 
+ #include <klocalizedstring.h>
+ #include <kdesktopfile.h>
+@@ -71,6 +73,10 @@
+ #include <tchar.h>
  #endif
  
--class Q_DECL_HIDDEN KoPart::Private
 +#ifdef Q_OS_MACOS
 +#include <QFileOpenEvent>
 +#endif
 +
-+class Q_DECL_HIDDEN KoPart::Private : public QObject
- {
- public:
-     Private(const KoComponentData &componentData_, KoPart *_parent)
--        : parent(_parent)
-+        : QObject(_parent)
-+        , parent(_parent)
-         , document(0)
-         , canvasItem(0)
-         , startUpWidget(0)
-@@ -72,6 +77,23 @@ public:
-         //delete canvasItem;
-     }
  
-+    bool eventFilter(QObject *obj, QEvent *event) override
-+    {
-+        if (event->type() == QEvent::FileOpen) {
-+            // handle file open events on Mac:
-+            // try to inform KoApplication::start() that we are not
-+            // started without file(s) to open:
-+            QFileOpenEvent *fileOpenEvent = static_cast<QFileOpenEvent*>(event);
-+//             debugMain << "FileOpen event for" << fileOpenEvent->url();
-+            warnMain << "Direct FileOpen event for" << fileOpenEvent->url();
-+            parent->openExistingFile(fileOpenEvent->url());
-+            // don't eat the event
-+            return false;
-+        }
+ #include <QDesktopWidget>
+ 
+@@ -671,3 +689,37 @@ KoApplication *KoApplication::koApplication()
+ {
+     return KoApp;
+ }
 +
-+        return QObject::eventFilter(obj, event);
++#ifdef Q_OS_MACOS
++bool KoApplication::event(QEvent *event)
++{
++    if (event->type() == QEvent::FileOpen) {
++        // handle file open events on Mac:
++        // try to inform KoApplication::start() that we are not
++        // started without file(s) to open:
++        const auto fileOpenEvent = static_cast<QFileOpenEvent*>(event);
++        const auto url = fileOpenEvent->url();
++        debugMain << "FileOpen event for" << fileOpenEvent->url();
++        // check if we already have the document open; if so,
++        // activate it as per Apple's HIG.
++        for (auto kw : KoMainWindow::memberList()) {
++            if (auto mw = qobject_cast<KoMainWindow*>(kw)) {
++                auto doc = mw->rootDocument();
++                if (doc && doc->url() == url) {
++                    debugMain << "\tActivating doc" << doc << "in" << mw;
++                    mw->show();
++                    mw->activateWindow();
++                    mw->raise();
++                    return true;
++                }
++            }
++        }
++        emit openFileEvent(url);
++        return true;
 +    }
 +
-     KoPart *parent;
++    return QApplication::event(event);
++}
++#endif
++
++
+diff --git a/libs/main/KoApplication.h b/libs/main/KoApplication.h
+index cd656992e7493570867b6432b0654c8ac4e3dd11..cfb45bed2f0b5817068fb154b3fb5e54d6c67cc7 100644
+--- a/libs/main/KoApplication.h
++++ b/libs/main/KoApplication.h
+@@ -118,6 +118,10 @@ public:
+      */
+     static KoApplication* koApplication();
  
-     QList<KoView*> views;
-@@ -249,6 +271,9 @@ void KoPart::openExistingFile(const QUrl &url)
++#ifdef Q_OS_MACOS
++    virtual bool event(QEvent *e) override;
++#endif
++
+ Q_SIGNALS:
+ 
+     /// KoPart needs to be able to emit document signals from here. These
+@@ -135,6 +139,11 @@ Q_SIGNALS:
+      */
+     void documentClosed(const QString &ref);
+ 
++    /**
++     * emitted on Mac if a QFileOpenEvent is received
++     */
++    void openFileEvent(const QUrl &url);
++
+ protected:
+ 
+     // Current application object.
+diff --git a/libs/main/KoMainWindow.cpp b/libs/main/KoMainWindow.cpp
+index c6e3c33aef8de093aec583b7716ab6ee8045bbb4..c515c67fb2370ca7463a7fd195b33df2cc0da549 100644
+--- a/libs/main/KoMainWindow.cpp
++++ b/libs/main/KoMainWindow.cpp
+@@ -250,9 +250,6 @@ KoMainWindow::KoMainWindow(const QByteArray &nativeMimeType, const KoComponentDa
+     : KXmlGuiWindow()
+     , d(new KoMainWindowPrivate(nativeMimeType, componentData, this))
+ {
+-#ifdef Q_OS_MAC
+-    setUnifiedTitleAndToolBarOnMac(true);
+-#endif
+     setStandardToolBarMenuEnabled(true);
+ 
+     setTabPosition(Qt::AllDockWidgetAreas, QTabWidget::North);
+@@ -420,6 +417,8 @@ void KoMainWindow::setNoCleanup(bool noCleanup)
+ 
+ KoMainWindow::~KoMainWindow()
+ {
++    enableFileOpenEventHandling(false);
++
+     KConfigGroup cfg( KSharedConfig::openConfig(), "MainWindow");
+     cfg.writeEntry("ko_geometry", saveGeometry().toBase64());
+     cfg.writeEntry("ko_windowstate", saveState().toBase64());
+@@ -2162,3 +2161,18 @@ void KoMainWindow::showDockerTitleBars(bool show)
+     KConfigGroup configGroupInterface =  KSharedConfig::openConfig()->group("Interface");
+     configGroupInterface.writeEntry("ShowDockerTitleBars", show);
+ }
++
++#ifdef Q_OS_MACOS
++void KoMainWindow::enableFileOpenEventHandling(bool enabled)
++{
++    if (enabled) {
++        // disconnect all other listeners
++        disconnect(KoApplication::koApplication(), &KoApplication::openFileEvent, nullptr, nullptr);
++        // connect us
++        connect(KoApplication::koApplication(), &KoApplication::openFileEvent,
++                this, [&](const QUrl &url) { openDocument(url); }, Qt::UniqueConnection);
++    } else {
++        disconnect(KoApplication::koApplication(), nullptr, this, nullptr);
++    }
++}
++#endif
+diff --git a/libs/main/KoMainWindow.h b/libs/main/KoMainWindow.h
+index ec7e4faec98678c80a164ca4c465816e04ee5c91..532a55578aac4605b1e7c8d260ee33ec7cab52b4 100644
+--- a/libs/main/KoMainWindow.h
++++ b/libs/main/KoMainWindow.h
+@@ -435,6 +435,10 @@ private:
+      */
+     virtual void setActivePart(KoPart *part, QWidget *widget);
+ 
++#ifdef Q_OS_MACOS
++    void enableFileOpenEventHandling(bool enable);
++#endif
++
+ private Q_SLOTS:
+ 
+     /**
+diff --git a/libs/main/KoPart.cpp b/libs/main/KoPart.cpp
+index 27dc8e24aa393e6c18eb8db3dc03e94161c7b655..4a8a0baecfbf9db4146fb9bbd2b6a861cde0e3e7 100644
+--- a/libs/main/KoPart.cpp
++++ b/libs/main/KoPart.cpp
+@@ -51,6 +51,10 @@
+ #include "KoPartAdaptor.h"
+ #endif
+ 
++#ifdef Q_OS_MACOS
++#include <QFileOpenEvent>
++#endif
++
+ class Q_DECL_HIDDEN KoPart::Private
+ {
+ public:
+@@ -70,6 +74,25 @@ public:
+         // delete condition. Until that's discovered, we'll need this
+         // to avoid crashes in Gemini
+         //delete canvasItem;
++        handleOpenFileEvents(false);
++        listenerPartList.removeAll(parent);
++    }
++
++    void handleOpenFileEvents(bool enabled)
++    {
++        if (enabled) {
++            // there should always be only a single handler for QFileOpenEvents
++            // so disconnect all other listeners
++            disconnect(KoApplication::koApplication(), &KoApplication::openFileEvent, nullptr, nullptr);
++            connect(KoApplication::koApplication(), &KoApplication::openFileEvent,
++                    parent, &KoPart::openExistingFile, Qt::UniqueConnection);
++            if (!listenerPartList.contains(parent)) {
++                listenerPartList.append(parent);
++            }
++        } else {
++            disconnect(KoApplication::koApplication(), &KoApplication::openFileEvent, parent, &KoPart::openExistingFile);
++            listenerPartList.removeAll(parent);
++        }
+     }
+ 
+     KoPart *parent;
+@@ -83,8 +106,9 @@ public:
+     QString templatesResourcePath;
+ 
+     KoComponentData componentData;
++    static QList<KoPart*> listenerPartList;
+ };
+-
++QList<KoPart*> KoPart::Private::listenerPartList;
+ 
+ KoPart::KoPart(const KoComponentData &componentData, QObject *parent)
+         : QObject(parent)
+@@ -249,6 +273,9 @@ void KoPart::openExistingFile(const QUrl &url)
      QApplication::setOverrideCursor(Qt::BusyCursor);
      d->document->openUrl(url);
      d->document->setModified(false);
@@ -55,27 +206,39 @@ index 27dc8e24aa393e6c18eb8db3dc03e94161c7b655..4c3400aaea1c554782a2f18160a9335f
      QApplication::restoreOverrideCursor();
  }
  
-@@ -327,6 +352,9 @@ void KoPart::showStartUpWidget(KoMainWindow *mainWindow, bool alwaysShow)
+@@ -327,6 +354,9 @@ void KoPart::showStartUpWidget(KoMainWindow *mainWindow, bool alwaysShow)
      }
  
      mainWindow->setPartToOpen(this);
 +#ifdef Q_OS_MACOS
-+    KoApplication::koApplication()->installEventFilter(d);
++    d->handleOpenFileEvents(true);
 +#endif
  }
  
  void KoPart::deleteOpenPane(bool closing)
-@@ -341,6 +369,9 @@ void KoPart::deleteOpenPane(bool closing)
+@@ -341,6 +371,22 @@ void KoPart::deleteOpenPane(bool closing)
                                                                    mainWindows().first())->show();
          }
      }
 +#ifdef Q_OS_MACOS
-+    KoApplication::koApplication()->removeEventFilter(d);
++    // there should always be only a single handler for QFileOpenEvents
++    // (it doesn't matter who).
++    d->handleOpenFileEvents(false);
++    if (!closing) {
++        // multiple KoOpenPane startUpWidgets can be open in as many KoParts
++        // so check if there are others that have not yet disabled their
++        // OpenFileEvent handler.
++        if (d->listenerPartList.isEmpty()) {
++            // no other KoOpenPanes left
++            mainWindows().first()->enableFileOpenEventHandling(true);
++        } else {
++            d->listenerPartList.first()->d->handleOpenFileEvents(true);
++        }
++    }
 +#endif
  }
  
  QList<KoPart::CustomDocumentWidgetItem> KoPart::createCustomDocumentWidgets(QWidget * /*parent*/)
-
 diff --git a/karbon/Info.plist.template b/karbon/Info.plist.template
 index 39e70e7d85b4bfb0e3583cd9a1f88e63da8550ca..c574fa9a3364566ec3b1e676957b9ad1235bd77d 100644
 --- a/karbon/Info.plist.template
