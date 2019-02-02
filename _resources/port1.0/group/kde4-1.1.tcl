@@ -76,7 +76,11 @@ configure.args-delete   -DCMAKE_BUILD_TYPE=Release
 # force cmake to use the compiler flags passed through CFLAGS, CXXFLAGS etc. in the environment
 configure.args-append   -DCMAKE_BUILD_TYPE:STRING=MacPorts \
                         -DCMAKE_STRIP:FILEPATH=/bin/echo \
-                        -DCMAKE_USE_RELATIVE_PATHS:BOOL=ON
+                        -DCMAKE_USE_RELATIVE_PATHS:BOOL=ON \
+                        -DQT_QMAKE_EXECUTABLE=${qt_qmake_cmd}
+configure.env-append    QTDIR=${qt_dir}
+build.env-append        QTDIR=${qt_dir}
+destroot.env-append     QTDIR=${qt_dir}
 
 # Install the kdelibs headerfiles in their own directory to prevent clashes with KF5 headers
 set kde4.include_prefix KDE4
