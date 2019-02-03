@@ -270,10 +270,11 @@ if {${kf5::includecounter} == 0} {
                                 -stdlib=libc++
             }
         } else {
+            variant libcxx description {Not supported. Use libc++ when building with clang or a libc++-enabled GCC port} {}
             if {[variant_isset libcxx]} {
                 ui_warn "+libcxx is supported only with clang or with g++ from port:gcc7+libcxxXY!"
                 pre-configure {
-                    return -code error "${subport}: Illegal variant requested"
+                    return -code error "${subport}: Invalid variant requested"
                 }
             }
         }
