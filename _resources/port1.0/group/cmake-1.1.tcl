@@ -401,6 +401,16 @@ pre-configure {
                                 -DCMAKE_RANLIB=[string map {"clang" "llvm-ranlib"} ${configure.cc}]
         }
     }
+    if {[info exists qt_qmake_spec]} {
+        if {(![string first "-DCMAKE_MKPEC" ${configure.pre_args}])
+            && (![string first "-DCMAKE_MKPEC" ${configure.args}])
+            && (![string first "-DCMAKE_MKPEC" ${configure.post_args}])} {
+            configure.args-append \
+                                "-DCMAKE_MKSPEC=${qt_qmake_spec}"
+        } else {
+            ui_debug "CMAKE_MKSPEC already set"
+        }
+    }
 
     # The configure.ccache variable has been cached so we can restore it in the post-configure
     # (pre-configure and post-configure are always run in a single `port` invocation.)
