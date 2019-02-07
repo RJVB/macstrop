@@ -11,7 +11,7 @@ index c61e8de32e..d8b14d8240 100644
      interfaces/iprojectfilemanager.cpp
      interfaces/ibuildsystemmanager.cpp
 diff --git kdevplatform/project/abstractfilemanagerplugin.cpp kdevplatform/project/abstractfilemanagerplugin.cpp
-index 6134e7b176f94d7fc55288d84f5ab7defbd2f14f..fd6fecd949d8016e4d6f5fa9cbb88cae8f95e750 100644
+index 6134e7b176f94d7fc55288d84f5ab7defbd2f14f..8a005c3be8fbffb87a2662e1ac4e7f36ccd81e37 100644
 --- kdevplatform/project/abstractfilemanagerplugin.cpp
 +++ kdevplatform/project/abstractfilemanagerplugin.cpp
 @@ -1,3 +1,4 @@
@@ -185,20 +185,22 @@ index 6134e7b176f94d7fc55288d84f5ab7defbd2f14f..fd6fecd949d8016e4d6f5fa9cbb88cae
      while (it.hasNext()) {
          const auto p = it.next().key();
          if ( !p->projectItem()->model() ) {
-@@ -284,8 +336,10 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
+@@ -283,9 +335,12 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
+             foreach ( ProjectFolderItem* folder, p->foldersForPath(indexedPath) ) {
                  // exists already in this project, happens e.g. when we restart the dirwatcher
                  // or if we delete and remove folders consecutively https://bugs.kde.org/show_bug.cgi?id=260741
++                // or when a change is signalled in the directory contents.
                  qCDebug(FILEMANAGER) << "force reload of" << path << folder;
 -                auto job = eventuallyReadFolder( folder );
 -                job->start();
 +                // schedule a reload, recursive if isCreated, of the directory only otherwise
 +                // (= when a change was reported in the directory itself).
-+                auto job = eventuallyReadFolder( folder, !isCreated );
++                auto job = eventuallyReadFolder( folder, false );
 +                job->start(1000);
                  found = true;
              }
              if ( found ) {
-@@ -295,18 +349,20 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
+@@ -295,18 +350,20 @@ void AbstractFileManagerPluginPrivate::created(const QString& path_)
              // also gets triggered for kate's backup files
              continue;
          }
@@ -231,7 +233,7 @@ index 6134e7b176f94d7fc55288d84f5ab7defbd2f14f..fd6fecd949d8016e4d6f5fa9cbb88cae
                  }
              }
          }
-@@ -330,7 +386,7 @@ void AbstractFileManagerPluginPrivate::deleted(const QString& path_)
+@@ -330,7 +387,7 @@ void AbstractFileManagerPluginPrivate::deleted(const QString& path_)
      const Path path(QUrl::fromLocalFile(path_));
      const IndexedString indexed(path.pathOrUrl());
  
@@ -240,7 +242,7 @@ index 6134e7b176f94d7fc55288d84f5ab7defbd2f14f..fd6fecd949d8016e4d6f5fa9cbb88cae
      while (it.hasNext()) {
          const auto p = it.next().key();
          if (path == p->path()) {
-@@ -440,12 +496,17 @@ void AbstractFileManagerPluginPrivate::removeFolder(ProjectFolderItem* folder)
+@@ -440,12 +497,17 @@ void AbstractFileManagerPluginPrivate::removeFolder(ProjectFolderItem* folder)
      foreach(FileManagerListJob* job, m_projectJobs[folder->project()]) {
          if (isChildItem(folder, job->item())) {
              qCDebug(FILEMANAGER) << "killing list job for removed folder" << job << folder->path();
@@ -259,7 +261,7 @@ index 6134e7b176f94d7fc55288d84f5ab7defbd2f14f..fd6fecd949d8016e4d6f5fa9cbb88cae
      folder->parent()->removeRow( folder->row() );
  }
  
-@@ -487,14 +548,19 @@ ProjectFolderItem *AbstractFileManagerPlugin::import( IProject *project )
+@@ -487,14 +549,19 @@ ProjectFolderItem *AbstractFileManagerPlugin::import( IProject *project )
  
      ///TODO: check if this works for remote files when something gets changed through another KDE app
      if ( project->path().isLocalFile() ) {
@@ -285,7 +287,7 @@ index 6134e7b176f94d7fc55288d84f5ab7defbd2f14f..fd6fecd949d8016e4d6f5fa9cbb88cae
      }
  
 diff --git kdevplatform/project/filemanagerlistjob.cpp kdevplatform/project/filemanagerlistjob.cpp
-index 30c89d3c2ab279b44ab2f036e09c5dd1d63d27b2..be21696815f65aacfe474395fb78a029a2722bed 100644
+index 30c89d3c2ab279b44ab2f036e09c5dd1d63d27b2..87f0190eb10225b0cfdf7895c89aeed834bf414b 100644
 --- kdevplatform/project/filemanagerlistjob.cpp
 +++ kdevplatform/project/filemanagerlistjob.cpp
 @@ -29,11 +29,67 @@
@@ -353,12 +355,20 @@ index 30c89d3c2ab279b44ab2f036e09c5dd1d63d27b2..be21696815f65aacfe474395fb78a029
 +    , m_basePath(item->path())
 +    , m_aborted(false)
 +    , m_emitWatchDir(!qEnvironmentVariableIsSet("KDEV_PROJECT_INTREE_DIRWATCHING_MODE"))
++    , m_recursive(true) // sic!
 +    , m_rcProxy(nullptr)
-+    , m_recursive(recursive)
  {
      qRegisterMetaType<KIO::UDSEntryList>("KIO::UDSEntryList");
      qRegisterMetaType<KIO::Job*>();
-@@ -51,13 +107,44 @@ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
+@@ -45,19 +101,52 @@ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
+     connect( this, &FileManagerListJob::nextJob, this, &FileManagerListJob::startNextJob, Qt::QueuedConnection );
+ 
+     addSubDir(item);
++    // now we can set m_recursive to the requested value
++    m_recursive = recursive;
+ 
+ #ifdef TIME_IMPORT_JOB
+     m_timer.start();
  #endif
  }
  
@@ -396,14 +406,14 @@ index 30c89d3c2ab279b44ab2f036e09c5dd1d63d27b2..be21696815f65aacfe474395fb78a029
 +
  void FileManagerListJob::addSubDir( ProjectFolderItem* item )
  {
-+    if (m_aborted) {
++    if (m_aborted || !m_recursive) {
 +        return;
 +    }
 +
      Q_ASSERT(!m_listQueue.contains(item));
      Q_ASSERT(!m_item || m_item == item || m_item->path().isDirectParentOf(item->path()));
  
-@@ -66,6 +153,10 @@ void FileManagerListJob::addSubDir( ProjectFolderItem* item )
+@@ -66,6 +155,10 @@ void FileManagerListJob::addSubDir( ProjectFolderItem* item )
  
  void FileManagerListJob::removeSubDir(ProjectFolderItem* item)
  {
@@ -414,7 +424,15 @@ index 30c89d3c2ab279b44ab2f036e09c5dd1d63d27b2..be21696815f65aacfe474395fb78a029
      m_listQueue.removeAll(item);
  }
  
-@@ -97,8 +189,12 @@ void FileManagerListJob::startNextJob()
+@@ -86,6 +179,7 @@ void FileManagerListJob::startNextJob()
+ #endif
+ 
+     m_item = m_listQueue.dequeue();
++    m_project = m_item->project();
+     if (m_item->path().isLocalFile()) {
+         // optimized version for local projects using QDir directly
+         QtConcurrent::run([this] (const Path& path) {
+@@ -97,8 +191,12 @@ void FileManagerListJob::startNextJob()
              if (m_aborted) {
                  return;
              }
@@ -428,25 +446,7 @@ index 30c89d3c2ab279b44ab2f036e09c5dd1d63d27b2..be21696815f65aacfe474395fb78a029
                  KIO::UDSEntry entry;
  #if KIO_VERSION < QT_VERSION_CHECK(5,48,0)
                  entry.insert(KIO::UDSEntry::UDS_NAME, info.fileName());
-@@ -106,11 +202,15 @@ void FileManagerListJob::startNextJob()
-                 entry.fastInsert(KIO::UDSEntry::UDS_NAME, info.fileName());
- #endif
-                 if (info.isDir()) {
-+                    if (m_recursive) {
- #if KIO_VERSION < QT_VERSION_CHECK(5,48,0)
--                    entry.insert(KIO::UDSEntry::UDS_FILE_TYPE, QT_STAT_DIR);
-+                        entry.insert(KIO::UDSEntry::UDS_FILE_TYPE, QT_STAT_DIR);
- #else
--                    entry.fastInsert(KIO::UDSEntry::UDS_FILE_TYPE, QT_STAT_DIR);
-+                        entry.fastInsert(KIO::UDSEntry::UDS_FILE_TYPE, QT_STAT_DIR);
- #endif
-+                    } else {
-+                        qCWarning(FILEMANAGER) << "Skipping recursive (re)load of" << info.fileName();
-+                    }
-                 }
-                 if (info.isSymLink()) {
- #if KIO_VERSION < QT_VERSION_CHECK(5,48,0)
-@@ -121,7 +221,9 @@ void FileManagerListJob::startNextJob()
+@@ -121,7 +219,9 @@ void FileManagerListJob::startNextJob()
                  }
                  return entry;
              });
@@ -457,7 +457,7 @@ index 30c89d3c2ab279b44ab2f036e09c5dd1d63d27b2..be21696815f65aacfe474395fb78a029
          }, m_item->path());
      } else {
          KIO::ListJob* job = KIO::listDir( m_item->path().toUrl(), KIO::HideProgressInfo );
-@@ -165,7 +267,13 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
+@@ -165,7 +265,13 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
      emit entries(this, m_item, entriesIn);
  
      if( m_listQueue.isEmpty() ) {
@@ -471,7 +471,7 @@ index 30c89d3c2ab279b44ab2f036e09c5dd1d63d27b2..be21696815f65aacfe474395fb78a029
  
  #ifdef TIME_IMPORT_JOB
          qCDebug(PROJECT) << "TIME FOR LISTJOB:" << m_timer.elapsed();
-@@ -178,13 +286,44 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
+@@ -178,13 +284,44 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
  void FileManagerListJob::abort()
  {
      m_aborted = true;
@@ -517,7 +517,7 @@ index 30c89d3c2ab279b44ab2f036e09c5dd1d63d27b2..be21696815f65aacfe474395fb78a029
 +    m_recursive = enabled;
 +}
 diff --git kdevplatform/project/filemanagerlistjob.h kdevplatform/project/filemanagerlistjob.h
-index 0d32c992c47ebc7d084a019badb64988f0be9ec0..5d0e675239cfd19baa4453cc6d65bc8455e30a6e 100644
+index 0d32c992c47ebc7d084a019badb64988f0be9ec0..6d43312b4504172a4a42c3f41d50141bdc6a7185 100644
 --- kdevplatform/project/filemanagerlistjob.h
 +++ kdevplatform/project/filemanagerlistjob.h
 @@ -30,28 +30,41 @@
