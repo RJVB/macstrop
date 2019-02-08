@@ -120,6 +120,7 @@ default destroot.target             install/fast
 # make sure cmake is available:
 # can use cmake or cmake-devel; default to cmake if not installed
 depends_build-append                path:bin/cmake:cmake
+depends_skip_archcheck-append       cmake
 
 
 proc cmake::rpath_flags {} {
@@ -182,6 +183,8 @@ proc cmake::handle_generator {option action args} {
                 ui_debug "Selecting the 'Unix Makefiles' generator ($args)"
                 depends_build-delete \
                                 port:ninja
+                depends_skip_archcheck-delete \
+                                ninja
                 build.cmd       make
                 build.post_args VERBOSE=ON
                 destroot.target install/fast
@@ -202,6 +205,8 @@ proc cmake::handle_generator {option action args} {
                 ui_debug "Selecting the Ninja generator ($args)"
                 depends_build-append \
                                 port:ninja
+                depends_skip_archcheck-append \
+                                ninja
                 build.cmd       ninja
                 # force Ninja not to exceed the probably-expected CPU load by too much;
                 # for larger projects one can reach as much as build.jobs*2 CPU load otherwise.
