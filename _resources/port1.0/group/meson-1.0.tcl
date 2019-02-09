@@ -59,7 +59,7 @@ destroot.env-append         DESTDIR=${destroot}
 default destroot.post_args  ""
 
 pre-configure {
-    if {[file exists ${build.dir}/compile_commands.json]} {
+    if {[file exists ${build.dir}/meson-private]} {
         configure.pre_args-append \
                             --reconfigure
     }
