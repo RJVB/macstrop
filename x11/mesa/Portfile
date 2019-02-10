@@ -2,10 +2,18 @@
 
 PortSystem          1.0
 PortGroup           compiler_blacklist_versions 1.0
+# PortGroup           muniversal 1.0
+# PortGroup           meson 1.0
+
+platform darwin {
+    if {${os.major} < 13} {
+        PortGroup   cxx11 1.1
+    }
+}
 
 name                mesa
 epoch               1
-version             17.1.6 ; revision 1
+version             18.3.3
 categories          x11 graphics
 maintainers         {jeremyhu @jeremyhu} openmaintainer
 license             MIT
@@ -18,9 +26,9 @@ platforms           macosx darwin
 use_xz              yes
 master_sites        https://mesa.freedesktop.org/archive
 
-checksums           sha1    2acc201e24ea67c5231074d6746a42a747228ed6 \
-                    rmd160  43a9b758462316ad344ccdccf72d6d0ce295620e \
-                    sha256  0686deadde1f126b20aa67e47e8c50502043eee4ecdf60d5009ffda3cebfee50
+checksums           rmd160  3db679c94bb3c168f6607f16ae4ae288b2b4f767 \
+                    sha256  2ab6886a6966c532ccbcc3b240925e681464b658244f0cbed752615af3936299
+#                     size    11874468
 
 depends_build       port:pkgconfig \
                     port:flex \
@@ -38,11 +46,6 @@ depends_lib         port:xorg-xorgproto \
                     port:xorg-libXxf86vm
 
 patch.pre_args      -p1
-patchfiles \
-    0001-glxcmds-Fix-a-typo-in-the-__APPLE__-codepath.patch \
-    0002-glext.h-Add-missing-include-of-stddef.h-for-ptrdiff_.patch \
-    0003-applegl-Provide-requirements-of-_SET_DrawBuffers.patch \
-    0004-mesa-Deal-with-size-differences-between-GLuint-and-G.patch
 
 if {[string match *gcc* ${configure.compiler}]} {
     # Older gcc fail to do -Werror=missing-prototypes correctly
@@ -50,24 +53,43 @@ if {[string match *gcc* ${configure.compiler}]} {
     patchfiles-append no-missing-prototypes-error.patch
 }
 
-if {![file exists ${worksrcpath}/config.log]} {
-    use_autoreconf  yes
-}
-autoreconf.args     -fvi
+if {[string match *meson* ${configure.cmd}]} {
+    patchfiles-append \
+                    patch-meson.diff
 
-configure.args \
-    --disable-silent-rules \
-    --with-platforms=x11 \
-    --disable-dri3 \
-    --disable-egl \
-    --disable-gbm \
-    --disable-osmesa \
-    --disable-llvm-shared-libs \
-    --with-gallium-drivers=
+    configure.args-append \
+                   -Ddri3=false \
+                   -Degl=false \
+                   -Dgbm=false \
+                   -Dosmesa=none \
+                   -Dshared-llvm=false \
+                   -Dgallium-drivers=
+} else {
+    if {![file exists ${worksrcpath}/configure]} {
+        use_autoreconf  yes
+    }
+    autoreconf.args -fvi
+    configure.args  --disable-dependency-tracking \
+                    --disable-silent-rules \
+                    --with-platforms=x11 \
+                    --disable-dri3 \
+                    --disable-egl \
+                    --disable-gbm \
+                    --disable-osmesa \
+                    --disable-llvm-shared-libs \
+                    --with-gallium-drivers=
+}
 
 configure.env-append \
-    INDENT=${prefix}/bin/gindent \
-    STRIP=echo
+                    INDENT=${prefix}/bin/gindent \
+                    STRIP=echo
+
+if {[string match macports-clang* ${configure.compiler}]} {
+    configure.env-append \
+                    AR="[string map {"clang" "llvm-ar"} ${configure.cc}]" \
+                    NM="[string map {"clang" "llvm-nm"} ${configure.cc}]" \
+                    RANLIB="[string map {"clang" "llvm-ranlib"} ${configure.cc}]"
+}
 
 # This project is affected by a bug in Apple's gcc driver driver that I fixed in the apple-gcc42 port.
 # Use that or clang.
@@ -84,7 +106,7 @@ platform darwin {
 
         patchfiles-append static-strndup.patch
     }
-    
+
     if {${os.major} < 10} {
         # https://trac.macports.org/ticket/52811
         patchfiles-append patch-include-GL-mesa_glinterop_h.diff
@@ -92,13 +114,24 @@ platform darwin {
 
     if {${os.major} < 11} {
         # See https://trac.macports.org/ticket/54643
-        configure.args-append --disable-glx-tls
+        if {[string match *meson* ${configure.cmd}]} {
+            patchfiles-append \
+                    patch-disable-glx_tls.diff
+        } else {
+            configure.args-append \
+                    --disable-glx-tls
+        }
     }
 
     if {${os.major} < 14} {
         # See https://trac.macports.org/ticket/54638
         # See https://trac.macports.org/ticket/54643
+        # disk_cache uses the fstatat() function
         patchfiles-append disable_shader_cache.patch
+        if {[string match *meson* ${configure.cmd}]} {
+            configure.args-append \
+                    -Dshader-cache=false
+        }
     }
 
     if { ![file exists /usr/include/Xplugin.h] } {
@@ -116,8 +149,9 @@ platform darwin {
 }
 
 configure.cppflags-delete -I${prefix}/include
+configure.cxxflags-append -std=c++11
 
-variant python27 conflicts python26 description {Use python 2.7} {
+variant python27 description {Use python 2.7} {
     depends_build-append \
         port:py27-libxml2
     configure.env-append \
@@ -130,9 +164,21 @@ if {![variant_isset python27]} {
 
 variant egl description {enable EGL support} {
     depends_lib-append      port:xorg-libxshmfence
-    configure.args-replace  --disable-egl \
+    if {[string match *meson* ${configure.cmd}]} {
+        configure.args-replace \
+                           -Degl=false \
+                           -Degl=true
+        configure.args-replace \
+                            -Dgallium-drivers= \
+                            -Dgallium-drivers=swrast
+    } else {
+        configure.args-replace \
+                            --disable-egl \
                             --enable-egl
-    configure.args-append   --with-gallium-drivers=swrast
+        configure.args-replace \
+                            --with-gallium-drivers= \
+                            --with-gallium-drivers=swrast
+    }
     patchfiles-append       patch-support-egl_dri2.diff
     post-patch {
         reinplace "s|@PREFIX@|${prefix}|g" ${worksrcpath}/src/egl/drivers/dri2/egl_dri2.c
@@ -164,16 +210,35 @@ variant egl description {enable EGL support} {
         if {[variant_isset llvm${llv}]} {
             depends_lib-append \
                 port:llvm-${ldv} port:clang-${ldv}
-            configure.args-append \
-                --enable-llvm \
-                --with-llvm-prefix=${prefix}/libexec/llvm-${ldv} \
-                --with-gallium-drivers=swrast
+            if {[string match *meson* ${configure.cmd}]} {
+                configure.args-append \
+                    -Dllvm=true
+                configure.env-append \
+                    PATH=${prefix}/libexec/llvm-${ldv}/bin:$env(PATH)
+                configure.args-replace \
+                    -Dgallium-drivers= \
+                    -Dgallium-drivers=swrast
+            } else {
+                configure.args-append \
+                    --enable-llvm \
+                    --with-llvm-prefix=${prefix}/libexec/llvm-${ldv}
+                configure.args-replace \
+                    --with-gallium-drivers= \
+                    --with-gallium-drivers=swrast
+            }
         }
     }
 
 variant osmesa description {enable OSMesa library} {
-    configure.args-delete --disable-osmesa
-    configure.args-append --enable-osmesa
+    if {[string match *meson* ${configure.cmd}]} {
+        configure.args-replace \
+                    -Dosmesa=none \
+                    -Dosmesa=gallium
+    } else {
+        configure.args-replace \
+                    --disable-osmesa \
+                    --enable-osmesa
+    }
 }
 default_variants-append +osmesa
 
@@ -183,6 +248,12 @@ default_variants-append +osmesa
 #}
 #default_variants-append +openvg
 
+if {[string match *meson* ${configure.cmd}]} {
+    build.post_args     -k 0
+} else {
+    build.post_args     -k
+}
+
 livecheck.type  regex
 livecheck.url   http://www.mesa3d.org/
 livecheck.regex {relnotes/([0-9.]+)\.html}
@@ -190,4 +261,35 @@ livecheck.regex {relnotes/([0-9.]+)\.html}
 # optional support for HFS-compression of the source and build dirs
 if {[info exists qt5::currentportgroupdir] && [file exists ${qt5::currentportgroupdir}/compress_workdir-1.0.tcl]} {
     PortGroup       compress_workdir 1.0
+}
+
+if {[string match *meson* ${configure.cmd}]} {
+    meson.save_configure_cmd "log too"
+} else {
+    configure.post_args-append "|& tee -a ${workpath}/.macports.${subport}.configure.log'"
+    pre-configure {
+        set cmd [join "${configure.cmd} ${configure.pre_args} ${configure.args}"]
+        configure.pre_args-prepend "-cf '${configure.cmd} "
+        configure.cmd "/bin/csh"
+        ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
+        system "echo '## ${cmd}' > ${workpath}/.macports.${subport}.configure.log"
+    }
+    post-configure {
+        if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
+            foreach var [array names ::env] {
+                puts ${fd} "${var}=$::env(${var})"
+            }
+            puts ${fd} "[join [lrange [split ${configure.env} " "] 0 end] "\n"]\n"
+            puts ${fd} "cd ${worksrcpath}"
+            if {[info exists configure.post_args]} {
+                puts ${fd} "${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}"
+            } else {
+                puts ${fd} "${configure.cmd} ${configure.pre_args} ${configure.args}"
+            }
+        } else {
+            if {[info exists fd]} {
+                unset fd
+            }
+        }
+    }
 }
