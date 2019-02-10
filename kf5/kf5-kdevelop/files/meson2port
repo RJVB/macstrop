@@ -1,0 +1,134 @@
+#!/bin/bash
+
+print_usage () {
+    cat <<- ENDUSAGE
+    #> meson2port [meson options] [port options] [--] [port options]
+    meson2port options (NB no '=' between option and argument!):
+        --port portName
+        --variants variant(s)
+        --configure.optflags "compiler options"
+        --rewind : force a repeat of the port configure phase
+    A wrapper that takes a meson commandline and tries to convert it to a MacPorts port call
+    Known meson options are filtered out until a lone '--' option is encountered
+    The port name has to be specified with "--port foo"
+    Variant(s) can be specified with the --variants option.
+ENDUSAGE
+}
+
+case $1 in
+    -h|setup|configure|install|introspect|init|test|wrap|subprojects|help)
+        exec /opt/local/bin/meson "$@"
+        ;;
+    --help)
+        print_usage
+        exec /opt/local/bin/meson "$@"
+        ;;
+esac
+
+# make sure we only work on the current port and never clean out the work directory
+PORTOPTIONS="-nokv"
+PORTOTHEROPTIONS=""
+PORT=""
+VARIANTS=""
+REWIND=0
+NOMOREMESONOPTIONS=0
+ECHO=""
+OPTFLAGS=""
+
+DOBUILD=0
+BUILDDIR=""
+BUILDTARGET=""
+
+OPTSHIFT=0
+parse_portOptions () {
+    OPTSHIFT=0
+    case $1 in
+        --rewind)
+            REWIND=1
+            ;;
+        --port)
+            PORT="$2"
+            OPTSHIFT=1
+            ;;
+        --variants)
+            VARIANTS="${VARIANTS}$2"
+            OPTSHIFT=1
+            ;;
+        --configure.optflags)
+            if [ "${OPTFLAGS}" != "" ] ;then
+                OPTFLAGS="${OPTFLAGS} ${2}"
+            else
+                OPTFLAGS="${2}"
+            fi
+            OPTSHIFT=1
+            ;;
+        -*)
+            PORTOPTIONS="${PORTOPTIONS} $1"
+            ;;
+        configure.*|configureccache*)
+            PORTOTHEROPTIONS="${PORTOTHEROPTIONS} $1"
+            ;;
+        *)
+            PORTOTHEROPTIONS="${PORTOTHEROPTIONS} \"$1\""
+            ;;
+    esac
+}
+
+while [ $# != 0 ] ;do
+    if [ ${NOMOREMESONOPTIONS} = 0 ] ;then
+        case $1 in
+            --dryrun)
+                ECHO="echo"
+                ;;
+		  --reconfigure)
+			# meson option
+		  	;;
+            --)
+                NOMOREMESONOPTIONS=1
+                ;;
+            *)
+                if [ ! -d "${1}" ] ;then
+                    parse_portOptions "$@"
+                    shift ${OPTSHIFT}
+                else
+                    echo "Skipping \"${1}\"; probably pointing meson to the source or build directory" 1>&2
+                fi
+                ;;
+        esac
+    else
+        parse_portOptions "$@"
+        shift ${OPTSHIFT}
+    fi
+    shift
+done
+
+if [ "${PORT}" != "" ] ;then
+    if [ ${REWIND} = 1 ] ;then
+        ${ECHO} port-redo-install-phase -configure ${PORT}
+    fi
+    if [ "${OPTFLAGS}" != "" ] ;then
+        ${ECHO} port ${PORTOPTIONS} configure ${PORT} ${VARIANTS} ${PORTOTHEROPTIONS} configure.optflags="${OPTFLAGS}"
+    else
+        ${ECHO} port ${PORTOPTIONS} configure ${PORT} ${VARIANTS} ${PORTOTHEROPTIONS}
+    fi
+    RET=$?
+    if [ ${RET} = 0 ] ;then
+        WDIR="`port work ${PORT}`"
+        if [ -d ${WDIR}/build ] ;then
+            touch ${WDIR}/build/compile_commands.json
+        fi
+        if [ ${DOBUILD} = 1 ] ;then
+            # attempt to set the appropriate environment to mimick `port build`
+            CPATH=/opt/local/include ; export CPATH
+            INSTALL="/usr/bin/install -c" ; export INSTALL
+            LIBRARY_PATH=/opt/local/lib ; export LIBRARY_PATH
+            MOC=/opt/local/bin/moc ; export MOC
+            PATH=/opt/local/bin:/opt/local/sbin:${PATH} ; export PATH
+            ${ECHO} make -C "${BUILDDIR}" -w ${BUILDTARGET}
+            RET=$?
+        fi
+    fi
+    exit ${RET}
+else
+    print_usage
+fi
