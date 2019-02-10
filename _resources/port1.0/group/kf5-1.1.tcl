@@ -195,7 +195,9 @@ if {${kf5::includecounter} == 0} {
     # The QML install location also has to be set
     configure.args-append   -DPLUGIN_INSTALL_DIR=${qt_plugins_dir} \
                             -DKDE_INSTALL_QTPLUGINDIR=${qt_plugins_dir} \
-                            -DQML_INSTALL_DIR=${qt_qml_dir}
+                            -DQML_INSTALL_DIR=${qt_qml_dir} \
+                            -DKDE_INSTALL_MANDIR=${prefix}/share/man
+
 
     # # This is why we need destroo.violate_mtree set to "yes"
     # configure.args-append   -DCONFIG_INSTALL_DIR="/Library/Preferences" \
