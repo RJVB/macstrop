@@ -379,7 +379,20 @@ pre-configure {
     configure.args-delete -DCMAKE_BUILD_TYPE=debugFull
     # set matching CMAKE_AR and CMAKE_RANLIB when using a macports-clang compiler
     # (and they're not set explicitly by the port)
-    if {[string match *clang++-mp* ${configure.cxx}]} {
+    if {[info exists configure.ar] && [info exists configure.nm] && [info exists configure.ranlib]} {
+        if {[string first "DCMAKE_AR=" ${configure.args}] eq -1} {
+            configure.args-append \
+                                -DCMAKE_AR="${configure.ar}"
+        }
+        if {[string first "DCMAKE_NM=" ${configure.args}] eq -1} {
+            configure.args-append \
+                                -DCMAKE_NM="${configure.nm}"
+        }
+        if {[string first "DCMAKE_RANLIB=" ${configure.args}] eq -1} {
+            configure.args-append \
+                                -DCMAKE_RANLIB="${configure.ranlib}"
+        }
+    } elseif {[string match *clang++-mp* ${configure.cxx}]} {
         if {[string first "DCMAKE_AR=" ${configure.args}] eq -1} {
             configure.args-append \
                                 -DCMAKE_AR=[string map {"clang++" "llvm-ar"} ${configure.cxx}]
