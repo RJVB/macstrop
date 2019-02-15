@@ -600,44 +600,15 @@ if {![info exists building_qt5]} {
     }
 }
 
-if {![tbool QT53] && ![tbool qt5.no_LTO_variant]} {
-    variant LTO description {Build with Link-Time Optimisation (LTO) (experimental)} {}
+if {![tbool QT53] && ![tbool qt5.no_LTO_variant] && ![variant_exists LTO]} {
+    if {[info exists building_qt5]} {
+        variant LTO description {Build with Link-Time Optimisation (LTO) (experimental)} {}
+    } else {
+        PortGroup LTO 1.0
+    }
 }
 
 if {![info exists building_qt5]} {
-    if {[variant_exists LTO] && [variant_isset LTO]} {
-        set clang_version [string map {"macports-clang-" ""} ${configure.compiler}]
-        if {"${clang_version}" ne "${configure.compiler}" && [vercmp ${clang_version} "4.0"] >= 0} {
-            # the compiler supports "ThinLTO", use it
-            set lto_flag                "-flto=thin"
-        } else {
-            set lto_flag                "-flto"
-        }
-        configure.cflags-append         ${lto_flag}
-        configure.cxxflags-append       ${lto_flag}
-        configure.objcflags-append      ${lto_flag}
-        configure.objcxxflags-append    ${lto_flag}
-        # ${configure.optflags} is a list, and that can lead to strange effects
-        # in certain situations if we don't treat it as such here.
-        foreach opt ${configure.optflags} {
-            configure.ldflags-append ${opt}
-        }
-        configure.ldflags-append        ${lto_flag}
-        platform darwin {
-            pre-configure {
-                xinstall -m 755 -d ${build.dir}/.lto_cache
-            }
-            configure.ldflags-append    -Wl,-cache_path_lto,${build.dir}/.lto_cache
-        }
-        # assume any compiler not clang will be gcc
-        if {![string match "*clang*" ${configure.compiler}]} {
-            configure.cflags-append     -fuse-linker-plugin -ffat-lto-objects
-            configure.cxxflags-append   -fuse-linker-plugin -ffat-lto-objects
-            configure.objcflags-append  -fuse-linker-plugin -ffat-lto-objects
-            configure.objcxxflags-append -fuse-linker-plugin -ffat-lto-objects
-            configure.ldflags-append    -fuse-linker-plugin
-        }
-    }
     if {${os.platform} ne "darwin"} {
         configure.ldflags-append        -Wl,-rpath,${qt_libs_dir}
     }
