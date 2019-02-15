@@ -37,10 +37,7 @@
 variant LTO description {build with link-time optimisation} {}
 if {[variant_isset LTO]} {
     if {${configure.compiler} eq "cc" && ${os.platform} eq "linux"} {
-        configure.cflags-append \
-                    -ftracer -flto -fuse-linker-plugin -ffat-lto-objects
-        configure.ldflags-append \
-                    ${configure.optflags} -ftracer -flto -fuse-linker-plugin
+        set lto_flags               "-ftracer -flto -fuse-linker-plugin -ffat-lto-objects"
     } elseif {[string match *clang* ${configure.compiler}]} {
 #         if {${os.platform} ne "darwin"} {
 #             ui_error "unsupported combination +LTO with configure.compiler=${configure.compiler}"
@@ -50,32 +47,30 @@ if {[variant_isset LTO]} {
         set clang_version [string map {"macports-clang-" ""} ${configure.compiler}]
         if {"${clang_version}" ne "${configure.compiler}" && [vercmp ${clang_version} "4.0"] >= 0} {
             # the compiler supports "ThinLTO", use it
-            set lto_flag                "-flto=thin"
+            set lto_flags           "-flto=thin"
         } else {
-            set lto_flag                "-flto"
-        }
-        configure.cflags-append         ${lto_flag}
-        configure.cxxflags-append       ${lto_flag}
-        configure.objcflags-append      ${lto_flag}
-        configure.objcxxflags-append    ${lto_flag}
-        # ${configure.optflags} is a list, and that can lead to strange effects
-        # in certain situations if we don't treat it as such here.
-        foreach opt ${configure.optflags} {
-            configure.ldflags-append    ${opt}
-        }
-        configure.ldflags-append        ${lto_flag}
-        platform darwin {
-            # the Mac linker will complain without explicit LTO cache directory
-            pre-configure {
-                xinstall -m 755 -d ${build.dir}/.lto_cache
-            }
-            configure.ldflags-append    -Wl,-cache_path_lto,${build.dir}/.lto_cache
+            set lto_flags           "-flto"
         }
     } else {
-        configure.cflags-append \
-                    -ftracer -flto -fuse-linker-plugin -ffat-lto-objects
-        configure.ldflags-append \
-                    ${configure.optflags} -ftracer -flto -fuse-linker-plugin
+        set lto_flags               "-ftracer -flto -fuse-linker-plugin -ffat-lto-objects"
+    }
+    configure.cflags-append         ${lto_flags}
+    configure.cxxflags-append       ${lto_flags}
+    configure.objcflags-append      ${lto_flags}
+    configure.objcxxflags-append    ${lto_flags}
+    # ${configure.optflags} is a list, and that can lead to strange effects
+    # in certain situations if we don't treat it as such here.
+    foreach opt ${configure.optflags} {
+        configure.ldflags-append    ${opt}
+    }
+    configure.ldflags-append        ${lto_flags}
+    platform darwin {
+        # the Mac linker will complain without explicit LTO cache directory
+        # only applies to lto=thin mode but won't hurt with lto=full.
+        pre-configure {
+            xinstall -m 755 -d ${build.dir}/.lto_cache
+        }
+        configure.ldflags-append    -Wl,-cache_path_lto,${build.dir}/.lto_cache
     }
 }
 
