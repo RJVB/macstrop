@@ -32,10 +32,13 @@
 # Usage:
 # PortGroup     LTO 1.0
 
-# TODO: this probably still needs logic for cmake, currently already implemented in another PG
 
 variant LTO description {build with link-time optimisation} {}
-if {[variant_isset LTO]} {
+
+# out-of-line implementation so changes are made *now*.
+# Qt5 has its own mechanism to set LTO flags so don't do anything
+# if we end up being loaded for a build of Qt5 itself.
+if {[variant_isset LTO] && ![info exists building_qt5]} {
     if {${configure.compiler} eq "cc" && ${os.platform} eq "linux"} {
         set lto_flags               "-ftracer -flto -fuse-linker-plugin -ffat-lto-objects"
     } elseif {[string match *clang* ${configure.compiler}]} {
