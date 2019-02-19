@@ -380,17 +380,19 @@ pre-configure {
     # set matching CMAKE_AR and CMAKE_RANLIB when using a macports-clang compiler
     # (and they're not set explicitly by the port)
     if {[info exists configure.ar] && [info exists configure.nm] && [info exists configure.ranlib]} {
-        if {[string first "DCMAKE_AR=" ${configure.args}] eq -1} {
-            configure.args-append \
+        if {[option LTO.use_archive_helpers]} {
+            if {[string first "DCMAKE_AR=" ${configure.args}] eq -1} {
+                configure.args-append \
                                 -DCMAKE_AR="${configure.ar}"
-        }
-        if {[string first "DCMAKE_NM=" ${configure.args}] eq -1} {
-            configure.args-append \
+            }
+            if {[string first "DCMAKE_NM=" ${configure.args}] eq -1} {
+                configure.args-append \
                                 -DCMAKE_NM="${configure.nm}"
-        }
-        if {[string first "DCMAKE_RANLIB=" ${configure.args}] eq -1} {
-            configure.args-append \
+            }
+            if {[string first "DCMAKE_RANLIB=" ${configure.args}] eq -1} {
+                configure.args-append \
                                 -DCMAKE_RANLIB="${configure.ranlib}"
+            }
         }
     } elseif {[string match *clang++-mp* ${configure.cxx}]} {
         if {[string first "DCMAKE_AR=" ${configure.args}] eq -1} {

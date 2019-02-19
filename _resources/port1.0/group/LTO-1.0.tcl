@@ -80,7 +80,11 @@ if {[variant_isset LTO] && ![info exists building_qt5]} {
 # Set up AR, NM and RANLIB to prepare for +LTO even if we don't end up using it
 options configure.ar \
         configure.nm \
-        configure.ranlib
+        configure.ranlib \
+        LTO.use_archive_helpers
+# give the port a say over whether or not the selected helpers are used
+default LTO.use_archive_helpers yes
+
 if {[string match *clang* ${configure.compiler}]} {
     if {${os.platform} ne "darwin" || [string match macports-clang* ${configure.compiler}]} {
         # only MacPorts provides llvm-ar and family on Mac
@@ -103,10 +107,14 @@ if {[string match *clang* ${configure.compiler}]} {
     }
 }
 if {[info exists LTO.custom_binaries]} {
-    configure.env-append \
-        AR="${configure.ar}" \
-        NM="${configure.nm}" \
-        RANLIB="${configure.ranlib}"
+    pre-configure {
+        if {[option LTO.use_archive_helpers]} {
+            configure.env-append \
+                AR="${configure.ar}" \
+                NM="${configure.nm}" \
+                RANLIB="${configure.ranlib}"
+        }
+    }
 } else {
     default configure.ar "ar"
     default configure.nm "nm"
