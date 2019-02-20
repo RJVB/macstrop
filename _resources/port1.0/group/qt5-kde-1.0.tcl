@@ -239,7 +239,10 @@ if {[info exists qt5::rootname]} {
 # standard Qt tests directory
     global qt_tests_dir
 # standard CMake module directory for Qt-related files
+# no idea why you'd need to protect this one against multiple defines...!
+if {![info exists qt_cmake_module_dir]} {
     global qt_cmake_module_dir
+}
 # standard qmake command location
     global qt_qmake_cmd
 # standard moc command location
