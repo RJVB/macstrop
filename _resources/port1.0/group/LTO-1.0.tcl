@@ -85,6 +85,10 @@ options configure.ar \
 # give the port a say over whether or not the selected helpers are used
 default LTO.use_archive_helpers yes
 
+# NB
+# FIXME
+# We should ascertain that configure.{ar,nm,ranlib} be full, absolute paths!
+# NB
 if {[string match *clang* ${configure.compiler}]} {
     if {${os.platform} ne "darwin" || [string match macports-clang* ${configure.compiler}]} {
         # only MacPorts provides llvm-ar and family on Mac
@@ -116,8 +120,18 @@ if {[info exists LTO.custom_binaries]} {
         }
     }
 } else {
-    default configure.ar "ar"
-    default configure.nm "nm"
-    default configure.ranlib "ranlib"
+    # check if port:cctools is installed; if so, use its ar/nm/ranlib.
+    # We could add a depends_build on port:cctools, but these commands will
+    # be picked up from the path anyway, so accept this opportunistic
+    # build dependency.
+    if {[file exists ${prefix}/bin/ar]} {
+        default configure.ar "/opt/local/bin/ar"
+        default configure.nm "/opt/local/bin/nm"
+        default configure.ranlib "/opt/local/bin/ranlib"
+    } else {
+        default configure.ar "/usr/bin/ar"
+        default configure.nm "/usr/bin/nm"
+        default configure.ranlib "/usr/bin/ranlib"
+    }
 }
 

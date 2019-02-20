@@ -379,6 +379,10 @@ pre-configure {
     configure.args-delete -DCMAKE_BUILD_TYPE=debugFull
     # set matching CMAKE_AR and CMAKE_RANLIB when using a macports-clang compiler
     # (and they're not set explicitly by the port)
+    # NB NB NB!
+    # FIXME!
+    # These should be set to absolute, full paths. We ought to check for that.
+    # NB NB NB!
     if {[info exists configure.ar] && [info exists configure.nm] && [info exists configure.ranlib]} {
         if {[option LTO.use_archive_helpers]} {
             if {[string first "DCMAKE_AR=" ${configure.args}] eq -1} {
