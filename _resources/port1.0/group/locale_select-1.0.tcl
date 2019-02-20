@@ -39,10 +39,16 @@
 variant langselect description "prune translations from ${prefix}/share/locale, leaving only those\
                                 specified in ${prefix}/etc/macports/locales.tcl" {}
 
-# optional directory holding Qt translations (.qm) (fully specified)
+# optional directory (list) holding Qt translations (.qm) (fully specified)
 options langselect_qm_dir langselect_qm_basename
 default langselect_qm_dir       {}
 default langselect_qm_basename  {}
+# optional directory (list) holding <lang>.html files
+options langselect_html_dir
+default langselect_html_dir     {}
+# optional directory (list) holding <lang> directories
+options langselect_dirs_dir
+default langselect_dirs_dir     {}
 
 if {[variant_isset langselect]} {
     post-destroot {
@@ -69,8 +75,37 @@ if {[variant_isset langselect]} {
                 foreach l [glob -nocomplain ${lsqmdir}/*.qm] {
                     set lang [file rootname [file tail ${l}]]
                     if {${langselect_qm_basename} ne {}} {
-                        set lang [string map [list "${langselect_qm_basename}_" ""] ${lang}]
+                        set lang [string map [list "${langselect_qm_basename}" ""] ${lang}]
                     }
+                    if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
+                        ui_info "rm ${l}"
+                        file delete -force ${l}
+                    } else {
+                        ui_debug "won't delete ${l} (${lang})"
+                    }
+                }
+            }
+            if {[file exists [join ${langselect_html_dir}]]} {
+                set lhtmldir [join ${langselect_html_dir}]
+                foreach l [glob -nocomplain ${lhtmldir}/*.html] {
+                    set keep no
+                    foreach lang ${keep_languages} {
+                        if {[string match *${lang}.html ${l}]} {
+                            set keep yes
+                        }
+                    }
+                    if {[tbool keep]} {
+                        ui_debug "won't delete ${l} (${lang})"
+                    } else {
+                        ui_info "rm ${l}"
+                        file delete -force ${l}
+                    }
+                }
+            }
+            if {[file exists [join ${langselect_dirs_dir}]]} {
+                set ldirdir [join ${langselect_dirs_dir}]
+                foreach l [glob -nocomplain -types d ${ldirdir}/*] {
+                    set lang [file rootname [file tail ${l}]]
                     if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
                         ui_info "rm ${l}"
                         file delete -force ${l}
