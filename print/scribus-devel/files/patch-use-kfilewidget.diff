@@ -1,0 +1,389 @@
+diff --git a/scribus/CMakeLists.txt b/scribus/CMakeLists.txt
+index c21ab492736b573b6ad4c28ba0bfc1d43650bd67..5b74a7b45ffd28026cb93185634a4447b064aa66 100644
+--- a/scribus/CMakeLists.txt
++++ b/scribus/CMakeLists.txt
+@@ -1293,6 +1293,11 @@ target_link_libraries(${EXE_NAME}
+ 	${WIN32_ONLY_LIBS}
+ 	${GMAGICK_LIBRARIES}
+ )
++if(KF5_FOUND)
++    target_link_libraries(${EXE_NAME}
++        KF5::KIOFileWidgets
++    )
++endif()
+ 
+ if (NOT WIN32 AND NOT HAIKU)
+ 	target_link_libraries(${EXE_NAME}
+diff --git a/scribus/ui/scfilewidget.cpp b/scribus/ui/scfilewidget.cpp
+index f6577b9806ca4ecad1fa5b83d6773cdde72b997d..2960831ac9b3d12e4602c6aa9cc2b43fa0eee945 100644
+--- a/scribus/ui/scfilewidget.cpp
++++ b/scribus/ui/scfilewidget.cpp
+@@ -18,16 +18,82 @@ for which a new license (GPL+exception) is in place.
+ #include "filedialogeventcatcher.h"
+ #include "scfilewidget.h"
+ 
++#ifdef SCFILEWIDGET_IS_KFILEWIDGET
++#include <QLayout>
++#include <KDirOperator>
++#include <KFileFilterCombo>
++#endif
++
++#ifdef SCFILEWIDGET_IS_KFILEWIDGET
++/*
++ * Map a Qt filter string into a KDE one.
++ */
++static QString qt2KdeFilter(const QStringList &f)
++{
++    QString               filter;
++    QTextStream           str(&filter, QIODevice::WriteOnly);
++    QStringList           list(f);
++    list.replaceInStrings(QStringLiteral("/"), QStringLiteral("\\/"));
++    QStringList::const_iterator it(list.constBegin()), end(list.constEnd());
++    bool                  first = true;
++
++    for (; it != end; ++it) {
++        int ob = it->lastIndexOf(QLatin1Char('(')),
++            cb = it->lastIndexOf(QLatin1Char(')'));
++
++        if (-1 != cb && ob < cb) {
++            if (first) {
++                first = false;
++            } else {
++                str << '\n';
++            }
++            str << it->mid(ob + 1, (cb - ob) - 1) << '|' << it->mid(0, ob);
++        }
++    }
++
++    return filter;
++}
+ 
+-ScFileWidget::ScFileWidget(QWidget * parent) : QFileDialog(parent, Qt::Widget)
++/*
++ * Map a KDE filter string into a Qt one.
++ */
++static QString kde2QtFilter(const QStringList &list, const QString &kde)
++{
++    QStringList::const_iterator it(list.constBegin()), end(list.constEnd());
++    int                   pos;
++
++    for (; it != end; ++it) {
++        if (-1 != (pos = it->indexOf(kde)) && pos > 0 &&
++                (QLatin1Char('(') == (*it)[pos - 1] || QLatin1Char(' ') == (*it)[pos - 1]) &&
++                it->length() >= kde.length() + pos &&
++                (QLatin1Char(')') == (*it)[pos + kde.length()] || QLatin1Char(' ') == (*it)[pos + kde.length()])) {
++            return *it;
++        }
++    }
++    return QString();
++}
++#endif
++
++ScFileWidget::ScFileWidget(QWidget * parent)
++#ifdef SCFILEWIDGET_IS_KFILEWIDGET
++    : KFileWidget(QUrl(), parent)
++#else
++    : QFileDialog(parent, Qt::Widget)
++#endif
+ {
+ 	m_forceDoubleClickActivation = false;
+ 
+-	setOption(QFileDialog::DontUseNativeDialog);
++#ifndef SCFILEWIDGET_IS_KFILEWIDGET
++// 	setOption(QFileDialog::DontUseNativeDialog);
+ 	setSizeGripEnabled(false);
+ 	setModal(false);
+ 	setViewMode(QFileDialog::List);
+ 	setWindowFlags(Qt::Widget);
++#else
++    if (parent) {
++        parent->layout()->addWidget(this);
++    }
++#endif
+ 
+ #ifdef Q_OS_MAC
+ 	QList<QUrl> urls;
+@@ -61,6 +127,10 @@ ScFileWidget::ScFileWidget(QWidget * parent) : QFileDialog(parent, Qt::Widget)
+ 		i.next()->setVisible(false);
+ 	setMinimumSize(QSize(480, 310));
+ 	setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
++#ifdef SCFILEWIDGET_IS_KFILEWIDGET
++    dirOperator()->rereadDir();
++    dirOperator()->updateDir();
++#endif
+ }
+ 
+ void ScFileWidget::forceDoubleClickActivation(bool force)
+@@ -80,12 +150,127 @@ void ScFileWidget::forceDoubleClickActivation(bool force)
+ 
+ QString ScFileWidget::selectedFile()
+ {
++#ifdef SCFILEWIDGET_IS_KFILEWIDGET
++    return KFileWidget::selectedFile();
++#else
+ 	QStringList l(selectedFiles());
+ 	if (l.count() == 0)
+ 		return QString();
+ 	return l.at(0);
++#endif
++}
++
++#ifdef SCFILEWIDGET_IS_KFILEWIDGET
++QSize ScFileWidget::sizeHint() const
++{
++    return dialogSizeHint();
++}
++
++QDir ScFileWidget::directory() const
++{
++    return QDir(baseUrl().toLocalFile());
++}
++
++void ScFileWidget::setDirectory(const QString &path)
++{
++    setUrl(path);
++}
++
++void ScFileWidget::setDirectory(const QDir &path)
++{
++    setUrl(path.absolutePath());
+ }
+ 
++void ScFileWidget::selectFile(const QString &path)
++{
++    QUrl dirUrl = QUrl(path).adjusted(QUrl::RemoveFilename);
++    setUrl(dirUrl);
++    setSelectedUrl(path);
++}
++
++void ScFileWidget::setIconProvider(QFileIconProvider*)
++{
++}
++
++void ScFileWidget::setFileMode(QFileDialog::FileMode mode)
++{
++    KFile::Modes kmode = KFile::LocalOnly;
++    switch(mode) {
++        case QFileDialog::AnyFile:
++            kmode |= KFile::File;
++            break;
++        case QFileDialog::ExistingFile:
++            kmode |= KFile::File | KFile::ExistingOnly;
++            break;
++        case QFileDialog::Directory:
++            kmode |= KFile::Files | KFile::Directory;
++            break;
++        case QFileDialog::ExistingFiles:
++            kmode |= KFile::Files | KFile::ExistingOnly;
++            break;
++        case QFileDialog::DirectoryOnly:
++            kmode |= KFile::Directory;
++            break;
++    }
++    setMode(kmode);
++}
++
++QFileDialog::FileMode ScFileWidget::fileMode() const
++{
++    const auto kmode = mode();
++    switch (kmode) {
++        default:
++            qWarning() << Q_FUNC_INFO << "unforeseen KFileWidget::mode" << kmode;
++        case KFile::File:
++            return QFileDialog::AnyFile;
++            break;
++        case KFile::File | KFile::ExistingOnly:
++            return QFileDialog::ExistingFile;
++            break;
++        case KFile::Files | KFile::Directory:
++            return QFileDialog::Directory;
++            break;
++        case KFile::Files | KFile::ExistingOnly:
++            return QFileDialog::ExistingFiles;
++            break;
++        case KFile::Directory:
++            return QFileDialog::DirectoryOnly;
++            break;
++    }
++}
++
++void ScFileWidget::setNameFilter(const QString &filter)
++{
++    if (!m_nameFilters.contains(filter)) {
++        m_nameFilters.append(filter);
++    }
++    filterWidget()->setFilter(qt2KdeFilter(QStringList(filter)));
++}
++
++void ScFileWidget::selectNameFilter(const QString &filter)
++{
++    if (!m_nameFilters.contains(filter)) {
++        m_nameFilters.append(filter);
++    }
++    filterWidget()->setCurrentFilter(qt2KdeFilter(QStringList(filter)));
++}
++
++QStringList ScFileWidget::nameFilters() const
++{
++    return m_nameFilters;
++}
++
++QString ScFileWidget::selectedNameFilter() const
++{
++    return kde2QtFilter(m_nameFilters, filterWidget()->currentFilter());
++}
++
++void ScFileWidget::setNameFilterDetailsVisible(bool)
++{
++}
++
++#endif
++
+ void ScFileWidget::locationDropped(const QString& fileUrl)
+ {
+ 	QFileInfo fi(fileUrl);
+@@ -104,9 +289,13 @@ void ScFileWidget::locationDropped(const QString& fileUrl)
+ 
+ void ScFileWidget::gotoParentDirectory()
+ {
++#ifndef SCFILEWIDGET_IS_KFILEWIDGET
+ 	QDir d(directory());
+ 	d.cdUp();
+ 	setDirectory(d);
++#else
++    dirOperator()->cdUp();
++#endif
+ }
+ 
+ void ScFileWidget::gotoSelectedDirectory()
+diff --git a/scribus/ui/scfilewidget.h b/scribus/ui/scfilewidget.h
+index 7ee83382f784cb3c2f5ffd7ce4b733cd3f1e5e81..54fb640240ded848c918f817f971eedfc70cd516 100644
+--- a/scribus/ui/scfilewidget.h
++++ b/scribus/ui/scfilewidget.h
+@@ -8,9 +8,14 @@ for which a new license (GPL+exception) is in place.
+ #define SCFILEWIDGET_H
+ 
+ #include <QFileDialog>
++#include <KFileWidget>
+ 
+ #include "scribusapi.h"
+ 
++using FileWidgetParentClass = KFileWidget;
++#define SCFILEWIDGET_IS_KFILEWIDGET
++class QFileIconProvider;
++
+ /*! \brief Simple wrapper simulating the QFileDialog as a common widget.
+ Usage is simple - everything is like in QFileDialog except it is not
+ a dialog, it's a widget. It can be used for extension features etc.
+@@ -22,7 +27,7 @@ user e.g. doubleclicks the "open" file (in the parent (new) dialog):
+ connect(fileWidget, SIGNAL(accepted()), this, SLOT(accept()));
+ \author Petr Vanek <petr@scribus.info>
+ */
+-class SCRIBUS_API ScFileWidget : public QFileDialog
++class SCRIBUS_API ScFileWidget : public FileWidgetParentClass
+ {
+ 	Q_OBJECT
+ 
+@@ -39,8 +44,28 @@ public slots:
+ 	void gotoDesktopDirectory();
+ 	void gotoHomeDirectory();
+ 
++#ifdef SCFILEWIDGET_IS_KFILEWIDGET
++    QSize sizeHint() const;
++    QDir directory() const;
++    void setDirectory(const QString &path);
++    void setDirectory(const QDir &path);
++    void selectFile(const QString &path);
++    void setIconProvider(QFileIconProvider*);
++    void setFileMode(QFileDialog::FileMode mode);
++    QFileDialog::FileMode fileMode() const;
++    void setNameFilter(const QString &filter);
++    void selectNameFilter(const QString &filter);
++    QStringList nameFilters() const;
++    QString selectedNameFilter() const;
++    // obsolete
++    void setNameFilterDetailsVisible(bool);
++#endif
++
+ private:
+ 	bool m_forceDoubleClickActivation;
++#ifdef SCFILEWIDGET_IS_KFILEWIDGET
++    QStringList m_nameFilters;
++#endif
+ };
+ 
+ #endif
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 305e11b06797f209999e5d64463803ba2873e285..925fc59d5d20396856cb83ce3fe830ad96644d4b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -50,7 +50,10 @@ include(GNUInstallDirs)
+ #enable_testing()
+ 
+ #Set the custom CMake module directory where our include/lib finders are
+-set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules")
++find_package(ECM NO_MODULE)
++
++set(SCRIBUS_CMAKE_MODULES "${CMAKE_SOURCE_DIR}/cmake/modules")
++set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH} ${ECM_KDE_MODULE_DIR} ${SCRIBUS_CMAKE_MODULES})
+ 
+ ##############################################################################################################
+ ########## toplevel compiler flags                                                                  ##########
+@@ -705,6 +708,10 @@ message(STATUS "Qt VERSION: ${Qt5Widgets_VERSION}")
+ #endif()
+ #>> Qt
+ 
++find_package(KF5 COMPONENTS KIO)
++if(KF5_FOUND)
++    message(STATUS "----- USE KF5::KIO -----")
++endif()
+ 
+ #C++11 Support
+ #as of 1.5.5.svn, require C++11
+@@ -725,8 +732,8 @@ if (WIN32)
+ 	# On win32 we can use Qt's zlib and libpng, so we use some
+ 	# custom cmake includes. This permits us to honour the
+ 	# USE_QT_ZLIB_PNGLIB flag if passed.
+-	set(PNG_DIR ${CMAKE_MODULE_PATH})
+-	set(ZLIB_DIR ${CMAKE_MODULE_PATH})
++	set(PNG_DIR ${SCRIBUS_CMAKE_MODULES})
++	set(ZLIB_DIR ${SCRIBUS_CMAKE_MODULES})
+ endif()
+ find_package(ZLIB REQUIRED)
+ if (ZLIB_FOUND)
+@@ -805,7 +812,7 @@ if (RENDER_LIB)
+ 	endif()
+ endif()
+ 
+-set(CAIRO_DIR ${CMAKE_MODULE_PATH})
++set(CAIRO_DIR ${SCRIBUS_CMAKE_MODULES})
+ find_package(CAIRO REQUIRED)
+ if(CAIRO_FOUND)
+ 	message("CAIRO Library Found OK")
+@@ -837,7 +844,7 @@ endif()
+ #>>LibXML2
+ 
+ #<<LittleCMS
+-set(LCMS_DIR ${CMAKE_MODULE_PATH})
++set(LCMS_DIR ${SCRIBUS_CMAKE_MODULES})
+ find_package(LCMS2 REQUIRED)
+ if(LCMS2_FOUND)
+ 	set(HAVE_LCMS2 1)
+@@ -851,7 +858,7 @@ endif()
+ 
+ #<<FontConfig
+ if(NOT WIN32)
+-	set(FONTCONFIG_DIR ${CMAKE_MODULE_PATH})
++	set(FONTCONFIG_DIR ${SCRIBUS_CMAKE_MODULES})
+ 	find_package(FONTCONFIG)
+ 	if(FONTCONFIG_FOUND)
+ 		message("FontConfig Found OK")
+@@ -904,7 +911,7 @@ endif()
+ 
+ #<<GraphicksMagick for image import
+ if (WANT_GRAPHICSMAGICK)
+-	set(GMAGICK_DIR ${CMAKE_MODULE_PATH})
++	set(GMAGICK_DIR ${SCRIBUS_CMAKE_MODULES})
+ 	pkg_check_modules(GMAGICK GraphicsMagick)
+ 	# find_package(GMAGICK)
+ 	if(GMAGICK_FOUND)
