@@ -426,9 +426,9 @@ pre-configure {
         }
     }
     if {[info exists qt_qmake_spec]} {
-        if {(![string first "-DCMAKE_MKPEC" ${configure.pre_args}])
-            && (![string first "-DCMAKE_MKPEC" ${configure.args}])
-            && (![string first "-DCMAKE_MKPEC" ${configure.post_args}])} {
+        if {([string first "-DCMAKE_MKPEC" ${configure.pre_args}] == -1)
+            && ([string first "-DCMAKE_MKPEC" ${configure.args}] == -1)
+            && ([string first "-DCMAKE_MKPEC" ${configure.post_args}] == -1)} {
             configure.args-append \
                                 "-DCMAKE_MKSPEC=${qt_qmake_spec}"
         } else {
