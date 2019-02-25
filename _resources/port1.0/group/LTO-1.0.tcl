@@ -72,8 +72,8 @@ if {[variant_isset LTO] && ![info exists building_qt5]} {
         # only applies to lto=thin mode but won't hurt with lto=full.
         pre-configure {
             xinstall -m 755 -d ${build.dir}/.lto_cache
+            configure.ldflags-append    -Wl,-cache_path_lto,${build.dir}/.lto_cache
         }
-        configure.ldflags-append    -Wl,-cache_path_lto,${build.dir}/.lto_cache
     }
 }
 
