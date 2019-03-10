@@ -1,8 +1,8 @@
 diff --git src/klauncher/klauncher.cpp src/klauncher/klauncher.cpp
-index 8b3d343..24421d2 100644
+index f8f15b3b3a6266cca145ab0cf71ed19da80ea749..80747c3699dbf3e0265352c4c12451115cb6847f 100644
 --- src/klauncher/klauncher.cpp
 +++ src/klauncher/klauncher.cpp
-@@ -551,6 +551,56 @@ static void appendLong(QByteArray &ba, long l)
+@@ -473,6 +473,56 @@ static void appendLong(QByteArray &ba, long l)
      memcpy(ba.data() + sz, &l, sizeof(long));
  }
  
@@ -10,7 +10,7 @@ index 8b3d343..24421d2 100644
 +                          const QString &cwd, qint64 *pid, int timeoutMs)
 +{
 +    bool ret = false;
-+#ifdef Q_OS_OSX
++#ifdef Q_OS_MACOS
 +    QProcess *proc = new QTimeoutProcess;
 +    connect(proc, SIGNAL(finished(int,QProcess::ExitStatus)), proc, SLOT(slotFinished(int,QProcess::ExitStatus)));
 +    if (!cwd.isEmpty()) {
@@ -32,7 +32,7 @@ index 8b3d343..24421d2 100644
 +
 +QTimeoutProcess::~QTimeoutProcess()
 +{
-+#ifdef Q_OS_OSX
++#ifdef Q_OS_MACOS
 +    if (state() == QProcess::Running) {
 +        // prevent the parent dtor from yelling because the process still runs
 +        kill();
@@ -43,7 +43,7 @@ index 8b3d343..24421d2 100644
 +
 +void QTimeoutProcess::timerEvent(QTimerEvent *)
 +{
-+#ifdef Q_OS_OSX
++#ifdef Q_OS_MACOS
 +    terminate();
 +    deleteLater();
 +#endif
@@ -51,7 +51,7 @@ index 8b3d343..24421d2 100644
 +
 +void QTimeoutProcess::slotFinished(int exitCode, QProcess::ExitStatus exitStatus)
 +{
-+#ifdef Q_OS_OSX
++#ifdef Q_OS_MACOS
 +    deleteLater();
 +#endif
 +}
@@ -59,44 +59,70 @@ index 8b3d343..24421d2 100644
  void
  KLauncher::requestStart(KLaunchRequest *request)
  {
-@@ -589,6 +639,27 @@ KLauncher::requestStart(KLaunchRequest *request)
+@@ -501,7 +551,7 @@ KLauncher::requestStart(KLaunchRequest *request)
+     }
+ 
+     QString executable = request->name;
+-#ifdef Q_OS_OSX
++#ifdef Q_OS_MACOS
+     const QString bundlepath = QStandardPaths::findExecutable(executable);
+     if (!bundlepath.isEmpty()) {
+         executable = bundlepath;
+@@ -519,6 +569,44 @@ KLauncher::requestStart(KLaunchRequest *request)
  #endif
          QByteArray data((char *)&request->pid, sizeof(int));
          processRequestReturn(LAUNCHER_OK, data);
-+#ifdef Q_OS_OSX
++#ifdef Q_OS_MACOS
 +        // we now know that 'process' started successfully, so we can start a background
 +        // process that will wait a preconfigured time for the <executable> to launch
 +        // and activate it (= bring to foreground). The only way to do this in combination
 +        // with QProcess is to use AppleScript
-+        QStringList osacommand;
-+        osacommand << QStringLiteral("-e")
-+            << QStringLiteral(
-+                "delay 0.5\n"
-+                "tell application \"System Events\"\n"
-+                " repeat\n"
-+                "  if (exists application process \"%1\") then\n"
-+                "   tell application \"%1\" to activate\n"
-+                "   exit repeat\n"
-+                "  end if\n"
-+                "  delay 0.2\n"
-+                " end repeat\n"
-+                "end tell").arg(QFileInfo(executable).baseName());
-+        bool osaOK = QTimeoutProcess::startDetached(QStringLiteral("/usr/bin/osascript"), osacommand, QString(), Q_NULLPTR, 2000);
-+        qCDebug(KLAUNCHER) << "osascript" << osacommand << ":" << osaOK;
++        if (!qEnvironmentVariableIsSet("KDE_KLAUNCH_NO_FOREGROUND_PUSH")) {
++            QStringList osacommand;
++            auto delay = qgetenv("KDE_KLAUNCH_FOREGROUND_PUSH_DELAY");
++            auto baDuration = qgetenv("KDE_KLAUNCH_FOREGROUND_PUSH_DURATION");
++            int durationMS;
++            bool floatOk = false;
++            if (delay.isEmpty() || delay.toDouble(&floatOk) < 0 || !floatOk) {
++                delay = QByteArrayLiteral("0.5");
++            }
++            floatOk = false;
++            // NB: we don't accept duration == 0!
++            if (baDuration.isEmpty() || baDuration.toDouble(&floatOk) <= 0 || !floatOk) {
++                durationMS = 2000;
++            } else {
++                durationMS = baDuration.toDouble() * 1000.0 + 0.5;
++            }
++            osacommand << QStringLiteral("-e")
++                << QStringLiteral(
++                    "delay %1\n"
++                    "tell application \"System Events\"\n"
++                    " repeat\n"
++                    "  if (exists application process \"%2\") then\n"
++                    "   tell application \"%2\" to activate\n"
++                    "   exit repeat\n"
++                    "  end if\n"
++                    "  delay 0.2\n"
++                    " end repeat\n"
++                    "end tell").arg(QString::fromLatin1(delay)).arg(QFileInfo(executable).baseName());
++            bool osaOK = QTimeoutProcess::startDetached(QStringLiteral("/usr/bin/osascript"),
++                                                        osacommand, QString(), Q_NULLPTR, durationMS);
++            qCDebug(KLAUNCHER) << "osascript" << osacommand << ":" << osaOK;
++        }
 +#endif
      }
      return;
  
 diff --git src/klauncher/klauncher.h src/klauncher/klauncher.h
-index e155f72..f0f3279 100644
+index 711e35c21c0f029043f3c43c91c3f136f20d3fb4..df36b8e28d0ac6011bc42a4353ea29ed674c1825 100644
 --- src/klauncher/klauncher.h
 +++ src/klauncher/klauncher.h
-@@ -261,4 +261,20 @@ protected Q_SLOTS:
-     void slotGotOutput();
-     void slotFinished(int exitCode, QProcess::ExitStatus exitStatus);
+@@ -261,4 +261,20 @@ private:
+     XCBConnection getXCBConnection(const QByteArray &displyName);
+ #endif
  };
 +
-+// For Q_OS_OSX:
++// For Q_OS_MACOS:
 +class QTimeoutProcess : public QProcess
 +{
 +    Q_OBJECT
