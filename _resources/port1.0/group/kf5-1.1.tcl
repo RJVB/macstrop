@@ -215,8 +215,10 @@ if {${kf5::includecounter} == 0} {
                             -DBUILD_SHARED_LIBS=ON \
                             -DCMAKE_STRIP:FILEPATH=/bin/echo
     if {${os.platform} eq "darwin"} {
-        set kf5.applications_dir \
+        if {![info exists kf5.applications_dir]} {
+            set kf5.applications_dir \
                             ${applications_dir}/KF5
+        }
         set kf5.libexec_dir ${prefix}/libexec/kde5
         set kf5.pkgconfig_dir \
                             ${prefix}/lib/pkgconfig
