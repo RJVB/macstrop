@@ -1,99 +1,128 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 
-# rebased on mainstream commit 06a55322f383234ca286790fc2c5190522388c86 from 20160628
+PortSystem      1.0
+platform darwin {
+    PortGroup   cxx11 1.1
+}
+PortGroup       github 1.0
 
-PortSystem 1.0
+github.setup    quassel quassel 0.13.1
 
 # KF5 integration is a work in progress and requires patching the build system
 # so we drop the variant until all that's sorted out. For a KF5 IRC client
 # see port:kf5-konversation .
-# variant kde description {include KDE support; not currently supported with Qt5/KF5} {}
+variant kde description {include KDE support; not currently supported with Qt5/KF5} {}
+variant qtwebkit description {use the legacy QtWebKit for HTML rendering} {}
 
 if {![variant_exists kde] || ![variant_isset kde]} {
     PortGroup qt5   1.0
     PortGroup cmake 1.1
 } else {
+    set kf5.dont_use_xz yes
+    set kf5.applications_dir ${applications_dir}
     PortGroup kf5   1.1
 }
-PortGroup cxx11 1.0
 
-name            quassel
-version         0.12.4
-revision        2
 categories      irc
 license         GPL-2 GPL-3
 platforms       darwin
-maintainers     gmail.com:rjvbertin nomaintainer
-homepage        http://quassel-irc.org
-master_sites    ${homepage}/pub
+maintainers     {yan12125 @yan12125} openmaintainer
+homepage        https://quassel-irc.org
 
-checksums       rmd160  f7282c07716342b235ab506722c17675854569fb \
-                sha256  93e4e54cb3743cbe2e5684c2fcba94fd2bc2cd739f7672dee14341b49c29444d
+checksums       rmd160  08557186caceb498f115c2cefac42bb09c148025 \
+                sha256  2cca5457e69f0144d93c59ee7b559309d785601a358471ee67afec2d4a825388
+#                 size    5453888
 
-if {![info exists qt5.using_kde] || !${qt5.using_kde}} {
-    qt5.depends_component \
-                qtscript qttools
-} elseif {[info exists qt5.using_kde]} {
-        # if using_kde exists we're supposed to have port:qca-qt5 and a few others
-    depends_lib-append \
-                port:qca-qt5-ossl \
-                port:phonon-qt5 \
-                port:dbusmenu-qt5 \
-}
-qt5.depends_component \
-                qtwebkit
 depends_lib-append \
-                path:share/ECM/cmake/ECMConfig.cmake:kde-extra-cmake-modules \
                 path:lib/libssl.dylib:openssl \
-                port:zlib
+                port:zlib \
+                port:openldap
 
-use_bzip2       yes
-
-# Do not use git to find out the program version - there is no ".git" directory
-# in the source tarball
-patchfiles      patch-scripts-build-macosx_makebundle.py.diff
-
-post-patch {
-    reinplace "s|@@VERSION@@|${version}|" \
-        ${worksrcpath}/scripts/build/macosx_makebundle.py
+qt5.depends_component \
+                qtmultimedia
+if {[variant_isset qtwebkit]} {
+    qt5.depends_component \
+                qtwebkit
+    configure.args-append \
+                -DWITH_WEBKIT=ON \
+                -DWITH_WEBENGINE=OFF
+} else {
+    qt5.depends_component \
+                qtwebengine
 }
+qt5.depends_build_component \
+                qttools
 
-configure.args  -DWANT_CORE=OFF \
+langselect_qm_dir ${destroot}${prefix}/share/quassel/translations
+
+configure.args-append \
+                -DWANT_CORE=OFF \
                 -DWANT_QTCLIENT=OFF \
                 -DWANT_MONO=OFF \
+                -DWITH_KDE=OFF \
                 -DUSE_QT5=ON
 
-if {![variant_exists kde] || ![variant_isset kde]} {
-    configure.args-append -DWITH_KDE=OFF
+if {[variant_exists kde] && [variant_isset kde]} {
+    kf5.depends_frameworks \
+                kconfigwidgets kcoreaddons knotifications \
+                knotifyconfig ktextwidgets kwidgetsaddons kxmlgui sonnet \
+                breeze-icons oxygen-icons
+    patchfiles-append \
+                patch-bundle-install-dir.diff
+    configure.args-replace \
+                -DWITH_KDE=OFF \
+                -DWITH_KDE=ON
+    configure.args-replace \
+                -DBUNDLE_INSTALL_DIR=${kf5.applications_dir} \
+                -DBUNDLE_INSTALL_DIR=${applications_dir}
+    configure.args-append \
+                -DWITH_BUNDLED_ICONS=OFF \
+                -DWITH_OXYGEN_ICONS=ON \
+                -DKDE_INSTALL_BUNDLEDIR=${applications_dir}
+    post-destroot {
+        file delete -force ${destroot}${prefix}/share/quassel/icons
+        xinstall -m 755 -d ${destroot}${prefix}/share/quassel/icons
+        ln -s ${prefix}/share/icons/oxygen ${destroot}${prefix}/share/quassel/icons/
+        ln -s ${prefix}/share/icons/breeze ${destroot}${prefix}/share/quassel/icons/
+        ln -s ${prefix}/share/icons/breeze-dark ${destroot}${prefix}/share/quassel/icons/
+    }
 } else {
-    configure.args-append -DWITH_KDE=ON
+    configure.args-append \
+                -DCMAKE_DISABLE_FIND_PACKAGE_ECM=ON
 }
 
-if {${name} == ${subport}} {
+if {[tbool configure.ccache]} {
+    configure.args-append \
+                -DUSE_CCACHE=ON
+}
 
+if {${name} eq ${subport}} {
     description \
         Qt5 IRC client
     long_description \
         Quassel IRC is a modern, cross-platform IRC client. This port installs \
         the monolithic variant, which does not require a separate Quassel core.
 
-    if {![info exists qt5.using_kde] || !${qt5.using_kde}} {
-        depends_run-append \
-                port:qt5-sqlite-plugin
-    }
+    qt5.depends_runtime_component sqlite-plugin
+    qt5.depends_component qtscript
+
+    # QCA is needed for chat encryption (/keyx and friends)
+    depends_lib-append port:qca-qt5-ossl
 
     configure.args-replace -DWANT_MONO=OFF -DWANT_MONO=ON
 
-    destroot {
-        xinstall -m 755 -d ${destroot}${qt_apps_dir}
-        copy "${build.dir}/Quassel.app" "${destroot}${qt_apps_dir}/Quassel.app"
-        xinstall -m 755 -d ${destroot}${qt_apps_dir}/Quassel.app/Contents/MacOS
-        xinstall -m 755 ${build.dir}/quassel ${destroot}${qt_apps_dir}/Quassel.app/Contents/MacOS/Quassel
+    if {![variant_exists kde] || ![variant_isset kde]} {
+        destroot {
+            copy "${build.dir}/Quassel.app" "${destroot}${applications_dir}"
+        }
+    } else {
+        post-destroot {
+            kf5.add_app_wrapper quassel quassel
+        }
     }
 }
 
 subport ${name}-client {
-
     description \
         Qt5 IRC client - client component
     long_description \
@@ -104,14 +133,13 @@ subport ${name}-client {
 
     configure.args-replace -DWANT_QTCLIENT=OFF -DWANT_QTCLIENT=ON
 
-    destroot {
-        xinstall -m 755 -d ${destroot}${qt_apps_dir}
-        copy "${build.dir}/Quassel Client.app" "${destroot}${qt_apps_dir}/Quassel Client.app"
-        xinstall -m 755 -d "${destroot}${qt_apps_dir}/Quassel Client.app/Contents/MacOS"
-        xinstall -m 755 ${build.dir}/quasselclient "${destroot}${qt_apps_dir}/Quassel Client.app/Contents/MacOS/Quassel Client"
+    if {![variant_exists kde] || ![variant_isset kde]} {
+        destroot {
+            copy "${build.dir}/Quassel Client.app" "${destroot}${applications_dir}"
+        }
+    } else {
+        post-destroot {
+            kf5.add_app_wrapper quasselclient quasselclient
+        }
     }
 }
-
-livecheck.type  regex
-livecheck.url   http://quassel-irc.org/pub/
-livecheck.regex "${name}-(\[0-9\.\]+)\.tar\.bz2"
