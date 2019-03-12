@@ -68,6 +68,13 @@ pre-configure {
 }
 
 proc meson.save_configure_cmd {{save_log_too ""}} {
+    namespace upvar ::meson configure_cmd_saved statevar
+    if {[tbool statevar]} {
+        ui_debug "meson.save_configure_cmd already called"
+        return;
+    }
+    set statevar yes
+
     if {${save_log_too} ne ""} {
         pre-configure {
             configure.pre_args-prepend "-cf '${configure.cmd} "

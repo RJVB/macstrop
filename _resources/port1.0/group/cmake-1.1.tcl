@@ -489,6 +489,13 @@ if {[info exist ::env(MACPORTS_KEEP_BUILDING)] && $::env(MACPORTS_KEEP_BUILDING)
 }
 
 proc cmake.save_configure_cmd {{save_log_too ""}} {
+    namespace upvar ::cmake configure_cmd_saved statevar
+    if {[tbool statevar]} {
+        ui_debug "cmake.save_configure_cmd already called"
+        return;
+    }
+    set statevar yes
+
     if {${save_log_too} ne ""} {
         pre-configure {
             configure.pre_args-prepend "-cf '${configure.cmd} "
