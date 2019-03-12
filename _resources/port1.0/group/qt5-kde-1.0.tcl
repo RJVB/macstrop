@@ -756,6 +756,29 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
     if {${appdir} eq ""} {
         set appdir ${qt_apps_dir}
     }
+    if {${os.platform} eq "darwin"} {
+        if {${bundlename} eq ""} {
+            set bundlename ${wrappername}
+        }
+        if {${bundleexec} eq ""} {
+            set bundleexec [file tail ${bundlename}]
+        }
+    } else {
+        # no app bundles on this platform, but provide the same API by pretending there are.
+        # If unset, use ${subport} to guess the exec. name because evidently we cannot
+        # symlink ${wrappername} onto itself.
+        if {${bundlename} eq ""} {
+            set bundlename ${subport}
+        }
+        if {${bundleexec} eq ""} {
+            set bundleexec ${bundlename}
+        }
+    }
+    if {${bundleexec} eq "${prefix}/bin/${wrappername}"
+            || "${appdir}/${bundleexec}" eq "${prefix}/bin/${wrappername}"} {
+        ui_error "qt5.add_app_wrapper: wrapper ${wrappername} would overwrite executable ${bundleexec}: ignoring!"
+        return;
+    }
     xinstall -m 755 -d ${destroot}${prefix}/bin
     if {![catch {set fd [open "${destroot}${prefix}/bin/${wrappername}" "w"]} err]} {
         # this wrapper exists to a large extent to improve integration of "pure" qt5
@@ -774,12 +797,6 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
             puts ${fd} "#"
         }
         if {${os.platform} eq "darwin"} {
-            if {${bundlename} eq ""} {
-                set bundlename ${wrappername}
-            }
-            if {${bundleexec} eq ""} {
-                set bundleexec [file tail ${bundlename}]
-            }
             if {[file dirname ${bundleexec}] eq "."} {
                 puts ${fd} "exec \"${appdir}/${bundlename}.app/Contents/MacOS/${bundleexec}\" \"\$\@\""
             } else {
@@ -788,15 +805,6 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
             }
         } else {
             global qt_libs_dir
-            # no app bundles on this platform, but provide the same API by pretending there are.
-            # If unset, use ${subport} to guess the exec. name because evidently we cannot
-            # symlink ${wrappername} onto itself.
-            if {${bundlename} eq ""} {
-                set bundlename ${subport}
-            }
-            if {${bundleexec} eq ""} {
-                set bundleexec ${bundlename}
-            }
             puts ${fd} "if \[ \"\$\{LD_LIBRARY_PATH\}\" = \"\" \] \;then"
             puts ${fd} "    export LD_LIBRARY_PATH=${prefix}/lib:${qt_libs_dir}"
             puts ${fd} "else"
