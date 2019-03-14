@@ -14,11 +14,11 @@ proc add_legacysupport {} {
     global os.platform os.major
     global legacysupport.newest_darwin_requires_legacy
 
-    set MPLegacyIncDir ${prefix}/include/LegacySupport
-    set AddLDFlag      -lMacportsLegacySupport
-    set AddCFlag       -I${MPLegacyIncDir}
-    set AddCIncPath       C_INCLUDE_PATH=${MPLegacyIncDir}
-    set AddCppIncPath CPLUS_INCLUDE_PATH=${MPLegacyIncDir}
+    set MPLegacyIncDir  ${prefix}/include/LegacySupport
+    set AddLDFlag       -lMacportsLegacySupport
+    set AddCFlag        -I${MPLegacyIncDir}
+    set AddCIncPath     C_INCLUDE_PATH=${MPLegacyIncDir}
+    set AddCppIncPath   CPLUS_INCLUDE_PATH=${MPLegacyIncDir}
 
     if {${os.platform} eq "darwin" && ${os.major} <= ${legacysupport.newest_darwin_requires_legacy}} {
 
@@ -31,6 +31,7 @@ proc add_legacysupport {} {
         # Add to configure options
         configure.ldflags-append    ${AddLDFlag}
         configure.cflags-append     ${AddCFlag}
+        configure.cppflags-append   ${AddCFlag}
         configure.objcflags-append  ${AddCFlag}
         configure.cxxflags-append   ${AddCFlag}
         configure.objcxxflags-append ${AddCFlag}
