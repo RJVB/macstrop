@@ -55,10 +55,12 @@ proc create_devport_content_archive {} {
         set args "${args} .${a}"
     }
     xinstall -m 755 -d ${destroot}${dev::archdir}
+    ui_debug "Creating devport archive ${destroot}${dev::archdir}/${dev::archname} from \"${args}\""
     if {[catch {system -W ${destroot} "bsdtar -cjvf ${destroot}${dev::archdir}/${dev::archname} ${args}"} err]} {
         ui_error "Failure creating ${destroot}${dev::archdir}/${dev::archname} for ${args}: ${err}"
         file delete -force ${destroot}${dev::archdir}/${dev::archname}
     } else {
+        ui_debug "Deleting archived \"${args}\""
         foreach a ${args} {
             file delete -force ${destroot}/${a}
         }
@@ -69,29 +71,43 @@ proc create_devport_content_archive {} {
 proc register_devport_standard_content {} {
     global subport destroot prefix name
     if {${subport} eq "${name}"} {
+        ui_msg "--->  Transferring developer content to ${name}-dev"
+        ui_debug "Finding and registering standard content for the devport"
         foreach h [glob -nocomplain ${destroot}${prefix}/include/*] {
+            ui_debug "\theader: ${h}"
             devport_content-append [string map [list ${destroot} ""] ${h}]
         }
         foreach h [glob -nocomplain ${destroot}${prefix}/lib/lib*.a] {
+            ui_debug "\tstatic library: ${h}"
             devport_content-append [string map [list ${destroot} ""] ${h}]
         }
         foreach h [glob -nocomplain ${destroot}${prefix}/lib/lib*.la] {
+            ui_debug "\t.la library: ${h}"
             devport_content-append [string map [list ${destroot} ""] ${h}]
         }
         foreach h [glob -nocomplain ${destroot}${prefix}/lib/lib*.dylib] {
             if {![string match -nocase {lib*.[0-9.]*.dylib} [file tail ${h}]] && [file type ${h}] eq "link"} {
+                ui_debug "\tMac shared linker library: ${h}"
+                devport_content-append [string map [list ${destroot} ""] ${h}]
+            }
+        }
+        foreach h [glob -nocomplain ${destroot}${prefix}/lib/lib*.so] {
+            if {[file type ${h}] eq "link"} {
+                ui_debug "\tstandard Unix shared linker library: ${h}"
                 devport_content-append [string map [list ${destroot} ""] ${h}]
             }
         }
         foreach h [glob -nocomplain ${destroot}${prefix}/lib/pkgconfig/*] {
+            ui_debug "\tpkg-config file: ${h}"
             devport_content-append [string map [list ${destroot} ""] ${h}]
         }
     }
 }
 
 proc unpack_devport_content {} {
-    global destroot prefix name
+    global destroot prefix name subport
     if {[file exists ${dev::archdir}/${dev::archname}]} {
+        ui_debug "Unpacking \"${dev::archdir}/${dev::archname}\" for ${subport}"
         if {[catch {system -W ${destroot} "bsdtar -xvf ${dev::archdir}/${dev::archname}"} err]} {
             ui_error "Failure unpacking ${dev::archdir}/${dev::archname}: ${err}"
         }
