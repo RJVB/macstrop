@@ -67,7 +67,8 @@ platform darwin {
             } else {
                 set compjobs ""
             }
-            if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} -S -L ${target} 2>&1"} result context]} {
+            # first try compressing in parallel, without backups/verification (this is all "redundant" data)
+            if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} -S -L -n ${target} 2>&1"} result context]} {
                 ui_info "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
                 if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${target} 2>&1"} result context]} {
                     ui_error "Compression failed: ${result}, ${context}"
