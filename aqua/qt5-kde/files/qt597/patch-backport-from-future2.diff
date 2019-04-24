@@ -1,0 +1,177 @@
+diff --git a/qtbase/src/corelib/kernel/qmetaobject.cpp b/qtbase/src/corelib/kernel/qmetaobject.cpp
+index cdc605d33b5684ccce22f312f3ae2d07927a0599..f07b463482f8fb1f58dd36e6ca2da689fdbbd636 100644
+--- a/qtbase/src/corelib/kernel/qmetaobject.cpp
++++ b/qtbase/src/corelib/kernel/qmetaobject.cpp
+@@ -3264,7 +3353,21 @@ int QMetaProperty::notifySignalIndex() const
+     if (hasNotifySignal()) {
+         int offset = priv(mobj->d.data)->propertyData +
+                      priv(mobj->d.data)->propertyCount * 3 + idx;
+-        return mobj->d.data[offset] + mobj->methodOffset();
++        int methodIndex = mobj->d.data[offset];
++        if (methodIndex & IsUnresolvedSignal) {
++            methodIndex &= ~IsUnresolvedSignal;
++            const QByteArray signalName = stringData(mobj, methodIndex);
++            const QMetaObject *m = mobj;
++            const int idx = indexOfMethodRelative<MethodSignal>(&m, signalName, 0, nullptr);
++            if (idx >= 0) {
++                return idx + m->methodOffset();
++            } else {
++                qWarning("QMetaProperty::notifySignal: cannot find the NOTIFY signal %s in class %s for property '%s'",
++                         signalName.constData(), objectClassName(mobj), name());
++                return -1;
++            }
++        }
++        return methodIndex + mobj->methodOffset();
+     } else {
+         return -1;
+     }
+diff --git a/qtbase/src/corelib/kernel/qmetaobject_p.h b/qtbase/src/corelib/kernel/qmetaobject_p.h
+index e247c48703eabad36634a6238327701ec85cc3a0..434ef84808204a52f78c0fb4aace251c7b46c5dd 100644
+--- a/qtbase/src/corelib/kernel/qmetaobject_p.h
++++ b/qtbase/src/corelib/kernel/qmetaobject_p.h
+@@ -111,7 +111,8 @@ enum MetaObjectFlags {
+ 
+ enum MetaDataFlags {
+     IsUnresolvedType = 0x80000000,
+-    TypeNameIndexMask = 0x7FFFFFFF
++    TypeNameIndexMask = 0x7FFFFFFF,
++    IsUnresolvedSignal = 0x70000000
+ };
+ 
+ enum EnumFlags {
+diff --git a/qtbase/src/tools/moc/generator.cpp b/qtbase/src/tools/moc/generator.cpp
+index c4184929ef7e12a01b9663f4c783bd9f9e00e1ee..0b45776b888574974730461c7dbc33f6b62531f1 100644
+--- a/qtbase/src/tools/moc/generator.cpp
++++ b/qtbase/src/tools/moc/generator.cpp
+@@ -218,6 +218,7 @@ void Generator::generateCode()
+     registerFunctionStrings(cdef->slotList);
+     registerFunctionStrings(cdef->methodList);
+     registerFunctionStrings(cdef->constructorList);
++    registerByteArrayVector(cdef->nonClassSignalList);
+     registerPropertyStrings();
+     registerEnumStrings();
+ 
+@@ -603,6 +604,19 @@ void Generator::generateCode()
+ // Generate plugin meta data
+ //
+     generatePluginMetaData();
++
++//
++// Generate function to make sure the non-class signals exist in the parent classes
++//
++    if (!cdef->nonClassSignalList.isEmpty()) {
++        fprintf(out, "// If you get a compile error in this function it can be because either\n");
++        fprintf(out, "//     a) You are using a NOTIFY signal that does not exist. Fix it.\n");
++        fprintf(out, "//     b) You are using a NOTIFY signal that does exist (in a parent class) but has a non-empty parameter list. This is a moc limitation.\n");
++        fprintf(out, "Q_DECL_UNUSED static void checkNotifySignalValidity_%s(%s *t) {\n", qualifiedClassNameIdentifier.constData(), cdef->qualified.constData());
++        for (const QByteArray &nonClassSignal : cdef->nonClassSignalList)
++            fprintf(out, "    t->%s();\n", nonClassSignal.constData());
++        fprintf(out, "}\n");
++    }
+ }
+ 
+ 
+@@ -648,6 +662,12 @@ void Generator::registerFunctionStrings(const QVector<FunctionDef>& list)
+     }
+ }
+ 
++void Generator::registerByteArrayVector(const QVector<QByteArray> &list)
++{
++    for (const QByteArray &ba : list)
++        strreg(ba);
++}
++
+ void Generator::generateFunctions(const QVector<FunctionDef>& list, const char *functype, int type, int &paramsIndex)
+ {
+     if (list.isEmpty())
+@@ -841,12 +861,17 @@ void Generator::generateProperties()
+         fprintf(out, "\n // properties: notify_signal_id\n");
+         for (int i = 0; i < cdef->propertyList.count(); ++i) {
+             const PropertyDef &p = cdef->propertyList.at(i);
+-            if(p.notifyId == -1)
++            if (p.notifyId == -1) {
+                 fprintf(out, "    %4d,\n",
+                         0);
+-            else
++            } else if (p.notifyId > -1) {
+                 fprintf(out, "    %4d,\n",
+                         p.notifyId);
++            } else {
++                const int indexInStrings = strings.indexOf(p.notify);
++                fprintf(out, "    %4d,\n",
++                        indexInStrings | IsUnresolvedSignal);
++            }
+         }
+     }
+     if (cdef->revisionedProperties) {
+@@ -1401,13 +1426,15 @@ void Generator::generateStaticMetacall()
+                             prefix.constData(), p.member.constData(), p.type.constData());
+                     fprintf(out, "                %s%s = *reinterpret_cast< %s*>(_v);\n",
+                             prefix.constData(), p.member.constData(), p.type.constData());
+-                    if (!p.notify.isEmpty() && p.notifyId != -1) {
++                    if (!p.notify.isEmpty() && p.notifyId > -1) {
+                         const FunctionDef &f = cdef->signalList.at(p.notifyId);
+                         if (f.arguments.size() == 0)
+                             fprintf(out, "                Q_EMIT _t->%s();\n", p.notify.constData());
+                         else if (f.arguments.size() == 1 && f.arguments.at(0).normalizedType == p.type)
+                             fprintf(out, "                Q_EMIT _t->%s(%s%s);\n",
+                                     p.notify.constData(), prefix.constData(), p.member.constData());
++                    } else if (!p.notify.isEmpty() && p.notifyId < -1) {
++                        fprintf(out, "                Q_EMIT _t->%s();\n", p.notify.constData());
+                     }
+                     fprintf(out, "            }\n");
+                     fprintf(out, "            break;\n");
+diff --git a/qtbase/src/tools/moc/generator.h b/qtbase/src/tools/moc/generator.h
+index 3833148fb30f60888b2aadcf3e377ecf06f306d2..8b801383021b6943112050da7eeb34002063de9b 100644
+--- a/qtbase/src/tools/moc/generator.h
++++ b/qtbase/src/tools/moc/generator.h
+@@ -46,6 +46,7 @@ private:
+     void registerClassInfoStrings();
+     void generateClassInfos();
+     void registerFunctionStrings(const QVector<FunctionDef> &list);
++    void registerByteArrayVector(const QVector<QByteArray> &list);
+     void generateFunctions(const QVector<FunctionDef> &list, const char *functype, int type, int &paramsIndex);
+     void generateFunctionRevisions(const QVector<FunctionDef> &list, const char *functype);
+     void generateFunctionParameters(const QVector<FunctionDef> &list, const char *functype);
+diff --git a/qtbase/src/tools/moc/moc.cpp b/qtbase/src/tools/moc/moc.cpp
+index 36d84a61d8e41af6ea125887bcbbccf6bd8506d7..f7de57fae3911a2cb977e5a1bb3fe41456190f46 100644
+--- a/qtbase/src/tools/moc/moc.cpp
++++ b/qtbase/src/tools/moc/moc.cpp
+@@ -1727,9 +1727,13 @@ void Moc::checkProperties(ClassDef *cdef)
+             }
+             p.notifyId = notifyId;
+             if (notifyId == -1) {
+-                QByteArray msg = "NOTIFY signal '" + p.notify + "' of property '" + p.name
+-                        + "' does not exist in class " + cdef->classname + ".";
+-                error(msg.constData());
++                int index = cdef->nonClassSignalList.indexOf(p.notify);
++                if (index == -1) {
++                    cdef->nonClassSignalList << p.notify;
++                    p.notifyId = -1 - cdef->nonClassSignalList.count();
++                } else {
++                    p.notifyId = -2 - index;
++                }
+             }
+         }
+     }
+diff --git a/qtbase/src/tools/moc/moc.h b/qtbase/src/tools/moc/moc.h
+index 6040f944f386eea9944d86445cd913cc289c429b..5f8cdfcf2c7cb1b7417d559d0cd5da5233e99c8f 100644
+--- a/qtbase/src/tools/moc/moc.h
++++ b/qtbase/src/tools/moc/moc.h
+@@ -121,7 +121,7 @@ struct PropertyDef
+ {
+     PropertyDef():notifyId(-1), constant(false), final(false), gspec(ValueSpec), revision(0){}
+     QByteArray name, type, member, read, write, reset, designable, scriptable, editable, stored, user, notify, inPrivateClass;
+-    int notifyId;
++    int notifyId; // -1 means no notifyId, >= 0 means signal defined in this class, < -1 means signal not defined in this class
+     bool constant;
+     bool final;
+     enum Specification  { ValueSpec, ReferenceSpec, PointerSpec };
+@@ -179,6 +179,7 @@ struct ClassDef : BaseDef {
+ 
+     QVector<FunctionDef> constructorList;
+     QVector<FunctionDef> signalList, slotList, methodList, publicList;
++    QVector<QByteArray> nonClassSignalList;
+     int notifyableProperties = 0;
+     QVector<PropertyDef> propertyList;
+     int revisionedMethods = 0;

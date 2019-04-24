@@ -1,0 +1,1310 @@
+From a8680d90f8d22f25e85cb301789c46894a386d96 Mon Sep 17 00:00:00 2001
+From: Timur Pocheptsov <timur.pocheptsov@qt.io>
+Date: Fri, 15 Mar 2019 12:05:38 +0100
+Subject: [PATCH] Introduce QNetworkConnection/Status/Monitor
+
+Private classes to replace broken or even not working at all 'session management'
+and 'bearer manager' (on at least two major platforms we support). This
+implementation is macOS/iOS-specific and uses SystemConfiguration framework,
+or more precisely SCNetworkReachability's part of it.
+
+Task-number: QTBUG-40332
+Change-Id: Iac5f44c4063c4092b93b8cf2bde3fb2c524855b3
+
+diff --git a/qtbase/src/corelib/global/qglobal.h b/qtbase/src/corelib/global/qglobal.h
+index f44b18e2..a639018d 100644
+--- a/qtbase/src/corelib/global/qglobal.h
++++ b/qtbase/src/corelib/global/qglobal.h
+@@ -324,6 +324,14 @@ typedef double qreal;
+     Class(const Class &) Q_DECL_EQ_DELETE;\
+     Class &operator=(const Class &) Q_DECL_EQ_DELETE;
+ 
++#define Q_DISABLE_MOVE(Class) \
++    Class(Class &&) = delete; \
++    Class &operator=(Class &&) = delete;
++
++#define Q_DISABLE_COPY_MOVE(Class) \
++    Q_DISABLE_COPY(Class) \
++    Q_DISABLE_MOVE(Class)
++
+ /*
+    No, this is not an evil backdoor. QT_BUILD_INTERNAL just exports more symbols
+    for Qt's internal unit tests. If you want slower loading times and more
+diff --git a/qtbase/src/network/access/access.pri b/qtbase/src/network/access/access.pri
+index faf907f7..2600af27 100644
+--- a/qtbase/src/network/access/access.pri
++++ b/qtbase/src/network/access/access.pri
+@@ -24,7 +24,8 @@ HEADERS += \
+     access/qabstractnetworkcache.h \
+     access/qnetworkfile_p.h \
+     access/qhsts_p.h \
+-    access/qhstspolicy.h
++    access/qhstspolicy.h \
++    access/qnetconmonitor_p.h
+ 
+ SOURCES += \
+     access/qnetworkaccessauthenticationmanager.cpp \
+@@ -44,7 +45,8 @@ SOURCES += \
+     access/qabstractnetworkcache.cpp \
+     access/qnetworkfile.cpp \
+     access/qhsts.cpp \
+-    access/qhstspolicy.cpp
++    access/qhstspolicy.cpp \
++    access/qnetconmonitor_qt.cpp
+ 
+ qtConfig(ftp) {
+     HEADERS += \
+@@ -68,6 +70,14 @@ mac: LIBS_PRIVATE += -framework Security
+ 
+ include($$PWD/../../3rdparty/zlib_dependency.pri)
+ 
++macos | ios {
++    SOURCES += \
++        access/qnetconmonitor_darwin.cpp
++    SOURCES -= access/qnetconmonitor_qt.cpp
++
++    LIBS_PRIVATE += -framework SystemConfiguration
++}
++
+ qtConfig(http) {
+     include($$PWD/http2/http2.pri)
+ 
+diff --git a/qtbase/src/network/access/qhttpnetworkconnection.cpp b/qtbase/src/network/access/qhttpnetworkconnection.cpp
+index 2301920b..bdb35051 100644
+--- a/qtbase/src/network/access/qhttpnetworkconnection.cpp
++++ b/qtbase/src/network/access/qhttpnetworkconnection.cpp
+@@ -1290,6 +1290,10 @@ QHttpNetworkConnection::QHttpNetworkConnection(const QString &hostName, quint16
+     Q_D(QHttpNetworkConnection);
+     d->networkSession = qMove(networkSession);
+     d->init();
++    if (QNetworkStatusMonitor::isEnabled()) {
++        connect(&d->connectionMonitor, &QNetworkConnectionMonitor::reachabilityChanged,
++                this, &QHttpNetworkConnection::onlineStateChanged, Qt::QueuedConnection);
++    }
+ }
+ 
+ QHttpNetworkConnection::QHttpNetworkConnection(quint16 connectionCount, const QString &hostName,
+@@ -1302,6 +1306,10 @@ QHttpNetworkConnection::QHttpNetworkConnection(quint16 connectionCount, const QS
+     Q_D(QHttpNetworkConnection);
+     d->networkSession = qMove(networkSession);
+     d->init();
++    if (QNetworkStatusMonitor::isEnabled()) {
++        connect(&d->connectionMonitor, &QNetworkConnectionMonitor::reachabilityChanged,
++                this, &QHttpNetworkConnection::onlineStateChanged, Qt::QueuedConnection);
++    }
+ }
+ #else
+ QHttpNetworkConnection::QHttpNetworkConnection(const QString &hostName, quint16 port, bool encrypt,
+@@ -1310,6 +1318,8 @@ QHttpNetworkConnection::QHttpNetworkConnection(const QString &hostName, quint16
+ {
+     Q_D(QHttpNetworkConnection);
+     d->init();
++    if (QNetworkStatus::isMonitoringEnabled())
++        connect(&d->connectionMonitor, &QNetConMonitor::reachabilityChanged, this, &QHttpNetworkConnection::onlineStateChanged, Qt::QueuedConnection);
+ }
+ 
+ QHttpNetworkConnection::QHttpNetworkConnection(quint16 connectionCount, const QString &hostName,
+@@ -1320,6 +1330,8 @@ QHttpNetworkConnection::QHttpNetworkConnection(quint16 connectionCount, const QS
+ {
+     Q_D(QHttpNetworkConnection);
+     d->init();
++    if (QNetworkStatus::isMonitoringEnabled())
++        connect(&d->connectionMonitor, &QNetConMonitor::reachabilityChanged, this, &QHttpNetworkConnection::onlineStateChanged, Qt::QueuedConnnection);
+ }
+ #endif
+ 
+@@ -1466,6 +1478,31 @@ void QHttpNetworkConnection::preConnectFinished()
+     d_func()->preConnectRequests--;
+ }
+ 
++void QHttpNetworkConnection::onlineStateChanged(bool isOnline)
++{
++    Q_D(QHttpNetworkConnection);
++
++    if (isOnline) {
++        // If we did not have any 'isOffline' previously - we don't care much: thanks, good
++        // to know, we are 'online' apparently. But if we first went offline and now online
++        // then it's too late and isn't important anymore.
++        return;
++    }
++
++    for (int i = 0; i < d->activeChannelCount; i++) {
++        auto &channel = d->channels[i];
++        channel.emitFinishedWithError(QNetworkReply::TemporaryNetworkFailureError, "Temporary network failure.");
++        channel.close();
++    }
++
++    if (sender() == &d->networkMonitor) {
++        disconnect(&d->networkMonitor, &QNetworkStatusMonitor::onlineStateChanged,
++                   this, &QHttpNetworkConnection::onlineStateChanged);
++    } else {
++        d->connectionMonitor.stopMonitoring();
++    }
++}
++
+ #ifndef QT_NO_NETWORKPROXY
+ // only called from QHttpNetworkConnectionChannel::_q_proxyAuthenticationRequired, not
+ // from QHttpNetworkConnectionChannel::handleAuthenticationChallenge
+diff --git a/qtbase/src/network/access/qhttpnetworkconnection_p.h b/qtbase/src/network/access/qhttpnetworkconnection_p.h
+index 2f185d97..caf0ea82 100644
+--- a/qtbase/src/network/access/qhttpnetworkconnection_p.h
++++ b/qtbase/src/network/access/qhttpnetworkconnection_p.h
+@@ -67,6 +67,7 @@
+ #include <private/qhttpnetworkheader_p.h>
+ #include <private/qhttpnetworkrequest_p.h>
+ #include <private/qhttpnetworkreply_p.h>
++#include <private/qnetconmonitor_p.h>
+ 
+ #include <private/qhttpnetworkconnectionchannel_p.h>
+ 
+@@ -148,6 +149,9 @@ public:
+ 
+     void preConnectFinished();
+ 
++public slots:
++    void onlineStateChanged(bool isOnline);
++
+ private:
+     Q_DECLARE_PRIVATE(QHttpNetworkConnection)
+     Q_DISABLE_COPY(QHttpNetworkConnection)
+@@ -279,7 +283,16 @@ public:
+ #ifndef QT_NO_BEARERMANAGEMENT
+     QSharedPointer<QNetworkSession> networkSession;
+ #endif
+-
++    
++    // If network status monitoring is enabled, we activate connectionMonitor
++    // as soons as one of channels managed to connect to host (and we
++    // have a pair of addresses (us,peer).
++    QNetworkConnectionMonitor connectionMonitor;
++
++    // Before we connect, we must be able to notice that network access was
++    // lost, otherwise, we can get stuck in some awkward state ('connecting')
++    // for a long time, not knowing we are already defunct.
++    QNetworkStatusMonitor networkMonitor;
+     friend class QHttpNetworkConnectionChannel;
+ };
+ 
+diff --git a/qtbase/src/network/access/qhttpnetworkconnectionchannel.cpp b/qtbase/src/network/access/qhttpnetworkconnectionchannel.cpp
+index d2532065..63cad19f 100644
+--- a/qtbase/src/network/access/qhttpnetworkconnectionchannel.cpp
++++ b/qtbase/src/network/access/qhttpnetworkconnectionchannel.cpp
+@@ -60,6 +60,8 @@
+ #include "private/qnetworksession_p.h"
+ #endif
+ 
++#include "private/qnetconmonitor_p.h"
++
+ QT_BEGIN_NAMESPACE
+ 
+ // TODO: Put channel specific stuff here so it does not polute qhttpnetworkconnection.cpp
+@@ -303,6 +305,11 @@ bool QHttpNetworkConnectionChannel::ensureConnection()
+     // make sure that this socket is in a connected state, if not initiate
+     // connection to the host.
+     if (socketState != QAbstractSocket::ConnectedState) {
++        auto conPrivate = connection->d_func();
++        if (QNetworkStatusMonitor::isEnabled()) {
++            connect(&conPrivate->networkMonitor, &QNetworkStatusMonitor::onlineStateChanged,
++                    connection, &QHttpNetworkConnection::onlineStateChanged, Qt::UniqueConnection);
++        }
+         // connect to the host if not already connected.
+         state = QHttpNetworkConnectionChannel::ConnectingState;
+         pendingEncrypt = ssl;
+@@ -827,6 +834,21 @@ void QHttpNetworkConnectionChannel::_q_connected()
+ 
+     pipeliningSupported = QHttpNetworkConnectionChannel::PipeliningSupportUnknown;
+ 
++    if (QNetworkStatusMonitor::isEnabled()) {
++        auto connectionPrivate = connection->d_func();
++        if (!connectionPrivate->connectionMonitor.isMonitoring()) {
++            // Now that we have a pair of addresses, we can start monitoring the
++            // connection status to handle its loss properly.
++            if (connectionPrivate->connectionMonitor.setTargets(socket->localAddress(), socket->peerAddress())
++                && connectionPrivate->connectionMonitor.startMonitoring()) {
++                    // From now connection's personal monitor will do the job.
++                    // 'Global' state is not interesting anymore.
++                    disconnect(&connectionPrivate->networkMonitor, &QNetworkStatusMonitor::onlineStateChanged,
++                               connection, &QHttpNetworkConnection::onlineStateChanged);
++            }
++        }
++    }
++
+     // ### FIXME: if the server closes the connection unexpectedly, we shouldn't send the same broken request again!
+     //channels[i].reconnectAttempts = 2;
+     if (ssl || pendingEncrypt) { // FIXME: Didn't work properly with pendingEncrypt only, we should refactor this into an EncrypingState
+diff --git a/qtbase/src/network/access/qnetconmonitor_darwin.cpp b/qtbase/src/network/access/qnetconmonitor_darwin.cpp
+new file mode 100644
+index 00000000..3833158f
+--- /dev/null
++++ b/qtbase/src/network/access/qnetconmonitor_darwin.cpp
+@@ -0,0 +1,474 @@
++/****************************************************************************
++**
++** Copyright (C) 2019 The Qt Company Ltd.
++** Contact: https://www.qt.io/licensing/
++**
++** This file is part of the QtNetwork module of the Qt Toolkit.
++**
++** $QT_BEGIN_LICENSE:LGPL$
++** Commercial License Usage
++** Licensees holding valid commercial Qt licenses may use this file in
++** accordance with the commercial license agreement provided with the
++** Software or, alternatively, in accordance with the terms contained in
++** a written agreement between you and The Qt Company. For licensing terms
++** and conditions see https://www.qt.io/terms-conditions. For further
++** information use the contact form at https://www.qt.io/contact-us.
++**
++** GNU Lesser General Public License Usage
++** Alternatively, this file may be used under the terms of the GNU Lesser
++** General Public License version 3 as published by the Free Software
++** Foundation and appearing in the file LICENSE.LGPL3 included in the
++** packaging of this file. Please review the following information to
++** ensure the GNU Lesser General Public License version 3 requirements
++** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
++**
++** GNU General Public License Usage
++** Alternatively, this file may be used under the terms of the GNU
++** General Public License version 2.0 or (at your option) the GNU General
++** Public license version 3 or any later version approved by the KDE Free
++** Qt Foundation. The licenses are as published by the Free Software
++** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
++** included in the packaging of this file. Please review the following
++** information to ensure the GNU General Public License requirements will
++** be met: https://www.gnu.org/licenses/gpl-2.0.html and
++** https://www.gnu.org/licenses/gpl-3.0.html.
++**
++** $QT_END_LICENSE$
++**
++****************************************************************************/
++
++#include "private/qnativesocketengine_p.h"
++#include "private/qnetconmonitor_p.h"
++
++#include "private/qobject_p.h"
++
++#include <SystemConfiguration/SystemConfiguration.h>
++#include <CoreFoundation/CoreFoundation.h>
++
++#include <netinet/in.h>
++
++#include <cstring>
++#include <mutex>
++
++QT_BEGIN_NAMESPACE
++
++Q_LOGGING_CATEGORY(lcNetMon, "qt.network.monitor");
++
++namespace {
++
++class ReachabilityDispatchQueue
++{
++public:
++    ReachabilityDispatchQueue()
++    {
++        queue = dispatch_queue_create("qt-network-reachability-queue", nullptr);
++        if (!queue)
++            qCWarning(lcNetMon(), "failed to create a dispatch queue for reachability probes");
++    }
++
++    ~ReachabilityDispatchQueue()
++    {
++        if (queue)
++            dispatch_release(queue);
++    }
++
++    dispatch_queue_t data() const
++    {
++        return queue;
++    }
++
++private:
++    dispatch_queue_t queue = nullptr;
++
++    Q_DISABLE_COPY_MOVE(ReachabilityDispatchQueue)
++};
++
++dispatch_queue_t qt_reachability_queue()
++{
++    static const ReachabilityDispatchQueue reachabilityQueue;
++    return reachabilityQueue.data();
++}
++
++qt_sockaddr qt_hostaddress_to_sockaddr(const QHostAddress &src)
++{
++    if (src.isNull())
++        return {};
++
++    qt_sockaddr dst;
++    if (src.protocol() == QAbstractSocket::IPv4Protocol) {
++        dst.a4 = sockaddr_in{};
++        dst.a4.sin_family = AF_INET;
++        dst.a4.sin_addr.s_addr = htonl(src.toIPv4Address());
++        dst.a4.sin_len = sizeof(sockaddr_in);
++    } else if (src.protocol() == QAbstractSocket::IPv6Protocol) {
++        dst.a6 = sockaddr_in6{};
++        dst.a6.sin6_family = AF_INET6;
++        dst.a6.sin6_len = sizeof(sockaddr_in6);
++        const Q_IPV6ADDR ipv6 = src.toIPv6Address();
++        std::memcpy(&dst.a6.sin6_addr, &ipv6, sizeof ipv6);
++    } else {
++        Q_UNREACHABLE();
++    }
++
++    return dst;
++}
++
++} // unnamed namespace
++
++class QNetworkConnectionMonitorPrivate : public QObjectPrivate
++{
++public:
++    SCNetworkReachabilityRef probe = nullptr;
++    SCNetworkReachabilityFlags state = kSCNetworkReachabilityFlagsIsLocalAddress;
++    bool scheduled = false;
++
++#ifdef Q_OS_IOS
++    // If an app goes to the background (for example, I switch to
++    // the 'Settings' to disable 'Mobile data' and connect to
++    // Wi-Fi), it can happen we don't receive any callbacks at
++    // all when switching back to foreground. However ugly it is,
++    // I need an additional timer to wake-up and schedule a check
++    // on the reachability's queue.
++    int watchdogTimerId = -1;
++    enum Parameters : int {
++        watchdogTimeoutMS = 10000
++    };
++#endif
++
++    void updateState(SCNetworkReachabilityFlags newState);
++    void updateState();
++    void reset();
++    bool isReachable() const;
++
++    static void probeCallback(SCNetworkReachabilityRef probe, SCNetworkReachabilityFlags flags, void *info);
++
++    Q_DECLARE_PUBLIC(QNetworkConnectionMonitor)
++};
++
++void QNetworkConnectionMonitorPrivate::updateState(SCNetworkReachabilityFlags newState)
++{
++    // To be executed only on the reachability queue.
++    Q_Q(QNetworkConnectionMonitor);
++
++    if (newState != state) {
++        state = newState;
++        emit q->reachabilityChanged(isReachable());
++    }
++}
++
++void QNetworkConnectionMonitorPrivate::updateState()
++{
++    // To be executed only on the reachability queue.
++    Q_ASSERT(probe);
++
++    SCNetworkReachabilityFlags currentState = kSCNetworkReachabilityFlagsIsLocalAddress;
++    if (SCNetworkReachabilityGetFlags(probe, &currentState))
++        updateState(currentState);
++}
++
++void QNetworkConnectionMonitorPrivate::reset()
++{
++    if (probe) {
++        CFRelease(probe);
++        probe = nullptr;
++    }
++
++    state = kSCNetworkReachabilityFlagsIsLocalAddress;
++    scheduled = false;
++}
++
++bool QNetworkConnectionMonitorPrivate::isReachable() const
++{
++    return !!(state & kSCNetworkReachabilityFlagsReachable);
++}
++
++void QNetworkConnectionMonitorPrivate::probeCallback(SCNetworkReachabilityRef probe, SCNetworkReachabilityFlags flags, void *info)
++{
++    // To be executed only on the reachability queue.
++    Q_UNUSED(probe);
++
++    auto monitorPrivate = static_cast<QNetworkConnectionMonitorPrivate *>(info);
++    Q_ASSERT(monitorPrivate);
++    monitorPrivate->updateState(flags);
++}
++
++QNetworkConnectionMonitor::QNetworkConnectionMonitor()
++    : QObject(*new QNetworkConnectionMonitorPrivate)
++{
++}
++
++QNetworkConnectionMonitor::QNetworkConnectionMonitor(const QHostAddress &local, const QHostAddress &remote)
++    : QObject(*new QNetworkConnectionMonitorPrivate)
++{
++    setTargets(local, remote);
++}
++
++QNetworkConnectionMonitor::~QNetworkConnectionMonitor()
++{
++    Q_D(QNetworkConnectionMonitor);
++
++    stopMonitoring();
++    d->reset();
++}
++
++bool QNetworkConnectionMonitor::setTargets(const QHostAddress &local, const QHostAddress &remote)
++{
++    Q_D(QNetworkConnectionMonitor);
++
++    if (isMonitoring()) {
++        qCWarning(lcNetMon, "Monitor is already active, call stopMonitoring() first");
++        return false;
++    }
++
++    if (local.isNull()) {
++        qCWarning(lcNetMon, "Invalid (null) local address, cannot create a reachability target");
++        return false;
++    }
++
++    // Clear the old target if needed:
++    d->reset();
++
++    qt_sockaddr client = qt_hostaddress_to_sockaddr(local);
++    if (remote.isNull()) {
++        // That's a special case our QNetworkStatusMonitor is using (AnyIpv4/6 address to check an overall status).
++        d->probe = SCNetworkReachabilityCreateWithAddress(kCFAllocatorDefault, reinterpret_cast<sockaddr *>(&client));
++    } else {
++        qt_sockaddr target = qt_hostaddress_to_sockaddr(remote);
++        d->probe = SCNetworkReachabilityCreateWithAddressPair(kCFAllocatorDefault,
++                                                              reinterpret_cast<sockaddr *>(&client),
++                                                              reinterpret_cast<sockaddr *>(&target));
++    }
++
++    if (!d->probe) {
++        qCWarning(lcNetMon, "Failed to create network reachability probe");
++        return false;
++    }
++
++    return true;
++}
++
++bool QNetworkConnectionMonitor::startMonitoring()
++{
++    Q_D(QNetworkConnectionMonitor);
++
++    if (isMonitoring()) {
++        qCWarning(lcNetMon, "Monitor is already active, call stopMonitoring() first");
++        return false;
++    }
++
++    if (!d->probe) {
++        qCWarning(lcNetMon, "Can not start monitoring, set targets first");
++        return false;
++    }
++
++    auto queue = qt_reachability_queue();
++    if (!queue) {
++        qWarning(lcNetMon, "Failed to create a dispatch queue to schedule a probe on");
++        return false;
++    }
++
++    SCNetworkReachabilityContext context = {};
++    context.info = d;
++    if (!SCNetworkReachabilitySetCallback(d->probe, QNetworkConnectionMonitorPrivate::probeCallback, &context)) {
++        qWarning(lcNetMon, "Failed to set a reachability callback");
++        return false;
++    }
++
++
++    if (!SCNetworkReachabilitySetDispatchQueue(d->probe, queue)) {
++        qWarning(lcNetMon, "Failed to schedule a reachability callback on a queue");
++        return false;
++    }
++
++#ifdef Q_OS_IOS
++    Q_ASSERT(d->watchdogTimerId == -1);
++    d->watchdogTimerId = startTimer(d->watchdogTimeoutMS);
++#endif // Q_OS_IOS
++
++    return d->scheduled = true;
++}
++
++bool QNetworkConnectionMonitor::isMonitoring() const
++{
++    Q_D(const QNetworkConnectionMonitor);
++
++    return d->scheduled;
++}
++
++void QNetworkConnectionMonitor::stopMonitoring()
++{
++    Q_D(QNetworkConnectionMonitor);
++
++    if (d->scheduled) {
++        Q_ASSERT(d->probe);
++#ifdef Q_OS_IOS
++        if (d->watchdogTimerId > 0) {
++            killTimer(d->watchdogTimerId);
++            d->watchdogTimerId = -1;
++        }
++#endif // Q_OS_IOS
++        SCNetworkReachabilitySetDispatchQueue(d->probe, nullptr);
++        SCNetworkReachabilitySetCallback(d->probe, nullptr, nullptr);
++        d->scheduled = false;
++    }
++}
++
++bool QNetworkConnectionMonitor::isReachable()
++{
++    Q_D(QNetworkConnectionMonitor);
++
++    if (isMonitoring()) {
++        qCWarning(lcNetMon, "Calling isReachable() is unsafe after the monitoring started");
++        return false;
++    }
++
++    if (!d->probe) {
++        qCWarning(lcNetMon, "Reachability is unknown, set the target firstl");
++        return false;
++    }
++
++    SCNetworkReachabilityFlags currentState = kSCNetworkReachabilityFlagsIsLocalAddress;
++    if (SCNetworkReachabilityGetFlags(d->probe, &currentState)) {
++        d->state = currentState;
++    } else {
++        qCWarning(lcNetMon, "Failed to request the current reachability state");
++        return false;
++    }
++
++    return d->isReachable();
++}
++
++void QNetworkConnectionMonitor::timerEvent(QTimerEvent *event)
++{
++    Q_UNUSED(event)
++
++#ifdef Q_OS_IOS
++    Q_D(QNetworkConnectionMonitor);
++    auto queue = qt_reachability_queue();
++    Q_ASSERT(queue);
++    dispatch_sync(queue, ^{
++                    d->updateState();
++                  });
++#endif // Q_OS_IOS
++}
++
++class QNetworkStatusMonitorPrivate : public QObjectPrivate
++{
++public:
++    QNetworkConnectionMonitor ipv4Probe;
++    bool isOnlineIpv4 = false;
++    QNetworkConnectionMonitor ipv6Probe;
++    bool isOnlineIpv6 = false;
++
++    static bool enabled;
++    static void readEnv();
++};
++
++bool QNetworkStatusMonitorPrivate::enabled = false;
++
++void QNetworkStatusMonitorPrivate::readEnv()
++{
++    bool envOk = false;
++    const int env = qEnvironmentVariableIntValue("QT_USE_NETWORK_MONITOR", &envOk);
++    enabled = envOk && env > 0;
++}
++
++QNetworkStatusMonitor::QNetworkStatusMonitor()
++    : QObject(*new QNetworkStatusMonitorPrivate)
++{
++    Q_D(QNetworkStatusMonitor);
++
++    if (d->ipv4Probe.setTargets(QHostAddress::AnyIPv4, {})) {
++        // We manage to create SCNetworkReachabilityRef for IPv4, let's
++        // read the last known state then!
++        d->isOnlineIpv4 = d->ipv4Probe.isReachable();
++    }
++
++    if (d->ipv6Probe.setTargets(QHostAddress::AnyIPv6, {})) {
++        // We manage to create SCNetworkReachability ref for IPv6, let's
++        // read the last known state then!
++        d->isOnlineIpv6 = d->ipv6Probe.isReachable();
++    }
++
++
++    connect(&d->ipv4Probe, &QNetworkConnectionMonitor::reachabilityChanged, this,
++            &QNetworkStatusMonitor::reachabilityChanged, Qt::QueuedConnection);
++    connect(&d->ipv6Probe, &QNetworkConnectionMonitor::reachabilityChanged, this,
++            &QNetworkStatusMonitor::reachabilityChanged, Qt::QueuedConnection);
++}
++
++QNetworkStatusMonitor::~QNetworkStatusMonitor()
++{
++    Q_D(QNetworkStatusMonitor);
++
++    d->ipv4Probe.disconnect();
++    d->ipv4Probe.stopMonitoring();
++    d->ipv6Probe.disconnect();
++    d->ipv6Probe.stopMonitoring();
++}
++
++bool QNetworkStatusMonitor::start()
++{
++    Q_D(QNetworkStatusMonitor);
++
++    if (isMonitoring()) {
++        qCWarning(lcNetMon, "Network status monitor is already active");
++        return true;
++    }
++
++    d->ipv4Probe.startMonitoring();
++    d->ipv6Probe.startMonitoring();
++
++    return isMonitoring();
++}
++
++bool QNetworkStatusMonitor::isMonitoring() const
++{
++    Q_D(const QNetworkStatusMonitor);
++
++    return d->ipv4Probe.isMonitoring() || d->ipv6Probe.isMonitoring();
++}
++
++bool QNetworkStatusMonitor::isNetworkAccesible()
++{
++    // This function is to be executed on the thread that created
++    // and uses 'this.
++    Q_D(QNetworkStatusMonitor);
++
++    return d->isOnlineIpv4 || d->isOnlineIpv6;
++}
++
++bool QNetworkStatusMonitor::isEnabled()
++{
++    static std::once_flag envRead = {};
++    std::call_once(envRead, QNetworkStatusMonitorPrivate::readEnv);
++    return QNetworkStatusMonitorPrivate::enabled;
++}
++
++void QNetworkStatusMonitor::reachabilityChanged(bool online)
++{
++    // This function is executed on the thread that created/uses 'this',
++    // not on the reachability queue.
++    Q_D(QNetworkStatusMonitor);
++
++    auto probe = qobject_cast<QNetworkConnectionMonitor *>(sender());
++    if (!probe)
++        return;
++
++    const bool isIpv4 = probe == &d->ipv4Probe;
++    bool &probeOnline = isIpv4 ? d->isOnlineIpv4 : d->isOnlineIpv6;
++    bool otherOnline = isIpv4 ? d->isOnlineIpv6 : d->isOnlineIpv4;
++
++    if (probeOnline == online) {
++        // We knew this already?
++        return;
++    }
++
++    probeOnline = online;
++    if (!otherOnline) {
++        // We either just lost or get a network access.
++        emit onlineStateChanged(probeOnline);
++    }
++}
++
++QT_END_NAMESPACE
+diff --git a/qtbase/src/network/access/qnetconmonitor_p.h b/qtbase/src/network/access/qnetconmonitor_p.h
+new file mode 100644
+index 00000000..036c90f5
+--- /dev/null
++++ b/qtbase/src/network/access/qnetconmonitor_p.h
+@@ -0,0 +1,132 @@
++/****************************************************************************
++**
++** Copyright (C) 2019 The Qt Company Ltd.
++** Contact: https://www.qt.io/licensing/
++**
++** This file is part of the QtNetwork module of the Qt Toolkit.
++**
++** $QT_BEGIN_LICENSE:LGPL$
++** Commercial License Usage
++** Licensees holding valid commercial Qt licenses may use this file in
++** accordance with the commercial license agreement provided with the
++** Software or, alternatively, in accordance with the terms contained in
++** a written agreement between you and The Qt Company. For licensing terms
++** and conditions see https://www.qt.io/terms-conditions. For further
++** information use the contact form at https://www.qt.io/contact-us.
++**
++** GNU Lesser General Public License Usage
++** Alternatively, this file may be used under the terms of the GNU Lesser
++** General Public License version 3 as published by the Free Software
++** Foundation and appearing in the file LICENSE.LGPL3 included in the
++** packaging of this file. Please review the following information to
++** ensure the GNU Lesser General Public License version 3 requirements
++** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
++**
++** GNU General Public License Usage
++** Alternatively, this file may be used under the terms of the GNU
++** General Public License version 2.0 or (at your option) the GNU General
++** Public license version 3 or any later version approved by the KDE Free
++** Qt Foundation. The licenses are as published by the Free Software
++** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
++** included in the packaging of this file. Please review the following
++** information to ensure the GNU General Public License requirements will
++** be met: https://www.gnu.org/licenses/gpl-2.0.html and
++** https://www.gnu.org/licenses/gpl-3.0.html.
++**
++** $QT_END_LICENSE$
++**
++****************************************************************************/
++
++#ifndef QNETCONMONITOR_P_H
++#define QNETCONMONITOR_P_H
++
++#include <private/qtnetworkglobal_p.h>
++
++#include <QtCore/qloggingcategory.h>
++#include <QtNetwork/qhostaddress.h>
++#include <QtCore/qglobal.h>
++#include <QtCore/qobject.h>
++
++//
++//  W A R N I N G
++//  -------------
++//
++// This file is not part of the Qt API.  It exists purely as an
++// implementation detail.  This header file may change from version to
++// version without notice, or even be removed.
++//
++// We mean it.
++//
++
++QT_BEGIN_NAMESPACE
++
++class QNetworkConnectionMonitorPrivate;
++class QNetworkConnectionMonitor : public QObject
++{
++    Q_OBJECT
++
++public:
++    QNetworkConnectionMonitor();
++    QNetworkConnectionMonitor(const QHostAddress &local, const QHostAddress &remote = {});
++    ~QNetworkConnectionMonitor();
++
++    bool setTargets(const QHostAddress &local, const QHostAddress &remote);
++    bool isReachable();
++
++    // Important: on Darwin you should not call isReachable() after
++    // startMonitoring(), you have to listen to reachabilityChanged()
++    // signal instead.
++    bool startMonitoring();
++    bool isMonitoring() const;
++    void stopMonitoring();
++
++Q_SIGNALS:
++    // Important: connect to this using QueuedConnection. On Darwin
++    // callback is coming on a special dispatch queue.
++    void reachabilityChanged(bool isOnline);
++
++private:
++    // On iOS, when an app goes to the background mode the reachability
++    // dispatch queue (and GDC) stops delivering notifications, so it can
++    // happen we miss a state change. Thus, we have to use a 'watchdog'
++    // timer in addition, for it will at some point detect the missing
++    // state change.
++    void timerEvent(QTimerEvent *timerEvent) override;
++
++    Q_DECLARE_PRIVATE(QNetworkConnectionMonitor)
++    Q_DISABLE_COPY_MOVE(QNetworkConnectionMonitor)
++};
++
++class QNetworkStatusMonitorPrivate;
++class QNetworkStatusMonitor : public QObject
++{
++    Q_OBJECT
++
++public:
++    QNetworkStatusMonitor();
++    ~QNetworkStatusMonitor();
++
++    bool isNetworkAccesible();
++
++    bool start();
++    bool isMonitoring() const;
++
++    static bool isEnabled();
++
++Q_SIGNALS:
++    // Unlike QNetworkConnectionMonitor, this can be connected to directly.
++    void onlineStateChanged(bool isOnline);
++
++private slots:
++    void reachabilityChanged(bool isOnline);
++
++private:
++    Q_DECLARE_PRIVATE(QNetworkStatusMonitor)
++    Q_DISABLE_COPY_MOVE(QNetworkStatusMonitor)
++};
++
++Q_DECLARE_LOGGING_CATEGORY(lcNetMon)
++
++QT_END_NAMESPACE
++
++#endif // QNETCONMONITOR_P_H
+diff --git a/qtbase/src/network/access/qnetconmonitor_qt.cpp b/qtbase/src/network/access/qnetconmonitor_qt.cpp
+new file mode 100644
+index 00000000..ed482bb6
+--- /dev/null
++++ b/qtbase/src/network/access/qnetconmonitor_qt.cpp
+@@ -0,0 +1,138 @@
++/****************************************************************************
++**
++** Copyright (C) 2019 The Qt Company Ltd.
++** Contact: https://www.qt.io/licensing/
++**
++** This file is part of the QtNetwork module of the Qt Toolkit.
++**
++** $QT_BEGIN_LICENSE:LGPL$
++** Commercial License Usage
++** Licensees holding valid commercial Qt licenses may use this file in
++** accordance with the commercial license agreement provided with the
++** Software or, alternatively, in accordance with the terms contained in
++** a written agreement between you and The Qt Company. For licensing terms
++** and conditions see https://www.qt.io/terms-conditions. For further
++** information use the contact form at https://www.qt.io/contact-us.
++**
++** GNU Lesser General Public License Usage
++** Alternatively, this file may be used under the terms of the GNU Lesser
++** General Public License version 3 as published by the Free Software
++** Foundation and appearing in the file LICENSE.LGPL3 included in the
++** packaging of this file. Please review the following information to
++** ensure the GNU Lesser General Public License version 3 requirements
++** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
++**
++** GNU General Public License Usage
++** Alternatively, this file may be used under the terms of the GNU
++** General Public License version 2.0 or (at your option) the GNU General
++** Public license version 3 or any later version approved by the KDE Free
++** Qt Foundation. The licenses are as published by the Free Software
++** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
++** included in the packaging of this file. Please review the following
++** information to ensure the GNU General Public License requirements will
++** be met: https://www.gnu.org/licenses/gpl-2.0.html and
++** https://www.gnu.org/licenses/gpl-3.0.html.
++**
++** $QT_END_LICENSE$
++**
++****************************************************************************/
++
++#include "qnetconmonitor_p.h"
++
++#include "private/qobject_p.h"
++
++QT_BEGIN_NAMESPACE
++
++Q_LOGGING_CATEGORY(lcNetMon, "qt.network.monitor");
++
++class QNetworkConnectionMonitorPrivate : public QObjectPrivate
++{
++};
++
++QNetworkConnectionMonitor::QNetworkConnectionMonitor()
++    : QObject(*new QNetworkConnectionMonitorPrivate)
++{
++}
++
++QNetworkConnectionMonitor::QNetworkConnectionMonitor(const QHostAddress &local, const QHostAddress &remote)
++    : QObject(*new QNetworkConnectionMonitorPrivate)
++{
++    Q_UNUSED(local)
++    Q_UNUSED(remote)
++}
++
++QNetworkConnectionMonitor::~QNetworkConnectionMonitor()
++{
++}
++
++bool QNetworkConnectionMonitor::setTargets(const QHostAddress &local, const QHostAddress &remote)
++{
++    Q_UNUSED(local)
++    Q_UNUSED(remote)
++
++    return false;
++}
++
++bool QNetworkConnectionMonitor::startMonitoring()
++{
++    return false;
++}
++
++bool QNetworkConnectionMonitor::isMonitoring() const
++{
++    return false;
++}
++
++void QNetworkConnectionMonitor::stopMonitoring()
++{
++}
++
++bool QNetworkConnectionMonitor::isReachable()
++{
++    return false;
++}
++
++void QNetworkConnectionMonitor::timerEvent(QTimerEvent *event)
++{
++    Q_UNUSED(event)
++}
++
++class QNetworkStatusMonitorPrivate : public QObjectPrivate
++{
++};
++
++QNetworkStatusMonitor::QNetworkStatusMonitor()
++    : QObject(*new QNetworkStatusMonitorPrivate)
++{
++}
++
++QNetworkStatusMonitor::~QNetworkStatusMonitor()
++{
++}
++
++bool QNetworkStatusMonitor::start()
++{
++    return false;
++}
++
++bool QNetworkStatusMonitor::isMonitoring() const
++{
++    return false;
++}
++
++bool QNetworkStatusMonitor::isNetworkAccesible()
++{
++    return false;
++}
++
++bool QNetworkStatusMonitor::isEnabled()
++{
++    return false;
++}
++
++void QNetworkStatusMonitor::reachabilityChanged(bool online)
++{
++    Q_UNUSED(online)
++}
++
++QT_END_NAMESPACE
+diff --git a/qtbase/src/network/access/qnetworkaccessmanager.cpp b/qtbase/src/network/access/qnetworkaccessmanager.cpp
+index b57c058a..b11c8bdc 100644
+--- a/qtbase/src/network/access/qnetworkaccessmanager.cpp
++++ b/qtbase/src/network/access/qnetworkaccessmanager.cpp
+@@ -83,6 +83,8 @@
+ #include <Security/SecKeychain.h>
+ #endif
+ 
++#include "qnetconmonitor_p.h"
++
+ QT_BEGIN_NAMESPACE
+ 
+ Q_GLOBAL_STATIC(QNetworkAccessFileBackendFactory, fileBackend)
+@@ -477,18 +479,23 @@ QNetworkAccessManager::QNetworkAccessManager(QObject *parent)
+     qRegisterMetaType<QNetworkReply::NetworkError>();
+     qRegisterMetaType<QSharedPointer<char> >();
+ 
+-#ifndef QT_NO_BEARERMANAGEMENT
+     Q_D(QNetworkAccessManager);
+-    // if a session is required, we track online state through
+-    // the QNetworkSession's signals if a request is already made.
+-    // we need to track current accessibility state by default
+-    //
+-    connect(&d->networkConfigurationManager, SIGNAL(onlineStateChanged(bool)),
+-            SLOT(_q_onlineStateChanged(bool)));
+-    connect(&d->networkConfigurationManager, SIGNAL(configurationChanged(const QNetworkConfiguration &)),
+-            SLOT(_q_configurationChanged(const QNetworkConfiguration &)));
+-
+-#endif
++    if (!QNetworkStatusMonitor::isEnabled()) {
++#ifndef QT_NO_BEARERMANAGEMENT
++        // if a session is required, we track online state through
++        // the QNetworkSession's signals if a request is already made.
++        // we need to track current accessibility state by default
++        //
++        connect(&d->networkConfigurationManager, SIGNAL(onlineStateChanged(bool)),
++                SLOT(_q_onlineStateChanged(bool)));
++        connect(&d->networkConfigurationManager, SIGNAL(configurationChanged(QNetworkConfiguration)),
++                SLOT(_q_configurationChanged(QNetworkConfiguration)));
++#endif // QT_NO_BEARERMANAGEMENT
++    } else {
++        connect(&d->statusMonitor, SIGNAL(onlineStateChanged(bool)),
++                SLOT(_q_onlineStateChanged(bool)));
++        d->networkAccessible = d->statusMonitor.isNetworkAccesible() ? Accessible : NotAccessible;
++    }
+ }
+ 
+ /*!
+@@ -968,9 +975,13 @@ QNetworkReply *QNetworkAccessManager::deleteResource(const QNetworkRequest &requ
+ void QNetworkAccessManager::setConfiguration(const QNetworkConfiguration &config)
+ {
+     Q_D(QNetworkAccessManager);
+-    d->networkConfiguration = config;
+-    d->customNetworkConfiguration = true;
+-    d->createSession(config);
++    if (!d->statusMonitor.isEnabled()) {
++        d->networkConfiguration = config;
++        d->customNetworkConfiguration = true;
++        d->createSession(config);
++    } else {
++        qWarning(lcNetMon, "No network configuration can be set with network status monitor enabled");
++    }
+ }
+ 
+ /*!
+@@ -986,7 +997,7 @@ QNetworkConfiguration QNetworkAccessManager::configuration() const
+     Q_D(const QNetworkAccessManager);
+ 
+     QSharedPointer<QNetworkSession> session(d->getNetworkSession());
+-    if (session) {
++    if (session && !d->statusMonitor.isEnabled()) {
+         return session->configuration();
+     } else {
+         return d->networkConfigurationManager.defaultConfiguration();
+@@ -1032,6 +1043,11 @@ void QNetworkAccessManager::setNetworkAccessible(QNetworkAccessManager::NetworkA
+ {
+     Q_D(QNetworkAccessManager);
+ 
++    if (d->statusMonitor.isEnabled()) {
++        qWarning(lcNetMon, "Can not manually set network accessibility with the network status monitor enabled");
++        return;
++    }
++
+     d->defaultAccessControl = accessible == NotAccessible ? false : true;
+ 
+     if (d->networkAccessible != accessible) {
+@@ -1052,6 +1068,12 @@ QNetworkAccessManager::NetworkAccessibility QNetworkAccessManager::networkAccess
+ {
+     Q_D(const QNetworkAccessManager);
+ 
++    if (d->statusMonitor.isEnabled()) {
++        if (!d->statusMonitor.isMonitoring())
++            d->statusMonitor.start();
++        return d->networkAccessible;
++    }
++
+     if (d->customNetworkConfiguration && d->networkConfiguration.state().testFlag(QNetworkConfiguration::Undefined))
+         return UnknownAccessibility;
+ 
+@@ -1332,35 +1354,52 @@ QNetworkReply *QNetworkAccessManager::createRequest(QNetworkAccessManager::Opera
+         }
+     }
+ 
+-#ifndef QT_NO_BEARERMANAGEMENT
++    if (d->statusMonitor.isEnabled()) {
++        // See the code in ctor - QNetworkStatusMonitor allows us to
++        // immediately set 'networkAccessible' even before we start
++        // the monitor.
++        if (d->networkAccessible == NotAccessible && !isLocalFile) {
++            QHostAddress dest;
++            QString host = req.url().host().toLower();
++            if (!(dest.setAddress(host) && dest.isLoopback())
++                 && host != QLatin1String("localhost")
++                 && host != QHostInfo::localHostName().toLower()) {
++                return new QDisabledNetworkReply(this, req, op);
++            }
++        }
+ 
+-    // Return a disabled network reply if network access is disabled.
+-    // Except if the scheme is empty or file:// or if the host resolves to a loopback address.
+-    if (d->networkAccessible == NotAccessible && !isLocalFile) {
+-        QHostAddress dest;
+-        QString host = req.url().host().toLower();
+-        if (!(dest.setAddress(host) && dest.isLoopback()) && host != QLatin1String("localhost")
++        if (!d->statusMonitor.isMonitoring() && !d->statusMonitor.start())
++            qWarning(lcNetMon, "failed to start network status monitoring");
++    } else {
++#ifndef QT_NO_BEARERMANAGEMENT
++        // Return a disabled network reply if network access is disabled.
++        // Except if the scheme is empty or file:// or if the host resolves to a loopback address.
++        if (d->networkAccessible == NotAccessible && !isLocalFile) {
++            QHostAddress dest;
++            QString host = req.url().host().toLower();
++            if (!(dest.setAddress(host) && dest.isLoopback()) && host != QLatin1String("localhost")
+                 && host != QHostInfo::localHostName().toLower()) {
+-            return new QDisabledNetworkReply(this, req, op);
++                return new QDisabledNetworkReply(this, req, op);
++            }
+         }
+-    }
+ 
+-    if (!d->networkSessionStrongRef && (d->initializeSession || !d->networkConfiguration.identifier().isEmpty())) {
+-        if (!d->networkConfiguration.identifier().isEmpty()) {
+-            if ((d->networkConfiguration.state() & QNetworkConfiguration::Defined)
+-                    && d->networkConfiguration != d->networkConfigurationManager.defaultConfiguration())
+-                d->createSession(d->networkConfigurationManager.defaultConfiguration());
+-            else
+-                d->createSession(d->networkConfiguration);
++        if (!d->networkSessionStrongRef && (d->initializeSession || !d->networkConfiguration.identifier().isEmpty())) {
++            if (!d->networkConfiguration.identifier().isEmpty()) {
++                if ((d->networkConfiguration.state() & QNetworkConfiguration::Defined)
++                        && d->networkConfiguration != d->networkConfigurationManager.defaultConfiguration())
++                    d->createSession(d->networkConfigurationManager.defaultConfiguration());
++                else
++                    d->createSession(d->networkConfiguration);
+ 
+-        } else {
+-            if (d->networkSessionRequired)
+-                d->createSession(d->networkConfigurationManager.defaultConfiguration());
+-            else
+-                d->initializeSession = false;
++            } else {
++                if (d->networkSessionRequired)
++                    d->createSession(d->networkConfigurationManager.defaultConfiguration());
++                else
++                    d->initializeSession = false;
++            }
+         }
+-    }
+ #endif
++    }
+ 
+     QNetworkRequest request = req;
+     if (!request.header(QNetworkRequest::ContentLengthHeader).isValid() &&
+@@ -1407,8 +1446,10 @@ QNetworkReply *QNetworkAccessManager::createRequest(QNetworkAccessManager::Opera
+ #endif
+         QNetworkReplyHttpImpl *reply = new QNetworkReplyHttpImpl(this, request, op, outgoingData);
+ #ifndef QT_NO_BEARERMANAGEMENT
+-        connect(this, SIGNAL(networkSessionConnected()),
+-                reply, SLOT(_q_networkSessionConnected()));
++        if (!d->statusMonitor.isEnabled()) {
++            connect(this, SIGNAL(networkSessionConnected()),
++                    reply, SLOT(_q_networkSessionConnected()));
++        }
+ #endif
+         return reply;
+     }
+@@ -1417,7 +1458,9 @@ QNetworkReply *QNetworkAccessManager::createRequest(QNetworkAccessManager::Opera
+     // first step: create the reply
+     QNetworkReplyImpl *reply = new QNetworkReplyImpl(this);
+ #ifndef QT_NO_BEARERMANAGEMENT
+-    if (!isLocalFile) {
++    // NETCONTODO: network reply impl must be augmented to use the same monitoring
++    // capabilities as http network reply impl does.
++    if (!isLocalFile && !d->statusMonitor.isEnabled()) {
+         connect(this, SIGNAL(networkSessionConnected()),
+                 reply, SLOT(_q_networkSessionConnected()));
+     }
+@@ -1880,7 +1923,13 @@ void QNetworkAccessManagerPrivate::_q_networkSessionStateChanged(QNetworkSession
+ 
+ void QNetworkAccessManagerPrivate::_q_onlineStateChanged(bool isOnline)
+ {
+-   Q_Q(QNetworkAccessManager);
++    Q_Q(QNetworkAccessManager);
++
++    if (statusMonitor.isEnabled()) {
++        networkAccessible = isOnline ? QNetworkAccessManager::Accessible : QNetworkAccessManager::NotAccessible;
++        return;
++    }
++
+ 
+    // if the user set a config, we only care whether this one is active.
+     // Otherwise, this QNAM is online if there is an online config.
+@@ -1910,6 +1959,9 @@ void QNetworkAccessManagerPrivate::_q_onlineStateChanged(bool isOnline)
+ 
+ void QNetworkAccessManagerPrivate::_q_configurationChanged(const QNetworkConfiguration &configuration)
+ {
++    if (statusMonitor.isEnabled())
++        return;
++
+     const QString id = configuration.identifier();
+     if (configuration.state().testFlag(QNetworkConfiguration::Active)) {
+         if (!onlineConfigurations.contains(id)) {
+@@ -1942,6 +1994,9 @@ void QNetworkAccessManagerPrivate::_q_configurationChanged(const QNetworkConfigu
+ 
+ void QNetworkAccessManagerPrivate::_q_networkSessionFailed(QNetworkSession::SessionError)
+ {
++    if (statusMonitor.isEnabled())
++        return;
++
+     const auto cfgs = networkConfigurationManager.allConfigurations();
+     for (const QNetworkConfiguration &cfg : cfgs) {
+         if (cfg.state().testFlag(QNetworkConfiguration::Active)) {
+diff --git a/qtbase/src/network/access/qnetworkaccessmanager_p.h b/qtbase/src/network/access/qnetworkaccessmanager_p.h
+index a7fede06..9eb2c8d2 100644
+--- a/qtbase/src/network/access/qnetworkaccessmanager_p.h
++++ b/qtbase/src/network/access/qnetworkaccessmanager_p.h
+@@ -55,6 +55,7 @@
+ #include "qnetworkaccessmanager.h"
+ #include "qnetworkaccesscache_p.h"
+ #include "qnetworkaccessbackend_p.h"
++#include "qnetconmonitor_p.h"
+ #include "qnetworkrequest.h"
+ #include "qhsts_p.h"
+ #include "private/qobject_p.h"
+@@ -214,6 +215,7 @@ public:
+ 
+     QHstsCache stsCache;
+     bool stsEnabled = false;
++    mutable QNetworkStatusMonitor statusMonitor;
+ 
+ #ifndef QT_NO_BEARERMANAGEMENT
+     Q_AUTOTEST_EXPORT static const QWeakPointer<const QNetworkSession> getNetworkSession(const QNetworkAccessManager *manager);
+diff --git a/qtbase/src/network/access/qnetworkreplyhttpimpl.cpp b/qtbase/src/network/access/qnetworkreplyhttpimpl.cpp
+index 10d0e86d..3ffd732a 100644
+--- a/qtbase/src/network/access/qnetworkreplyhttpimpl.cpp
++++ b/qtbase/src/network/access/qnetworkreplyhttpimpl.cpp
+@@ -59,6 +59,7 @@
+ #include <QtCore/private/qthread_p.h>
+ 
+ #include "qnetworkcookiejar.h"
++#include "qnetconmonitor_p.h"
+ 
+ #include <string.h>             // for strchr
+ 
+@@ -166,6 +167,11 @@ static QHash<QByteArray, QByteArray> parseHttpOptionHeader(const QByteArray &hea
+ #if QT_CONFIG(bearermanagement)
+ static bool isSessionNeeded(const QUrl &url)
+ {
++    if (QNetworkStatusMonitor::isEnabled()) {
++        // In case QNetworkStatus/QNetConManager are in business,
++        // no session, no bearer manager are involved.
++        return false;
++    }
+     // Connections to the local machine does not require a session
+     QString host = url.host().toLower();
+     return !QHostAddress(host).isLoopback() && host != QLatin1String("localhost")
+@@ -779,7 +785,8 @@ void QNetworkReplyHttpImplPrivate::postRequest(const QNetworkRequest &newHttpReq
+     // Create the HTTP thread delegate
+     QHttpThreadDelegate *delegate = new QHttpThreadDelegate;
+ #ifndef QT_NO_BEARERMANAGEMENT
+-    delegate->networkSession = managerPrivate->getNetworkSession();
++    if (!QNetworkStatusMonitor::isEnabled())
++        delegate->networkSession = managerPrivate->getNetworkSession();
+ #endif
+ 
+     // For the synchronous HTTP, this is the normal way the delegate gets deleted
+@@ -1795,7 +1802,7 @@ bool QNetworkReplyHttpImplPrivate::start(const QNetworkRequest &newHttpRequest)
+ {
+ #ifndef QT_NO_BEARERMANAGEMENT
+     QSharedPointer<QNetworkSession> networkSession(managerPrivate->getNetworkSession());
+-    if (!networkSession) {
++    if (!networkSession || QNetworkStatusMonitor::isEnabled()) {
+ #endif
+         postRequest(newHttpRequest);
+         return true;
+@@ -1885,7 +1892,7 @@ void QNetworkReplyHttpImplPrivate::_q_startOperation()
+         // state changes.
+         if (!startWaitForSession(session))
+             return;
+-    } else if (session) {
++    } else if (session && !QNetworkStatusMonitor::isEnabled()) {
+         QObject::connect(session.data(), SIGNAL(stateChanged(QNetworkSession::State)),
+                          q, SLOT(_q_networkSessionStateChanged(QNetworkSession::State)),
+                          Qt::QueuedConnection);
+@@ -2174,7 +2181,7 @@ void QNetworkReplyHttpImplPrivate::finished()
+ #ifndef QT_NO_BEARERMANAGEMENT
+     Q_ASSERT(managerPrivate);
+     QSharedPointer<QNetworkSession> session = managerPrivate->getNetworkSession();
+-    if (session && session->state() == QNetworkSession::Roaming &&
++    if (!QNetworkStatusMonitor::isEnabled() && session && session->state() == QNetworkSession::Roaming &&
+         state == Working && errorCode != QNetworkReply::OperationCanceledError) {
+         // only content with a known size will fail with a temporary network failure error
+         if (!totalSize.isNull()) {
