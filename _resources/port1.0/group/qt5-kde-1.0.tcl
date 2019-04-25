@@ -154,38 +154,7 @@ if {[info exists qt5.using_kde] && !${qt5.using_kde}} {
 }
 ####################################################
 
-namespace eval qt5 {
-    if {[info exists dont_include_twice] && [info exists currentportgroupdir]} {
-        ui_debug "not including qt5-kde-1.0.tcl again"
-        return
-    }
-    # our directory:
-    variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
-}
-
-options qt5.min_version
-default qt5.min_version 5.0
-
-# Ports that want to provide a universal variant need to use the muniversal PortGroup explicitly.
-universal_variant no
-
-if {![variant_exists qt5kde]} {
-    # define a variant that will be set default when port:qt5-kde or port:qt5-kde-devel is
-    # installed. This means that a user doing a new install (or upgrade) of a port depending
-    # on Qt5 and with port:qt5-kde installed will request a variant the build bots should not
-    # consider a default variant. This meant to protect against pulling in a binary build against
-    # the wrong Qt5 port, which was relevant in the time of port:qt5-mac, and hopefully no
-    # longer now that port:qt5 installs to the same place as we do (but as an all-inclusive prefix).
-    variant qt5kde description {default variant set for port:qt5-kde* and ports that depend on them} {}
-}
-# it should no longer be necessary to set qt5kde but we will continue to do so for now.
-if {[variant_isset qt5kde]} {
-    ui_debug "+qt5kde is set for port:${subport}"
-} else {
-    ui_debug "+qt5kde is not yet set but will be for port:${subport}"
-}
-default_variants        +qt5kde
-
+### These should be set (re)set on each invocation:
 # standard Qt5 name. This should be just "qt5" (or qt53 for instance when more
 # specific version info must be included).
 global qt_name
@@ -260,21 +229,6 @@ if {![info exists qt_cmake_module_dir]} {
     global qt_host_data_dir
 
 global qt5_is_concurrent
-# check if we're building qt5 itself. We're aiming to phase out exclusive installs, but we
-# keep the this block for now that handles detection of the nature of the installed port.
-# if {![info exists building_qt5] || ![info exists name] \
-#     || (${name} ne "qt5-mac" && ${name} ne "qt5-mac-devel" && ${name} ne "qt5-kde" && ${name} ne "qt5-kde-devel")} {
-#     # no, this must be a dependent port: check the qt5 install:
-#     if {[file exists ${prefix}/libexec/${qt_name}/bin/qmake]} {
-#         # we have a "concurrent" install, which means we must look for the various components
-#         # in different locations (esp. qmake)
-#         set qt5_is_concurrent   1
-#     }
-# } else {
-#     # we're building qt5, qt5-mac or one of its subports/variants
-#     # we're asking for the standard concurrent install. No need to guess anything, give the user what s/he wants
-#     set qt5_is_concurrent   1
-# }
 set qt5_is_concurrent       1
 
 # NB: these have all already been set by the mainstream Qt5 PG (qt5-mac-1.0.tcl)
@@ -315,6 +269,39 @@ set qt_demos_dir            ${qt_apps_dir}/demos
 
 set qt_pkg_config_dir       ${prefix}/lib/pkgconfig
 set qt_host_data_dir        ${prefix}/share/${qt_name}
+
+### The remaining part can be skipped even if we just included the qt5-mac PG a 2nd time
+namespace eval qt5 {
+    if {[info exists dont_include_twice] && [info exists currentportgroupdir]} {
+        ui_debug "not including qt5-kde-1.0.tcl again"
+        return
+    }
+    # our directory:
+    variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
+}
+
+options qt5.min_version
+default qt5.min_version 5.0
+
+# Ports that want to provide a universal variant need to use the muniversal PortGroup explicitly.
+universal_variant no
+
+if {![variant_exists qt5kde]} {
+    # define a variant that will be set default when port:qt5-kde or port:qt5-kde-devel is
+    # installed. This means that a user doing a new install (or upgrade) of a port depending
+    # on Qt5 and with port:qt5-kde installed will request a variant the build bots should not
+    # consider a default variant. This meant to protect against pulling in a binary build against
+    # the wrong Qt5 port, which was relevant in the time of port:qt5-mac, and hopefully no
+    # longer now that port:qt5 installs to the same place as we do (but as an all-inclusive prefix).
+    variant qt5kde description {default variant set for port:qt5-kde* and ports that depend on them} {}
+}
+# it should no longer be necessary to set qt5kde but we will continue to do so for now.
+if {[variant_isset qt5kde]} {
+    ui_debug "+qt5kde is set for port:${subport}"
+} else {
+    ui_debug "+qt5kde is not yet set but will be for port:${subport}"
+}
+default_variants        +qt5kde
 
 # ui_debug "qt_dir=${qt_dir}"
 # ui_debug "qt_dir_rel=${qt_dir_rel}"
