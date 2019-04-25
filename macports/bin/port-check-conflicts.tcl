@@ -15,6 +15,7 @@ proc printUsage {} {
     puts "Usage: $::argv0 \[-vV\] \[-t macports-tcl-path\] port-name\[s\]"
     puts "  -h    This help"
     puts "  -d    some debug output"
+    puts "  -q    quiet mode"
     puts "  -v    list new files (inVerse mode)"
     puts "  -V    show version and MacPorts version being used"
     puts ""
@@ -105,6 +106,9 @@ while {[string index [lindex $::argv 0] 0] == "-" } {
             set ui_options(ports_debug) yes
             # debug implies verbose
             set ui_options(ports_verbose) yes
+        }
+        q {
+            set ui_options(ports_quiet) yes
         }
         t {
             if {[llength $::argv] < 2} {
@@ -260,26 +264,38 @@ foreach portName $::argv {
                 } elseif {${inverse}} {
                     regsub -all {[ \r\t\n]+} ${g} "" gg
                     if {${g} ne ${gg}} {
-                        puts "\"${g}\" doesn't exist yet"
+                        puts -nonewline "\"${g}\""
                     } else {
-                        puts "${g} doesn't exist yet"
+                        puts -nonewline "${g}"
+                    }
+                    if {![macports::ui_isset ports_quiet]} {
+                        puts " doesn't exist yet"
+                    } else {
+                        puts ""
                     }
                 }
             }
             if {[llength ${InstalledDupsList}]} {
-                ui_msg "[llength ${InstalledDupsList}] files already exist, checking if any do not already belong to ${portName}"
+                if {![macports::ui_isset ports_quiet]} {
+                    ui_msg "[llength ${InstalledDupsList}] files already exist, checking if any do not already belong to ${portName}"
+                }
                 set ProviderDict [port_provides ${InstalledDupsList}]
                 set DUPS {}
                 dict for {g provider} ${ProviderDict} {
                     if {${provider} ne ${portName}} {
                         regsub -all {[ \r\t\n]+} ${g} "" gg
                         if {${g} ne ${gg}} {
-                            puts "\"${g}\" already exists"
+                            puts -nonewline "\"${g}\""
                         } else {
-                            puts "${g} already exists"
+                            puts -nonewline "${g}"
                         }
-                        puts "\tprovided by: ${provider}"
-                        system "ls -l \"./${g}\" \"${g}\""
+                        if {![macports::ui_isset ports_quiet]} {
+                            puts " already exists"
+                            puts "\tprovided by: ${provider}"
+                            system "ls -l \"./${g}\" \"${g}\""
+                        } else {
+                            puts "\t : ${provider}"
+                        }
                         set DUPS [lappend DUPS [string cat "${g}" "\n"]]
                     }
                 }
