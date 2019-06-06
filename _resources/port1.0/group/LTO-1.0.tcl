@@ -34,6 +34,8 @@
 
 
 variant LTO description {build with link-time optimisation} {}
+options LTO_supports_i386
+default LTO_supports_i386 yes
 
 # out-of-line implementation so changes are made *now*.
 # Qt5 has its own mechanism to set LTO flags so don't do anything
@@ -57,22 +59,53 @@ if {[variant_isset LTO] && ![info exists building_qt5]} {
     } else {
         set lto_flags               "-ftracer -flto -fuse-linker-plugin -ffat-lto-objects"
     }
-    configure.cflags-append         ${lto_flags}
-    configure.cxxflags-append       ${lto_flags}
-    configure.objcflags-append      ${lto_flags}
-    configure.objcxxflags-append    ${lto_flags}
-    # ${configure.optflags} is a list, and that can lead to strange effects
-    # in certain situations if we don't treat it as such here.
-    foreach opt ${configure.optflags} {
-        configure.ldflags-append    ${opt}
+    if {![variant_isset universal] || [tbool LTO_supports_i386]} {
+        configure.cflags-append         ${lto_flags}
+        configure.cxxflags-append       ${lto_flags}
+        configure.objcflags-append      ${lto_flags}
+        configure.objcxxflags-append    ${lto_flags}
+        # ${configure.optflags} is a list, and that can lead to strange effects
+        # in certain situations if we don't treat it as such here.
+        foreach opt ${configure.optflags} {
+            configure.ldflags-append    ${opt}
+        }
+        configure.ldflags-append        ${lto_flags}
+    } elseif {${build_arch} ne "i386"} {
+        if {[info exists merger_configure_cflags(x86_64)]} {
+            set merger_configure_cflags(x86_64) "{*}$merger_configure_cflags(x86_64) ${lto_flags}"
+        } else {
+            set merger_configure_cflags(x86_64) "${lto_flags}"
+        }
+        if {[info exists merger_configure_cxxflags(x86_64)]} {
+            set merger_configure_cxxflags(x86_64) "{*}$merger_configure_cxxflags(x86_64) ${lto_flags}"
+        } else {
+            set merger_configure_cxxflags(x86_64) "${lto_flags}"
+        }
+        if {[info exists merger_configure_objcflags(x86_64)]} {
+            set merger_configure_objcflags(x86_64) "{*}$merger_configure_objcflags(x86_64) ${lto_flags}"
+        } else {
+            set merger_configure_objcflags(x86_64) "${lto_flags}"
+        }
+        if {[info exists merger_configure_ldflags(x86_64)]} {
+            set merger_configure_ldflags(x86_64) "{*}$merger_configure_ldflags(x86_64) ${lto_flags}"
+        } else {
+            set merger_configure_ldflags(x86_64) "${lto_flags}"
+        }
+        # ${configure.optflags} is a list, and that can lead to strange effects
+        # in certain situations if we don't treat it as such here.
+        foreach opt ${configure.optflags} {
+            configure.ldflags-append    ${opt}
+        }
+        set merger_arch_flag            yes
     }
-    configure.ldflags-append        ${lto_flags}
     platform darwin {
         # the Mac linker will complain without explicit LTO cache directory
         # only applies to lto=thin mode but won't hurt with lto=full.
         pre-configure {
-            xinstall -m 755 -d ${build.dir}/.lto_cache
-            configure.ldflags-append    -Wl,-cache_path_lto,${build.dir}/.lto_cache
+            if {${configure.compiler} ne "clang"} {
+                xinstall -m 755 -d ${build.dir}/.lto_cache
+                configure.ldflags-append    -Wl,-cache_path_lto,${build.dir}/.lto_cache
+            }
         }
     }
 }
