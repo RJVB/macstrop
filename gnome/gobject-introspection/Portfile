@@ -1,0 +1,140 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
+PortSystem          1.0
+PortGroup           active_variants 1.1
+
+PortGroup           locale_select 1.0
+PortGroup           preserve_runtime_libraries 1.0
+
+name                gobject-introspection
+version             1.58.1
+set branch          [join [lrange [split ${version} .] 0 1] .]
+categories          gnome
+platforms           darwin
+# library under LGPL-2+, tools under GPL-2+
+license             {LGPL GPL-2+}
+maintainers         {devans @dbevans} openmaintainer
+description         GObject Introspection
+long_description    Gobject Introspection acts as a bridge between low-level C+GObject code and \
+                    a managed runtime (JavaScript, Python, Java, Lua, .NET, Scheme, etc.).
+
+homepage            https://wiki.gnome.org/Projects/GObjectIntrospection
+master_sites        gnome:sources/${name}/${branch}/
+use_xz              yes
+
+checksums           rmd160  e129b74f9e75f7bab7d1f882bb4304459ba70d35 \
+                    sha256  4954681fa5c5ed95451d914de89de1263a5b35158b1ded1a8b870042c0d0df89
+#                     size    1377340
+
+platform linux {
+    subport system-girepository {}
+    if {${subport} eq "system-girepository"} {
+        version 1.0
+        distfiles
+        installs_libs   no
+        supported_archs noarch
+        use_configure   no
+        build           {}
+        patch           {}
+        depends_lib     port:gobject-introspection
+        destroot {
+            xinstall -m 755 -d ${destroot}${prefix}/lib/girepository-1.0
+            foreach g [glob -nocomplain /usr/lib/girepository-1.0/*] {
+                set gb [file tail ${g}]
+                if {![file exists ${prefix}/lib/girepository-1.0/${gb}]} {
+                    ln -s ${g} ${destroot}${prefix}/lib/girepository-1.0/${gb}
+                }
+            }
+        }
+        return
+    }
+}
+
+if {${subport} eq "${name}"} {
+
+depends_build       port:pkgconfig
+
+depends_lib         path:lib/pkgconfig/glib-2.0.pc:glib2 \
+                    port:libffi \
+                    port:py27-mako \
+                    port:py27-markdown
+platform darwin {
+    depends_lib-append \
+                    path:lib/pkgconfig/cairo.pc:cairo
+}
+
+depends_run         bin:glibtool:libtool
+
+patchfiles          no-env-shebang.patch
+if {${os.platform} eq "darwin"} {
+    # cf. https://github.com/Cimbali/pympress/issues/58
+    patchfiles-append \
+                    patch-cairogir.diff
+    post-patch {
+        reinplace "s|libcairo-gobject.2.dylib|${prefix}/lib/libcairo-gobject.2.dylib|g" ${worksrcpath}/configure
+        reinplace "s|@PREFIX@|${prefix}|g" gir/cairo-1.0.gir.in
+    }
+} else {
+    configure.ldflags-append \
+                    -Wl,-rpath,${prefix}/lib
+    post-build {
+        # the typelib files are (re)generated during the destroot, so we can splice in the rpaths at this point
+        system -W ${worksrcpath} "patch -Np0 -i ${filespath}/patch-rpath-in-gir-linux.diff"
+        foreach g [glob ${worksrcpath}/*.gir] {
+            reinplace "s|@PREFIX@|${prefix}|g" ${g}
+        }
+    }
+    notes-append       "Don't forget to install port:system-girepository!"
+}
+
+
+configure.python    ${prefix}/bin/python2.7
+
+if {![file exists ${worksrcpath}/config.log]} {
+    depends_build-append \
+                    port:autoconf-archive
+    # use autoreconf to sync with our build tools
+    use_autoreconf      yes
+    autoreconf.args     -fvi
+}
+
+build.args          CC="${configure.cc} ${configure.cc_archflags}" V=1
+
+# gobject-introspection needs to be aware whether it was compiled against python +ucs4, see #35603
+variant python_ucs4 description {Build against Python with +ucs4} {
+    require_active_variants python27 ucs4
+}
+
+if {![variant_isset python_ucs4]} {
+    pre-configure {
+        if {![active_variants python27 "" ucs4]} {
+            error "You have python installed with the +ucs4 variant. Please build ${name} with +python_ucs4"
+        }
+    }
+}
+
+if {![catch {set result [active_variants python27 ucs4]}]} {
+    if {$result} {
+        default_variants +python_ucs4
+    }
+}
+
+platform darwin 8 {
+    # GObject introspection doesn't build with tiger's make, #32358
+    depends_build-append    port:gmake
+    build.cmd               ${prefix}/bin/gmake
+
+    # Tiger does not support RPATHs at this time
+    patchfiles-append patch-girscanner-tiger-no-rpath.diff
+
+    # Tiger requires
+    configure.args-append --disable-dependency-tracking
+}
+
+post-destroot {
+    preserve_libraries ${prefix}/lib "libgirepository-1.0.*.dylib libgirepository-1.0.so.*"
+}
+
+livecheck.type      gnome
+
+}

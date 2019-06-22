@@ -37,84 +37,12 @@ variant LTO description {build with link-time optimisation} {}
 options LTO_supports_i386
 default LTO_supports_i386 yes
 
-# out-of-line implementation so changes are made *now*.
-# Qt5 has its own mechanism to set LTO flags so don't do anything
-# if we end up being loaded for a build of Qt5 itself.
-if {[variant_isset LTO] && ![info exists building_qt5]} {
-    if {${configure.compiler} eq "cc" && ${os.platform} eq "linux"} {
-        set lto_flags               "-ftracer -flto -fuse-linker-plugin -ffat-lto-objects"
-    } elseif {[string match *clang* ${configure.compiler}]} {
-#         if {${os.platform} ne "darwin"} {
-#             ui_error "unsupported combination +LTO with configure.compiler=${configure.compiler}"
-#             return -code error "Unsupported variant/compiler combination in ${subport}"
-#         }
-        # detect support for flto=thin but only with MacPorts clang versions (being a bit cheap here)
-        set clang_version [string map {"macports-clang-" ""} ${configure.compiler}]
-        if {"${clang_version}" ne "${configure.compiler}" && [vercmp ${clang_version} "4.0"] >= 0} {
-            # the compiler supports "ThinLTO", use it
-            set lto_flags           "-flto=thin"
-        } else {
-            set lto_flags           "-flto"
-        }
-    } else {
-        set lto_flags               "-ftracer -flto -fuse-linker-plugin -ffat-lto-objects"
-    }
-    if {![variant_isset universal] || [tbool LTO_supports_i386]} {
-        configure.cflags-append         ${lto_flags}
-        configure.cxxflags-append       ${lto_flags}
-        configure.objcflags-append      ${lto_flags}
-        configure.objcxxflags-append    ${lto_flags}
-        # ${configure.optflags} is a list, and that can lead to strange effects
-        # in certain situations if we don't treat it as such here.
-        foreach opt ${configure.optflags} {
-            configure.ldflags-append    ${opt}
-        }
-        configure.ldflags-append        ${lto_flags}
-    } elseif {${build_arch} ne "i386"} {
-        if {[info exists merger_configure_cflags(x86_64)]} {
-            set merger_configure_cflags(x86_64) "{*}$merger_configure_cflags(x86_64) ${lto_flags}"
-        } else {
-            set merger_configure_cflags(x86_64) "${lto_flags}"
-        }
-        if {[info exists merger_configure_cxxflags(x86_64)]} {
-            set merger_configure_cxxflags(x86_64) "{*}$merger_configure_cxxflags(x86_64) ${lto_flags}"
-        } else {
-            set merger_configure_cxxflags(x86_64) "${lto_flags}"
-        }
-        if {[info exists merger_configure_objcflags(x86_64)]} {
-            set merger_configure_objcflags(x86_64) "{*}$merger_configure_objcflags(x86_64) ${lto_flags}"
-        } else {
-            set merger_configure_objcflags(x86_64) "${lto_flags}"
-        }
-        if {[info exists merger_configure_ldflags(x86_64)]} {
-            set merger_configure_ldflags(x86_64) "{*}$merger_configure_ldflags(x86_64) ${lto_flags}"
-        } else {
-            set merger_configure_ldflags(x86_64) "${lto_flags}"
-        }
-        # ${configure.optflags} is a list, and that can lead to strange effects
-        # in certain situations if we don't treat it as such here.
-        foreach opt ${configure.optflags} {
-            configure.ldflags-append    ${opt}
-        }
-        set merger_arch_flag            yes
-    }
-    platform darwin {
-        # the Mac linker will complain without explicit LTO cache directory
-        # only applies to lto=thin mode but won't hurt with lto=full.
-        pre-configure {
-            if {${configure.compiler} ne "clang"} {
-                xinstall -m 755 -d ${build.dir}/.lto_cache
-                configure.ldflags-append    -Wl,-cache_path_lto,${build.dir}/.lto_cache
-            }
-        }
-    }
-}
-
 # Set up AR, NM and RANLIB to prepare for +LTO even if we don't end up using it
 options configure.ar \
         configure.nm \
         configure.ranlib \
         LTO.use_archive_helpers
+
 # give the port a say over whether or not the selected helpers are used
 default LTO.use_archive_helpers yes
 
@@ -122,6 +50,86 @@ default LTO.use_archive_helpers yes
 # FIXME
 # We should ascertain that configure.{ar,nm,ranlib} be full, absolute paths!
 # NB
+
+# out-of-line implementation so changes are made *now*.
+# Qt5 has its own mechanism to set LTO flags so don't do anything
+# if we end up being loaded for a build of Qt5 itself.
+if {[variant_isset LTO] && ![info exists building_qt5]} {
+    # some projects have their own configure option for LTO (often --enable-lto);
+    # use this if the port tells us to
+    if {[info exists LTO.configure_option]} {
+        configure.args-append           ${LTO.configure_option}
+    } else {
+        if {${configure.compiler} eq "cc" && ${os.platform} eq "linux"} {
+            set lto_flags               "-ftracer -flto -fuse-linker-plugin -ffat-lto-objects"
+        } elseif {[string match *clang* ${configure.compiler}]} {
+#             if {${os.platform} ne "darwin"} {
+#                 ui_error "unsupported combination +LTO with configure.compiler=${configure.compiler}"
+#                 return -code error "Unsupported variant/compiler combination in ${subport}"
+#             }
+            # detect support for flto=thin but only with MacPorts clang versions (being a bit cheap here)
+            set clang_version [string map {"macports-clang-" ""} ${configure.compiler}]
+            if {"${clang_version}" ne "${configure.compiler}" && [vercmp ${clang_version} "4.0"] >= 0} {
+                # the compiler supports "ThinLTO", use it
+                set lto_flags           "-flto=thin"
+            } else {
+                set lto_flags           "-flto"
+            }
+        } else {
+            set lto_flags               "-ftracer -flto -fuse-linker-plugin -ffat-lto-objects"
+        }
+        if {![variant_isset universal] || [tbool LTO_supports_i386]} {
+            configure.cflags-append         ${lto_flags}
+            configure.cxxflags-append       ${lto_flags}
+            configure.objcflags-append      ${lto_flags}
+            configure.objcxxflags-append    ${lto_flags}
+            # ${configure.optflags} is a list, and that can lead to strange effects
+            # in certain situations if we don't treat it as such here.
+            foreach opt ${configure.optflags} {
+                configure.ldflags-append    ${opt}
+            }
+            configure.ldflags-append        ${lto_flags}
+        } elseif {${build_arch} ne "i386"} {
+            if {[info exists merger_configure_cflags(x86_64)]} {
+                set merger_configure_cflags(x86_64) "{*}$merger_configure_cflags(x86_64) ${lto_flags}"
+            } else {
+                set merger_configure_cflags(x86_64) "${lto_flags}"
+            }
+            if {[info exists merger_configure_cxxflags(x86_64)]} {
+                set merger_configure_cxxflags(x86_64) "{*}$merger_configure_cxxflags(x86_64) ${lto_flags}"
+            } else {
+                set merger_configure_cxxflags(x86_64) "${lto_flags}"
+            }
+            if {[info exists merger_configure_objcflags(x86_64)]} {
+                set merger_configure_objcflags(x86_64) "{*}$merger_configure_objcflags(x86_64) ${lto_flags}"
+            } else {
+                set merger_configure_objcflags(x86_64) "${lto_flags}"
+            }
+            if {[info exists merger_configure_ldflags(x86_64)]} {
+                set merger_configure_ldflags(x86_64) "{*}$merger_configure_ldflags(x86_64) ${lto_flags}"
+            } else {
+                set merger_configure_ldflags(x86_64) "${lto_flags}"
+            }
+            # ${configure.optflags} is a list, and that can lead to strange effects
+            # in certain situations if we don't treat it as such here.
+            foreach opt ${configure.optflags} {
+                configure.ldflags-append    ${opt}
+            }
+            set merger_arch_flag            yes
+        }
+        platform darwin {
+            # the Mac linker will complain without explicit LTO cache directory
+            # only applies to lto=thin mode but won't hurt with lto=full.
+            pre-configure {
+                if {${configure.compiler} ne "clang"} {
+                    xinstall -m 755 -d ${build.dir}/.lto_cache
+                    configure.ldflags-append    -Wl,-cache_path_lto,${build.dir}/.lto_cache
+                }
+            }
+        }
+    }
+}
+
 if {[string match *clang* ${configure.compiler}]} {
     if {${os.platform} ne "darwin" || [string match macports-clang* ${configure.compiler}]} {
         # only MacPorts provides llvm-ar and family on Mac

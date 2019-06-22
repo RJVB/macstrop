@@ -58,6 +58,8 @@ default build.target        ""
 destroot.env-append         DESTDIR=${destroot}
 default destroot.post_args  ""
 
+configure.args-append
+
 pre-configure {
     if {[file exists ${build.dir}/meson-private]} {
         configure.pre_args-append \
