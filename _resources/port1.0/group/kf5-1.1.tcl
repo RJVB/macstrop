@@ -186,6 +186,8 @@ if {${kf5::includecounter} == 0} {
 
     # This is used by all KF5 frameworks
     depends_build-append    path:share/ECM/cmake/ECMConfig.cmake:kde-extra-cmake-modules
+    depends_skip_archcheck-append \
+                            kde-extra-cmake-modules kde-extra-cmake-modules-devel
 
     # configure.args-append   -G "\"CodeBlocks - Unix Makefiles\""
 
@@ -293,6 +295,8 @@ if {${kf5::includecounter} == 0} {
     variant chm requires docs description {when building the API documentation, also create a .chm version} {
         depends_build-append \
                             port:chmcmd-fpc
+        depends_skip_archcheck-append \
+                            chmcmd-fpc
     }
     variant docs description {build and install the API documentation, for use with Qt's Assistant and KDevelop} {
         configure.args-delete \
@@ -317,6 +321,8 @@ if {${kf5::includecounter} == 0} {
                     kf5.depends_build_frameworks \
                             kgenapidox
                 }
+                depends_skip_archcheck-append \
+                            ${kf5::kapidox_dep} ${kf5::kgenapidox_dep}
             }
         }
     }
