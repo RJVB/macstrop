@@ -69,8 +69,8 @@ if {[variant_isset LTO] && ![info exists building_qt5]} {
 #             }
             # detect support for flto=thin but only with MacPorts clang versions (being a bit cheap here)
             set clang_version [string map {"macports-clang-" ""} ${configure.compiler}]
-            if {"${clang_version}" ne "${configure.compiler}" && [vercmp ${clang_version} "4.0"] >= 0} {
-                # the compiler supports "ThinLTO", use it
+            if {[tbool LTO.allow_ThinLTO] && "${clang_version}" ne "${configure.compiler}" && [vercmp ${clang_version} "4.0"] >= 0} {
+                # the compiler supports "ThinLTO", use it if allowed
                 set lto_flags           "-flto=thin"
             } else {
                 set lto_flags           "-flto"
