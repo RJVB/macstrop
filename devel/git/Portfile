@@ -2,9 +2,11 @@
 
 PortSystem          1.0
 PortGroup           perl5 1.0
+set LTO.allow_ThinLTO no
+PortGroup           LTO 1.0
 
 name                git
-version             2.18.0
+version             2.22.0
 
 description         A fast version control system
 long_description    Git is a fast, scalable, distributed open source version \
@@ -13,7 +15,7 @@ maintainers         {ciserlohn @ci42} openmaintainer
 categories          devel
 license             GPL-2 LGPL-2.1+
 platforms           darwin
-homepage            http://git-scm.com/
+homepage            https://git-scm.com/
 master_sites        https://www.kernel.org/pub/software/scm/git/ \
                     https://cdn.kernel.org/pub/software/scm/git/
 distname            git-${version}
@@ -21,16 +23,16 @@ use_xz              yes
 distfiles           git-${version}${extract.suffix} \
                     git-manpages-${version}${extract.suffix}
 
-checksums           git-${version}${extract.suffix} \
-                    rmd160  2fc27cb7eaf9d74d0d305ef97fc1c6f7ea14a75f \
-                    sha256  8b40be383a603147ae29337136c00d1c634bdfdc169a30924a024596a7e30e92 \
-                    git-manpages-${version}${extract.suffix} \
-                    rmd160  ee6d2f843517c9c3f5c90b57e801fa94e827dbd4 \
-                    sha256  9ae3be95e63379597164c79c9018e84b7ef6964da923e5689dbc307693266096
+checksums           git-${version}.tar.xz \
+                    rmd160  a427f61cbc0bc40de23570f1f35fa082221e5c90 \
+                    sha256  159e4b599f8af4612e70b666600a3139541f8bacc18124daf2cbe8d1b934f29f \
+                    git-manpages-${version}.tar.xz \
+                    rmd160  ea77ed9691557fa8675b7539b650b6b27512e2f5 \
+                    sha256  4e2cfda33d8e86812bfcdb907478d1144412ce472c32edd0219b3c0201c7ee3a
 
 perl5.require_variant   yes
-perl5.conflict_variants no
-perl5.branches          5.24 5.26
+perl5.conflict_variants yes
+perl5.branches          5.24 5.26 5.28
 perl5.default_branch    5.26
 perl5.create_variants   ${perl5.branches}
 
@@ -48,13 +50,17 @@ depends_run-append  port:p${perl5.major}-authen-sasl \
                     port:p${perl5.major}-cgi \
                     port:rsync
 
-patchfiles          patch-Makefile.diff git-subtree.1.diff patch-sha1dc-older-apple-gcc-versions.diff
+patchfiles          git-subtree.1.diff
+platform darwin {
+    patchfiles-append \
+                    patch-Makefile.diff \
+                    patch-sha1dc-older-apple-gcc-versions.diff
+    use_configure   no
+}
 patch.pre_args      -p1
 
 extract.only        git-${version}${extract.suffix} \
                     git-manpages-${version}${extract.suffix}
-
-use_configure       no
 
 variant universal   {}
 
@@ -64,18 +70,23 @@ set LDFLAGS         "-L${prefix}/lib [get_canonical_archflags ld] ${configure.ld
 if {[variant_isset pcre]} {
     depends_build-append \
                     port:pkgconfig
-    pre-build {
-        if {[file exists ${prefix}/bin/pkg-config]} {
-            # fetch the flags required for building with the local pcre2 install
-            set CFLAGS  "${CFLAGS} [exec ${prefix}/bin/pkg-config --cflags libpcre2-8]"
+    pre-configure {
+        if {![file exists ${prefix}/bin/pkg-config]} {
+            ui_error "Please re-run this command after installing port:pkgconfig"
+            return -code error "Please re-run this command after installing port:pkgconfig"
         }
+    }
+    if {[file exists ${prefix}/bin/pkg-config]} {
+        # fetch the flags required for building with the local pcre2 install
+        set pcreflags "[exec ${prefix}/bin/pkg-config --cflags libpcre2-8]"
+        configure.cflags-append \
+                    ${pcreflags}
+        set CFLAGS  "${CFLAGS} ${pcreflags}"
     }
 }
 
-proc set_build_args {} {
-    global CFLAGS LDFLAGS perl5.major configure.cc prefix
-    uplevel build.args \
-                    CFLAGS="${CFLAGS}" \
+build.env           CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}"
+build.args          CFLAGS="${CFLAGS}" \
                     LDFLAGS="${LDFLAGS}" \
                     CC=${configure.cc} \
                     prefix=${prefix} \
@@ -89,10 +100,6 @@ proc set_build_args {} {
                     NO_R_TO_GCC_LINKER=1 \
                     NO_PERL_CPAN_FALLBACK=1 \
                     V=1
-}
-pre-build {
-    set_build_args
-}
 
 test.run            yes
 test.cmd            make
@@ -104,10 +111,7 @@ pre-test {
 
 destroot.target     install
 pre-destroot {
-    set_build_args
-    # destroot'ing will probably rebuild the target(s), so use parallel building
-    destroot.args  {*}${build.args} -j${build.jobs}
-    ui_msg [option destroot.args]
+    destroot.args  {*}${build.args}
     xinstall -m 644 ${worksrcpath}/contrib/subtree/git-subtree.1 ${workpath}/man1
 }
 
@@ -157,15 +161,17 @@ post-destroot {
 }
 
 variant pcre {
-    build.args-append       LIBPCREDIR=${prefix} USE_LIBPCRE2=1
+    platform darwin {
+        build.args-append   LIBPCREDIR=${prefix} USE_LIBPCRE2=1
+    }
     depends_lib-append      port:pcre2
 }
 
 variant doc description {Install HTML and plaintext documentation} {
     distfiles-append        git-htmldocs-${version}${extract.suffix}
-    checksums-append        git-htmldocs-${version}${extract.suffix} \
-                            rmd160  7d43f7246034b88b95d6c4b8e6e15df30f2c56c7 \
-                            sha256  5b70d9b1f86aad464ae172040eb87da83058c00581388af6f60b050214912efc
+    checksums-append        git-htmldocs-${version}.tar.xz \
+                            rmd160  d6fe388483ad3dc4236a7d26c6e5e947e805cf29 \
+                            sha256  5c7e010abfca5ff2eabf3616bf7216609cfb93dbc12b7c4e13f4ae3e539dbc79
 
     patchfiles-append       git-subtree.html.diff
 
@@ -237,11 +243,60 @@ variant credential_osxkeychain description {Install git credential-osxkeychain u
     }
 }
 
+variant diff_highlight description {Install git diff-highlight utility from contrib} {
+
+    patchfiles-append   patch-contrib-diff-highlight-Makefile.diff
+
+    post-patch {
+        reinplace "s|%PREFIX%|${prefix}|" \
+        ${worksrcpath}/contrib/diff-highlight/Makefile
+    }
+
+    post-build {
+        system -W "${worksrcpath}/contrib/diff-highlight" "make [join ${build.args}]"
+    }
+
+    post-destroot {
+        xinstall -m 755 "${worksrcpath}/contrib/diff-highlight/diff-highlight" \
+            "${destroot}${prefix}/bin/"
+    }
+}
+
 platform darwin 8 {
     build.args-append   NO_APPLE_COMMON_CRYPTO=1
 }
 
-default_variants    +doc +pcre +credential_osxkeychain
+default_variants    +doc +pcre +diff_highlight
+platform darwin {
+    default_variants \
+                    +doc +pcre +credential_osxkeychain
+}
+
+platform linux {
+#     PortGroup conflicts_build 1.0
+#     conflicts_build gettext-dev
+    depends_lib-append \
+                    port:gettext
+    use_configure   yes
+    pre-configure {
+        # recreate the configure script with the build.args collected above
+        system -W ${worksrcpath} "make ${build.args} configure"
+    }
+    configure.args  --prefix=${prefix} --with-curl --with-openssl --with-iconv=${prefix} --with-perl="${prefix}/bin/perl${perl5.major}"
+    if {[variant_isset pcre]} {
+        configure.args-append \
+                    --with-libpcre2
+    }
+    configure.args-append \
+                    --with-python="${prefix}/bin/python2.7"
+    configure.env-append \
+                    LIBS="-L${prefix}/lib -lintl"
+    configure.ldflags-append \
+                    -lintl
+    build.args      V=1
+}
+
+build.post_args-append  -wk
 
 livecheck.type          regexm
 livecheck.regex         {<span class="version">.*?(\d+\.\d+\.\d+).*?</span>}
