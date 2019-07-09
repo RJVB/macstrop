@@ -234,6 +234,47 @@ diff --git a/qtbase/src/testlib/qtest.h b/qtbase/src/testlib/qtest.h
 index ba63df5f36..ca045120d5 100644
 --- a/qtbase/src/testlib/qtest.h
 +++ b/qtbase/src/testlib/qtest.h
+@@ -65,9 +65,14 @@ QT_BEGIN_NAMESPACE
+ namespace QTest
+ {
+ 
++template <> inline char *toString(const QStringView &str)
++{
++    return QTest::toPrettyUnicode(str);
++}
++
+ template<> inline char *toString(const QString &str)
+ {
+-    return QTest::toPrettyUnicode(reinterpret_cast<const ushort *>(str.constData()), str.length());
++    return toString(QStringView(str));
+ }
+ 
+ template<> inline char *toString(const QLatin1String &str)
+@@ -84,21 +89,21 @@ template<> inline char *toString(const QByteArray &ba)
+ template<> inline char *toString(const QTime &time)
+ {
+     return time.isValid()
+-        ? qstrdup(qPrintable(time.toString(QLatin1String("hh:mm:ss.zzz"))))
++        ? qstrdup(qPrintable(time.toString(QStringViewLiteral("hh:mm:ss.zzz"))))
+         : qstrdup("Invalid QTime");
+ }
+ 
+ template<> inline char *toString(const QDate &date)
+ {
+     return date.isValid()
+-        ? qstrdup(qPrintable(date.toString(QLatin1String("yyyy/MM/dd"))))
++        ? qstrdup(qPrintable(date.toString(QStringViewLiteral("yyyy/MM/dd"))))
+         : qstrdup("Invalid QDate");
+ }
+ 
+ template<> inline char *toString(const QDateTime &dateTime)
+ {
+     return dateTime.isValid()
+-        ? qstrdup(qPrintable(dateTime.toString(QLatin1String("yyyy/MM/dd hh:mm:ss.zzz[t]"))))
++        ? qstrdup(qPrintable(dateTime.toString(QStringViewLiteral("yyyy/MM/dd hh:mm:ss.zzz[t]"))))
+         : qstrdup("Invalid QDateTime");
+ }
+ #endif // QT_NO_DATESTRING
 @@ -194,6 +199,22 @@ template<> inline char *toString(const QVariant &v)
      return qstrdup(vstring.constData());
  }
@@ -366,10 +407,18 @@ index 8ad0f13dc2..f430294142 100644
          [testfunction2:testData]
          msvc-2010
 diff --git a/qtbase/src/testlib/qtestcase.cpp b/qtbase/src/testlib/qtestcase.cpp
-index 4c5c9e1eb8..3b5acb6b95 100644
+index 4c5c9e1eb84b01c11dcebf557460c90b1867e00a..9ecc4478a5fab1c2c257e522a412d3a75625b9d1 100644
 --- a/qtbase/src/testlib/qtestcase.cpp
 +++ b/qtbase/src/testlib/qtestcase.cpp
-@@ -275,6 +275,11 @@ namespace QTest
+@@ -45,6 +45,7 @@
+ #include <QtCore/qmetaobject.h>
+ #include <QtCore/qobject.h>
+ #include <QtCore/qstringlist.h>
++#include <QtCore/qstringview.h>
+ #include <QtCore/qvector.h>
+ #include <QtCore/qvarlengtharray.h>
+ #include <QtCore/qcoreapplication.h>
+@@ -275,6 +276,11 @@ namespace QTest
      static QObject *currentTestObject = 0;
      static QString mainSourcePath;
  
@@ -381,7 +430,36 @@ index 4c5c9e1eb8..3b5acb6b95 100644
      class TestMethods {
          Q_DISABLE_COPY(TestMethods)
      public:
-@@ -1343,9 +1360,7 @@ void TestMethods::invokeTests(QObject *testObject) const
+@@ -1269,6 +1275,16 @@ char *toPrettyCString(const char *p, int length)
+     return buffer.take();
+ }
+ 
++#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
++// this used to be the signature up to and including Qt 5.9
++// keep it for BC reasons:
++Q_TESTLIB_EXPORT
++char *toPrettyUnicode(const ushort *p, int length)
++{
++    return toPrettyUnicode(QStringView(p, length));
++}
++#endif
++
+ /*!
+     \internal
+     Returns the same QString but with only the ASCII characters still shown;
+@@ -1276,8 +1292,10 @@ char *toPrettyCString(const char *p, int length)
+ 
+     Similar to QDebug::putString().
+ */
+-char *toPrettyUnicode(const ushort *p, int length)
++char *toPrettyUnicode(QStringView string)
+ {
++    auto p = reinterpret_cast<const ushort *>(string.utf16());
++    auto length = string.size();
+     // keep it simple for the vast majority of cases
+     bool trimmed = false;
+     QScopedArrayPointer<char> buffer(new char[256]);
+@@ -1343,9 +1361,7 @@ void TestMethods::invokeTests(QObject *testObject) const
  {
      const QMetaObject *metaObject = testObject->metaObject();
      QTEST_ASSERT(metaObject);
@@ -391,7 +469,7 @@ index 4c5c9e1eb8..3b5acb6b95 100644
      if (m_initTestCaseDataMethod.isValid())
          m_initTestCaseDataMethod.invoke(testObject, Qt::DirectConnection);
  
-@@ -1390,9 +1405,6 @@ void TestMethods::invokeTests(QObject *testObject) const
+@@ -1390,9 +1406,6 @@ void TestMethods::invokeTests(QObject *testObject) const
      }
      QTestResult::finishedCurrentTestFunction();
      QTestResult::setCurrentTestFunction(0);
@@ -401,7 +479,7 @@ index 4c5c9e1eb8..3b5acb6b95 100644
  }
  
  #if defined(Q_OS_UNIX)
-@@ -1702,23 +1714,27 @@ static void initEnvironment()
+@@ -1702,23 +1715,27 @@ static void initEnvironment()
  
  int QTest::qExec(QObject *testObject, int argc, char **argv)
  {
@@ -440,7 +518,7 @@ index 4c5c9e1eb8..3b5acb6b95 100644
  #endif
  
  #if defined(Q_OS_MACX)
-@@ -1749,6 +1765,24 @@ int QTest::qExec(QObject *testObject, int argc, char **argv)
+@@ -1749,6 +1766,24 @@ int QTest::qExec(QObject *testObject, int argc, char **argv)
  
      qtest_qParseArgs(argc, argv, false);
  
@@ -465,7 +543,7 @@ index 4c5c9e1eb8..3b5acb6b95 100644
  #if defined(Q_OS_WIN)
      if (!noCrashHandler) {
  # ifndef Q_CC_MINGW
-@@ -1784,17 +1818,17 @@ int QTest::qExec(QObject *testObject, int argc, char **argv)
+@@ -1784,17 +1819,17 @@ int QTest::qExec(QObject *testObject, int argc, char **argv)
          for (const QString &tf : qAsConst(QTest::testFunctions)) {
                  const QByteArray tfB = tf.toLatin1();
                  const QByteArray signature = tfB + QByteArrayLiteral("()");
@@ -487,7 +565,7 @@ index 4c5c9e1eb8..3b5acb6b95 100644
      }
  
  #ifndef QT_NO_EXCEPTIONS
-@@ -1819,16 +1853,6 @@ int QTest::qExec(QObject *testObject, int argc, char **argv)
+@@ -1819,16 +1854,6 @@ int QTest::qExec(QObject *testObject, int argc, char **argv)
       }
  #endif
  
@@ -504,7 +582,7 @@ index 4c5c9e1eb8..3b5acb6b95 100644
  #ifdef QTESTLIB_USE_VALGRIND
      if (QBenchmarkGlobalData::current->mode() == QBenchmarkGlobalData::CallgrindParentProcess)
          return callgrindChildExitCode;
-@@ -1838,6 +1862,26 @@ int QTest::qExec(QObject *testObject, int argc, char **argv)
+@@ -1838,6 +1863,26 @@ int QTest::qExec(QObject *testObject, int argc, char **argv)
      return qMin(QTestLog::failCount(), 127);
  }
  
@@ -557,7 +635,7 @@ index a59eb4ecb3..2605325a94 100644
      Q_TESTLIB_EXPORT char *toHexRepresentation(const char *ba, int length);
      Q_TESTLIB_EXPORT char *toPrettyCString(const char *unicode, int length);
 -    Q_TESTLIB_EXPORT char *toPrettyUnicode(const ushort *unicode, int length);
-+    Q_TESTLIB_EXPORT char *toPrettyUnicode(const ushort *unicode, int length); //Q_TESTLIB_EXPORT char *toPrettyUnicode(QStringView string);
++    Q_TESTLIB_EXPORT char *toPrettyUnicode(QStringView string);
      Q_TESTLIB_EXPORT char *toString(const char *);
      Q_TESTLIB_EXPORT char *toString(const void *);
  
