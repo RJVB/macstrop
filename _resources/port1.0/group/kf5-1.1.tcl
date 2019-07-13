@@ -798,7 +798,7 @@ if {${kf5::includecounter} == 0} {
             reinplace -q "s|Exec=${bundlename} |Exec=${prefix}/bin/${wrappername} |g" ${df}
         }
         foreach df [glob -nocomplain ${destroot}${prefix}/share/metainfo/*.${bundlename}.appdata.xml] {
-            reinplace "s|<binary>${bundlename}</binary>|<binary>${prefix}/bin/${wrappername}</binary>|g" ${df}
+            reinplace -q "s|<binary>${bundlename}</binary>|<binary>${prefix}/bin/${wrappername}</binary>|g" ${df}
         }
     }
 
