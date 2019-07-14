@@ -1,0 +1,113 @@
+diff --git a/src/backtracegenerator.cpp b/src/backtracegenerator.cpp
+index 11296bb68f405cbf68aeb38366b2bc2ab4461750..d18edc0751e7f0e68fb04f75c6b9bec8904eebef 100644
+--- a/src/backtracegenerator.cpp
++++ b/src/backtracegenerator.cpp
+@@ -37,7 +37,8 @@
+ BacktraceGenerator::BacktraceGenerator(const Debugger & debugger, QObject *parent)
+         : QObject(parent),
+           m_debugger(debugger), m_proc(nullptr),
+-          m_temp(nullptr), m_state(NotLoaded)
++          m_temp(nullptr), m_state(NotLoaded),
++          m_debuggerKilled(false)
+ {
+     m_parser = BacktraceParser::newParser(m_debugger.codeName(), this);
+     m_parser->connectToGenerator(this);
+@@ -103,6 +104,7 @@ bool BacktraceGenerator::start()
+     // and take the appropriate steps if so
+     QString stdinFile = m_debugger.backendValueOfParameter(QStringLiteral("ExecInputFile"));
+     Debugger::expandString(stdinFile, Debugger::ExpansionUsageShell, m_temp->fileName());
++    m_temp->close();
+     if (!stdinFile.isEmpty() && QFile::exists(stdinFile)) {
+         m_proc->setStandardInputFile(stdinFile);
+     }
+@@ -142,19 +144,22 @@ void BacktraceGenerator::slotReadInput()
+ 
+         emit newLine(line);
+         line = line.simplified();
+-        if (line.startsWith(QLatin1String("Process ")) && line.endsWith(QLatin1String(" detached"))) {
+-            // lldb is acting on a detach command (in lldbrc)
++        if (line.startsWith(QLatin1String("(lldb)")) && line.endsWith(QLatin1String(" exit"))) {
++            // lldb is acting on the exit command (from lldbrc)
+             // Anything following this line doesn't interest us, and lldb has been known
+             // to turn into a zombie instead of exitting, thereby blocking us.
+             // Tell the process to quit if it's still running, and pretend it did.
+             if (m_proc && m_proc->state() == QProcess::Running) {
+-                m_proc->terminate();
++                // give it a bit of time before termination
+                 if (!m_proc->waitForFinished(500)) {
+-                    m_proc->kill();
++                    m_debuggerKilled = true;
++                    m_proc->terminate();
+                 }
+-                if (m_proc) {
+-                    slotProcessExited(0, QProcess::NormalExit);
++                if (m_proc && !m_proc->waitForFinished(500)) {
++                    // insist harder.
++                    m_proc->kill();
+                 }
++                slotProcessExited(0, QProcess::NormalExit);
+             }
+             return;
+         }
+@@ -163,16 +168,24 @@ void BacktraceGenerator::slotReadInput()
+ 
+ void BacktraceGenerator::slotProcessExited(int exitCode, QProcess::ExitStatus exitStatus)
+ {
+-    //these are useless now
+-    m_proc->deleteLater();
+-    m_temp->deleteLater();
+-    m_proc = nullptr;
+-    m_temp = nullptr;
++    QString errorString;
++    if (m_proc) {
++        errorString = m_proc->errorString();
++        //these are useless now
++        m_proc->deleteLater();
++        m_proc = nullptr;
++        m_temp->deleteLater();
++        m_temp = nullptr;
++    }
+ 
+     //mark the end of the backtrace for the parser
+     emit newLine(QString());
+ 
+-    if (exitStatus != QProcess::NormalExit || exitCode != 0) {
++    // killing the debugger processes will raise an error; ignore it.
++    if (!m_debuggerKilled && (exitStatus != QProcess::NormalExit || exitCode != 0)) {
++        if (!errorString.isEmpty()) {
++            qCCritical(DRKONQI_LOG) << m_debugger.command() << "encountered an error:" << errorString;
++        }
+         m_state = Failed;
+         emit someError();
+         return;
+@@ -193,5 +206,3 @@ void BacktraceGenerator::slotProcessExited(int exitCode, QProcess::ExitStatus ex
+ 
+     emit done();
+ }
+-
+-
+diff --git a/src/backtracegenerator.h b/src/backtracegenerator.h
+index 924afb1af28e48dd1d7d27e5c689832d0f5b291a..3e5988d03ed8ad06c29cfca79a3889f1cd8472ff 100644
+--- a/src/backtracegenerator.h
++++ b/src/backtracegenerator.h
+@@ -84,6 +84,7 @@ private:
+     State             m_state;
+     BacktraceParser * m_parser = nullptr;
+     QString           m_parsedBacktrace;
++    bool              m_debuggerKilled;
+ 
+ #ifdef BACKTRACE_PARSER_DEBUG
+     BacktraceParser * m_debugParser = nullptr;
+diff --git a/src/data/debuggers/internal/lldbrc b/src/data/debuggers/internal/lldbrc
+index e901eb8f2bfe18452e8a5ff7b52c140582f150a0..9781b6cd5811e8591539678861a3594464dbfaf1 100644
+--- a/src/data/debuggers/internal/lldbrc
++++ b/src/data/debuggers/internal/lldbrc
+@@ -30,6 +30,5 @@ TryExec=lldb
+ Backends=KCrash
+ 
+ [KCrash]
+-Exec=lldb -p %pid
+-ExecInputFile=%tempfile
+-BatchCommands=settings set term-width 200\nthread info\nbt all\ndetach
++Exec=lldb -X -p %pid -s %tempfile
++BatchCommands=settings set term-width 200\nthread info\nbt all\ndetach\nexit
