@@ -1,0 +1,587 @@
+commit a4083c7cf0d62b2c73efe0c4d4f22d65a1f164f1
+Author: Dominik Haumann <dhaumann@kde.org>
+Date:   Mon Mar 18 21:52:33 2019 +0100
+
+    REVERT
+    Add Variable interface to KTextEditor::Editor
+    
+    Summary:
+    The Variable interface allows to register either exact matches
+    of the form %{Document:Text} or prefix matches of the form
+    %{Date:} where the text after the colon (separator) is passed
+    to the evaluation of the variable.
+    
+    This functionality is required for the External Tools plugin,
+    that will use this interface to do its macro expansion.
+    
+    A unit test demonstrates a bit how it works.
+    
+    Some possible/fictive examples:
+    - %{CurrentDocument:Text} evaluates to documents contents
+    - %{UUID} evaluates to a random uuid
+    - %{Time:hh-mm} evaluates to 17-35
+    
+    Currently, none of these variables are added, it's just the
+    interface.
+    
+    Test Plan: make && make test
+    
+    Reviewers: cullmann
+    
+    Reviewed By: cullmann
+    
+    Subscribers: kwrite-devel, kde-frameworks-devel
+    
+    Tags: #kate, #frameworks
+    
+    Differential Revision: https://phabricator.kde.org/D19795
+
+diff --git autotests/CMakeLists.txt autotests/CMakeLists.txt
+index 505d4cd2..802594d1 100644
+--- autotests/CMakeLists.txt
++++ autotests/CMakeLists.txt
+@@ -143,7 +143,6 @@ ecm_add_tests(
+   src/revision_test.cpp
+   src/modificationsystem_test.cpp
+   src/inlinenote_test.cpp
+-  src/variable_test.cpp
+   src/templatehandler_test.cpp
+   src/katefoldingtest.cpp
+   src/bug286887.cpp
+diff --git src/CMakeLists.txt src/CMakeLists.txt
+index 50109a4c..db6133dd 100644
+--- src/CMakeLists.txt
++++ src/CMakeLists.txt
+@@ -195,8 +195,6 @@ utils/mainwindow.cpp
+ utils/katedefaultcolors.cpp
+ utils/katecommandrangeexpressionparser.cpp
+ utils/katesedcmd.cpp
+-utils/katemacroexpander.cpp
+-utils/variable.cpp
+ 
+ # schema
+ schema/kateschema.cpp
+diff --git src/include/ktexteditor/editor.h src/include/ktexteditor/editor.h
+index da2cab51..40fe31d9 100644
+--- src/include/ktexteditor/editor.h
++++ src/include/ktexteditor/editor.h
+@@ -41,11 +41,9 @@ namespace KTextEditor
+ class Application;
+ class Command;
+ class Document;
+-class View;
+ class EditorPrivate;
+ class ConfigPage;
+ 
+-
+ /**
+  * \brief Accessor interface for the KTextEditor framework.
+  *
+@@ -248,79 +246,6 @@ public:
+      */
+     virtual QStringList commandList() const = 0;
+ 
+-public:
+-    /**
+-     * Function that is called to expand a variable in @p text.
+-     */
+-    using ExpandFunction = QString (*)(const QStringView& text, KTextEditor::View* view);
+-
+-    /**
+-     * Registers a variable called @p name for exact matches.
+-     * For instance, a variable called "CurrentDocument:Path" could be
+-     * registered which then expands to the path the current document.
+-     *
+-     * @return true on success, false if the variable could not be registered,
+-     *         e.g. because it already was registered previously.
+-     *
+-     * @since 5.57
+-     */
+-    bool registerVariableMatch(const QString& name, const QString& description, ExpandFunction expansionFunc);
+-
+-    /**
+-     * Registers a variable for arbitrary text that matches the specified
+-     * prefix. For instance, a variable called "ENV:" could be registered
+-     * which then expands arbitrary environment variables, e.g. ENV:HOME
+-     * would expand to the user's home directory.
+-     *
+-     * @note A colon ':' is used as separator for the prefix and the text
+-     *       after the colon that should be evaluated.
+-     *
+-     * @return true on success, false if a prefix could not be registered,
+-     *         e.g. because it already was registered previously.
+-     *
+-     * @since 5.57
+-     */
+-    bool registerVariablePrefix(const QString& prefix, const QString& description, ExpandFunction expansionFunc);
+-
+-    /**
+-     * Unregisters a variable that was previously registered with
+-     * registerVariableMatch().
+-     *
+-     * @return true if the variable was successfully unregistered, and
+-     *         false if the variable did not exist.
+-     *
+-     * @since 5.57
+-     */
+-    bool unregisterVariableMatch(const QString& variable);
+-
+-    /**
+-     * Unregisters a prefix of variable that was previously registered with
+-     * registerVariableMatch().
+-     *
+-     * @return true if the variable was successfully unregistered, and
+-     *         false if the variable did not exist.
+-     *
+-     * @since 5.57
+-     */
+-    bool unregisterVariablePrefix(const QString& variable);
+-
+-    /**
+-     * Expands a single @p variable, writing the expanded value to @p output.
+-     *
+-     * @return true on success, otherwise false.
+-     *
+-     * @since 5.57
+-     */
+-    bool expandVariable(const QString& variable, KTextEditor::View* view, QString& output) const;
+-
+-    /**
+-     * Expands arbitrary @p text that may contain arbitrary many variables.
+-     * On success, the expanded text is written to @p output.
+-     *
+-     * @since 5.57
+-     */
+-    void expandText(const QString& text, KTextEditor::View* view, QString& output) const;
+-
+ private:
+     /**
+      * private d-pointer, pointing to the internal implementation
+diff --git src/utils/kateglobal.h src/utils/kateglobal.h
+index 40cafdd0..00d02917 100644
+--- src/utils/kateglobal.h
++++ src/utils/kateglobal.h
+@@ -24,7 +24,6 @@
+ 
+ #include <ktexteditor_export.h>
+ #include "katescript.h"
+-#include "variable.h"
+ 
+ #include <ktexteditor/editor.h>
+ #include "ktexteditor/view.h"
+@@ -555,16 +554,6 @@ private:
+      */
+     QStringListModel *m_searchHistoryModel;
+     QStringListModel *m_replaceHistoryModel;
+-
+-    /**
+-     * Contains a lookup from the variable to the Variable instance.
+-     */
+-    QHash<QString, KTextEditor::Variable> m_variableExactMatches;
+-
+-    /**
+-     * Contains a lookup from the variable prefix to the Variable instance.
+-     */
+-    QHash<QString, KTextEditor::Variable> m_variablePrefixMatches;
+ };
+ 
+ }
+diff --git src/utils/katemacroexpander.cpp src/utils/katemacroexpander.cpp
+deleted file mode 100644
+index 364cf780..00000000
+--- src/utils/katemacroexpander.cpp
++++ /dev/null
+@@ -1,73 +0,0 @@
+-/* This file is part of the KDE project
+- *
+- *  Copyright 2019 Dominik Haumann <dhaumann@kde.org>
+- *
+- *  This library is free software; you can redistribute it and/or
+- *  modify it under the terms of the GNU Library General Public
+- *  License as published by the Free Software Foundation; either
+- *  version 2 of the License, or (at your option) any later version.
+- *
+- *  This library is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+- *  Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU Library General Public License
+- *  along with this library; see the file COPYING.LIB.  If not, write to
+- *  the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+- *  Boston, MA 02110-1301, USA.
+- */
+-#include "katemacroexpander.h"
+-
+-#include <KTextEditor/Editor>
+-
+-/**
+- * Find closing bracket for @p str starting a position @p pos.
+- */
+-static int findClosing(QStringView str, int pos = 0)
+-{
+-    const int len = str.size();
+-    int nesting = 0;
+-
+-    while (pos < len) {
+-        ++pos;
+-        const QChar c = str[pos];
+-        if (c == QLatin1Char('}')) {
+-            if (nesting == 0) {
+-                return pos;
+-            }
+-            nesting--;
+-        } else if (c == QLatin1Char('{')) {
+-            nesting++;
+-        }
+-    }
+-    return -1;
+-}
+-
+-QString KateMacroExpander::expandMacro(const QString& input, KTextEditor::View* view)
+-{
+-    QString output = input;
+-    QString oldStr;
+-    do {
+-        oldStr = output;
+-        const int startIndex = output.indexOf(QStringLiteral("%{"));
+-        if (startIndex < 0) {
+-            break;
+-        }
+-
+-        const int endIndex = findClosing(output, startIndex + 2);
+-        if (endIndex <= startIndex) {
+-            break;
+-        }
+-
+-        const int varLen = endIndex - (startIndex + 2);
+-        QString variable = output.mid(startIndex + 2, varLen);
+-        variable = expandMacro(variable, view);
+-        if (KTextEditor::Editor::instance()->expandVariable(variable, view, variable)) {
+-            output.replace(startIndex, endIndex - startIndex + 1, variable);
+-        }
+-    } while (output != oldStr); // str comparison guards against infinite loop
+-    return output;
+-}
+-
+-// kate: space-indent on; indent-width 4; replace-tabs on;
+diff --git src/utils/katemacroexpander.h src/utils/katemacroexpander.h
+deleted file mode 100644
+index 6b3d92f3..00000000
+--- src/utils/katemacroexpander.h
++++ /dev/null
+@@ -1,44 +0,0 @@
+-/* This file is part of the KDE project
+- *
+- *  Copyright 2019 Dominik Haumann <dhaumann@kde.org>
+- *
+- *  This library is free software; you can redistribute it and/or
+- *  modify it under the terms of the GNU Library General Public
+- *  License as published by the Free Software Foundation; either
+- *  version 2 of the License, or (at your option) any later version.
+- *
+- *  This library is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+- *  Library General Public License for more details.
+- *
+- *  You should have received a copy of the GNU Library General Public License
+- *  along with this library; see the file COPYING.LIB.  If not, write to
+- *  the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+- *  Boston, MA 02110-1301, USA.
+- */
+-#ifndef KTEXTEDITOR_MACRO_EXPANDER_H
+-#define KTEXTEDITOR_MACRO_EXPANDER_H
+-
+-#include <QString>
+-
+-namespace KTextEditor
+-{
+-    class View;
+-}
+-
+-/**
+- * Helper for macro expansion.
+- */
+-namespace KateMacroExpander
+-{
+-    /**
+-     * Expands the @p input text based on the @p view.
+-     * @return the expanded text.
+-     */
+-    QString expandMacro(const QString& input, KTextEditor::View* view);
+-}
+-
+-#endif // KTEXTEDITOR_MACRO_EXPANDER_H
+-
+-// kate: space-indent on; indent-width 4; replace-tabs on;
+diff --git src/utils/ktexteditor.cpp src/utils/ktexteditor.cpp
+index 24ef536a..bd32c04c 100644
+--- src/utils/ktexteditor.cpp
++++ src/utils/ktexteditor.cpp
+@@ -40,7 +40,6 @@
+ #include "modificationinterface.h"
+ #include "sessionconfiginterface.h"
+ #include "texthintinterface.h"
+-#include "variable.h"
+ 
+ #include "annotationinterface.h"
+ #include "abstractannotationitemdelegate.h"
+@@ -48,7 +47,6 @@
+ #include "kateglobal.h"
+ #include "kateconfig.h"
+ #include "katecmd.h"
+-#include "katemacroexpander.h"
+ 
+ using namespace KTextEditor;
+ 
+@@ -105,80 +103,6 @@ QString Editor::defaultEncoding () const
+     return d->documentConfig()->encoding ();
+ }
+ 
+-bool Editor::registerVariableMatch(const QString& name, const QString& description, ExpandFunction expansionFunc)
+-{
+-    if (name.isEmpty() || expansionFunc == nullptr)
+-        return false;
+-
+-    if (d->m_variableExactMatches.contains(name))
+-        return false;
+-
+-    d->m_variableExactMatches.insert(name, Variable(name, description, expansionFunc));
+-    return true;
+-}
+-
+-bool Editor::registerVariablePrefix(const QString& prefix, const QString& description, ExpandFunction expansionFunc)
+-{
+-    if (prefix.isEmpty() || expansionFunc == nullptr)
+-        return false;
+-
+-    if (d->m_variablePrefixMatches.contains(prefix))
+-        return false;
+-
+-    if (!prefix.contains(QLatin1Char(':')))
+-        return false;
+-
+-    d->m_variablePrefixMatches.insert(prefix, Variable(prefix, description, expansionFunc));
+-    return true;
+-}
+-
+-bool Editor::unregisterVariableMatch(const QString& variable)
+-{
+-    auto it = d->m_variableExactMatches.find(variable);
+-    if (it != d->m_variableExactMatches.end()) {
+-        d->m_variableExactMatches.erase(it);
+-        return true;
+-    }
+-    return false;
+-}
+-
+-bool Editor::unregisterVariablePrefix(const QString& variable)
+-{
+-    auto it = d->m_variablePrefixMatches.find(variable);
+-    if (it != d->m_variablePrefixMatches.end()) {
+-        d->m_variablePrefixMatches.erase(it);
+-        return true;
+-    }
+-    return false;
+-}
+-
+-bool Editor::expandVariable(const QString& variable, KTextEditor::View* view, QString& output) const
+-{
+-    // first try exact matches
+-    const auto it = d->m_variableExactMatches.find(variable);
+-    if (it != d->m_variableExactMatches.end()) {
+-        output = it->evaluate(variable, view);
+-        return true;
+-    }
+-
+-    // try prefix matching
+-    const int colonIndex = variable.indexOf(QLatin1Char(':'));
+-    if (colonIndex >= 0) {
+-        const QString prefix = variable.left(colonIndex + 1);
+-        const auto itPrefix = d->m_variablePrefixMatches.find(prefix);
+-        if (itPrefix != d->m_variablePrefixMatches.end()) {
+-            output = itPrefix->evaluate(variable, view);
+-            return true;
+-        }
+-    }
+-    return false;
+-}
+-
+-void Editor::expandText(const QString& text, KTextEditor::View* view, QString& output) const
+-{
+-    output = KateMacroExpander::expandMacro(text, view);
+-}
+-
+ bool View::insertText(const QString &text)
+ {
+     KTextEditor::Document *doc = document();
+diff --git src/utils/variable.cpp src/utils/variable.cpp
+deleted file mode 100644
+index 07690782..00000000
+--- src/utils/variable.cpp
++++ /dev/null
+@@ -1,50 +0,0 @@
+-/* This file is part of the KDE project
+-   Copyright (C) 2019 Dominik Haumann <dhaumann@kde.org>
+-
+-   This library is free software; you can redistribute it and/or
+-   modify it under the terms of the GNU Library General Public
+-   License as published by the Free Software Foundation; either
+-   version 2 of the License, or (at your option) any later version.
+-
+-   This library is distributed in the hope that it will be useful,
+-   but WITHOUT ANY WARRANTY; without even the implied warranty of
+-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+-   Library General Public License for more details.
+-
+-   You should have received a copy of the GNU Library General Public License
+-   along with this library; see the file COPYING.LIB.  If not, write to
+-   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+-   Boston, MA 02110-1301, USA.
+-*/
+-#include "variable.h"
+-
+-namespace KTextEditor
+-{
+-
+-Variable::Variable(const QString& name, const QString& description, Variable::ExpandFunction func)
+-    : m_name(name)
+-    , m_description(description)
+-    , m_function(func)
+-{}
+-
+-bool Variable::isValid() const
+-{
+-    return (!m_name.isEmpty()) && (m_function != nullptr);
+-}
+-
+-QString Variable::name() const
+-{
+-    return m_name;
+-}
+-
+-QString Variable::description() const
+-{
+-    return m_description;
+-}
+-
+-QString Variable::evaluate(const QStringView& prefix, KTextEditor::View * view) const
+-{
+-    return isValid() ? m_function(prefix, view) : QString();
+-}
+-
+-}
+diff --git src/utils/variable.h src/utils/variable.h
+deleted file mode 100644
+index 22d02348..00000000
+--- src/utils/variable.h
++++ /dev/null
+@@ -1,107 +0,0 @@
+-/* This file is part of the KDE project
+-   Copyright (C) 2019 Dominik Haumann <dhaumann@kde.org>
+-
+-   This library is free software; you can redistribute it and/or
+-   modify it under the terms of the GNU Library General Public
+-   License as published by the Free Software Foundation; either
+-   version 2 of the License, or (at your option) any later version.
+-
+-   This library is distributed in the hope that it will be useful,
+-   but WITHOUT ANY WARRANTY; without even the implied warranty of
+-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+-   Library General Public License for more details.
+-
+-   You should have received a copy of the GNU Library General Public License
+-   along with this library; see the file COPYING.LIB.  If not, write to
+-   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+-   Boston, MA 02110-1301, USA.
+-*/
+-
+-#ifndef KTEXTEDITOR_VARIABLE_H
+-#define KTEXTEDITOR_VARIABLE_H
+-
+-#include <QStringList>
+-#include <QVariant>
+-
+-namespace KTextEditor
+-{
+-    class View;
+-
+-/**
+- * @brief Variable for variable expansion.
+- *
+- * @section variable_intro Introduction
+- *
+- * A Variable is used by the KTextEditor::Editor to expand variables, also
+- * know as expanding macros. A Variable itself is defined by the variable
+- * name() as well as a description() and a function that replaces the variable
+- * by its value.
+- *
+- * To register a Variable in the Editor use either Editor::registerVariableMatch()
+- * or Editor::registerPrefixMatch().
+- *
+- * @see KTextEditor::Editor, KTextEditor::Editor::registerVariableMatch(),
+- *      KTextEditor::Editor::registerPrefixMatch()
+- * @author Dominik Haumann \<dhaumann@kde.org\>
+- */
+-class Variable
+-{
+-public:
+-    /**
+-     * Function that is called to expand a variable in @p text.
+-     * @param text
+-     */
+-    using ExpandFunction = QString (*)(const QStringView& text, KTextEditor::View* view);
+-
+-    /**
+-     * Constructor defining a Variable by its @p name, its @p description, and
+-     * its function @p expansionFunc to expand a variable to its corresponding
+-     * value.
+-     *
+-     * @note The @p name should @e not be translated.
+-     */
+-    Variable(const QString& name, const QString& description, ExpandFunction expansionFunc);
+-
+-    /**
+-     * Returns true, if the name is non-empty and the function provided in the
+-     * constructor is not a nullptr.
+-     */
+-    bool isValid() const;
+-
+-    /**
+-     * Returns the @p name that was provided in the constructor.
+-     * Depending on where the Variable is registered, this name is used to
+-     * identify an exact match or a prefix match.
+-     */
+-    QString name() const;
+-
+-    /**
+-     * Returns the description that was provided in the constructor.
+-     */
+-    QString description() const;
+-
+-    /**
+-     * Expands the Variable to its value.
+-     *
+-     * As example for an exact match, a variable "CurerntDocument:Cursor:Line"
+-     * uses the @p view to return the current line of the text cursor. In this
+-     * case @p prefix equals the text of the variable itself, i.e.
+-     * "CurerntDocument:Cursor:Line".
+-     *
+-     * As example of a prefix match, a variable "ENV:value" expands the
+-     * environment value @e value, e.g. "ENV:HOME". In this case, the @p prefix
+-     * equals the text "ENV:HOME" and @p view would be unused.
+-     *
+-     * @return the expanded variable.
+-     */
+-    QString evaluate(const QStringView& prefix, KTextEditor::View * view) const;
+-
+-private:
+-    QString m_name;
+-    QString m_description;
+-    ExpandFunction m_function;
+-};
+-
+-}
+-
+-#endif
