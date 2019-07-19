@@ -2,16 +2,24 @@
 
 PortSystem          1.0
 PortGroup           muniversal 1.0
-PortGroup           legacysupport 1.0
-PortGroup           compiler_blacklist_versions 1.0
+PortGroup           xcodeversion 1.0
+PortGroup           LTO 1.0
+
+# use legacy support if OSX <= 10.11 && Xcode < 8.
+# Xcode 8 provides "clock_gettime" while Xcode 7 doesn't.
+# legacysupport is used for 10.11 just for this specific feature.
+if {${os.platform} eq "darwin" && \
+    ${os.major} <= 15 && \
+    [vercmp ${xcodeversion} 8.0] < 0} {
+    PortGroup legacysupport 1.0
+}
+
 platform darwin {
     # devel requires C++11 as of 2017-08-21
     # https://gitlab.kitware.com/cmake/cmake/commit/c1f3eb9f2d628b2911aa17f65012fab0befc4b87
     # release requires C++11 as of 3.10.0
     if {!((${os.platform} eq "darwin" && ${os.major} < 10) || ${build_arch} eq "ppc" || ${build_arch} eq "ppc64")} {
-        if {${os.major} == 10} {
-            depends_lib-append port:libcxx
-        }
+        depends_lib-append port:libcxx
         configure.cxx_stdlib libc++
     }
     PortGroup cxx11 1.1
@@ -36,16 +44,16 @@ dist_subdir         cmake
 
 subport cmake-devel {}
 
-set branch          3.13
+set branch          3.14
 
 if {${subport} eq ${name}} {
 
     # release
 
-    version         ${branch}.4
-    checksums       rmd160 6211b5315071015d2a949af077e4301c47e36fd4 \
-                    sha256 fdd928fee35f472920071d1c7f1a6a2b72c9b25e04f7a37b409349aef3f20e9b
-#                     size   8617881
+    version         ${branch}.5
+    checksums       rmd160 dd8c7c0aa7a64584453eec13fbc292c4d7edfd7c \
+                    sha256 505ae49ebe3c63c595fa5f814975d8b72848447ee13b6613b0f8b96ebda18c06
+#                     size   8854929
     revision        0
 
     master_sites    ${homepage}/files/v${branch}/
@@ -55,8 +63,8 @@ if {${subport} eq ${name}} {
     # rename it to something that includes only the branch plus a non-numeric token that
     # might be bumped if ever a 3.x release introduces major changes. This should address
     # the issue that QCH readers like Qt's Assistant drop the document at every CMake upgrade.
-    set qch_version 3134
-    set qch_suffix  313a
+    set qch_version 3145
+    set qch_suffix  314a
     long_description ${base_long_description} \
         The ${subport} release port is updated roughly every few months.
 
@@ -66,7 +74,8 @@ if {${subport} eq ${name}} {
         patch-CMakeFindFrameworks.cmake.release.diff \
         patch-Source_CMakeVersionCompute.cmake.release.diff \
         patch-Source_Modules_FindLibUV.cmake.release.diff \
-        patch-fix_cxx14_17_checks.release.diff
+        patch-fix_cxx14_17_checks.release.diff \
+        patch-fix-system-prefix-path.release.diff
     patchfiles-append \
         patch-Modules-FindQt4.cmake.release.diff \
         patch-Modules-IgnorePolicy25.diff
@@ -79,12 +88,12 @@ if {${subport} eq ${name}} {
 
     # devel
 
-    version         20190309
-    set commit      5c106bfc42a5eb068719c3dec28ddc6dfc493973
-    checksums       rmd160 82111ce8138e8226fb7866b77bdc94ab259592c0 \
-                    sha256 e80c24da0346db8fe185d49956c19ece03a00fdb1281491a666895a502d20eb2 \
-                    size   6610127
-    revision        0
+    set commit 06f1560a58391d29b10697b2d5462966cd417b2f
+    version   20190626-[string range ${commit} 0 7]
+    checksums rmd160 25a7d65e775290ea12e63dadaed5698b6c483331 \
+              sha256 60da1b7933845672734ca315cd73cf2a12b6c4eb8e9d91adb0a348a9ae0756cf \
+              size   6956639
+    revision  0
 
     use_bzip2       yes
     master_sites    https://gitlab.kitware.com/cmake/cmake/repository/archive${extract.suffix}?ref=${commit}&
@@ -101,7 +110,8 @@ if {${subport} eq ${name}} {
         patch-CMakeFindFrameworks.cmake.devel.diff \
         patch-Source_CMakeVersionCompute.cmake.devel.diff \
         patch-Source_Modules_FindLibUV.cmake.devel.diff \
-        patch-fix_cxx14_17_checks.devel.diff
+        patch-fix_cxx14_17_checks.devel.diff \
+        patch-fix-system-prefix-path.devel.diff
 
     livecheck.type  regex
     livecheck.regex data-clipboard-text=\"(\[0-9a-g\]+)\"
@@ -146,12 +156,12 @@ if {![file exists ${prefix}/bin/cmake]} {
 
 platform darwin {
     configure.env-append \
-                    CMAKE_OSX_DEPLOYMENT_TARGET="${macosx_deployment_target}"
+                    CMAKE_OSX_DEPLOYMENT_TARGET=${macosx_deployment_target}
 
     if {${configure.sdkroot} != ""} {
-        configure.env-append CMAKE_OSX_SYSROOT="${configure.sdkroot}"
+        configure.env-append CMAKE_OSX_SYSROOT=${configure.sdkroot}
     } else {
-        configure.env-append CMAKE_OSX_SYSROOT="/"
+        configure.env-append CMAKE_OSX_SYSROOT=/
     }
 
     if {${os.arch} eq "i386" && ${os.major} <= 9} {
@@ -239,8 +249,10 @@ post-patch {
     copy ${filespath}/macports.cmake ${worksrcpath}
 
     # patch PREFIX
-    reinplace "s|__PREFIX__|${prefix}|g" ${worksrcpath}/macports.cmake
-    reinplace "s|__PREFIX__|${prefix}|g" ${worksrcpath}/Modules/CMakeFindFrameworks.cmake
+    reinplace "s|__PREFIX__|${prefix}|g" \
+        ${worksrcpath}/macports.cmake \
+        ${worksrcpath}/Modules/CMakeFindFrameworks.cmake \
+        ${worksrcpath}/Modules/Platform/Darwin.cmake
 
     # patch Python Version; doing this is OK even when +docs is not
     # used, because the PYTHON_EXECUTABLE is used only when building
@@ -326,53 +338,48 @@ if {[variant_isset gui]} {
 }
 
 variant docs description {Build documentation: Qt help file and manpages} {
+    patchfiles-append patch-use-classic-theme.diff
     configure.args-append \
         --mandir=share/man \
         --sphinx-man \
-        --sphinx-qthelp
+        --sphinx-qthelp \
+        --sphinx-build=${prefix}/bin/sphinx-build-${PYTHON_VERSION_WITH_DOT}
+
+    depends_build-append \
+        port:py${PYTHON_VERSION_NO_DOT}-sphinx
+
+    # these are required for Py3X, but not Py27
+    if {${PYTHON_VERSION_NO_DOT} ne "27"} {
+        depends_build-append \
+            port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-applehelp \
+            port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-devhelp \
+            port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-htmlhelp \
+            port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-jsmath \
+            port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-qthelp \
+            port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-serializinghtml \
+            port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-websupport
+    }
+
 }
 
 variant python27 conflicts python34 python35 python36 requires docs \
-    description {Build documentation using Sphinx from Python 2.7} {
-    depends_build-append port:py27-sphinx
-    patchfiles-append       patch-use-classic-theme.diff
-    configure.args-append \
-        --sphinx-build=${prefix}/bin/sphinx-build-2.7
-}
+    description {Build documentation using Sphinx from Python 2.7} {}
 
 variant python34 conflicts python27 python35 python36 python37 requires docs \
-    description {Build documentation using Sphinx from Python 3.4} {
-    depends_build-append port:py34-sphinx
-    patchfiles-append       patch-use-classic-theme.diff
-    configure.args-append \
-        --sphinx-build=${prefix}/bin/sphinx-build-3.4
-}
+    description {Build documentation using Sphinx from Python 3.4} {}
 
 variant python35 conflicts python27 python34 python36 python37 requires docs \
-    description {Build documentation using Sphinx from Python 3.5} {
-    depends_build-append port:py35-sphinx
-    patchfiles-append       patch-use-classic-theme.diff
-    configure.args-append \
-        --sphinx-build=${prefix}/bin/sphinx-build-3.5
-}
+    description {Build documentation using Sphinx from Python 3.5} {}
 
 variant python36 conflicts python27 python34 python35 python37 requires docs \
-    description {Build documentation using Sphinx from Python 3.6} {
-    depends_build-append port:py36-sphinx
-    patchfiles-append       patch-use-classic-theme.diff
-    configure.args-append \
-        --sphinx-build=${prefix}/bin/sphinx-build-3.6
-}
+    description {Build documentation using Sphinx from Python 3.6} {}
 
 variant python37 conflicts python27 python34 python35 python36 requires docs \
-    description {Build documentation using Sphinx from Python 3.7} {
-    depends_build-append port:py37-sphinx
-    patchfiles-append       patch-use-classic-theme.diff
-    configure.args-append \
-        --sphinx-build=${prefix}/bin/sphinx-build-3.7
-}
+    description {Build documentation using Sphinx from Python 3.7} {}
 
 if {[variant_isset docs]} {
+
+    # default Python is 2.7
     if {![variant_isset python27] &&
         ![variant_isset python34] &&
         ![variant_isset python35] &&
@@ -381,6 +388,7 @@ if {[variant_isset docs]} {
         default_variants +python27
     }
 
+    # make sure -python27 is not specified alone
     if {![variant_isset python27] &&
         ![variant_isset python34] &&
         ![variant_isset python35] &&
@@ -389,18 +397,26 @@ if {[variant_isset docs]} {
         ui_error "\n\nYou must select either the +python27, +python34, +python35, +python36, or +python37 variant when using variant +docs.\n"
         return -code error "Invalid variant selection"
     }
-}
 
-# post-activate {
-#     PortGroup cmake 1.1
-#     set pgroup_files {"cmake-1.1.tcl"}
-#     ui_msg "Don't forget to copy the following file(s) into your main port tree's _resources directory:"
-#     foreach pg ${pgroup_files} {
-#         ui_msg "\t${cmake::currentportgroupdir}/${pg}"
-#     }
-#     ui_msg "(That's probably ${prefix}/var/macports/sources/rsync.macports.org/release/ports/_resources/port1.0/group"
-#     ui_msg "or ${prefix}/var/macports/sources/svn.macports.org/trunk/dports/_resources/port1.0/group)"
-# }
+    # determine Python-related variables
+    if {[variant_isset python27]} {
+        set PYTHON_VERSION_WITH_DOT "2.7"
+    } elseif {[variant_isset python34]} {
+        set PYTHON_VERSION_WITH_DOT "3.4"
+    } elseif {[variant_isset python35]} {
+        set PYTHON_VERSION_WITH_DOT "3.5"
+    } elseif {[variant_isset python36]} {
+        set PYTHON_VERSION_WITH_DOT "3.6"
+    } else {
+        set PYTHON_VERSION_WITH_DOT "3.7"
+    }
+    set PYTHON_VERSION_NO_DOT [join [split ${PYTHON_VERSION_WITH_DOT} "."] ""]
+
+    post-patch {
+        # patch Python Version
+        reinplace "s|__PYTHON_VERSION_WITH_DOT__|${PYTHON_VERSION_WITH_DOT}|g" ${worksrcpath}/macports.cmake
+    }
+}
 
 configure.post_args-append "|& tee -a ${workpath}/.macports.${subport}.configure.log'"
 pre-configure {
