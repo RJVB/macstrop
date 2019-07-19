@@ -46,6 +46,10 @@ options configure.ar \
 # give the port a say over whether or not the selected helpers are used
 default LTO.use_archive_helpers yes
 
+if {![info exists LTO.allow_ThinLTO]} {
+    set LTO.allow_ThinLTO yes
+}
+
 # NB
 # FIXME
 # We should ascertain that configure.{ar,nm,ranlib} be full, absolute paths!
