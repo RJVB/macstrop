@@ -111,7 +111,7 @@ if { ![ info exists kf5.project ] } {
 
 # KF5 frameworks current version, which is the same for all frameworks
 if {![info exists kf5.version]} {
-    set kf5.version     5.52.0
+    set kf5.version     5.60.0
     # kf5.latest_version is supposed to be used only in the KF5-Frameworks Portfile
     # when updating it to the new version (=kf5.latest_version). This feature is
     # activated only when a file `port dir KF5-Frameworks`/files/enable_latest exists.
