@@ -84,6 +84,9 @@ default cmake_share_module_dir      {${prefix}/share/cmake/Modules}
 # cmake.module_path; they come after ${cmake_share_module_dir}
 default cmake.module_path           {}
 
+# Set cmake.debugopts to the desired compiler debug options (or an empty string) if you want to
+# use custom options with the +debug variant.
+
 # CMake provides several different generators corresponding to different utilities
 # (and IDEs) used for building the sources. We support "Unix Makefiles" (the default)
 # and Ninja, a leaner-and-meaner alternative.
@@ -612,25 +615,34 @@ platform darwin {
 configure.universal_args-delete --disable-dependency-tracking
 
 variant debug description "Enable debug binaries" {
-    # this PortGroup uses a custom CMAKE_BUILD_TYPE giving complete control over
-    # the compiler flags. We use that here: replace the default -O2 with -O0, add
-    # debugging options and do otherwise an exactly identical build.
-    configure.cflags-replace         -O2 -O0
-    configure.cxxflags-replace       -O2 -O0
-    configure.objcflags-replace      -O2 -O0
-    configure.objcxxflags-replace    -O2 -O0
-    configure.ldflags-replace        -O2 -O0
-    # get most if not all possible debug info
-    if {[string match *clang* ${configure.cxx}] || [string match *clang* ${configure.cc}]} {
-        set cmake::debugopts "-g -fno-limit-debug-info -DDEBUG"
+    if {![info exists cmake.debugopts]} {
+        # this PortGroup uses a custom CMAKE_BUILD_TYPE giving complete control over
+        # the compiler flags. We use that here: replace the default -O2 or -Os with -O0, add
+        # debugging options and do otherwise an exactly identical build.
+        configure.cflags-replace         -O2 -O0
+        configure.cxxflags-replace       -O2 -O0
+        configure.objcflags-replace      -O2 -O0
+        configure.objcxxflags-replace    -O2 -O0
+        configure.ldflags-replace        -O2 -O0
+        configure.cflags-replace         -Os -O0
+        configure.cxxflags-replace       -Os -O0
+        configure.objcflags-replace      -Os -O0
+        configure.objcxxflags-replace    -Os -O0
+        configure.ldflags-replace        -Os -O0
+        # get most if not all possible debug info
+        if {[string match *clang* ${configure.cxx}] || [string match *clang* ${configure.cc}]} {
+            set cmake.debugopts "-g -fno-limit-debug-info -fstandalone-debug -DDEBUG"
+        } else {
+            set cmake.debugopts "-g -DDEBUG"
+        }
     } else {
-        set cmake::debugopts "-g -DDEBUG"
+        ui_debug "+debug variant uses custom cmake.debugopts \"${cmake.debugopts}\""
     }
-    configure.cflags-append         ${cmake::debugopts}
-    configure.cxxflags-append       ${cmake::debugopts}
-    configure.objcflags-append      ${cmake::debugopts}
-    configure.objcxxflags-append    ${cmake::debugopts}
-    configure.ldflags-append        ${cmake::debugopts}
+    configure.cflags-append         ${cmake.debugopts}
+    configure.cxxflags-append       ${cmake.debugopts}
+    configure.objcflags-append      ${cmake.debugopts}
+    configure.objcxxflags-append    ${cmake.debugopts}
+    configure.ldflags-append        ${cmake.debugopts}
     # try to ensure that info won't get stripped
     configure.args-append           -DCMAKE_STRIP:FILEPATH=/bin/echo
 }
