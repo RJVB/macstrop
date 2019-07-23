@@ -1,0 +1,102 @@
+diff --git src/plugins/clangrefactoring/clangrefactoringplugin.cpp src/plugins/clangrefactoring/clangrefactoringplugin.cpp
+index 917823152e3b42ea3acde694636daa05aea27b59..26b1b16a660a99f4a042b85393ea8424ab6fd870 100644
+--- src/plugins/clangrefactoring/clangrefactoringplugin.cpp
++++ src/plugins/clangrefactoring/clangrefactoringplugin.cpp
+@@ -31,6 +31,7 @@
+ #include "querysqlitestatementfactory.h"
+ #include "sqlitedatabase.h"
+ #include "sqlitereadstatement.h"
++#include "sqliteexception.h"
+ #include "symbolquery.h"
+ 
+ #include <clangpchmanager/clangpchmanagerplugin.h>
+@@ -113,23 +114,48 @@ static bool useClangFilters()
+     return use;
+ }
+ 
+-bool ClangRefactoringPlugin::initialize(const QStringList & /*arguments*/, QString * /*errorMessage*/)
++static QtMessageHandler oldHandler = nullptr;
++static QStringList logMessages;
++static void messageOutput(QtMsgType type, const QMessageLogContext &ctx, const QString &msg)
+ {
+-    d = std::make_unique<ClangRefactoringPluginData>();
+-
+-    d->refactoringClient.setRefactoringEngine(&d->engine);
+-    d->refactoringClient.setRefactoringConnectionClient(&d->connectionClient);
+-    ExtensionSystem::PluginManager::addObject(&d->qtCreatorfindFilter);
+-
+-    connectBackend();
+-    startBackend();
+-
+-    CppTools::CppModelManager::addRefactoringEngine(
+-                CppTools::RefactoringEngineType::ClangRefactoring, &refactoringEngine());
+-
+-    initializeFilters();
++    logMessages << msg;
++    if (oldHandler) {
++        oldHandler(type, ctx, msg);
++    }
++}
+ 
+-    return true;
++bool ClangRefactoringPlugin::initialize(const QStringList & /*arguments*/, QString * errorMessage)
++{
++    bool ret;
++    logMessages.clear();
++    oldHandler = qInstallMessageHandler(messageOutput);
++    try {
++        d = std::make_unique<ClangRefactoringPluginData>();
++
++        d->refactoringClient.setRefactoringEngine(&d->engine);
++        d->refactoringClient.setRefactoringConnectionClient(&d->connectionClient);
++        ExtensionSystem::PluginManager::addObject(&d->qtCreatorfindFilter);
++
++        connectBackend();
++        startBackend();
++
++        CppTools::CppModelManager::addRefactoringEngine(
++                    CppTools::RefactoringEngineType::ClangRefactoring, &refactoringEngine());
++
++        initializeFilters();
++
++        ret = true;
++    } catch (const Sqlite::Exception &e) {
++        e.printWarning();
++        if (errorMessage) {
++            *errorMessage = logMessages.join("\n");
++        }
++        qCritical() << Q_FUNC_INFO << "failed with exception";
++        ret = false;
++    }
++    qInstallMessageHandler(oldHandler);
++    logMessages.clear();
++    return ret;
+ }
+ 
+ void ClangRefactoringPlugin::extensionsInitialized()
+diff --git src/tools/clangpchmanagerbackend/source/collectbuilddependencypreprocessorcallbacks.h src/tools/clangpchmanagerbackend/source/collectbuilddependencypreprocessorcallbacks.h
+index 82530927516e4d89fdd2915442292311edcf27e1..f97b9340a7ed54ca15dcae0119ab6e6606f5f58d 100644
+--- src/tools/clangpchmanagerbackend/source/collectbuilddependencypreprocessorcallbacks.h
++++ src/tools/clangpchmanagerbackend/source/collectbuilddependencypreprocessorcallbacks.h
+@@ -94,7 +94,7 @@ public:
+                             llvm::StringRef /*searchPath*/,
+                             llvm::StringRef /*relativePath*/,
+                             const clang::Module * /*imported*/,
+-                            clang::SrcMgr::CharacteristicKind fileType) override
++                            clang::SrcMgr::CharacteristicKind fileType)
+     {
+         if (file) {
+             addSourceDependency(file, hashLocation);
+diff --git src/tools/clangrefactoringbackend/source/indexdataconsumer.h src/tools/clangrefactoringbackend/source/indexdataconsumer.h
+index 6db595391c30f30e5707112468c415b939e27c11..4cc3d87231dc435390a307f32236319ad18ab257 100644
+--- src/tools/clangrefactoringbackend/source/indexdataconsumer.h
++++ src/tools/clangrefactoringbackend/source/indexdataconsumer.h
+@@ -56,7 +56,7 @@ public:
+                              clang::index::SymbolRoleSet symbolRoles,
+                              llvm::ArrayRef<clang::index::SymbolRelation> symbolRelations,
+                              clang::SourceLocation sourceLocation,
+-                             ASTNodeInfo astNodeInfo) override;
++                             ASTNodeInfo astNodeInfo);
+ 
+ private:
+     bool skipSymbol(clang::FileID fileId, clang::index::SymbolRoleSet symbolRoles);

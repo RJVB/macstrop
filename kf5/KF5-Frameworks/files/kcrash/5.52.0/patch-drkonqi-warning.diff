@@ -1,0 +1,119 @@
+diff --git src/kcrash.cpp src/kcrash.cpp
+index ced390c0bf395ab6fd4831361001b326014d971f..c71bbab46aa64618bad34f249a12738eaa2daff5 100644
+--- src/kcrash.cpp
++++ src/kcrash.cpp
+@@ -114,7 +114,7 @@ Q_COREAPP_STARTUP_FUNCTION(kcrashInitialize)
+ namespace KCrash
+ {
+ void setApplicationFilePath(const QString &filePath);
+-void startProcess(int argc, const char *argv[], bool waitAndExit);
++void startProcess(int argc, const char *argv[], bool waitAndExit, bool *started=nullptr);
+ 
+ #if defined(Q_OS_WIN)
+ LONG WINAPI win32UnhandledExceptionFilter(_EXCEPTION_POINTERS *exceptionInfo);
+@@ -377,6 +377,7 @@ KCrash::defaultCrashHandler(int sig)
+     // Handle possible recursions
+     static int crashRecursionCounter = 0;
+     crashRecursionCounter++; // Nothing before this, please !
++    bool drKonqiDidStart = false;
+ 
+ #if !defined(Q_OS_WIN)
+     signal(SIGALRM, SIG_DFL);
+@@ -525,18 +526,21 @@ KCrash::defaultCrashHandler(int sig)
+         // NULL terminated list
+         argv[i] = nullptr;
+ 
+-        startProcess(i, argv, true);
++        startProcess(i, argv, true, &drKonqiDidStart);
+     }
+ 
+-    if (crashRecursionCounter < 4) {
+-        fprintf(stderr, "Unable to start Dr. Konqi\n");
+-    }
++    if (!drKonqiDidStart) {
++        if (crashRecursionCounter < 4) {
++            fprintf(stderr, "Unable to start Dr. Konqi\n");
++        }
+ 
+-    if (s_coreConfig->isProcess()) {
+-        fprintf(stderr, "Re-raising signal for core dump handling.\n");
+-        KCrash::setCrashHandler(nullptr);
+-        raise(sig);
+-        // not getting here
++        // re-raise the signal but only if DrKonqi wasn't cancelled
++        if (s_coreConfig->isProcess()) {
++            fprintf(stderr, "Re-raising signal for core dump handling.\n");
++            KCrash::setCrashHandler(nullptr);
++            raise(sig);
++            // not getting here
++        }
+     }
+ 
+     _exit(255);
+@@ -544,7 +548,7 @@ KCrash::defaultCrashHandler(int sig)
+ 
+ #if defined(Q_OS_WIN)
+ 
+-void KCrash::startProcess(int argc, const char *argv[], bool waitAndExit)
++void KCrash::startProcess(int argc, const char *argv[], bool waitAndExit, bool *started)
+ {
+     QString cmdLine;
+     for (int i = 0; i < argc; ++i) {
+@@ -564,6 +568,10 @@ void KCrash::startProcess(int argc, const char *argv[], bool waitAndExit)
+                                  false, CREATE_UNICODE_ENVIRONMENT, NULL, NULL,
+                                  &startupInfo, &procInfo);
+ 
++    if (started) {
++        *started = success;
++    }
++
+     if (success && waitAndExit) {
+         // wait for child to exit
+         WaitForSingleObject(procInfo.hProcess, INFINITE);
+@@ -605,14 +613,14 @@ LONG WINAPI KCrash::win32UnhandledExceptionFilter(_EXCEPTION_POINTERS *exception
+ }
+ #else
+ 
+-static bool startProcessInternal(int argc, const char *argv[], bool waitAndExit, bool directly);
++static bool startProcessInternal(int argc, const char *argv[], bool waitAndExit, bool directly, bool *started=nullptr);
+ static pid_t startFromKdeinit(int argc, const char *argv[]);
+ static pid_t startDirectly(const char *argv[]);
+ static int write_socket(int sock, char *buffer, int len);
+ static int read_socket(int sock, char *buffer, int len);
+ static int openSocket();
+ 
+-void KCrash::startProcess(int argc, const char *argv[], bool waitAndExit)
++void KCrash::startProcess(int argc, const char *argv[], bool waitAndExit, bool *started)
+ {
+     bool startDirectly = true;
+ 
+@@ -622,22 +630,26 @@ void KCrash::startProcess(int argc, const char *argv[], bool waitAndExit)
+     // (there can be functions registered to be performed before fork(), for example handling
+     // of malloc locking, which doesn't work when malloc crashes because of heap corruption).
+     if (!(s_flags & AlwaysDirectly)) {
+-        startDirectly = !startProcessInternal(argc, argv, waitAndExit, false);
++        startDirectly = !startProcessInternal(argc, argv, waitAndExit, false, started);
+     }
+ #endif
+ 
+     // If we can't reach kdeinit, we can still at least try to fork()
+     if (startDirectly) {
+-        startProcessInternal(argc, argv, waitAndExit, true);
++        startProcessInternal(argc, argv, waitAndExit, true, started);
+     }
+ }
+ 
+-static bool startProcessInternal(int argc, const char *argv[], bool waitAndExit, bool directly)
++static bool startProcessInternal(int argc, const char *argv[], bool waitAndExit, bool directly, bool *started)
+ {
+     fprintf(stderr, "KCrash: Attempting to start %s %s\n", argv[0], directly ? "directly" : "from kdeinit");
+ 
+     pid_t pid = directly ? startDirectly(argv) : startFromKdeinit(argc, argv);
+ 
++    if (started) {
++        *started = pid > 0;
++    }
++
+     if (pid > 0 && waitAndExit) {
+         // Seems we made it....
+         alarm(0); //stop the pending alarm that was set at the top of the defaultCrashHandler

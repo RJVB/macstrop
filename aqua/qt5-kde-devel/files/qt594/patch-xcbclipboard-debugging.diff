@@ -1,5 +1,5 @@
 diff --git a/qtbase/src/plugins/platforms/xcb/qxcbclipboard.cpp b/qtbase/src/plugins/platforms/xcb/qxcbclipboard.cpp
-index 01b3bca0d2b75752d4d2fdc1019e9b196778b870..cb9cd819fc807619b15cb04325c848289f66e6ab 100644
+index 01b3bca0d2b75752d4d2fdc1019e9b196778b870..1444f3c5757eedc0951f0e09cd8303c782a385d7 100644
 --- a/qtbase/src/plugins/platforms/xcb/qxcbclipboard.cpp
 +++ b/qtbase/src/plugins/platforms/xcb/qxcbclipboard.cpp
 @@ -52,6 +52,11 @@
@@ -14,7 +14,26 @@ index 01b3bca0d2b75752d4d2fdc1019e9b196778b870..cb9cd819fc807619b15cb04325c84828
  QT_BEGIN_NAMESPACE
  
  #ifndef QT_NO_CLIPBOARD
-@@ -292,8 +297,21 @@ QXcbClipboard::QXcbClipboard(QXcbConnection *c)
+@@ -274,7 +279,17 @@ QXcbClipboard::QXcbClipboard(QXcbConnection *c)
+     m_clientClipboard[QClipboard::Selection] = 0;
+     m_timestamp[QClipboard::Clipboard] = XCB_CURRENT_TIME;
+     m_timestamp[QClipboard::Selection] = XCB_CURRENT_TIME;
+-    m_owner = connection()->getQtSelectionOwner();
++
++    initOwner();
++}
++
++void QXcbClipboard::initOwner()
++{
++    if (m_owner == XCB_NONE){
++        m_owner = connection()->getQtSelectionOwner();
++    } else {
++        m_owner = connection()->resetQtSelectionOwner();
++    }
+ 
+ #ifndef QT_NO_DEBUG
+     QByteArray ba("Qt clipboard window");
+@@ -292,8 +307,21 @@ QXcbClipboard::QXcbClipboard(QXcbConnection *c)
          const uint32_t mask = XCB_XFIXES_SELECTION_EVENT_MASK_SET_SELECTION_OWNER |
                  XCB_XFIXES_SELECTION_EVENT_MASK_SELECTION_WINDOW_DESTROY |
                  XCB_XFIXES_SELECTION_EVENT_MASK_SELECTION_CLIENT_CLOSE;
@@ -37,7 +56,16 @@ index 01b3bca0d2b75752d4d2fdc1019e9b196778b870..cb9cd819fc807619b15cb04325c84828
      }
  }
  
-@@ -419,13 +437,40 @@ void QXcbClipboard::setMimeData(QMimeData *data, QClipboard::Mode mode)
+@@ -400,7 +428,7 @@ void QXcbClipboard::setMimeData(QMimeData *data, QClipboard::Mode mode)
+         return;
+ 
+     xcb_atom_t modeAtom = atomForMode(mode);
+-    xcb_window_t newOwner = XCB_NONE;
++    xcb_window_t newOwner = m_owner;
+ 
+     if (m_clientClipboard[mode]) {
+         if (m_clientClipboard[QClipboard::Clipboard] != m_clientClipboard[QClipboard::Selection])
+@@ -419,13 +447,54 @@ void QXcbClipboard::setMimeData(QMimeData *data, QClipboard::Mode mode)
          m_timestamp[mode] = connection()->time();
      }
  
@@ -49,7 +77,7 @@ index 01b3bca0d2b75752d4d2fdc1019e9b196778b870..cb9cd819fc807619b15cb04325c84828
 +    if (getSelectionOwner(modeAtom) != newOwner || error) {
          qWarning("QXcbClipboard::setMimeData: Cannot set X11 selection owner");
 +        qWarning() << "\tclipboard mode=" << mode << "connection=" << xcb_connection() << "time=" << connection()->time()
-+            << "newOwner=" << newOwner << "effective owner:" << getSelectionOwner(modeAtom);
++            << "newOwner=" << newOwner << "effective owner:" << getSelectionOwner(modeAtom) << "m_owner=" << m_owner;
 +        if (error) {
 +            qWarning() << "\tX11 error" << error->error_code << "opcode" << error->major_code << ":" << error->minor_code;
 +            connection()->handleXcbError(error);
@@ -57,20 +85,34 @@ index 01b3bca0d2b75752d4d2fdc1019e9b196778b870..cb9cd819fc807619b15cb04325c84828
 +        }
 +        // adapted from QXcbClipboard::handleXFixesSelectionRequest(), in
 +        // hope a full reset will clear the issue.
++        // Also create a new owner (the old one has become useless anyway).
 +        if (mode <= QClipboard::Selection) {
 +            qWarning() << "\tattempting again after resetting the X clipboard";
++            initOwner();
 +            m_xClipboard[mode].reset(new QXcbClipboardMime(mode, this));
++            newOwner = m_owner;
 +            cookie = xcb_set_selection_owner(xcb_connection(), newOwner, modeAtom, connection()->time());
++            error = xcb_request_check(xcb_connection(), cookie);
 +        }
-+#if QT_CONFIG(xcb_xlib)
-+        if (getSelectionOwner(modeAtom) != newOwner && data && data->hasText()) {
-+            const QByteArray text(data->text().toLocal8Bit());
-+            if (text.size()) {
-+                qWarning() << "\tfallback: storing on X11 cutbuffer 0";
-+                XStoreBuffer(DISPLAY_FROM_XCB(connection()), text.constData(), text.size(), 0);
++        if (getSelectionOwner(modeAtom) != newOwner || error) {
++            qWarning("\tQXcbClipboard::setMimeData: failed to set X11 selection owner again");
++            qWarning() << "\t\tclipboard mode=" << mode << "connection=" << xcb_connection() << "time=" << connection()->time()
++                << "newOwner=" << newOwner << "effective owner:" << getSelectionOwner(modeAtom) << "m_owner=" << m_owner;
++            if (error) {
++                qWarning() << "\t\tX11 error" << error->error_code << "opcode" << error->major_code << ":" << error->minor_code;
++                connection()->handleXcbError(error);
++                free(error);
 +            }
-+        }
++#if QT_CONFIG(xcb_xlib)
++            if (data && data->hasText()) {
++                const QByteArray text(data->text().toLocal8Bit());
++                if (text.size()) {
++                    qWarning() << "\tfallback: storing on X11 cutbuffer 0";
++                    XStoreBuffer(DISPLAY_FROM_XCB(connection()), text.constData(), text.size(), 0);
++                }
++            }
 +#endif
++        }
      }
  
 -    emitChanged(mode);
@@ -81,3 +123,49 @@ index 01b3bca0d2b75752d4d2fdc1019e9b196778b870..cb9cd819fc807619b15cb04325c84828
  }
  
  bool QXcbClipboard::supportsMode(QClipboard::Mode mode) const
+diff --git a/qtbase/src/plugins/platforms/xcb/qxcbclipboard.h b/qtbase/src/plugins/platforms/xcb/qxcbclipboard.h
+index bfeae13e10092a48151b7dbefb3e0fd0ab48c7ee..979a29dc3e154c932538e184a5606d167084c845 100644
+--- a/qtbase/src/plugins/platforms/xcb/qxcbclipboard.h
++++ b/qtbase/src/plugins/platforms/xcb/qxcbclipboard.h
+@@ -89,6 +89,9 @@ public:
+     QByteArray getSelection(xcb_atom_t selection, xcb_atom_t target, xcb_atom_t property, xcb_timestamp_t t = 0);
+ 
+ private:
++    // RJVB
++    void initOwner();
++
+     xcb_generic_event_t *waitForClipboardEvent(xcb_window_t win, int type, int timeout, bool checkManager = false);
+ 
+     xcb_atom_t sendTargetsSelection(QMimeData *d, xcb_window_t window, xcb_atom_t property);
+diff --git a/qtbase/src/plugins/platforms/xcb/qxcbconnection.cpp b/qtbase/src/plugins/platforms/xcb/qxcbconnection.cpp
+index d36a14b92055ebfc2697b5afdf105cd13c11a478..ca243d8c052b8d7f0b90c7e4cf41a485968054e9 100644
+--- a/qtbase/src/plugins/platforms/xcb/qxcbconnection.cpp
++++ b/qtbase/src/plugins/platforms/xcb/qxcbconnection.cpp
+@@ -1501,6 +1501,15 @@ xcb_window_t QXcbConnection::getQtSelectionOwner()
+     return m_qtSelectionOwner;
+ }
+ 
++xcb_window_t QXcbConnection::resetQtSelectionOwner()
++{
++    if (m_qtSelectionOwner) {
++        Q_XCB_CALL(xcb_destroy_window(xcb_connection(), m_qtSelectionOwner));
++        m_qtSelectionOwner = 0;
++    }
++    return getQtSelectionOwner();
++}
++
+ xcb_window_t QXcbConnection::rootWindow()
+ {
+     QXcbScreen *s = primaryScreen();
+diff --git a/qtbase/src/plugins/platforms/xcb/qxcbconnection.h b/qtbase/src/plugins/platforms/xcb/qxcbconnection.h
+index edbc8d846e0eda4e34a3ff18f58dc1528f7187c8..f72286d5c2be1a30158229874eaafd4b9a5bb646 100644
+--- a/qtbase/src/plugins/platforms/xcb/qxcbconnection.h
++++ b/qtbase/src/plugins/platforms/xcb/qxcbconnection.h
+@@ -476,6 +476,7 @@ public:
+     xcb_timestamp_t getTimestamp();
+     xcb_window_t getSelectionOwner(xcb_atom_t atom) const;
+     xcb_window_t getQtSelectionOwner();
++    xcb_window_t resetQtSelectionOwner();
+ 
+     void setButton(Qt::MouseButton button, bool down) { m_buttons.setFlag(button, down); }
+     Qt::MouseButtons buttons() const { return m_buttons; }

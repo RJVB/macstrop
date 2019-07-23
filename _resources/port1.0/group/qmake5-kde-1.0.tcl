@@ -276,4 +276,45 @@ pre-configure {
     close ${qt5::cache}
 }
 
+proc qmake5.save_configure_cmd {{save_log_too ""}} {
+    namespace upvar ::qt5 configure_cmd_saved statevar
+    if {[tbool statevar]} {
+        ui_debug "qmake5.save_configure_cmd already called"
+        return;
+    }
+    set statevar yes
+
+    if {![info exists configure.post_args]} {
+        # make certain configure.post_args exists now.
+        ui_debug "qmake5.save_configure_cmd : configure.post_args appears to be undefined, setting it to an empty value now"
+        configure.post_args {}
+    }
+    if {${save_log_too} ne ""} {
+        pre-configure {
+            configure.pre_args-prepend "-cf '${configure.cmd} "
+            configure.post_args-append  "|& tee ${workpath}/.macports.${subport}.configure.log'"
+            configure.cmd "/bin/csh"
+            ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
+        }
+    }
+    post-configure {
+        if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
+            foreach var [array names ::env] {
+                puts ${fd} "${var}=$::env(${var})"
+            }
+            puts ${fd} "[join [lrange [split ${configure.env} " "] 0 end] "\n"]\n"
+            puts ${fd} "cd ${worksrcpath}"
+            puts ${fd} "${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}"
+            if {[file exists "${configure.dir}/.qmake.cache"]} {
+                puts ${fd} "## ${configure.dir}/.qmake.cache:"
+                close ${fd}
+                system "cat \"${configure.dir}/.qmake.cache\" >> \"${workpath}/.macports.${subport}.configure.cmd\""
+            } else {
+                close ${fd}
+            }
+            unset fd
+        }
+    }
+}
+
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;

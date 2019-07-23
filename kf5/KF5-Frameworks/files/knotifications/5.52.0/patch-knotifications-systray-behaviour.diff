@@ -1,0 +1,200 @@
+diff --git src/kstatusnotifieritem.cpp src/kstatusnotifieritem.cpp
+index c3828afbbc38b53bcb17c5ec15e089ec7229d759..eb1d0896e03e9d81a0a450a68d80dc2b1e912885 100644
+--- src/kstatusnotifieritem.cpp
++++ src/kstatusnotifieritem.cpp
+@@ -317,9 +317,6 @@ void KStatusNotifierItem::setToolTip(const QString &iconName, const QString &tit
+     d->toolTipIconName = iconName;
+ 
+     d->toolTipTitle = title;
+-//     if (d->systemTrayIcon) {
+-//         d->systemTrayIcon->setToolTip(title);
+-//     }
+     setTrayToolTip(d->systemTrayIcon, title, subTitle);
+     d->toolTipSubTitle = subTitle;
+     emit d->statusNotifierItemDBus->NewToolTip();
+@@ -338,9 +335,6 @@ void KStatusNotifierItem::setToolTip(const QIcon &icon, const QString &title, co
+     d->toolTipIcon = icon;
+ 
+     d->toolTipTitle = title;
+-//     if (d->systemTrayIcon) {
+-//         d->systemTrayIcon->setToolTip(title);
+-//     }
+     setTrayToolTip(d->systemTrayIcon, title, subTitle);
+ 
+     d->toolTipSubTitle = subTitle;
+@@ -388,9 +382,6 @@ void KStatusNotifierItem::setToolTipTitle(const QString &title)
+ 
+     d->toolTipTitle = title;
+     emit d->statusNotifierItemDBus->NewToolTip();
+-//     if (d->systemTrayIcon) {
+-//         d->systemTrayIcon->setToolTip(title);
+-//     }
+     setTrayToolTip(d->systemTrayIcon, title, d->toolTipSubTitle);
+ }
+ 
+@@ -429,9 +420,9 @@ void KStatusNotifierItem::setContextMenu(QMenu *menu)
+         return;
+     }
+ 
+-    if (d->systemTrayIcon) {
++    if (d->useSystemTrayIcon()) {
+         d->systemTrayIcon->setContextMenu(menu);
+-    } else if (d->menu != menu) {
++    } else if (!d->forceLegacyMode && d->menu != menu) {
+         if (getenv("KSNI_NO_DBUSMENU")) {
+             // This is a hack to make it possible to disable DBusMenu in an
+             // application. The string "/NO_DBUSMENU" must be the same as in
+@@ -446,6 +437,9 @@ void KStatusNotifierItem::setContextMenu(QMenu *menu)
+ #endif
+         }
+ 
++    }
++
++    if (!d->forceLegacyMode) {
+         connect(menu, SIGNAL(aboutToShow()), this, SLOT(contextMenuAboutToShow()));
+     }
+ 
+@@ -571,19 +565,16 @@ bool KStatusNotifierItem::standardActionsEnabled() const
+ 
+ void KStatusNotifierItem::showMessage(const QString &title, const QString &message, const QString &icon, int timeout)
+ {
+-    if (!d->notificationsClient) {
++    if (!d->notificationsClient && !d->forceLegacyMode) {
+         d->notificationsClient = new org::freedesktop::Notifications(QStringLiteral("org.freedesktop.Notifications"), QStringLiteral("/org/freedesktop/Notifications"),
+                 QDBusConnection::sessionBus());
+     }
+ 
+     uint id = 0;
+-#ifdef Q_OS_MACOS
+-    if (d->systemTrayIcon) {
++    if (d->useSystemTrayIcon()) {
+         // Growl is not needed anymore for QSystemTrayIcon::showMessage() since OS X 10.8
+         d->systemTrayIcon->showMessage(title, message, QSystemTrayIcon::Information, timeout);
+-    } else
+-#endif
+-    {
++    } else {
+         d->notificationsClient->Notify(d->title, id, icon, title, message, QStringList(), QVariantMap(), timeout);
+     }
+ }
+@@ -747,25 +738,41 @@ KStatusNotifierItemPrivate::KStatusNotifierItemPrivate(KStatusNotifierItem *item
+       systemTrayIcon(nullptr),
+       hasQuit(false),
+       onAllDesktops(false),
+-      standardActionsEnabled(true)
++      standardActionsEnabled(true),
++      forceLegacyMode(false)
+ {
+ }
+ 
+ void KStatusNotifierItemPrivate::init(const QString &extraId)
+ {
+-    qDBusRegisterMetaType<KDbusImageStruct>();
+-    qDBusRegisterMetaType<KDbusImageVector>();
+-    qDBusRegisterMetaType<KDbusToolTipStruct>();
++    q->setAssociatedWidget(qobject_cast<QWidget *>(q->parent()));
+ 
++    // check if we should enforce legacy mode and forego all attempts to use
++    // the newer D-Bus SNI protocol. A priori that is the case on all platforms
++    // that are neither X11 (XCB) nor Wayland, but additional checks could be
++    // made using QGuiApplication::platformName() .
++    // An optional override via an env. variable would probably not make
++    // much sense but could be provided.
++    if (!KWindowSystem::isPlatformX11() && !KWindowSystem::isPlatformWayland()) {
++        forceLegacyMode = true;
++    }
++
++    // create the KStatusNotifierItemDBus
+     statusNotifierItemDBus = new KStatusNotifierItemDBus(q);
+-    q->setAssociatedWidget(qobject_cast<QWidget *>(q->parent()));
+ 
+-    QDBusServiceWatcher *watcher = new QDBusServiceWatcher(QString::fromLatin1(s_statusNotifierWatcherServiceName),
+-            QDBusConnection::sessionBus(),
+-            QDBusServiceWatcher::WatchForOwnerChange,
+-            q);
+-    QObject::connect(watcher, SIGNAL(serviceOwnerChanged(QString,QString,QString)),
+-                     q, SLOT(serviceChange(QString,QString,QString)));
++    if (!forceLegacyMode) {
++        qDBusRegisterMetaType<KDbusImageStruct>();
++        qDBusRegisterMetaType<KDbusImageVector>();
++        qDBusRegisterMetaType<KDbusToolTipStruct>();
++
++
++        QDBusServiceWatcher *watcher = new QDBusServiceWatcher(QString::fromLatin1(s_statusNotifierWatcherServiceName),
++                QDBusConnection::sessionBus(),
++                QDBusServiceWatcher::WatchForOwnerChange,
++                q);
++        QObject::connect(watcher, SIGNAL(serviceOwnerChanged(QString,QString,QString)),
++                         q, SLOT(serviceChange(QString,QString,QString)));
++    }
+ 
+     //create a default menu, just like in KSystemtrayIcon
+     QMenu *m = new QMenu(associatedWidget);
+@@ -808,7 +815,11 @@ void KStatusNotifierItemPrivate::init(const QString &extraId)
+     // Init iconThemePath to the app folder for now
+     iconThemePath = QStandardPaths::locate(QStandardPaths::DataLocation, QStringLiteral("icons"), QStandardPaths::LocateDirectory);
+ 
+-    registerToDaemon();
++    if (forceLegacyMode) {
++        setLegacySystemTrayEnabled(true);
++    } else {
++        registerToDaemon();
++    }
+ }
+ 
+ void KStatusNotifierItemPrivate::registerToDaemon()
+@@ -880,6 +891,15 @@ void KStatusNotifierItemPrivate::setLegacyMode(bool legacy)
+     }
+ }
+ 
++bool KStatusNotifierItemPrivate::useSystemTrayIcon()
++{
++    bool useSystrayIcon = systemTrayIcon != nullptr;
++#ifndef Q_OS_MACOS
++    useSystrayIcon &= forceLegacyMode;
++#endif
++    return useSystrayIcon;
++}
++
+ void KStatusNotifierItemPrivate::legacyWheelEvent(int delta)
+ {
+     statusNotifierItemDBus->Scroll(delta, QStringLiteral("vertical"));
+@@ -903,7 +923,7 @@ void KStatusNotifierItemPrivate::setLegacySystemTrayEnabled(bool enabled)
+ 
+     if (enabled) {
+         bool isKde = !qEnvironmentVariableIsEmpty("KDE_FULL_SESSION") || qgetenv("XDG_CURRENT_DESKTOP") == "KDE";
+-        if (!systemTrayIcon && !isKde) {
++        if (!systemTrayIcon && (forceLegacyMode || !isKde)) {
+             if (!QSystemTrayIcon::isSystemTrayAvailable()) {
+                 return;
+             }
+diff --git src/kstatusnotifieritemprivate_p.h src/kstatusnotifieritemprivate_p.h
+index 4286ea67d6f9b9e5f53afc2fb645a5d11a6a2809..572de1084dbedd2a7c25bc1be6c21dcf1c2388b3 100644
+--- src/kstatusnotifieritemprivate_p.h
++++ src/kstatusnotifieritemprivate_p.h
+@@ -122,6 +122,9 @@ public:
+     void checkForRegisteredHosts();
+     void legacyWheelEvent(int delta);
+     void legacyActivated(QSystemTrayIcon::ActivationReason reason);
++    // should we and can we use the legacy systemTrayIcon (instead of
++    // the SNI equivalent)?
++    bool useSystemTrayIcon();
+ 
+     KDbusImageStruct imageToStruct(const QImage &image);
+     KDbusImageVector iconToVector(const QIcon &icon);
+@@ -176,6 +179,15 @@ public:
+     bool hasQuit : 1;
+     bool onAllDesktops : 1;
+     bool standardActionsEnabled : 1;
++
++    // certain platforms (Mac, MSWin, ...) provide a native systemtray that
++    // does not use the D-Bus; this functionality is supported via
++    // KStatusNotifierLegacyIcon. While D-Bus implementations exists for those
++    // those platforms it should not be used there. One likely example situation
++    // happens when the user runs a Gnome environment under XQuartz or CygwinX;
++    // KNotifications and systray functionality should continue to go via the
++    // native API and not move to the X11 variant.
++    bool forceLegacyMode : 1;
+ };
+ 
+ #endif

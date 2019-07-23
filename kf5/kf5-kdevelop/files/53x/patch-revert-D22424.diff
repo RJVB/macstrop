@@ -1,0 +1,118 @@
+commit d940a88e8bd92031cd7ffce2450cc24f266e6acc
+Author: Friedrich W. H. Kossebau <kossebau@kde.org>
+Date:   Fri Jul 12 16:53:22 2019 +0200
+
+    REVERT
+    TextDocument: remove actions from contextmenu on hide already
+    
+    Summary:
+    Fixes a bug of context menu entries being duplicated each time the context
+    menu is shown with another document in same cases.
+    This happened, as each document instance tracks what actions it adds to a
+    context menu, but only removes the actions once the menu is shown again.
+    Which fails if the menu is shown with another document than before, but the
+    same context menu object is reused again, thus still having the actions from
+    the other document.
+
+    Differential Revision: https://phabricator.kde.org/D22424
+
+diff --git kdevplatform/shell/textdocument.cpp kdevplatform/shell/textdocument.cpp
+index 6076db073c..e5f92beee4 100644
+--- kdevplatform/shell/textdocument.cpp
++++ kdevplatform/shell/textdocument.cpp
+@@ -86,11 +86,8 @@ public:
+ 
+     ~TextDocumentPrivate()
+     {
+-        // Handle the case we are being deleted while the context menu is not yet hidden.
+-        // We want to remove all actions we added to it, especially those not owned by the document
+-        // but by the plugins (i.e. created on-the-fly during ContextMenuExtension::populateMenu
+-        // with ownership set to our addedContextMenu)
+-        cleanContextMenu();
++        delete addedContextMenu;
++        addedContextMenu = nullptr;
+ 
+         saveSessionConfig();
+         delete document;
+@@ -228,31 +225,6 @@ public:
+         setStatus(document, dirty);
+     }
+ 
+-    void cleanContextMenu()
+-    {
+-        if (!addedContextMenu) {
+-            return;
+-        }
+-
+-        if (currentContextMenu) {
+-            const auto actions = addedContextMenu->actions();
+-            for (QAction* action : actions) {
+-                currentContextMenu->removeAction(action);
+-            }
+-            currentContextMenu.clear();
+-        }
+-
+-        // The addedContextMenu owns those actions created on-the-fly for the context menu
+-        // (other than those actions only shared for the context menu, but also used elsewhere)
+-        // and thuse deletes then on its own destruction.
+-        // Some actions potentially could be connected to triggered-signal handlers
+-        // using Qt::QueuedConnection (at least SwitchToBuddyPlugin does so currently).
+-        // Deleting them here also would also delete the connection before the handler is triggered.
+-        // So we delay the menu's and thus their destruction to the next eventloop by default.
+-        addedContextMenu->deleteLater();
+-        addedContextMenu = nullptr;
+-    }
+-
+     TextDocument * const q;
+ 
+     QPointer<KTextEditor::Document> document;
+@@ -261,7 +233,6 @@ public:
+     bool loaded = false;
+     // we want to remove the added stuff when the menu hides
+     QMenu* addedContextMenu = nullptr;
+-    QPointer<QMenu> currentContextMenu;
+ };
+ 
+ class TextViewPrivate
+@@ -699,25 +670,15 @@ void KDevelop::TextDocument::textChanged(KTextEditor::Document *document)
+     notifyContentChanged();
+ }
+ 
+-void KDevelop::TextDocument::unpopulateContextMenu()
+-{
+-    auto* menu = qobject_cast<QMenu*>(sender());
+-
+-    disconnect(menu, &QMenu::aboutToHide, this, &TextDocument::unpopulateContextMenu);
+-
+-    d->cleanContextMenu();
+-}
+-
+ void KDevelop::TextDocument::populateContextMenu( KTextEditor::View* v, QMenu* menu )
+ {
+     if (d->addedContextMenu) {
+-        qCWarning(SHELL) << "populateContextMenu() called while we still handled another menu.";
+-        d->cleanContextMenu();
++        foreach ( QAction* action, d->addedContextMenu->actions() ) {
++            menu->removeAction(action);
++        }
++        delete d->addedContextMenu;
+     }
+ 
+-    d->currentContextMenu = menu;
+-    connect(menu, &QMenu::aboutToHide, this, &TextDocument::unpopulateContextMenu);
+-
+     d->addedContextMenu = new QMenu();
+ 
+     EditorContext c(v, v->cursorPosition());
+diff --git kdevplatform/shell/textdocument.h kdevplatform/shell/textdocument.h
+index f948e4c5b9..04d12abfca 100644
+--- kdevplatform/shell/textdocument.h
++++ kdevplatform/shell/textdocument.h
+@@ -86,7 +86,6 @@ private:
+ 
+     void newDocumentStatus(KTextEditor::Document*);
+     void populateContextMenu(KTextEditor::View*, QMenu*);
+-    void unpopulateContextMenu();
+     void textChanged(KTextEditor::Document*);
+     void documentUrlChanged(KTextEditor::Document*);
+     void slotDocumentLoaded();
