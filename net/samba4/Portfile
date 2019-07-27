@@ -9,9 +9,8 @@ maintainers     openmaintainer
 license         GPL-3
 description     SMB/CIFS server and client
 long_description \
-                Samba is the standard Windows interoperability suite of programs for Linux and Unix.
-
-conflicts       samba3
+                Samba is the standard Windows interoperability suite of programs for Linux and Unix. \
+                This is version ${version} which is API compatible with the version from port:samba3.
 
 homepage        http://www.samba.org/
 master_sites    https://download.samba.org/pub/samba/stable
@@ -20,40 +19,50 @@ checksums       rmd160  24b661c5a2ead293ce4003b71072d321f34ece69 \
                 sha256  ad2acf6bed436c125314a054f0589308eb664ac3d96cfb02d05e654a44e09c80
 #                 size    17750151
 
-depends_build   port:python27 \
-                port:py27-orbit
+depends_build   port:python27
 
 depends_lib     port:gnutls \
                 port:readline \
                 port:libarchive \
                 port:libiconv \
-                port:popt \
                 port:zlib \
                 port:gettext \
-                port:avahi \
-                port:openldap \
-                port:jansson \
                 port:gpgme \
                 port:py27-pygpgme
+platform darwin {
+    depends_lib-append \
+                port:popt \
+                port:openldap \
+                port:jansson
+}
+## Extra host packages installed on Linux:
+#   faketime gir1.2-tracker-0.16 libexempi3 libfaketime libiptcdata0
+#   libjansson-dev libjansson4 libldb-dev libparse-yapp-perl libtalloc-dev
+#   libtevent-dev libtracker-extract-0.16-0 libtracker-miner-0.16-0
+#   libtracker-sparql-0.16-dev python-extras python-fixtures python-ldb-dev
+#   python-mimeparse python-talloc-dev python-testtools
+
 
 patch.pre_args  -Np1
-patchfiles-append \
+platform darwin {
+    patchfiles-append \
                 patch-nss-test.diff \
                 patch-no-attributes_h.diff \
                 patch-xml-catalog.diff
-# disable the build in the docs-xml dir which fails on docs-xml/manpages/smb.conf.5.xml :
-# runtime error: file file:/opt/local/share/xsl/docbook-xsl-nons/lib/lib.xsl line 54 element choose
-# xsltApplySequenceConstructor: A potential infinite template recursion was detected.
-patchfiles-append \
+    # disable the build in the docs-xml dir which fails on docs-xml/manpages/smb.conf.5.xml :
+    # runtime error: file file:/opt/local/share/xsl/docbook-xsl-nons/lib/lib.xsl line 54 element choose
+    # xsltApplySequenceConstructor: A potential infinite template recursion was detected.
+    patchfiles-append \
                 patch-no-docs_xml.diff
 
-post-patch {
-    reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}|g" \
+    post-patch {
+        reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}|g" \
                 release-scripts/build-docs \
                 release-scripts/build-htmlman-git \
                 release-scripts/build-htmlman-nogit \
                 release-scripts/build-manpages-git \
                 release-scripts/build-manpages-nogit
+    }
 }
 
 # worksrcdir      samba-${version}/source
@@ -67,28 +76,61 @@ configure.args  -C \
                 --without-acl-support \
                 --without-ad-dc \
                 --disable-avahi \
-                --without-system-mitkrb5 \
-                --with-gpgme
+                --with-gpgme \
+                --disable-spotlight
+platform darwin {
+    # let the toolchain handle rpath details as usual; if not we end up
+    # with hardcoded (r)paths into ${destroot}...
+    configure.args-append \
+                --disable-rpath \
+                --disable-rpath-install \
+                --disable-rpath-private-install
+}
 
-# variant spotlight description "Enable Spotlight support" {
-#     configure.args-append \
-#                 --enable-spotlight
-#     depends_lib-append \
-#                 port:tracker
-# }
+variant concurrent description {Build for concurrent installation with port:samba3. Otherwise the port will use its normal install layout.} {}
+if {![variant_isset concurrent]} {
+    conflicts   samba3
+} else {
+    configure.args-append \
+                --libdir=${prefix}/lib/${name} \
+                --with-configdir=${prefix}/etc/${name}
+}
+
+variant spotlight description "Enable Spotlight support" {
+    configure.args-replace \
+                --disable-spotlight \
+                --enable-spotlight
+    platform darwin {
+        depends_lib-append \
+                port:tracker
+    }
+}
 
 variant avahi description "Enable Avahi support" {
     configure.args-replace \
                 --disable-avahi \
                 --enable-avahi
-    depends_lib-append port:avahi
+    platform darwin {
+        depends_lib-append port:avahi
+    }
 }
 
 variant kerberos description "Enable Kerberos support" {
-    configure.args-replace \
-                --without-system-mitkrb5 \
+    configure.args-append \
                 --with-system-mitkrb5
-    depends_lib-append port:kerberos5
+    platform darwin {
+        depends_lib-append port:kerberos5
+    }
+}
+
+platform linux {
+    configure.args-replace \
+                --without-acl-support \
+                --with-acl-support
+    depends_lib-append \
+                port:attr \
+                port:acl
+    default_variants +avahi
 }
 
 configure.post_args-append "|& tee -a ${workpath}/.macports.${subport}.configure.log'"
@@ -102,11 +144,50 @@ pre-configure {
 
 build.post_args-append -wk V=1 VERBOSE=1
 
+proc mkpdir {path perms} {
+    global destroot prefix
+    xinstall -m ${perms} -d ${destroot}${prefix}/${path}
+    destroot.keepdirs-append ${path}
+}
+
 post-destroot {
+    ## TODO: need to install extra manpages from manpages/*.1 ?!
     xinstall -m 755 -d ${destroot}${prefix}/share/man/man5
     foreach m [glob -directory "${worksrcpath}/docs/manpages/" *.5] {
         xinstall ${m} ${destroot}${prefix}/share/man/man5/
     }
+
+    # create required runtime directories with the appropriate permissions
+    mkpdir var/lib/samba/private 755
+    mkpdir var/lib/samba/private/msg.sock 700
+    mkpdir var/cache/samba 755
+    mkpdir var/run/samba 755
+    mkpdir var/lock/samba/msg.lock 755
+
+    if {[variant_isset concurrent]} {
+        xinstall -m 755 -d ${destroot}${prefix}/etc/${name}/
+        xinstall -m 644 ${worksrcpath}/../examples/smb.conf.default \
+            ${destroot}${prefix}/etc/${name}/smb.conf.sample
+        system "touch ${destroot}${prefix}/etc/${name}/lmhosts.sample"
+        # TODO: rename .pc files. Ideally port:samba3 would rename its
+        # copies since that's the obsolete port...
+    } else {
+        xinstall -m 755 -d ${destroot}${prefix}/etc/samba
+        xinstall -m 644 ${worksrcpath}/../examples/smb.conf.default \
+            ${destroot}${prefix}/etc/samba/smb.conf.sample
+        system "touch ${destroot}${prefix}/etc/samba/lmhosts.sample"
+        # install symlinks so that existing dependents continue to find their dependents
+        xinstall -m 755 -d ${destroot}${prefix}/lib/samba3
+        ln -s ../libnetapi.dylib ${destroot}${prefix}/lib/samba3/
+        ln -s ../libnetapi.0.dylib ${destroot}${prefix}/lib/samba3/libnetapi.dylib.0
+        ln -s ../libsmbclient.dylib ${destroot}${prefix}/lib/samba3
+        ln -s ../libsmbclient.0.dylib ${destroot}${prefix}/lib/samba3/libsmbclient.dylib.0
+        foreach p [glob -directory ${destroot}${prefix}/lib/pkgconfig *.pc] {
+            set pc [file tail ${p} .pc]
+            ln -s ${pc}.pc ${destroot}${prefix}/lib/pkgconfig/${pc}4.pc
+        }
+    }
+    system "touch ${destroot}${prefix}/var/lib/samba/private/secrets.tdb.sample"
 }
 
 livecheck.type  regex
