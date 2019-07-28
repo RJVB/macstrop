@@ -1,5 +1,7 @@
 PortSystem      1.0
 PortGroup       code-sign 1.0
+PortGroup       compress_workdir 1.0
+PortGroup       conflicts_build 1.0
 
 name            samba4
 version         4.8.9
@@ -24,6 +26,7 @@ depends_build   port:python27
 depends_lib     port:gnutls \
                 port:readline \
                 port:libarchive \
+                port:openldap \
                 port:libiconv \
                 port:zlib \
                 port:gettext \
@@ -32,7 +35,6 @@ depends_lib     port:gnutls \
 platform darwin {
     depends_lib-append \
                 port:popt \
-                port:openldap \
                 port:jansson
 }
 ## Extra host packages installed on Linux:
@@ -47,13 +49,9 @@ patch.pre_args  -Np1
 platform darwin {
     patchfiles-append \
                 patch-nss-test.diff \
+                patch-max_grp.diff \
                 patch-no-attributes_h.diff \
                 patch-xml-catalog.diff
-    # disable the build in the docs-xml dir which fails on docs-xml/manpages/smb.conf.5.xml :
-    # runtime error: file file:/opt/local/share/xsl/docbook-xsl-nons/lib/lib.xsl line 54 element choose
-    # xsltApplySequenceConstructor: A potential infinite template recursion was detected.
-    patchfiles-append \
-                patch-no-docs_xml.diff
 
     post-patch {
         reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}|g" \
@@ -63,11 +61,20 @@ platform darwin {
                 release-scripts/build-manpages-git \
                 release-scripts/build-manpages-nogit
     }
+    configure.ldflags-append -v
 }
 
-# worksrcdir      samba-${version}/source
+# inspired from Ubuntu's packaging (debian/rules):
+configure.cmd   ${prefix}/bin/python2.7 ./buildtools/bin/waf configure
+build.cmd       ${prefix}/bin/python2.7 ./buildtools/bin/waf -v
+build.pre_args
+build.env-append \
+                DESTDIR=${destroot}
+destroot.cmd    ${prefix}/bin/python2.7 ./buildtools/bin/waf -v
+destroot.env-append \
+                DESTDIR=${destroot}
+destroot.destdir
 
-configure.env   PYTHON=${prefix}/bin/python2.7
 configure.args  -C \
                 --enable-fhs \
                 --enable-gnutls \
@@ -78,13 +85,12 @@ configure.args  -C \
                 --disable-avahi \
                 --with-gpgme \
                 --disable-spotlight
-platform darwin {
-    # let the toolchain handle rpath details as usual; if not we end up
-    # with hardcoded (r)paths into ${destroot}...
-    configure.args-append \
-                --disable-rpath \
-                --disable-rpath-install \
-                --disable-rpath-private-install
+
+platform linux {
+#     configure.args-append \
+#                 --disable-rpath \
+#                 --disable-rpath-install \
+#                 --disable-rpath-private-install
 }
 
 variant concurrent description {Build for concurrent installation with port:samba3. Otherwise the port will use its normal install layout.} {}
@@ -131,6 +137,8 @@ platform linux {
                 port:attr \
                 port:acl
     default_variants +avahi
+    configure.ldflags-append \
+                -L${prefix}/lib -lintl
 }
 
 configure.post_args-append "|& tee -a ${workpath}/.macports.${subport}.configure.log'"
@@ -142,12 +150,12 @@ pre-configure {
         system "echo '## ${cmd}' > ${workpath}/.macports.${subport}.configure.log"
 }
 
-build.post_args-append -wk V=1 VERBOSE=1
+build.post_args-append -k
 
 proc mkpdir {path perms} {
     global destroot prefix
     xinstall -m ${perms} -d ${destroot}${prefix}/${path}
-    destroot.keepdirs-append ${path}
+    destroot.keepdirs-append ${destroot}${prefix}/${path}
 }
 
 post-destroot {
@@ -165,15 +173,19 @@ post-destroot {
     mkpdir var/lock/samba/msg.lock 755
 
     if {[variant_isset concurrent]} {
+        set samba "samba3"
         xinstall -m 755 -d ${destroot}${prefix}/etc/${name}/
-        xinstall -m 644 ${worksrcpath}/../examples/smb.conf.default \
+        xinstall -m 644 ${worksrcpath}/examples/smb.conf.default \
             ${destroot}${prefix}/etc/${name}/smb.conf.sample
         system "touch ${destroot}${prefix}/etc/${name}/lmhosts.sample"
-        # TODO: rename .pc files. Ideally port:samba3 would rename its
-        # copies since that's the obsolete port...
+
+        foreach p [glob -directory ${destroot}${prefix}/lib/pkgconfig *.pc] {
+            file rename ${p} ${destroot}${prefix}/lib/pkgconfig/${pc}4.pc
+        }
     } else {
+        set samba "samba"
         xinstall -m 755 -d ${destroot}${prefix}/etc/samba
-        xinstall -m 644 ${worksrcpath}/../examples/smb.conf.default \
+        xinstall -m 644 ${worksrcpath}/examples/smb.conf.default \
             ${destroot}${prefix}/etc/samba/smb.conf.sample
         system "touch ${destroot}${prefix}/etc/samba/lmhosts.sample"
         # install symlinks so that existing dependents continue to find their dependents
@@ -183,11 +195,122 @@ post-destroot {
         ln -s ../libsmbclient.dylib ${destroot}${prefix}/lib/samba3
         ln -s ../libsmbclient.0.dylib ${destroot}${prefix}/lib/samba3/libsmbclient.dylib.0
         foreach p [glob -directory ${destroot}${prefix}/lib/pkgconfig *.pc] {
-            set pc [file tail ${p} .pc]
+            set pc [file rootname [file tail ${p}]]
             ln -s ${pc}.pc ${destroot}${prefix}/lib/pkgconfig/${pc}4.pc
         }
     }
     system "touch ${destroot}${prefix}/var/lib/samba/private/secrets.tdb.sample"
+
+#     platform darwin {
+#         set changeline "\
+#             -change bin/libnetapi.0.dylib ${prefix}/lib/${samba}/libnetapi.dylib \
+#             -change bin/libsmbclient.0.dylib ${prefix}/lib/${samba}/libsmbclient.dylib \
+#             -change bin/libsmbsharemodes.0.dylib ${prefix}/lib/${samba}/libsmbsharemodes.dylib \
+#             -change bin/libtalloc.dylib.2 ${prefix}/lib/${samba}/libtalloc.dylib \
+#             -change bin/libtevent.0.dylib ${prefix}/lib/${samba}/libtevent.dylib \
+#             -change bin/libtdb.dylib.1 ${prefix}/lib/${samba}/libtdb.dylib \
+#             -change bin/script.dylib ${prefix}/lib/${samba}/auth/script.dylib \
+#             -change bin/CP437.dylib ${prefix}/lib/${samba}/charset/CP437.dylib \
+#             -change bin/CP850.dylib ${prefix}/lib/${samba}/charset/CP850.dylib \
+#             -change bin/macosxfs.dylib ${prefix}/lib/${samba}/charset/macosxfs.dylib \
+#             -change bin/autorid.dylib ${prefix}/lib/${samba}/idmap/autorid.dylib \
+#             -change bin/pam_smbpass.dylib ${prefix}/lib/${samba}/security/pam_smbpass.dylib \
+#             -change bin/acl_tdb.dylib ${prefix}/lib/${samba}/vfs/acl_tdb.dylib \
+#             -change bin/acl_xattr.dylib ${prefix}/lib/${samba}/vfs/acl_xattr.dylib \
+#             -change bin/audit.dylib ${prefix}/lib/${samba}/vfs/audit.dylib \
+#             -change bin/cap.dylib ${prefix}/lib/${samba}/vfs/cap.dylib \
+#             -change bin/catia.dylib ${prefix}/lib/${samba}/vfs/catia.dylib \
+#             -change bin/crossrename.dylib ${prefix}/lib/${samba}/vfs/crossrename.dylib \
+#             -change bin/default_quota.dylib ${prefix}/lib/${samba}/vfs/default_quota.dylib \
+#             -change bin/expand_msdfs.dylib ${prefix}/lib/${samba}/vfs/expand_msdfs.dylib \
+#             -change bin/extd_audit.dylib ${prefix}/lib/${samba}/vfs/extd_audit.dylib \
+#             -change bin/fake_perms.dylib ${prefix}/lib/${samba}/vfs/fake_perms.dylib \
+#             -change bin/full_audit.dylib ${prefix}/lib/${samba}/vfs/full_audit.dylib \
+#             -change bin/linux_xfs_sgid.dylib ${prefix}/lib/${samba}/vfs/linux_xfs_sgid.dylib \
+#             -change bin/netatalk.dylib ${prefix}/lib/${samba}/vfs/netatalk.dylib \
+#             -change bin/preopen.dylib ${prefix}/lib/${samba}/vfs/preopen.dylib \
+#             -change bin/readahead.dylib ${prefix}/lib/${samba}/vfs/readahead.dylib \
+#             -change bin/readonly.dylib ${prefix}/lib/${samba}/vfs/readonly.dylib \
+#             -change bin/recycle.dylib ${prefix}/lib/${samba}/vfs/recycle.dylib \
+#             -change bin/scannedonly.dylib ${prefix}/lib/${samba}/vfs/scannedonly.dylib \
+#             -change bin/shadow_copy.dylib ${prefix}/lib/${samba}/vfs/shadow_copy.dylib \
+#             -change bin/shadow_copy2.dylib ${prefix}/lib/${samba}/vfs/shadow_copy2.dylib \
+#             -change bin/smb_traffic_analyzer.dylib ${prefix}/lib/${samba}/vfs/smb_traffic_analyzer.dylib \
+#             -change bin/streams_depot.dylib ${prefix}/lib/${samba}/vfs/streams_depot.dylib \
+#             -change bin/streams_xattr.dylib ${prefix}/lib/${samba}/vfs/streams_xattr.dylib \
+#             -change bin/time_audit.dylib ${prefix}/lib/${samba}/vfs/time_audit.dylib \
+#             -change bin/xattr_tdb.dylib ${prefix}/lib/${samba}/vfs/xattr_tdb.dylib"
+#
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/libnetapi.dylib ${destroot}${prefix}/lib/${samba}/libnetapi.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/libsmbclient.dylib ${destroot}${prefix}/lib/${samba}/libsmbclient.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/libsmbsharemodes.dylib ${destroot}${prefix}/lib/${samba}/libsmbsharemodes.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/libtalloc.dylib ${destroot}${prefix}/lib/${samba}/libtalloc.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/libtevent.dylib ${destroot}${prefix}/lib/${samba}/libtevent.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/libtdb.dylib ${destroot}${prefix}/lib/${samba}/libtdb.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/auth/script.dylib ${destroot}${prefix}/lib/${samba}/auth/script.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/charset/CP437.dylib ${destroot}${prefix}/lib/${samba}/charset/CP437.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/charset/CP850.dylib ${destroot}${prefix}/lib/${samba}/charset/CP850.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/charset/macosxfs.dylib ${destroot}${prefix}/lib/${samba}/charset/macosxfs.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/idmap/autorid.dylib ${destroot}${prefix}/lib/${samba}/idmap/autorid.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/security/pam_smbpass.dylib ${destroot}${prefix}/lib/${samba}/security/pam_smbpass.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/acl_tdb.dylib ${destroot}${prefix}/lib/${samba}/vfs/acl_tdb.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/acl_xattr.dylib ${destroot}${prefix}/lib/${samba}/vfs/acl_xattr.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/audit.dylib ${destroot}${prefix}/lib/${samba}/vfs/audit.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/cap.dylib ${destroot}${prefix}/lib/${samba}/vfs/cap.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/catia.dylib ${destroot}${prefix}/lib/${samba}/vfs/catia.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/crossrename.dylib ${destroot}${prefix}/lib/${samba}/vfs/crossrename.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/default_quota.dylib ${destroot}${prefix}/lib/${samba}/vfs/default_quota.dylib"
+#         if {[file exists ${destroot}${prefix}/lib/${samba}/vfs/dirsort.dylib]} {
+#             system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/dirsort.dylib ${destroot}${prefix}/lib/${samba}/vfs/dirsort.dylib"
+#         }
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/expand_msdfs.dylib ${destroot}${prefix}/lib/${samba}/vfs/expand_msdfs.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/extd_audit.dylib ${destroot}${prefix}/lib/${samba}/vfs/extd_audit.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/fake_perms.dylib ${destroot}${prefix}/lib/${samba}/vfs/fake_perms.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/full_audit.dylib ${destroot}${prefix}/lib/${samba}/vfs/full_audit.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/linux_xfs_sgid.dylib ${destroot}${prefix}/lib/${samba}/vfs/linux_xfs_sgid.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/netatalk.dylib ${destroot}${prefix}/lib/${samba}/vfs/netatalk.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/preopen.dylib ${destroot}${prefix}/lib/${samba}/vfs/preopen.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/readahead.dylib ${destroot}${prefix}/lib/${samba}/vfs/readahead.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/readonly.dylib ${destroot}${prefix}/lib/${samba}/vfs/readonly.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/recycle.dylib ${destroot}${prefix}/lib/${samba}/vfs/recycle.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/scannedonly.dylib ${destroot}${prefix}/lib/${samba}/vfs/scannedonly.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/shadow_copy.dylib ${destroot}${prefix}/lib/${samba}/vfs/shadow_copy.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/shadow_copy2.dylib ${destroot}${prefix}/lib/${samba}/vfs/shadow_copy2.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/smb_traffic_analyzer.dylib ${destroot}${prefix}/lib/${samba}/vfs/smb_traffic_analyzer.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/streams_depot.dylib ${destroot}${prefix}/lib/${samba}/vfs/streams_depot.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/streams_xattr.dylib ${destroot}${prefix}/lib/${samba}/vfs/streams_xattr.dylib"
+#         if {[file exists ${destroot}${prefix}/lib/${samba}/vfs/syncops.dylib]} {
+#             system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/syncops.dylib ${destroot}${prefix}/lib/${samba}/vfs/syncops.dylib"
+#         }
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/time_audit.dylib ${destroot}${prefix}/lib/${samba}/vfs/time_audit.dylib"
+#         system "install_name_tool ${changeline} -id ${prefix}/lib/${samba}/vfs/xattr_tdb.dylib ${destroot}${prefix}/lib/${samba}/vfs/xattr_tdb.dylib"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/eventlogadm"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/net"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/nmblookup"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/ntlm_auth"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/pdbedit"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/profiles"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/rpcclient"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/sharesec"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/smbcacls"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/smbclient"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/smbcontrol"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/smbcquotas"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/smbget"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/smbpasswd"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/smbspool"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/smbstatus"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/smbta-util"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/smbtree"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/tdbbackup"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/tdbdump"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/tdbrestore"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/tdbtool"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/bin/testparm"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/sbin/nmbd"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/sbin/smbd"
+#         system "install_name_tool ${changeline} ${destroot}${prefix}/sbin/swat"
+#     }
 }
 
 livecheck.type  regex
