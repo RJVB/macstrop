@@ -3,6 +3,9 @@ PortGroup       code-sign 1.0
 PortGroup       compress_workdir 1.0
 PortGroup       conflicts_build 1.0
 
+# Many thanks to https://medium.com/@mattmatic/compiling-samba-4-on-mac-os-x-high-sierra-24ca6a93a51c
+# for showing which Samba4 version still builds on Mac, and how to do it.
+
 name            samba4
 version         4.8.9
 categories      net
@@ -130,6 +133,8 @@ variant kerberos description "Enable MIT Kerberos support" {
 }
 
 platform linux {
+    depends_build-append \
+                port:patchelf
     configure.args-replace \
                 --without-acl-support \
                 --with-acl-support
@@ -174,11 +179,16 @@ post-destroot {
         set samba "samba"
     }
 
+    # install a file missed by the build system:
     platform darwin {
         xinstall -m 755 ${worksrcpath}/bin/shared/private/libdnsserver-common-samba4.dylib ${destroot}${prefix}/lib/${samba}
     }
     platform linux {
         xinstall -m 755 ${worksrcpath}/bin/shared/private/libdnsserver-common-samba4.so ${destroot}${prefix}/lib/${samba}
+        # get the current required rpath from one of the library's dependencies (known to be complete)
+        set rpath [exec patchelf --print-rpath ${destroot}${prefix}/lib/${samba}/libsamba-debug-samba4.so]
+        # set the rpath
+        system "patchelf --set-rpath \"${rpath}\" ${destroot}${prefix}/lib/${samba}/libdnsserver-common-samba4.so"
     }
 
     # install all manpages
@@ -199,6 +209,11 @@ post-destroot {
     mkpdir var/lock/samba/msg.lock 755
 
     platform darwin {
+        # On Darwin the build system fails to set library install names AND uses absolute paths
+        # into the build directory (-o ${build.dir}/path/to/libfoo.dylib). As a result, these
+        # libraries will have their ID set to those paths, and dependents will expect them in that
+        # location (think of it as hard-coded, library-specific rpaths).
+        # We want to run without need for ${build.dir} so we need to fix the IDs and the "rpaths".
         proc canonical {lf} {
             set l [file normalize ${lf}]
             if {[file type ${l}] eq "link"} {
@@ -213,6 +228,9 @@ post-destroot {
             }
         }
 
+        # First, find all .dylib files, record their current ID (in changelist) and correct it
+        # so it corresponds with their install location. The changelist record takes the form
+        # of a list of "-change oldLocation newLocation" triplets which can be fed into install_name_tool.
         ui_msg "--->  Fixing dylib IDs"
         array set libdone {}
         catch {exec -ignorestderr find ${destroot}${prefix} -regex {.*/lib[^.]*\.[0-9]\.dylib}} versioneddylibs err
@@ -220,15 +238,17 @@ post-destroot {
             # we may get output from `find` that's not a file, so check
             if {[file exists ${lf}]} {
                 set l [canonical ${lf}]
-			 if {[string first ${destroot} ${l}] < 0} {
-				 # shouldn't happen but better safe than sorry
-				 ui_warn "${lf} -> ${l} !"
-			 } else {
+                if {[string first ${destroot} ${l}] < 0} {
+                    # shouldn't happen but better safe than sorry
+                    ui_warn "${lf} -> ${l} !"
+                } else {
                     # NB: the install name is based on the symlink, not the target!
                     set id [exec otool -D ${lf} | tail -1]
+                    # the new install name == ID: the full path minus ${destroot}.
                     set instname [string map [list ${destroot} ""] ${lf}]
                     if {${instname} ne ${id}} {
                         system "install_name_tool -id ${instname} ${l}"
+                        # the current ID must be changed to the new one in all files that depend on it:
                         changelist-append -change ${id} ${instname}
                         # annoyingly some libraries will still their intermediate library ID
                         # and who knows if other binaries depend on those IDs
@@ -240,19 +260,20 @@ post-destroot {
                         }
                         changelist-append -change ${id2} ${instname}
                     }
+                    # mark the actual file we just processed as "done".
                     set libdone(${l}) yes
-			 }
+                }
             }
         }
-        # find unversioned libraries - by finding all and then ignoring those already processed.
+        # idem for the unversioned libraries - by finding all and then ignoring those already processed.
         catch {exec -ignorestderr find ${destroot}${prefix} -name "*.dylib"} otherdylibs err
         foreach lf ${otherdylibs} {
             if {[file exists ${lf}]} {
                 set l [canonical ${lf}]
-			 if {[string first ${destroot} ${l}] < 0} {
-				 # shouldn't happen but better safe than sorry
-				 ui_warn "${lf} -> ${l} !"
-			 } elseif {![info exists libdone(${l})]} {
+                if {[string first ${destroot} ${l}] < 0} {
+                    # shouldn't happen but better safe than sorry
+                    ui_warn "${lf} -> ${l} !"
+                } elseif {![info exists libdone(${l})]} {
                     set id [exec otool -D ${lf} | tail -1]
                     set instname [string map [list ${destroot} ""] ${lf}]
                     if {${instname} ne ${id}} {
@@ -273,7 +294,7 @@ post-destroot {
         ui_debug "Changelist:"
         ui_debug "${changelist}"
         ui_msg "--->  Updating all binaries with the new IDs"
-        # reuse libdone
+        # reset libdone
         array unset libdone
         catch {exec -ignorestderr find ${destroot}${prefix} -name "*.dylib" -o -name "*.so"} alllibs err
         foreach lf ${alllibs} {
