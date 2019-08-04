@@ -1,13 +1,14 @@
 #!/usr/bin/env port-tclsh
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 #
-# check if a port's destroot directory contains already installed files or (with -v) list new files
+# check if a port's destroot directory contains already installed files or (with -v) list new files or those
+# that will no longer be available after upgrading (go "missing"; with -m).
 #
 # parts copied from Clemens Lang's port-check-distributable.tcl script and of course the `port` driver command
 #
-# everything else (c) 2017 R.J.V. Bertin
+# everything else (c) 2017-2019 R.J.V. Bertin
 
-set SCRIPTVERSION 0.1
+set SCRIPTVERSION 0.2
 
 array set portsSeen {}
 
