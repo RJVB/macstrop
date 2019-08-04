@@ -15,6 +15,7 @@ proc printUsage {} {
     puts "Usage: $::argv0 \[-vV\] \[-t macports-tcl-path\] port-name\[s\]"
     puts "  -h    This help"
     puts "  -d    some debug output"
+    puts "  -m    list files that will go missing (present in the active named port, not in the version-to-be-installed)"
     puts "  -q    quiet mode"
     puts "  -v    list new files (inVerse mode)"
     puts "  -V    show version and MacPorts version being used"
@@ -89,6 +90,7 @@ extend string {
 
 set macportsTclPath /Library/Tcl
 set inverse 0
+set missing 0
 set showVersion 0
 set _WD_port {}
 
@@ -119,8 +121,21 @@ while {[string index [lindex $::argv 0] 0] == "-" } {
             set macportsTclPath [lindex $::argv 1]
             set ::argv [lrange $::argv 1 end]
         }
+        m {
+            if {!${inverse}} {
+                 set missing 1
+            } else {
+                puts "-m and -v are mutually exclusive"
+                exit 2
+            }
+        }
         v {
-             set inverse 1
+            if {!${missing}} {
+                set inverse 1
+            } else {
+                puts "-m and -v are mutually exclusive"
+                exit 2
+            }
         }
         V {
             set showVersion 1
@@ -205,6 +220,40 @@ proc port_provides { fileNames } {
     return ${providers}
 }
 
+proc port_contents { portname } {
+    if { ![catch {set ilist [registry::installed $portname]} result] } {
+        # set portname again since the one we were passed may not have had the correct case
+        set portname [lindex $ilist 0 0]
+    }
+    set files [registry::port_registered $portname]
+    if { $files != 0 } {
+        if { [llength $files] > 0 } {
+            return ${files}
+        } else {
+            ui_notice "Port $portname does not contain any files or is not active."
+        }
+    } else {
+        ui_notice "Port $portname is not installed."
+    }
+    registry::close_file_map
+
+    return {}
+}
+
+proc message { filename message } {
+    regsub -all {[ \r\t\n]+} ${filename} "" gg
+    if {${filename} ne ${gg}} {
+        puts -nonewline "\"${filename}\""
+    } else {
+        puts -nonewline "${filename}"
+    }
+    if {![macports::ui_isset ports_quiet]} {
+        puts " ${message}"
+    } else {
+        puts ""
+    }
+}
+
 if {[catch {mportinit ui_options global_options global_variations} result]} {
     puts \$::errorInfo
         fatal "Failed to initialise MacPorts, \$result"
@@ -226,11 +275,16 @@ foreach portName $::argv {
     set pWD ""
     set OK 0
     if {[file exists ${portName}] && [file type ${portName}] eq "directory"} {
-        # we're pointed to a directory
-        set pWD ${portName}
-        cd ${pWD}
-        set OK 1
-        ui_msg "Checking in directory ${pWD}"
+        if {!${missing}} {
+            # we're pointed to a directory
+            set pWD ${portName}
+            cd ${pWD}
+            set OK 1
+            ui_msg "Checking in directory ${pWD}"
+        } else {
+            ui_error "\"Missing\" mode needs a portname, not a destroot directory!"
+            exit 2
+        }
     } elseif {${_WD_port} ne ${portName}} {
         set _WD_port ${portName}
         set pWD [port_workdir ${portName}]
@@ -245,62 +299,66 @@ foreach portName $::argv {
             set FILES {}
             ui_debug "Building file list for ${portName}"
             Trawler foreach file {
-                set FILES [lappend FILES "${file}"]
+                if {${missing}} {
+                    set FILES [lappend FILES [string map [list "./" "/"] "${file}"]]
+                } else {
+                    set FILES [lappend FILES "${file}"]
+                }
             }
-            set InstalledDupsList {}
-            set DestrootDupsList {}
-            if {${inverse}} {
-                ui_debug "Checking [llength ${FILES}] files for already installed copies"
+            if {${missing}} {
+                set currentFiles [port_contents ${portName}]
+                ui_debug "Checking for files from\n\t\{${currentFiles}\}\nmissing from\n\t\{${FILES}\}"
+                foreach f ${currentFiles} {
+                    if {[lsearch -exact ${FILES} ${f}] < 0} {
+                        message ${f} "will go missing"
+                    }
+                }
             } else {
-                ui_debug "Checking [llength ${FILES}] files for new, not-yet-installed items"
-            }
-            foreach f $FILES {
-                set g [string range ${f} 1 end]
-                if {[file exists "${g}"]} {
-                    if {!${inverse}} {
-                        set InstalledDupsList [lappend InstalledDupsList "${g}"]
-                        set DestrootDupsList [lappend DestrootDupsList "${f}"]
+                set InstalledDupsList {}
+                set DestrootDupsList {}
+                if {${inverse}} {
+                    ui_debug "Checking [llength ${FILES}] files for new, not-yet-installed items"
+                } else {
+                    ui_debug "Checking [llength ${FILES}] files for already installed copies"
+                }
+                foreach f $FILES {
+                    set g [string range ${f} 1 end]
+                    if {[file exists "${g}"]} {
+                        if {!${inverse}} {
+                            set InstalledDupsList [lappend InstalledDupsList "${g}"]
+                            set DestrootDupsList [lappend DestrootDupsList "${f}"]
+                        }
+                    } elseif {${inverse}} {
+                        message ${g} "doesn't exist yet"
                     }
-                } elseif {${inverse}} {
-                    regsub -all {[ \r\t\n]+} ${g} "" gg
-                    if {${g} ne ${gg}} {
-                        puts -nonewline "\"${g}\""
-                    } else {
-                        puts -nonewline "${g}"
-                    }
+                }
+                if {[llength ${InstalledDupsList}]} {
                     if {![macports::ui_isset ports_quiet]} {
-                        puts " doesn't exist yet"
-                    } else {
-                        puts ""
+                        ui_msg "[llength ${InstalledDupsList}] files already exist, checking if any do not already belong to ${portName}"
                     }
-                }
-            }
-            if {[llength ${InstalledDupsList}]} {
-                if {![macports::ui_isset ports_quiet]} {
-                    ui_msg "[llength ${InstalledDupsList}] files already exist, checking if any do not already belong to ${portName}"
-                }
-                set ProviderDict [port_provides ${InstalledDupsList}]
-                set DUPS {}
-                dict for {g provider} ${ProviderDict} {
-                    if {${provider} ne ${portName}} {
-                        regsub -all {[ \r\t\n]+} ${g} "" gg
-                        if {${g} ne ${gg}} {
-                            puts -nonewline "\"${g}\""
-                        } else {
-                            puts -nonewline "${g}"
+                    set ProviderDict [port_provides ${InstalledDupsList}]
+                    set DUPS {}
+                    dict for {g provider} ${ProviderDict} {
+                        if {${provider} ne ${portName}} {
+                            regsub -all {[ \r\t\n]+} ${g} "" gg
+                            if {${g} ne ${gg}} {
+                                puts -nonewline "\"${g}\""
+                            } else {
+                                puts -nonewline "${g}"
+                            }
+                            if {![macports::ui_isset ports_quiet]} {
+                                puts " already exists"
+                                puts "\tprovided by: ${provider}"
+                                system "ls -l \"./${g}\" \"${g}\""
+                            } else {
+                                puts "\t : ${provider}"
+                            }
+                            set DUPS [lappend DUPS [string cat "${g}" "\n"]]
                         }
-                        if {![macports::ui_isset ports_quiet]} {
-                            puts " already exists"
-                            puts "\tprovided by: ${provider}"
-                            system "ls -l \"./${g}\" \"${g}\""
-                        } else {
-                            puts "\t : ${provider}"
-                        }
-                        set DUPS [lappend DUPS [string cat "${g}" "\n"]]
                     }
-                }
-                if {[llength ${DUPS}]} {
-                    puts [join ${DUPS}]
+                    if {[llength ${DUPS}]} {
+                        puts [join ${DUPS}]
+                    }
                 }
             }
         }
