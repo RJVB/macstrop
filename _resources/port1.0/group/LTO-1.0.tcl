@@ -159,9 +159,9 @@ if {[info exists LTO.custom_binaries]} {
     pre-configure {
         if {[option LTO.use_archive_helpers]} {
             configure.env-append \
-                AR="${configure.ar}" \
-                NM="${configure.nm}" \
-                RANLIB="${configure.ranlib}"
+                "AR=${configure.ar}" \
+                "NM=${configure.nm}" \
+                "RANLIB=${configure.ranlib}"
         }
     }
 } else {
