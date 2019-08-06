@@ -478,11 +478,12 @@ proc qt5.active_version {} {
         set av ${version}
         return ${av}
     } elseif {[file exists ${prefix}/bin/pkg-config]} {
-        set av [exec ${prefix}/bin/pkg-config --modversion Qt5Core]
-        return ${av}
-    } else {
-        return 0.0.0
+        if {![catch {set av [exec ${prefix}/bin/pkg-config --modversion Qt5Core]} err]} {
+            return ${av}
+        }
+        # else: Qt5 isn't installed yet
     }
+    return 0.0.0
 }
 
 proc qt5.active_branch {} {
