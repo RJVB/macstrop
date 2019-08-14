@@ -12,7 +12,7 @@ PortGroup preserve_runtime_libraries 1.0
 name                gcc7
 
 # are we the port that currently provides libgcc?
-set provides_libgcc 1
+set provides_libgcc 0
 
 epoch               2
 version             7.3.0
@@ -24,12 +24,7 @@ patchfiles-append   notparallel-install-headers.patch
 set major           [lindex [split ${version} .-] 0]
 set ver3char        [join [split ${version} '.'] ""]
 
-if {${provides_libgcc}} {
-    set libgcc_port libgcc
-    subport libgcc7 {revision 0}
-} else {
-    set libgcc_port libgcc${major}
-}
+set libgcc_port     libgcc${major}
 
 subport             ${libgcc_port} { revision 0 }
 
@@ -50,11 +45,10 @@ master_sites        ftp://ftp.funet.fi/pub/mirrors/sources.redhat.com/pub/gcc/re
                     gnu:gcc/gcc-${version}
 
     if {${subport} eq "libgcc7"} {
-        depends_lib     port:libgcc
         use_configure   no
         installs_libs   no
         supported_archs noarch
-	   distfiles 	    {}
+        distfiles       {}
         fetch           {}
         extract         {}
         patch           {}
@@ -80,10 +74,10 @@ depends_lib         port:cctools \
                     port:gmp \
                     path:lib/pkgconfig/isl.pc:isl \
                     port:ld64 \
-                    path:lib/libgcc/libgcc_s.1.dylib:libgcc \
                     port:libiconv \
                     port:libmpc \
                     port:mpfr
+depends_run-append  path:lib/libgcc/libgcc_s.1.dylib:libgcc
 
 depends_skip_archcheck-append gcc_select ld64 cctools
 license_noconflict  gmp mpfr ppl libmpc
@@ -112,7 +106,7 @@ configure.cmd       ${worksrcpath}/configure
 
 # where to install the headers, should be unversioned for the GCC version that
 # provides port:libgcc and versioned for all other ports
-if {${provides_libgcc}} {
+if {[tbool provides_libgcc]} {
     set gcc_headerdir ${prefix}/include/gcc
 } else {
     set gcc_headerdir ${prefix}/include/${name}
@@ -396,12 +390,19 @@ if {${subport} eq "${libgcc_port}"} {
 # The previous version is relevant in the port providing libgcc-devel (currently gcc8); older releases should
 # not provide a +with_libgcc variant in any case (currently that is gcc6 and earlier).
 # The next version is relevant in the current latest release version (currently gcc7)
+# We can also NOT provide the variant when we're no longer the official libgcc provider
 proc check_withlibgcc_compat {other} {
-    if {[catch {set result [active_variants ${other} {} with_libgcc]} err]} {
-        # port:${other} isn't installed or active; we accept that too.
-        set result 1
+    global provides_libgcc
+    if {[tbool provides_libgcc]} {
+        if {[catch {set result [active_variants ${other} {} with_libgcc]} err]} {
+            # port:${other} isn't installed or active; we accept that too.
+            set result 1
+        }
+        ui_debug "+with_libgcc compatibility due to port:${other}: ${result} ${err}"
+    } else {
+        set result 0
+        ui_debug "+with_libgcc incompatible because"
     }
-    ui_debug "+with_libgcc compatibility due to port:${other}: ${result} ${err}"
     return ${result}
 }
 set previous_version_allows [check_withlibgcc_compat gcc[expr ${major} - 1]]
@@ -414,7 +415,7 @@ if {${previous_version_allows} && ${next_version_allows}} {
     }
     long_description-append \
                     Users building from source can install port:${name}+with_libgcc \
-                    and port:libgcc+stub to avoid building everything twice.
+                    and port:libgcc7+stub to avoid building everything twice.
 }
 # the quick variant simplifies gcc patch development but also decreases the build time by a factor > 4. The
 # resulting compiler binaries appear to be about 1-2% slower.
@@ -601,7 +602,11 @@ post-destroot {
     ln -s gcc${ver3char} ${destroot}${prefix}/lib/${name}
 
     ### MacStrop private
-    preserve_libraries ${prefix}/lib/libgcc lib*.*.dylib
+    if {[tbool provides_libgcc]} {
+        preserve_libraries ${prefix}/lib/libgcc lib*.*.dylib
+    } else {
+        preserve_libraries ${prefix}/lib/libgcc libgfortran.*.dylib
+    }
     ### MacStrop private
 }
 
