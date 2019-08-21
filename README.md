@@ -85,5 +85,11 @@ in this tree are versions of ports from the main tree that have received some ki
 Please don't file duplicate issues, but if you do file a Trac ticket for something MacStrop-related please add me ("RJVB") in the 
 `Cc:` field on the Trac new ticket form. That will allow me to remain informed about the issue, and see what I can do about it here.
 
+Good MacPorts bug reporting practice has it that you attach the main log (`port logfile foo`). With modern computers having more and more
+CPU cores it can be difficult to read that file to understand the error because output from several parallel build processes is intermingled.
+So please have a look at the file after attaching it, and, for build failures, consider doing an additional build attempt with
+`port -nok build foo [variants-and-options] build.jobs=1`; the`build.jobs` argument will force a serial build and the `main.log` file will
+be rewritten with nicely serialised output of only the relevant part of the build procedure.
+
 ## Legal disclaimer (FWIW)
 Many of the files in this repositories are more or less verbatim copies of files available elsewhere. I have neither removed nor added copyright or license information/claims. The commit history will make it clear which portfiles and patches have been authored by me. Those are explicitly put in the public domain, for use in any way seen fit, including incorporation (of code in the patch files) in commercially available software (like Qt) as long as a reference is made to my original authorship. Contact me in case of doubt or necessity.
