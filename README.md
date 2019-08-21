@@ -1,7 +1,9 @@
 This is my "local port repository" for use with MacPorts, containing among others the first co-installable Qt4 and Qt5 ports and a collection of other ports not (yet) in or overriding those from the main repository.
 That includes ports for a growing selection of KF5 ("KDE5") applications and the KF5 Frameworks (see below).
 
-Instructions to use are given below. Make sure to read everything, especially the note about PortGroups.
+Instructions to use are given below. Make sure to read everything, especially the note about PortGroups. And the note about bug reports and feature requests.
+
+## Installation
 
 To "install", clone the repository to a location of choice. My original is in the root of the MacPorts prefix: /opt/local/site-ports; let's say you want to do the same:
 
@@ -27,6 +29,8 @@ and the new ports will be available.
 
 Ports that are in my repository but are also in the default repository will override those in the default repository (and all other repositories listed after site-ports in sources.conf). If you use the aforementioned [nosync] option, you'll have to update the tree yourself. In that case you may have to do `portindex -f` at least periodically, to account for changes like removed variants or subports.
 
+## PortGroups
+
 An important note: this repository also contains PortGroup files. These files that contain definitions that are used by multiple ports that share certain properties (form a group, say all ports that build using CMake, or that use Qt or KDE libraries). PortGroups are like C header files, or Python/Perl/Tcl packages, included via a specific command in a port's "Portfile". Note that PortGroups themselves can include other PortGroups in exactly the same way! An example: the command `PortGroup kf5 1.1` will include the file kf5-1.1.tcl, which will then include other PortGroup files like qt5-1.0.tcl, qt5-kde-1.0.tcl and cmake-1.1.tcl. Each file will be included from either the same _resources directory, or else from the default _resources directory.
 These PortGroups apply only to the ports in the local repository. This may lead to surprising behaviour and errors. For instance, if you install my port:qt5-kde or port:qt5-kde-devel, every port (including those in the official port tree) that requires Qt5 will need to use the corresponding Qt5 PortGroup (the qt5-*1.0.tcl files and probably qmake5-1.0.tcl), esp. if you plan to build them from source.
 You will thus have to copy the corresponding files from the /opt/local/site-ports/_resources directory to the same directory in the default port tree (defined in sources.conf). You will have to do this again after each selfupdate.
@@ -50,7 +54,11 @@ file:///opt/local/site-ports [own_portgroups_first]
 
 and (say) the MacStrop KF5 ports will still use the MacStrop Qt5 PortGroup. Note that options must be separated with commas, and that the own_portgroups_first option is moot for the first tree in the list.
 
+## Upgrades
+
 A note about upgrades: I am not very religous at all in bumping the port revision variable each time I change something minor. That means that even after running portindex those ports won't be updated automatically (marked as outdated). It is thus useful to know that any port can be reinstalled ("upgraded") with the command `port -ns upgrade --force foo` (the -n is strongly advisable here; without it all ports on which `foo` depends would be reinstalled).
+
+## KF5 ("KDE5")
 
 A note about the KF5 ports:
 These are designed to install much like the KDE4 ports from the official ports tree: using shared resources and dependencies.
@@ -63,5 +71,19 @@ It should also be possible to specify the +qt5kde variant in the install command
 
 I haven't tested this in a clean install; it is NOT necessary to specify the variant once port:qt5-kde is installed.
 
-Legal disclaimer (FWIW):
+## Bug reports, upgrade/feature requests, etc.
+
+Feel free to report issues or do upgrade or feature requests via the GitHub issue tracker. However, please consider the fact that many ports
+in this tree are versions of ports from the main tree that have received some kind of personal convenience tweak(s). So, in terms of rules of thumb:
+
+- upgrade requests go here
+- if an issue you're seeing is clearly related to my tweaks, it will go here
+- if a feature (or new port) request isn't compatible with or possible in the main tree (e.g. a new KF5 port), it'll go here
+- anything that also applies to the mainstream version of a port would go onto the MacPorts issue tracker (trac.macports.org)
+  (example: https://github.com/RJVB/macstrop/pull/64).
+
+Please don't file duplicate issues, but if you do file a Trac ticket for something MacStrop-related please add me ("RJVB") in the 
+`Cc:` field on the Trac new ticket form. That will allow me to remain informed about the issue, and see what I can do about it here.
+
+## Legal disclaimer (FWIW)
 Many of the files in this repositories are more or less verbatim copies of files available elsewhere. I have neither removed nor added copyright or license information/claims. The commit history will make it clear which portfiles and patches have been authored by me. Those are explicitly put in the public domain, for use in any way seen fit, including incorporation (of code in the patch files) in commercially available software (like Qt) as long as a reference is made to my original authorship. Contact me in case of doubt or necessity.
