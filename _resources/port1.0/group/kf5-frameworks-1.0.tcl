@@ -202,7 +202,7 @@ proc kf5.depends_frameworks {first args} {
         && [lsearch ${depends_lib} "docbook-x"] eq -1
     } {
         depends_lib-append \
-                        port:docbook-xml port:docbook-nons
+                        port:docbook-xml port:docbook-xsl-nons
     }
 }
 
@@ -221,7 +221,7 @@ proc kf5.depends_build_frameworks {first args} {
         && [lsearch ${depends_build} "docbook-x"] eq -1
     } {
         depends_build-append \
-                        port:docbook-xml port:docbook-nons
+                        port:docbook-xml port:docbook-xsl-nons
     }
 }
 
