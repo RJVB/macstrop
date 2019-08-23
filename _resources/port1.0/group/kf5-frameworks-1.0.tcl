@@ -199,7 +199,7 @@ proc kf5.depends_frameworks {first args} {
         kf5::has_translations
     }
     if {[lsearch -exact ${args} "kdoctools"] ne "-1"
-        && [lsearch ${depends_lib} "docbook-x"] eq -1
+        && [lsearch [option depends_lib] "docbook-x"] eq -1
     } {
         depends_lib-append \
                         port:docbook-xml port:docbook-xsl-nons
@@ -207,7 +207,6 @@ proc kf5.depends_frameworks {first args} {
 }
 
 proc kf5.depends_build_frameworks {first args} {
-    global depends_build
     # join ${first} and (the optional) ${args}
     set args [linsert $args[set list {}] 0 ${first}]
     foreach f ${args} {
@@ -218,7 +217,7 @@ proc kf5.depends_build_frameworks {first args} {
         kf5::has_translations
     }
     if {[lsearch -exact ${args} "kdoctools"] ne "-1"
-        && [lsearch ${depends_build} "docbook-x"] eq -1
+        && [lsearch [option depends_build] "docbook-x"] eq -1
     } {
         depends_build-append \
                         port:docbook-xml port:docbook-xsl-nons
