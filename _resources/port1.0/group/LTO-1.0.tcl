@@ -139,7 +139,9 @@ if {[string match *clang* ${configure.compiler}]} {
         # only MacPorts provides llvm-ar and family on Mac
         default configure.ar "[string map {"clang" "llvm-ar"} ${configure.cc}]"
         default configure.nm "[string map {"clang" "llvm-nm"} ${configure.cc}]"
-        default configure.ranlib "[string map {"clang" "llvm-ranlib"} ${configure.cc}]"
+#         default configure.ranlib "[string map {"clang" "llvm-ranlib"} ${configure.cc}]"
+        # ranlib is done by llvm-ar
+        default configure.ranlib "true"
         set LTO.custom_binaries 1
     }
 } elseif {${os.platform} eq "linux"} {
@@ -151,7 +153,9 @@ if {[string match *clang* ${configure.compiler}]} {
     } else {
         default configure.ar "[string map {"gcc" "gcc-ar"} ${configure.cc}]"
         default configure.nm "[string map {"gcc" "gcc-nm"} ${configure.cc}]"
-        default configure.ranlib "[string map {"gcc" "gcc-ranlib"} ${configure.cc}]"
+#         default configure.ranlib "[string map {"gcc" "gcc-ranlib"} ${configure.cc}]"
+        # done by gcc-ar
+        default configure.ranlib "true"
         set LTO.custom_binaries 1
     }
 }

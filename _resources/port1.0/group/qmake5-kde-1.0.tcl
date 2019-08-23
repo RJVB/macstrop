@@ -186,20 +186,20 @@ pre-configure {
         puts ${qt5::cache} "QMAKE_LINK_SHLIB=${configure.cxx}"
         if {[info exists configure.ar] && [info exists configure.nm] && [info exists configure.ranlib]} {
             if {[option LTO.use_archive_helpers]} {
-                    puts ${qt5::cache} "QMAKE_AR=${configure.ar}"
-                    puts ${qt5::cache} "QMAKE_NM=${configure.nm}"
-                    puts ${qt5::cache} "QMAKE_RANLIB=${configure.ranlib}"
+                    puts ${qt5::cache} "QMAKE_AR=${configure.ar} cqs"
+                    puts ${qt5::cache} "QMAKE_NM=${configure.nm} -P"
+                    puts ${qt5::cache} "QMAKE_RANLIB=${configure.ranlib} -s"
             }
         } elseif {[string match *clang++-mp* ${configure.cxx}]} {
                 set QMAKE_AR [string map {"clang++" "llvm-ar"} ${configure.cxx}]
                 set QMAKE_NM [string map {"clang++" "llvm-nm"} ${configure.cxx}]
                 set QMAKE_RANLIB [string map {"clang++" "llvm-ranlib"} ${configure.cxx}]
-                puts ${qt5::cache} "QMAKE_AR=${QMAKE_AR}"
-                puts ${qt5::cache} "QMAKE_NM=${QMAKE_NM}"
-                puts ${qt5::cache} "QMAKE_RANLIB=${QMAKE_RANLIB}"
+                puts ${qt5::cache} "QMAKE_AR=${QMAKE_AR} cqs"
+                puts ${qt5::cache} "QMAKE_NM=${QMAKE_NM} -P"
+                puts ${qt5::cache} "QMAKE_RANLIB=${QMAKE_RANLIB} -s"
         }
-        puts ${qt5::cache} "QMAKE_AR_LTCG=\$\$QMAKE_AR cqs"
-        puts ${qt5::cache} "QMAKE_NM_LTCG=\$\$QMAKE_NM -P"
+        puts ${qt5::cache} "QMAKE_AR_LTCG=\$\$QMAKE_AR"
+        puts ${qt5::cache} "QMAKE_NM_LTCG=\$\$QMAKE_NM"
     }
     # add our compiler options
     if {${qt5.unset_cflags} ne {}} {
