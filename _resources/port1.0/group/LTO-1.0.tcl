@@ -141,7 +141,7 @@ if {[string match *clang* ${configure.compiler}]} {
         default configure.nm "[string map {"clang" "llvm-nm"} ${configure.cc}]"
 #         default configure.ranlib "[string map {"clang" "llvm-ranlib"} ${configure.cc}]"
         # ranlib is done by llvm-ar
-        default configure.ranlib "true"
+        default configure.ranlib "/bin/echo"
         set LTO.custom_binaries 1
     }
 } elseif {${os.platform} eq "linux"} {
@@ -155,7 +155,7 @@ if {[string match *clang* ${configure.compiler}]} {
         default configure.nm "[string map {"gcc" "gcc-nm"} ${configure.cc}]"
 #         default configure.ranlib "[string map {"gcc" "gcc-ranlib"} ${configure.cc}]"
         # done by gcc-ar
-        default configure.ranlib "true"
+        default configure.ranlib "/bin/echo"
         set LTO.custom_binaries 1
     }
 }
