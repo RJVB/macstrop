@@ -52,6 +52,35 @@ if {${subport} eq "${name}-devel"} {
 # sadly this port isn't compatible with KDE4's digikam
 conflicts-append    digikam
 
+    ### the KF5 buildsystem has a habit of adding *lots* of -I options that each include the full
+    ### ${build.dir} or ${worksrcpath}, leading to command argument lists that are approaching the
+    ### limit. Pull a hack to shorten the
+    package require cksum
+    set portdb [file dirname ${portpath}]
+    # category/portdir:
+    set portcat [file tail ${portdb}]
+    set portdir [file join ${portcat} [file tail ${portpath}]]
+    set portdb [file dirname ${portdb}]
+    ui_debug "### shortening ${portbuildpath} with crc::cksum from package cksum ###"
+    ui_debug "${portpath} cksum=[crc::cksum ${portpath}] ${portdb}|${portdir} -> [crc::cksum ${portdb}]|[crc::cksum ${portdir}]"
+    set portbuildpath.old ${portbuildpath}
+    set worksrcpath.old ${worksrcpath}
+    set workdir [crc::cksum ${portdb}]/${portcat}
+    set portbuildpath [file join ${portdbpath} build ${workdir}]
+    ui_debug "${portpath}->${workdir}"
+    ui_debug "old.portbuildpath=${portbuildpath.old}"
+    ui_debug "    portbuildpath=${portbuildpath}"
+    ui_debug "old.worksrcpath=${worksrcpath.old}"
+    ui_debug "    worksrcpath=${worksrcpath}"
+    pre-fetch {
+        system "mkdir -p ${portbuildpath}"
+    }
+    # ensure that the actual portbuildpath can also be found via the usual, expected standard path:
+    if {[file exists ${portbuildpath}] && ![file exists ${portbuildpath.old}]} {
+        ln -s ${portbuildpath} ${portbuildpath.old}
+    }
+
+
 kf5.depends_build_frameworks \
                     kdoctools
 
@@ -161,6 +190,7 @@ configure.args-append \
                     -DENABLE_KFILEMETADATASUPPORT=ON \
                     -DENABLE_OPENCV3=ON \
                     -DENABLE_MEDIAPLAYER=OFF \
+                    -DCMAKE_DISABLE_FIND_PACKAGE_QtAV=ON \
                     -DENABLE_DBUS=ON
 ifplatform other {
     configure.args-append \
@@ -189,16 +219,20 @@ if {[variant_isset docs]} {
 
 patchfiles-append       patch-prefix.diff \
                         patch-notdefined-syntax.diff
-patchfiles-append       patch-disable-qtav.diff
+# patchfiles-append       patch-disable-qtav.diff
 
 # allow toggling the menubar on Mac too, for use with 
 # qt5-kde*-x11 and/or Qt::AA_DontUseNativeMenuBar=true
 patchfiles-append       patch-menubar-action.diff
 patchfiles-append       patch-default-nativedialogs.diff
+patchfiles-append       patch-allow-ciment-theme.diff
 
 # fix a QtAV version check:
 patchfiles-append       patch-qtav-version.diff
 patchfiles-append       patch-avoid-crash.diff
+
+# fix compatibility with ImageMagick 7
+patchfiles-append       patch-imagick7-compat.diff
 
 # Option to check MySQL availability before compiling target
 
@@ -206,7 +240,7 @@ set use_msql            no
 
 configure.args-append   -DENABLE_INTERNALMYSQL=off -DENABLE_MYSQLSUPPORT=off
 
-variant mysql_check conflicts mariadb description {Check MySQL availability before building digiKam} {
+variant mysql_check conflicts mariadb description {Include MySQL support in digiKam} {
     configure.args-delete  -DENABLE_INTERNALMYSQL=off -DENABLE_MYSQLSUPPORT=off
     configure.args-append  -DENABLE_INTERNALMYSQL=on -DENABLE_MYSQLSUPPORT=on
     platform darwin {
@@ -214,7 +248,7 @@ variant mysql_check conflicts mariadb description {Check MySQL availability befo
     }
     set use_msql            yes
 }
-variant mariadb conflicts mysql_check description {Use MariaDB instead of MySQL} {
+variant mariadb conflicts mysql_check description {Use MariaDB for MySQL support in digiKam} {
     configure.args-delete   -DENABLE_INTERNALMYSQL=off -DENABLE_MYSQLSUPPORT=off
     configure.args-append   -DENABLE_INTERNALMYSQL=on -DENABLE_MYSQLSUPPORT=on
     platform darwin {
@@ -226,10 +260,12 @@ variant mariadb conflicts mysql_check description {Use MariaDB instead of MySQL}
 
 variant video description {Include video support} {
     depends_lib-append      path:include/QtAV/QtAV.h:QtAV
-    patchfiles-replace      patch-disable-qtav.diff \
-                            patch-qtav-are-regular-libs.diff
+    patchfiles-append       patch-qtav-are-regular-libs.diff
     configure.args-replace  -DENABLE_MEDIAPLAYER=OFF \
                             -DENABLE_MEDIAPLAYER=ON
+    # NB: disabling QtAV lookup will cause CMake to fail when using the Ninja generator
+    configure.args-replace  -DCMAKE_DISABLE_FIND_PACKAGE_QtAV=ON \
+                            -DCMAKE_DISABLE_FIND_PACKAGE_QtAV=OFF
 }
 default_variants +video
 
