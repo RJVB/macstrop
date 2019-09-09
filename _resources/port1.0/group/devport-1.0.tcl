@@ -1,7 +1,7 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
 
 # Copyright (c) 2015 The MacPorts Project
-# Copyright (c) 2017 RJVB
+# Copyright (c) 2017-2019 RJVB
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -100,6 +100,19 @@ proc register_devport_standard_content {} {
         foreach h [glob -nocomplain ${destroot}${prefix}/lib/pkgconfig/*] {
             ui_debug "\tpkg-config file: ${h}"
             devport_content-append [string map [list ${destroot} ""] ${h}]
+        }
+    }
+}
+
+proc append_to_devport_standard_content {args} {
+    global subport destroot prefix name
+    if {${subport} eq "${name}"} {
+        foreach pattern ${args} {
+            ui_debug "Finding and registering additional content for the devport: \"${pattern}\""
+            foreach h [glob ${destroot}${pattern}] {
+                ui_debug "\tmatching: ${h}"
+                devport_content-append [string map [list ${destroot} ""] ${h}]
+            }
         }
     }
 }
