@@ -117,6 +117,43 @@ proc append_to_devport_standard_content {args} {
     }
 }
 
+# check for the presence and basic validity of the -dev port tarball,
+# restoring the file from the main port install image if required.
+# Main purpose: allow reinstalling the -dev port after uninstalling it,
+# without having to reinstall/re-activate the main port.
+# Warnings but no errors are raised if this fails.
+proc restore_devport_tarball {baseport} {
+    if {[file exists ${dev::archdir}/${dev::archname}]
+        && [file size ${dev::archdir}/${dev::archname}] > 0} {
+        return
+    }
+    if {![catch {set installed [lindex [registry_active ${baseport}] 0]}]} {
+        set cVersion [lindex $installed 1]
+        set cRevision [lindex $installed 2]
+        set cVariants [lindex $installed 3]
+        global name subport portdbpath os.platform os.major build_arch portarchivetype prefix
+        set portimage "${portdbpath}/software/${baseport}/${baseport}-${cVersion}_${cRevision}${cVariants}.${os.platform}_${os.major}.${build_arch}.${portarchivetype}"
+        if {[file exists ${portimage}]} {
+            if {[catch {system -W ${prefix} "bsdtar -xf ${portimage} .${dev::archdir}/${dev::archname}"} err]} {
+                ui_warn "Failure restoring ${dev::archdir}/${dev::archname}: ${err}"
+            } elseif {![file exists ${dev::archdir}/${dev::archname}]
+                || [file size ${dev::archdir}/${dev::archname}] == 0} {
+                ui_warn "Failure restoring ${dev::archdir}/${dev::archname} - did you use sudo?"
+                system "ls -l ${dev::archdir}/${dev::archname}*"
+            }
+
+        } else {
+            ui_warn "Calculated port image \"${portimage}\" doesn't exist"
+            if {[file exists ${portdbpath}/software/${baseport}]} {
+                ui_warn "Image directory content:"
+                system "ls -1 ${portdbpath}/software/${baseport}"
+            }
+        }
+    } else {
+        ui_warn "Cannot determine installed image name for ${baseport}"
+    }
+}
+
 proc unpack_devport_content {} {
     global destroot prefix name subport
     if {[file exists ${dev::archdir}/${dev::archname}]} {
@@ -132,6 +169,8 @@ proc unpack_devport_content {} {
 
 proc create_devport {dependency} {
     global name devport_description devport_long_description
+    # just so we're clear that what port we're talking about (the main port):
+    set baseport ${name}
     subport ${name}-dev {
         description     [join ${devport_description}]
         long_description [join ${devport_long_description}]
@@ -150,6 +189,7 @@ proc create_devport {dependency} {
         patchfiles
         build           {}
         destroot {
+            restore_devport_tarball ${baseport}
             unpack_devport_content
         }
         pre-activate {
