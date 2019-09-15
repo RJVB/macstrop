@@ -156,14 +156,15 @@ proc restore_devport_tarball {baseport} {
 
 proc unpack_devport_content {} {
     global destroot prefix name subport
-    if {[file exists ${dev::archdir}/${dev::archname}]} {
+    if {[file exists ${dev::archdir}/${dev::archname}]
+        && [file size ${dev::archdir}/${dev::archname}] > 0} {
         ui_debug "Unpacking \"${dev::archdir}/${dev::archname}\" for ${subport}"
         if {[catch {system -W ${destroot} "bsdtar -xvf ${dev::archdir}/${dev::archname}"} err]} {
             ui_error "Failure unpacking ${dev::archdir}/${dev::archname}: ${err}"
         }
     } else {
-        ui_error "The port's content archive doesn't exists (${dev::archdir}/${dev::archname})!"
-        return -code error "Missing content archive; try re-activating or reinstalling port:${name}"
+        ui_error "The port's content archive doesn't exists or is empty (${dev::archdir}/${dev::archname})!"
+        return -code error "Missing or invalid content archive; try re-activating or reinstalling port:${name}"
     }
 }
 
