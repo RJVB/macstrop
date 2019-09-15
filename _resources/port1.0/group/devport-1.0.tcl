@@ -169,7 +169,7 @@ proc unpack_devport_content {} {
 }
 
 proc create_devport {dependency} {
-    global name devport_description devport_long_description
+    global name devport_description devport_long_description baseport
     # just so we're clear that what port we're talking about (the main port):
     set baseport ${name}
     subport ${name}-dev {
