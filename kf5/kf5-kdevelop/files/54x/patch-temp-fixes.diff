@@ -1,0 +1,156 @@
+diff --git plugins/quickopen/quickopenplugin.cpp plugins/quickopen/quickopenplugin.cpp
+index 0da101cdda0eeecc131e5a6625d3389cb4eef390..eef69c4a21e5db2bd961f1e2aff7011cf04c8b84 100644
+--- plugins/quickopen/quickopenplugin.cpp
++++ plugins/quickopen/quickopenplugin.cpp
+@@ -844,7 +844,7 @@ struct CreateOutlineDialog
+                     // already called 'widget->show()'.
+                     auto list = dialog->widget()->ui.list;
+                     QMetaObject::invokeMethod(list, "setCurrentIndex", Qt::QueuedConnection, Q_ARG(QModelIndex, index));
+-                    QMetaObject::invokeMethod(list, "scrollTo", Qt::QueuedConnection, Q_ARG(QModelIndex, index), Q_ARG(QAbstractItemView::ScrollHint, QAbstractItemView::PositionAtCenter));
++                    QMetaObject::invokeMethod(list, "scrollTo", Qt::QueuedConnection, Q_ARG(const QModelIndex, index), Q_ARG(QAbstractItemView::ScrollHint, QAbstractItemView::PositionAtCenter));
+                 }
+                 ++num;
+             }
+diff --git kdevplatform/language/duchain/topducontextdynamicdata.cpp kdevplatform/language/duchain/topducontextdynamicdata.cpp
+index c56fac0..ec7cd23 100644
+--- kdevplatform/language/duchain/topducontextdynamicdata.cpp
++++ kdevplatform/language/duchain/topducontextdynamicdata.cpp
+@@ -407,7 +407,7 @@ Item TopDUContextDynamicData::DUChainItemStorage<Item>::getItemForIndex(uint ind
+                                     "Potentially, the context has been deleted without deleting its children.");
+     item->rebuildDynamicData(parent, index);
+   } else {
+-    qCWarning(LANGUAGE) << "invalid item for index" << index << offsets.size() << offsets.value(realIndex).dataOffset;
++    qCDebug(LANGUAGE) << "invalid item for index" << index << offsets.size() << offsets.value(realIndex).dataOffset;
+   }
+ 
+   return item;
+diff --git kdevplatform/sublime/idealcontroller.cpp kdevplatform/sublime/idealcontroller.cpp
+index 03715233b..b3ef57ff6 100644
+--- kdevplatform/sublime/idealcontroller.cpp
++++ kdevplatform/sublime/idealcontroller.cpp
+@@ -40,6 +40,8 @@
+ #include "idealdockwidget.h"
+ #include "idealbuttonbarwidget.h"
+ 
++#include <QDebug>
++
+ using namespace Sublime;
+ 
+ IdealController::IdealController(Sublime::MainWindow* mainWindow):
+@@ -150,7 +151,14 @@ void IdealController::dockLocationChanged(Qt::DockWidgetArea area)
+ {
+     IdealDockWidget *dock = qobject_cast<IdealDockWidget*>(sender());
+     View *view = dock->view();
+-    QAction* action = m_view_to_action.value(view);
++    QAction* action = nullptr;
++    if (m_view_to_action.contains(view)) {
++        action = m_view_to_action.value(view);
++    }
++    if (!action) {
++        qCritical() << Q_FUNC_INFO << "View" << view << "has no known hide/shown action";
++        return;
++    }
+ 
+     if (dock->dockWidgetArea() == area) {
+         // this event can happen even when dock changes its location within the same area
+@@ -240,8 +248,15 @@ void IdealController::raiseView(View* view, RaiseMode mode)
+     ///       for toolviews of the same type.
+     mode = HideOtherViews;
+ 
+-    QAction* action = m_view_to_action.value(view);
++    QAction* action = nullptr;
++    if (m_view_to_action.contains(view)) {
++        action = m_view_to_action.value(view);
++    }
+     Q_ASSERT(action);
++    if (!action) {
++        qCritical() << Q_FUNC_INFO << "View" << view << "has no known hide/shown action";
++        return;
++    }
+ 
+     QWidget *focusWidget = m_mainWindow->focusWidget();
+ 
+@@ -297,7 +312,7 @@ QWidget* IdealController::statusBarLocation() const
+ 
+ QAction* IdealController::actionForView(View* view) const
+ {
+-    return m_view_to_action.value(view);
++    return m_view_to_action.contains(view) ? m_view_to_action.value(view) : nullptr;
+ }
+ 
+ void IdealController::setShowDockStatus(Qt::DockWidgetArea area, bool checked)
+diff --git kdevplatform/language/duchain/duchainregister.cpp kdevplatform/language/duchain/duchainregister.cpp
+index 60fa3358af..59ba544fa7 100644
+--- kdevplatform/language/duchain/duchainregister.cpp
++++ kdevplatform/language/duchain/duchainregister.cpp
+@@ -32,7 +32,7 @@ DUChainItemSystem::~DUChainItemSystem()
+ }
+ 
+ DUChainBase* DUChainItemSystem::create(DUChainBaseData* data) const {
+-  if(uint(m_factories.size()) <= data->classId || m_factories[data->classId] == nullptr)
++  if(!data || uint(m_factories.size()) <= data->classId || m_factories[data->classId] == nullptr)
+     return nullptr;
+   return m_factories[data->classId]->create(data);
+ }
+@@ -46,13 +46,13 @@ DUChainBaseData* DUChainItemSystem::cloneData(const DUChainBaseData& data) const
+ }
+ 
+ void DUChainItemSystem::callDestructor(DUChainBaseData* data) const {
+-  if(uint(m_factories.size()) <= data->classId || m_factories[data->classId] == nullptr)
++  if(!data || uint(m_factories.size()) <= data->classId || m_factories[data->classId] == nullptr)
+     return;
+   m_factories[data->classId]->callDestructor(data);
+ }
+ 
+ void DUChainItemSystem::freeDynamicData(KDevelop::DUChainBaseData* data) const {
+-  if(uint(m_factories.size()) <= data->classId || m_factories[data->classId] == nullptr)
++  if(!data || uint(m_factories.size()) <= data->classId || m_factories[data->classId] == nullptr)
+     return;
+   m_factories[data->classId]->freeDynamicData(data);
+ 
+diff --git plugins/clang/duchain/builder.cpp plugins/clang/duchain/builder.cpp
+index 484265dc01..c097705e72 100644
+--- plugins/clang/duchain/builder.cpp
++++ plugins/clang/duchain/builder.cpp
+@@ -463,7 +463,7 @@ struct Visitor
+             auto it = m_parentContext->previousChildContexts.begin();
+             while (it != m_parentContext->previousChildContexts.end()) {
+                 auto ctx = *it;
+-                if (ctx->type() == Type && ctx->indexedLocalScopeIdentifier() == indexedScopeId) {
++                if (ctx && ctx->type() == Type && ctx->indexedLocalScopeIdentifier() == indexedScopeId) {
+                     ctx->setRange(range);
+                     m_parentContext->resortChildContexts = true;
+                     m_parentContext->previousChildContexts.erase(it);
+diff --git plugins/clang/tests/test_assistants.cpp plugins/clang/tests/test_assistants.cpp
+index ef48748595f211d417137559e0d17485cdfd42d4..217559107694e85172887ff68270cbded3925d04 100644
+--- plugins/clang/tests/test_assistants.cpp
++++ plugins/clang/tests/test_assistants.cpp
+@@ -70,6 +70,13 @@ void TestAssistants::initTestCase()
+         "kdevelop.plugins.clang.debug=true\n"
+     ));
+     QVERIFY(qputenv("KDEV_CLANG_DISPLAY_DIAGS", "1"));
++    // Set TMPDIR to the canonical version of QDir::tempPath(); this equals
++    // setting TMPDIR to the canonical representation of itself on systems
++    // where this variable is set (on Mac it is likely to be set to a path
++    // containing a symlink).
++    // Doing this prevents DocumentController problems when QTemporaryDir
++    // returns a path containing a symlink.
++    qputenv("TMPDIR", QFileInfo(QDir::tempPath()).canonicalFilePath().toUtf8().constData());
+     AutoTestShell::init({QStringLiteral("kdevclangsupport"), QStringLiteral("kdevproblemreporter")});
+     TestCore::initialize();
+     DUChain::self()->disablePersistentStorage();
+@@ -200,7 +207,13 @@ private:
+     {
+         Core::self()->documentController()->openDocument(url);
+         DUChain::self()->waitForUpdate(IndexedString(url), KDevelop::TopDUContext::AllDeclarationsAndContexts);
+-        return Core::self()->documentController()->documentForUrl(url)->textDocument();
++        const auto doc = Core::self()->documentController()->documentForUrl(url);
++        if (doc) {
++            return doc->textDocument();
++        } else {
++            qCritical() << "DocumentController:documentForUrl() returns NULL for" << url;
++            return nullptr;
++        }
+     }
+ 
+     IncludeBehavior m_includeBehavior;

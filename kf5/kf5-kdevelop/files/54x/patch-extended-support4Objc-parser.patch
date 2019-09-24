@@ -1,0 +1,214 @@
+diff --git  plugins/clang/duchain/builder.cpp  plugins/clang/duchain/builder.cpp
+index d173c33e6cd40a25c4e303e1027f13c35da5dc1a..1d9816826a2f0b2571f29159128dbd73fcd1aa92 100644
+---  plugins/clang/duchain/builder.cpp
++++  plugins/clang/duchain/builder.cpp
+@@ -1202,7 +1202,7 @@ CXChildVisitResult Visitor::buildParmDecl(CXCursor cursor)
+ CXChildVisitResult Visitor::buildUse(CXCursor cursor)
+ {
+     m_uses[m_parentContext->context].push_back(cursor);
+-    return cursor.kind == CXCursor_DeclRefExpr || cursor.kind == CXCursor_MemberRefExpr ?
++    return cursor.kind == CXCursor_DeclRefExpr || cursor.kind == CXCursor_MemberRefExpr || cursor.kind == CXCursor_ObjCMessageExpr?
+         CXChildVisit_Recurse : CXChildVisit_Continue;
+ }
+ 
+@@ -1221,9 +1221,9 @@ CXChildVisitResult Visitor::buildMacroExpansion(CXCursor cursor)
+ template<CXCursorKind CK>
+ CXChildVisitResult Visitor::buildCompoundStatement(CXCursor cursor)
+ {
+-    if (CK == CXCursor_LambdaExpr || m_parentContext->context->type() == DUContext::Function)
++    if (CK == CXCursor_LambdaExpr || CK == CXCursor_BlockExpr || m_parentContext->context->type() == DUContext::Function)
+     {
+-        auto context = createContext<CK, CK == CXCursor_LambdaExpr ? DUContext::Function : DUContext::Other>(cursor);
++        auto context = createContext<CK, CK == CXCursor_LambdaExpr || CK == CXCursor_BlockExpr ? DUContext::Function : DUContext::Other>(cursor);
+         CurrentContext newParent(context, m_parentContext->keepAliveContexts);
+         PushValue<CurrentContext*> pushCurrent(m_parentContext, &newParent);
+         clang_visitChildren(cursor, &visitCursor, this);
+@@ -1560,6 +1560,7 @@ CXChildVisitResult visitCursor(CXCursor cursor, CXCursor parent, CXClientData da
+     case CXCursor_DeclRefExpr:
+     case CXCursor_MemberRefExpr:
+     case CXCursor_ObjCClassRef:
++    case CXCursor_ObjCMessageExpr:
+         return visitor->buildUse(cursor);
+     case CXCursor_MacroExpansion:
+         return visitor->buildMacroExpansion(cursor);
+@@ -1567,6 +1568,8 @@ CXChildVisitResult visitCursor(CXCursor cursor, CXCursor parent, CXClientData da
+         return visitor->buildCompoundStatement<CXCursor_CompoundStmt>(cursor);
+     case CXCursor_LambdaExpr:
+         return visitor->buildCompoundStatement<CXCursor_LambdaExpr>(cursor);
++    case CXCursor_BlockExpr:
++        return visitor->buildCompoundStatement<CXCursor_BlockExpr>(cursor);
+     case CXCursor_CXXBaseSpecifier:
+         return visitor->buildCXXBaseSpecifier(cursor);
+     case CXCursor_ParmDecl:
+diff --git  plugins/clang/duchain/cursorkindtraits.h  plugins/clang/duchain/cursorkindtraits.h
+index a5219d1a01775de3ea8ad6ef9a196409035f93c3..2cdb3e3905329c2a52789875bdb8ecf1481c5260 100644
+---  plugins/clang/duchain/cursorkindtraits.h
++++  plugins/clang/duchain/cursorkindtraits.h
+@@ -55,6 +55,19 @@ constexpr bool isClass(CXCursorKind CK)
+     || CK == CXCursor_ObjCCategoryImplDecl;
+ }
+ 
++// TODO: somehow this is (probably) the function to call in isKDevForwardDeclaration() but
++// I cannot seem to understand how to achieve that without raising a ton of 
++// uncomprehensible errors in builder.cpp (I can't even remove the ObjC cursor
++// kinds from the isClass function above?!)
++// TODO: remove this comment.
++constexpr bool isClassNoObjC(CXCursorKind CK)
++{
++    return isClassTemplate(CK)
++    || CK == CXCursor_StructDecl
++    || CK == CXCursor_ClassDecl
++    || CK == CXCursor_UnionDecl;
++}
++
+ constexpr bool isFunction(CXCursorKind CK)
+ {
+     return CK == CXCursor_FunctionDecl
+diff --git  plugins/clang/duchain/documentfinderhelpers.cpp  plugins/clang/duchain/documentfinderhelpers.cpp
+index 10793421ec05ed6c298b11fee264bd0a0455ce40..181f471324937e72a6a8c8dca4186c3852779909 100644
+---  plugins/clang/duchain/documentfinderhelpers.cpp
++++  plugins/clang/duchain/documentfinderhelpers.cpp
+@@ -181,7 +181,8 @@ QStringList mimeTypesList()
+         QStringLiteral("text/x-c++hdr"),
+         QStringLiteral("text/x-csrc"),
+         QStringLiteral("text/x-c++src"),
+-        QStringLiteral("text/x-objcsrc")
++        QStringLiteral("text/x-objcsrc"),
++        QStringLiteral("text/x-objc++src")
+     };
+     return mimeTypes;
+ }
+diff --git  plugins/clang/duchain/parsesession.cpp  plugins/clang/duchain/parsesession.cpp
+index 5d9366cbdc90c0ac36b2ab0a138786aa3c22d25d..e2eddaff3509fd8f610d9a1288b45c11f2ce516e 100644
+---  plugins/clang/duchain/parsesession.cpp
++++  plugins/clang/duchain/parsesession.cpp
+@@ -91,10 +91,7 @@ void sanitizeArguments(QVector<QByteArray>& arguments)
+ QVector<QByteArray> argsForSession(const QString& path, ParseSessionData::Options options, const ParserSettings& parserSettings)
+ {
+     QMimeDatabase db;
+-    if(db.mimeTypeForFile(path).name() == QStringLiteral("text/x-objcsrc")) {
+-        return {QByteArrayLiteral("-xobjective-c++")};
+-    }
+-
++    QString mimeType = db.mimeTypeForFile(path).name();
+     // TODO: No proper mime type detection possible yet
+     // cf. https://bugs.freedesktop.org/show_bug.cgi?id=26913
+     if (path.endsWith(QLatin1String(".cl"), Qt::CaseInsensitive)) {
+@@ -132,7 +129,15 @@ QVector<QByteArray> argsForSession(const QString& path, ParseSessionData::Option
+         return result;
+     }
+ 
+-    result.append(parserSettings.isCpp() ? QByteArrayLiteral("-xc++") : QByteArrayLiteral("-xc"));
++    if (mimeType == QStringLiteral("text/x-objc++src")) {
++        result.append(QByteArrayLiteral("-xobjective-c++"));
++    } else if (mimeType == QStringLiteral("text/x-objcsrc")) {
++        result.append(QByteArrayLiteral(" -ObjC"));
++    } else if (parserSettings.isCpp()) {
++       result.append(QByteArrayLiteral("-xc++"));
++    } else {
++       result.append(QByteArrayLiteral("-xc"));
++    }
+ 
+     sanitizeArguments(result);
+     return result;
+diff --git  plugins/clang/kdevclangsupport.json  plugins/clang/kdevclangsupport.json
+index a1183d3c848edc9d5e3a211e1154e4ca7f329b87..73981565c562a3c2cbf0da688e42f1d3b4f2cd5e 100644
+---  plugins/clang/kdevclangsupport.json
++++  plugins/clang/kdevclangsupport.json
+@@ -59,7 +59,8 @@
+         "C++",
+         "OpenCL C",
+         "CUDA C",
+-        "Objective-C"
++        "Objective-C",
++        "Objective-C++"
+     ],
+     "X-KDevelop-LoadMode": "AlwaysOn",
+     "X-KDevelop-Mode": "NoGUI",
+@@ -68,8 +69,9 @@
+         "text/x-c++hdr",
+         "text/x-csrc",
+         "text/x-c++src",
++        "text/x-objcsrc",
++        "text/x-objc++src",
+         "text/x-opencl-src",
+-        "text/vnd.nvidia.cuda.csrc",
+-        "text/x-objcsrc"
++        "text/vnd.nvidia.cuda.csrc"
+     ]
+ }
+diff --git plugins/clang/kdevclang.xml plugins/clang/kdevclang.xml
+index 7ed2acdf9e16b9cda409f0b300bb03d68965dd49..767f9fbdf43c8632e48138d896ffb8426c8ee488 100644
+--- plugins/clang/kdevclang.xml
++++ plugins/clang/kdevclang.xml
+@@ -57,4 +57,70 @@
+         <sub-class-of type="text/x-csrc"/>
+         <glob pattern="*.cu"/>
+     </mime-type>
++
++    <!--
++    Not yet registered, mimetype derived from the x-objcsrc type and also used in Qt Creator.
++    See https://bugs.freedesktop.org/show_bug.cgi?id=98823
++    -->
++    <mime-type type="text/x-objc++src">
++        <comment>Objective-C++ source code</comment>
++        <comment xml:lang="ar">شفرة مصدر الهدف-C</comment>
++        <comment xml:lang="ast">códigu fonte en Objective-C++</comment>
++        <comment xml:lang="be">Kryničny kod Objective-C++</comment>
++        <comment xml:lang="be@latin">Kryničny kod Objective-C++</comment>
++        <comment xml:lang="bg">Изходен код — Objective C++</comment>
++        <comment xml:lang="bo">Objective-C++ ཐོག་མའི་ཚབ་ཨང</comment>
++        <comment xml:lang="bs">Objektni-C izvorni kôd</comment>
++        <comment xml:lang="ca">codi font en Objective-C++</comment>
++        <comment xml:lang="cs">Zdrojový kód v Objective-C++</comment>
++        <comment xml:lang="da">Objektiv C-kildekode</comment>
++        <comment xml:lang="de">Objective-C++-Quelltext</comment>
++        <comment xml:lang="el">πηγαίος κώδικας Objective-C++</comment>
++        <comment xml:lang="en_AU">Objective-C++ source code</comment>
++        <comment xml:lang="en_GB">Objective-C++ source code</comment>
++        <comment xml:lang="eo">fontkodo en Objective-C++</comment>
++        <comment xml:lang="es">código fuente en Objective-C++</comment>
++        <comment xml:lang="eu">Objective-C++ iturburu-kodea</comment>
++        <comment xml:lang="fi">Objective-C++-lähdekoodi</comment>
++        <comment xml:lang="fo">Objective-C++ keldukota</comment>
++        <comment xml:lang="fr">code source Objective-C++</comment>
++        <comment xml:lang="ga">cód foinseach Objective-C++</comment>
++        <comment xml:lang="gl">código fonte de Objective-C++</comment>
++        <comment xml:lang="he">קוד מקור של Objective-C++</comment>
++        <comment xml:lang="hu">Objective-C++ forráskód</comment>
++        <comment xml:lang="id">Kode program Objective-C++</comment>
++        <comment xml:lang="it">Codice sorgente Objective-C++</comment>
++        <comment xml:lang="ja">Objective-C++ ソースコード</comment>
++        <comment xml:lang="ka">Objective-C++-ის საწყისი კოდი</comment>
++        <comment xml:lang="kk">Objective-C++ бастапқы коды</comment>
++        <comment xml:lang="ko">Objective-C++ 소스 코드</comment>
++        <comment xml:lang="lt">Objective-C++ pradinis kodas</comment>
++        <comment xml:lang="lv">Objective-C++ pirmkods</comment>
++        <comment xml:lang="ms">Kod sumber Objective-C++</comment>
++        <comment xml:lang="nb">Objective-C++-kildekode</comment>
++        <comment xml:lang="nl">Objective-C++-broncode</comment>
++        <comment xml:lang="nn">Objective-C++-kjeldekode</comment>
++        <comment xml:lang="no">Objective-C++-kildekode</comment>
++        <comment xml:lang="pl">Kod źródłowy Objective-C++</comment>
++        <comment xml:lang="pt">código fonte Objective-C++</comment>
++        <comment xml:lang="pt_BR">Código-fonte Objective-C++</comment>
++        <comment xml:lang="ro">Cod sursă Objective-C++</comment>
++        <comment xml:lang="ru">исходный код Objective-C++</comment>
++        <comment xml:lang="sk">Zdrojový kód Objective-C++</comment>
++        <comment xml:lang="sl">Datoteka izvorne kode Objective-C++</comment>
++        <comment xml:lang="sq">Kod burues C objekt</comment>
++        <comment xml:lang="sr">Објектни-C изворни ко̂д</comment>
++        <comment xml:lang="sv">Objective-C++-källkod</comment>
++        <comment xml:lang="tr">Objective-C++ kaynak kodu</comment>
++        <comment xml:lang="uk">вихідний код мовою Objective-C++</comment>
++        <comment xml:lang="vi">Mã nguồn Objective-C++</comment>
++        <comment xml:lang="zh_CN">Objective-C++ 源代码</comment>
++        <comment xml:lang="zh_TW">Objective-C++ 源碼</comment>
++        <sub-class-of type="text/x-c++src"/>
++        <sub-class-of type="text/x-objcsrc"/>
++        <magic priority="30">
++          <match value="#import" type="string" offset="0"/>
++        </magic>
++        <glob pattern="*.mm"/>
++    </mime-type>
+ </mime-info>

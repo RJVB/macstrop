@@ -1,0 +1,145 @@
+diff --git kdevplatform/shell/filteredproblemstore.cpp kdevplatform/shell/filteredproblemstore.cpp
+index 7ebdcdc4023575f7945daff3e5afc2034f25f97c..ff1f8f725af536567d5681f4fe6bef0b19eb15ee 100644
+--- kdevplatform/shell/filteredproblemstore.cpp
++++ kdevplatform/shell/filteredproblemstore.cpp
+@@ -27,6 +27,8 @@
+ 
+ #include <KLocalizedString>
+ 
++#include <QDebug>
++
+ using namespace KDevelop;
+ 
+ namespace
+@@ -36,10 +38,14 @@ namespace
+ void addDiagnostics(ProblemStoreNode *node, const QVector<IProblem::Ptr> &diagnostics)
+ {
+     for (const IProblem::Ptr& ptr : diagnostics) {
+-        auto *child = new ProblemNode(node, ptr);
+-        node->addChild(child);
++        if (ptr.data()){
++            auto *child = new ProblemNode(node, ptr);
++            node->addChild(child);
+ 
+-        addDiagnostics(child, ptr->diagnostics());
++            addDiagnostics(child, ptr->diagnostics());
++        } else {
++            qWarning() << Q_FUNC_INFO << "caught NULL ptr in" << diagnostics;
++        }
+     }
+ }
+ 
+diff --git kdevplatform/shell/projectcontroller.cpp kdevplatform/shell/projectcontroller.cpp
+index 47f9d193670699f3b2263173a23bf94455e4e07b..5734108d0267bb9c60b50ef5b4710c36085aeb21 100644
+--- kdevplatform/shell/projectcontroller.cpp
++++ kdevplatform/shell/projectcontroller.cpp
+@@ -808,7 +808,8 @@ void ProjectController::openProjectForUrl(const QUrl& sourceUrl) {
+             d->m_foundProjectFile = false;
+             return;
+         }
+-        QUrl oldTest = testAt.adjusted(QUrl::RemoveFilename);
++        QUrl oldTest = testAt;
++        testAt = testAt.adjusted(QUrl::RemoveFilename);
+         if(oldTest == testAt)
+             break;
+     }
+diff --git kdevplatform/vcs/dvcs/dvcsjob.cpp kdevplatform/vcs/dvcs/dvcsjob.cpp
+index d0e0b0befbb936d449eea2320eb329a3652a30be..1fa1b9f4f1ae6c422bc8e6c1ec0755f26ccac919 100644
+--- kdevplatform/vcs/dvcs/dvcsjob.cpp
++++ kdevplatform/vcs/dvcs/dvcsjob.cpp
+@@ -181,6 +181,16 @@ void DVcsJob::start()
+     Q_D(DVcsJob);
+ 
+     Q_ASSERT_X(d->status != JobRunning, "DVCSjob::start", "Another process was started using this job class");
++    if( d->status == JobRunning ) {
++        QString error = i18n( "Another process was started using this job class" );
++        d->model->appendLine(error);
++        setError( 255 );
++        setErrorText(error);
++        d->status = JobFailed;
++        emitResult();
++        qCWarning(VCS) << "DVCSjob::start:" << error;
++        return;
++    }
+ 
+     const QDir& workingdir = directory();
+     if( !workingdir.exists() ) {
+@@ -190,6 +200,7 @@ void DVcsJob::start()
+         setErrorText(error);
+         d->status = JobFailed;
+         emitResult();
++        qCWarning(VCS) << "DVCSjob::start:" << error;
+         return;
+     }
+     if( !workingdir.isAbsolute() ) {
+@@ -199,6 +210,7 @@ void DVcsJob::start()
+         setErrorText(error);
+         d->status = JobFailed;
+         emitResult();
++        qCWarning(VCS) << "DVCSjob::start:" << error;
+         return;
+     }
+ 
+@@ -216,6 +228,15 @@ void DVcsJob::start()
+     d->childproc->start();
+ 
+     d->model->appendLine(directory().path() + QLatin1String("> ") + commandDisplay);
++
++    if (!d->childproc->waitForStarted(1000)) {
++        QString error = i18n("DVCSJob::start: %1 failed to start after 1s: state=%2 %3",
++            commandDisplay, d->childproc->state(), d->childproc->errorString());
++        d->model->appendLine(error);
++        // don't raise the error (emitResult) and don't change the job's status
++        // just print a warning.
++        qCWarning(VCS) << error;
++    }
+ }
+ 
+ void DVcsJob::setCommunicationMode(KProcess::OutputChannelMode comm)
+@@ -241,9 +262,11 @@ void DVcsJob::slotProcessError( QProcess::ProcessError err )
+     setError(OutputJob::FailedShownError); //we don't want to trigger a message box
+ 
+     d->errorOutput = d->childproc->readAllStandardError();
++    QByteArray stdOut = d->childproc->readAllStandardOutput();
+ 
+     QString displayCommand = KShell::joinArgs(dvcsCommand());
+-    QString completeErrorText = i18n("Process '%1' exited with status %2\n%3", displayCommand, d->childproc->exitCode(), QString::fromLocal8Bit(d->errorOutput) );
++    QString completeErrorText = i18n("Process '%1' exited with status %2\n\"%3\"\n\"%4\"",
++        displayCommand, d->childproc->exitCode(), QString::fromLocal8Bit(stdOut), QString::fromLocal8Bit(d->errorOutput) );
+     setErrorText( completeErrorText );
+ 
+     QString errorValue;
+@@ -270,11 +293,11 @@ void DVcsJob::slotProcessError( QProcess::ProcessError err )
+         errorValue = QStringLiteral("UnknownError");
+         break;
+     }
+-    qCDebug(VCS) << "Found an error while running" << displayCommand << ":" << errorValue
++    qCWarning(VCS) << "Found an error while running" << displayCommand << ":" << errorValue
+                                                      << "Exit code is:" << d->childproc->exitCode();
+-    qCDebug(VCS) << "Error:" << completeErrorText;
+-    displayOutput(QString::fromLocal8Bit(d->errorOutput));
+-    d->model->appendLine(i18n("Command finished with error %1.", errorValue));
++    qCWarning(VCS) << "Error:" << completeErrorText;
++//     displayOutput(QString::fromLocal8Bit(d->errorOutput));
++    d->model->appendLine(i18n("%1 (%2).", completeErrorText, errorValue));
+ 
+     if(verbosity()==Silent) {
+         setVerbosity(Verbose);
+diff --git plugins/patchreview/patchreview.cpp plugins/patchreview/patchreview.cpp
+index 82265a8ae1a047aff54ac0054ed39f45f167309c..6f180aae37ca64594a170802322577e25d7f30df 100644
+--- plugins/patchreview/patchreview.cpp
++++ plugins/patchreview/patchreview.cpp
+@@ -424,7 +424,12 @@ void PatchReviewPlugin::switchToEmptyReviewArea()
+ QUrl PatchReviewPlugin::urlForFileModel( const Diff2::DiffModel* model )
+ {
+     KDevelop::Path path(QDir::cleanPath(m_patch->baseDir().toLocalFile()));
+-    QVector<QString> destPath = KDevelop::Path(QLatin1Char('/') + model->destinationPath()).segments();
++    QVector<QString> destPath;
++    if (model->destinationPath().startsWith(QLatin1Char('/'))) {
++        destPath = KDevelop::Path(model->destinationPath()).segments();
++    } else {
++        destPath = KDevelop::Path(QLatin1Char('/') + model->destinationPath()).segments();
++    }
+     if (destPath.size() >= (int)m_depth) {
+         destPath.remove(0, m_depth);
+     }

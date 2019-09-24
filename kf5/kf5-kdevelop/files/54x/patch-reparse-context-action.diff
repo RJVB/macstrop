@@ -1,0 +1,225 @@
+diff --git kdevplatform/interfaces/iprojectcontroller.h kdevplatform/interfaces/iprojectcontroller.h
+index a740b7ef72c897c830eb5c7cabed4e6e9b3e3a17..474dc5afd4dd591dc389e0b859de39a551b61dd3 100644
+--- kdevplatform/interfaces/iprojectcontroller.h
++++ kdevplatform/interfaces/iprojectcontroller.h
+@@ -148,8 +148,12 @@ public Q_SLOTS:
+ 
+     virtual void configureProject( IProject* ) = 0;
+ 
+-    /// Schedules all files of the @p project for reparsing by @see BackgroundParser
+-    virtual void reparseProject( IProject* project, bool ForceUpdate = false ) = 0;
++    /**
++     * Schedules all files of the @p project for reparsing by @see BackgroundParser
++     * The @p forceAll argument is for triggering a full reparse of the entire project
++     * after the initial import.
++     */
++    virtual void reparseProject( IProject* project, bool ForceUpdate = false, bool forceAll = false ) = 0;
+ 
+ //     virtual void changeCurrentProject( KDevelop::ProjectBaseItem* ) = 0;
+ 
+diff --git kdevplatform/language/backgroundparser/parseprojectjob.cpp kdevplatform/language/backgroundparser/parseprojectjob.cpp
+index 2d2a42e122ad818f1283a6ee45dd2138c388d303..01da98bd16f7b02c7768e22c0a5752c0fb28a6cf 100644
+--- kdevplatform/language/backgroundparser/parseprojectjob.cpp
++++ kdevplatform/language/backgroundparser/parseprojectjob.cpp
+@@ -41,14 +41,16 @@ using namespace KDevelop;
+ class KDevelop::ParseProjectJobPrivate
+ {
+ public:
+-    ParseProjectJobPrivate(IProject* project, bool forceUpdate)
++    ParseProjectJobPrivate(IProject* project, bool forceUpdate, bool forceAll)
+         : forceUpdate(forceUpdate)
++        , forceAll(forceAll)
+         , project(project)
+     {
+     }
+ 
+     int updated = 0;
+     bool forceUpdate;
++    bool forceAll;
+     KDevelop::IProject* project;
+     QSet<IndexedString> filesToParse;
+ };
+@@ -66,12 +68,14 @@ ParseProjectJob::~ParseProjectJob() {
+         ICore::self()->runController()->unregisterJob(this);
+ }
+ 
+-ParseProjectJob::ParseProjectJob(IProject* project, bool forceUpdate)
+-    : d(new ParseProjectJobPrivate(project, forceUpdate))
++ParseProjectJob::ParseProjectJob(IProject* project, bool forceUpdate, bool forceAll)
++    : d(new ParseProjectJobPrivate(project, forceUpdate, forceAll))
+ {
+     connect(project, &IProject::destroyed, this, &ParseProjectJob::deleteNow);
+ 
+-    if (!ICore::self()->projectController()->parseAllProjectSources()) {
++    if (forceAll || ICore::self()->projectController()->parseAllProjectSources()) {
++        d->filesToParse = project->fileSet();
++    } else {
+         // In case we don't want to parse the whole project, still add all currently open files that belong to the project to the background-parser
+         foreach (auto document, ICore::self()->documentController()->openDocuments()) {
+             const auto path = IndexedString(document->url());
+@@ -79,8 +83,6 @@ ParseProjectJob::ParseProjectJob(IProject* project, bool forceUpdate)
+                 d->filesToParse.insert(path);
+             }
+         }
+-    } else {
+-        d->filesToParse = project->fileSet();
+     }
+ 
+     setCapabilities(Killable);
+@@ -147,7 +149,7 @@ void ParseProjectJob::start() {
+         }
+     }
+ 
+-    if (!ICore::self()->projectController()->parseAllProjectSources()) {
++    if (!d->forceAll && !ICore::self()->projectController()->parseAllProjectSources()) {
+         return;
+     }
+ 
+diff --git kdevplatform/language/backgroundparser/parseprojectjob.h kdevplatform/language/backgroundparser/parseprojectjob.h
+index 66cae29f4b5e90b51b57bb0194c0eb34c3e3c2c4..536f518b7fd4c36e559eb62c8951e1763adb0125 100644
+--- kdevplatform/language/backgroundparser/parseprojectjob.h
++++ kdevplatform/language/backgroundparser/parseprojectjob.h
+@@ -28,13 +28,19 @@ namespace KDevelop {
+ class ReferencedTopDUContext;
+ class IProject;
+ 
+-///A job that parses all project-files in the given project
+-///Deletes itself as soon as the project is deleted
++///A job that parses all project-files in the given project either
++///when KDevelop is configured to parse all files at project import
++///(see ProjectController:parseAllProjectSources()) or when the
++///forceAll argument is true. That forceAll argument allows to
++///trigger a full project reparse after the initial import, e.g.
++///via the project manager's context menu.
++///ParseProjectJob instances delete themselves as soon as the project
++///is deleted or when a new job is started.
+ class KDEVPLATFORMLANGUAGE_EXPORT ParseProjectJob : public KJob
+ {
+     Q_OBJECT
+ public:
+-    explicit ParseProjectJob(KDevelop::IProject* project, bool forceUpdate = false );
++    explicit ParseProjectJob(KDevelop::IProject* project, bool forceUpdate = false, bool forceAll = false );
+     ~ParseProjectJob() override;
+     void start() override;
+     bool doKill() override;
+diff --git kdevplatform/shell/projectcontroller.cpp kdevplatform/shell/projectcontroller.cpp
+index 42170702f216f67c228ff370207e379ebb2477d5..b19c9a2242850e1b53f0ef36103b10f37c031291 100644
+--- kdevplatform/shell/projectcontroller.cpp
++++ kdevplatform/shell/projectcontroller.cpp
+@@ -263,25 +263,7 @@ public:
+         m_closeProject->setEnabled(itemCount > 0);
+     }
+ 
+-    void openProjectConfig()
+-    {
+-        // if only one project loaded, this is our target
+-        IProject *project = (m_projects.count() == 1) ? m_projects.at(0) : nullptr;
+-
+-        // otherwise base on selection
+-        if (!project) {
+-            ProjectItemContext* ctx = dynamic_cast<ProjectItemContext*>(ICore::self()->selectionController()->currentSelection());
+-            if (ctx && ctx->items().count() == 1) {
+-                project = ctx->items().at(0)->project();
+-            }
+-        }
+-
+-        if (project) {
+-            q->configureProject(project);
+-        }
+-    }
+-
+-    void closeSelectedProjects()
++    QSet<IProject*> selectedProjects()
+     {
+         QSet<IProject*> projects;
+ 
+@@ -290,15 +272,28 @@ public:
+             projects.insert(m_projects.at(0));
+         } else {
+             // otherwise base on selection
+-            ProjectItemContext* ctx =  dynamic_cast<ProjectItemContext*>(ICore::self()->selectionController()->currentSelection());
++            ProjectItemContext* ctx = dynamic_cast<ProjectItemContext*>(ICore::self()->selectionController()->currentSelection());
+             if (ctx) {
+                 foreach (ProjectBaseItem* item, ctx->items()) {
+                     projects.insert(item->project());
+                 }
+             }
+         }
++        return projects;
++    }
++
++    void openProjectConfig()
++    {
++        auto projects = selectedProjects();
++
++        if (projects.count() == 1) {
++            q->configureProject(*projects.constBegin());
++        }
++    }
+ 
+-        foreach (IProject* project, projects) {
++    void closeSelectedProjects()
++    {
++        foreach (IProject* project, selectedProjects()) {
+             q->closeProject(project);
+         }
+     }
+@@ -1180,12 +1175,27 @@ ContextMenuExtension ProjectController::contextMenuExtension(Context* ctx, QWidg
+ {
+     Q_UNUSED(parent);
+     ContextMenuExtension ext;
+-    if ( ctx->type() != Context::ProjectItemContext || !static_cast<ProjectItemContext*>(ctx)->items().isEmpty() ) {
++    if ( ctx->type() != Context::ProjectItemContext) {
++        return ext;
++    }
++    if (!static_cast<ProjectItemContext*>(ctx)->items().isEmpty() ) {
++
++        QAction *action = new QAction(this);
++        connect(action, &QAction::triggered, this, [&] {
++            foreach (auto project, d->selectedProjects()) {
++                reparseProject(project, true, true);
++            }
++        });
++
++        action->setText( i18n( "Reparse the Entire Project" ) );
++        ext.addAction(ContextMenuExtension::ProjectGroup, action);
+         return ext;
+     }
++
+     ext.addAction(ContextMenuExtension::ProjectGroup, d->m_openProject);
+     ext.addAction(ContextMenuExtension::ProjectGroup, d->m_fetchProject);
+     ext.addAction(ContextMenuExtension::ProjectGroup, d->m_recentProjectsAction);
++
+     return ext;
+ }
+ 
+@@ -1285,13 +1295,13 @@ QString ProjectController::mapSourceBuild( const QString& path_, bool reverse, b
+     return QString();
+ }
+ 
+-void ProjectController::reparseProject( IProject* project, bool forceUpdate )
+-{
++    void KDevelop::ProjectController::reparseProject(IProject *project, bool forceUpdate, bool forceAll)
++    {
+     if (auto job = d->m_parseJobs.value(project)) {
+         job->kill();
+     }
+ 
+-    d->m_parseJobs[project] = new KDevelop::ParseProjectJob(project, forceUpdate);
++    d->m_parseJobs[project] = new KDevelop::ParseProjectJob(project, forceUpdate, forceAll);
+     ICore::self()->runController()->registerJob(d->m_parseJobs[project]);
+ }
+ 
+diff --git kdevplatform/shell/projectcontroller.h kdevplatform/shell/projectcontroller.h
+index 5177dfd7762b62e6018d745e7df78ed97ea5cf0f..0912b56f143371fbf71eead5c9650b5ea1a979d6 100644
+--- kdevplatform/shell/projectcontroller.h
++++ kdevplatform/shell/projectcontroller.h
+@@ -113,7 +113,7 @@ public Q_SLOTS:
+     void closeAllProjects() override;
+     void configureProject( IProject* ) override;
+ 
+-    void reparseProject( IProject* project, bool forceUpdate = false  ) override;
++    void reparseProject( IProject* project, bool forceUpdate = false, bool forceAll = false  ) override;
+ 
+     void eventuallyOpenProjectFile(KIO::Job* job, const KIO::UDSEntryList& entries);
+     void openProjectForUrlSlot(bool);
