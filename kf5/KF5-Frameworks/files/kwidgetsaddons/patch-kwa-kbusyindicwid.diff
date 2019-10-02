@@ -1,0 +1,342 @@
+commit 2631be903f947872f67c9e2063950345dda9033e
+Author: Harald Sitter <sitter@kde.org>
+Date:   Wed Jul 10 15:06:46 2019 +0200
+
+    new class KBusyIndicatorWidget similar to QtQuick's BusyIndicator
+    
+    Summary:
+    this mimics QQC's BusyIndicator and more specifically our styling of it.
+    
+    KBIW loads an icon from the icon theme, scales it to the widget size
+    and rotates it 360 degrees every second for as long as it is running.
+    
+    the intent here is to give an easy to use spinner implementation that looks
+    like and feels (to the developer) like the one seen in plasma/kirigami.
+    this does however somewhat infringe on the business of kpixmapsequence,
+    so here's why KBIW is better for this specific use case:
+    
+    - not pixmap based
+    - because it's not pixmap based scaling works much better for SVGs
+    - since we paint a QIcon directly we don't have to manually faff about
+      with pixmap copies/segments
+    - more robust as themes may incorrectly or not at all implement the
+      animation icon spec (which is rather offhandedly specified really).
+      KBIW takes care of the animation so the theme need only supply a very
+      standard icon and there is no change for things to go wrong more or less
+    - because this fully leverages QIcon/KIconThemes we get full advantage of
+      SVG coloring. i.e. when using a dark theme the icon is correctly using
+      a contrasting color
+    - users of KBIW no longer need to explicitly use KIconLoader to resolve
+      a pixmap path
+    
+    Test Plan:
+    widget works.
+    not sure an autotest is worth here, there's not much to assert.
+    
+    Reviewers: cfeck, apol
+    
+    Reviewed By: cfeck, apol
+    
+    Subscribers: ngraham, kossebau, broulik, kde-frameworks-devel, apol
+    
+    Tags: #frameworks
+    
+    Differential Revision: https://phabricator.kde.org/D22375
+
+diff --git src/CMakeLists.txt src/CMakeLists.txt
+index cea13e4..0c38da6 100644
+--- src/CMakeLists.txt
++++ src/CMakeLists.txt
+@@ -6,6 +6,7 @@ qt5_add_resources(kwidgetsaddons_ICON_SRCS icons.qrc)
+ set(kwidgetsaddons_SRCS
+   kacceleratormanager.cpp
+   kanimatedbutton.cpp
++  kbusyindicatorwidget.cpp
+   kcharselect.cpp
+   kcharselectdata.cpp
+   kcollapsiblegroupbox.cpp
+@@ -115,6 +116,7 @@ ecm_generate_headers(KWidgetsAddons_HEADERS
+   HEADER_NAMES
+   KAcceleratorManager
+   KAnimatedButton
++  KBusyIndicatorWidget
+   KCharSelect
+   KCollapsibleGroupBox
+   KColorButton
+@@ -198,6 +200,7 @@ if (PythonModuleGeneration_FOUND)
+     HEADERS
+       kacceleratormanager.h
+       kanimatedbutton.h
++      kbusyindicatorwidget.h
+       kcharselect.h
+       kcollapsiblegroupbox.h
+       kcolorbutton.h
+diff --git src/kbusyindicatorwidget.cpp src/kbusyindicatorwidget.cpp
+new file mode 100644
+index 0000000..ee1e12a
+--- /dev/null
++++ src/kbusyindicatorwidget.cpp
+@@ -0,0 +1,109 @@
++/*
++    Copyright 2019 Harald Sitter <sitter@kde.org>
++
++    This library is free software; you can redistribute it and/or
++    modify it under the terms of the GNU Lesser General Public
++    License as published by the Free Software Foundation; either
++    version 2.1 of the License, or (at your option) version 3, or any
++    later version accepted by the membership of KDE e.V. (or its
++    successor approved by the membership of KDE e.V.), which shall
++    act as a proxy defined in Section 6 of version 3 of the license.
++
++    This library is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++    Lesser General Public License for more details.
++
++    You should have received a copy of the GNU Lesser General Public
++    License along with this library.  If not, see <https://www.gnu.org/licenses/>.
++*/
++
++#include "kbusyindicatorwidget.h"
++
++#include <QApplication>
++#include <QIcon>
++#include <QPainter>
++#include <QPropertyAnimation>
++#include <QResizeEvent>
++#include <QStyle>
++
++class KBusyIndicatorWidgetPrivate
++{
++public:
++    KBusyIndicatorWidgetPrivate(KBusyIndicatorWidget *parent)
++        : q(parent)
++    {
++        animation.setLoopCount(-1);
++        animation.setDuration(1500);
++        animation.setStartValue(0);
++        animation.setEndValue(360);
++        QObject::connect(&animation, &QVariantAnimation::valueChanged,
++                q, [=](QVariant value) {
++            rotation = value.toReal();
++            q->update(); // repaint new rotation
++        });
++    }
++
++    KBusyIndicatorWidget *q = nullptr;
++    QVariantAnimation animation;
++    QIcon icon = QIcon::fromTheme(QStringLiteral("view-refresh"));
++    qreal rotation = 0;
++    QPointF paintCenter;
++};
++
++KBusyIndicatorWidget::KBusyIndicatorWidget(QWidget *parent)
++    : QWidget(parent)
++    , d(new KBusyIndicatorWidgetPrivate(this))
++{
++}
++
++KBusyIndicatorWidget::~KBusyIndicatorWidget()
++{
++    delete d;
++}
++
++QSize KBusyIndicatorWidget::minimumSizeHint() const
++{
++    const auto extent = QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize);
++    return QSize(extent, extent);
++}
++
++void KBusyIndicatorWidget::showEvent(QShowEvent *event)
++{
++    QWidget::showEvent(event);
++    d->animation.start();
++}
++
++void KBusyIndicatorWidget::hideEvent(QHideEvent *event)
++{
++    QWidget::hideEvent(event);
++    d->animation.pause();
++}
++
++void KBusyIndicatorWidget::resizeEvent(QResizeEvent *event)
++{
++    QWidget::resizeEvent(event);
++    d->paintCenter = QPointF(event->size().width() / 2.0,
++                             event->size().height() / 2.0);
++}
++
++void KBusyIndicatorWidget::paintEvent(QPaintEvent *)
++{
++    QPainter painter(this);
++    painter.setRenderHint(QPainter::SmoothPixmapTransform);
++
++    // Rotate around the center and then reset back to origin for icon painting.
++    painter.translate(d->paintCenter);
++    painter.rotate(d->rotation);
++    painter.translate(-d->paintCenter);
++
++    d->icon.paint(&painter, rect());
++}
++
++bool KBusyIndicatorWidget::event(QEvent *event)
++{
++    // Only overridden to be flexible WRT binary compatible in the future.
++    // Overriding later has potential to change the call going through
++    // the vtable or not.
++    return QWidget::event(event);
++}
+diff --git src/kbusyindicatorwidget.h src/kbusyindicatorwidget.h
+new file mode 100644
+index 0000000..db6c0c0
+--- /dev/null
++++ src/kbusyindicatorwidget.h
+@@ -0,0 +1,74 @@
++/*
++    Copyright 2019 Harald Sitter <sitter@kde.org>
++
++    This library is free software; you can redistribute it and/or
++    modify it under the terms of the GNU Lesser General Public
++    License as published by the Free Software Foundation; either
++    version 2.1 of the License, or (at your option) version 3, or any
++    later version accepted by the membership of KDE e.V. (or its
++    successor approved by the membership of KDE e.V.), which shall
++    act as a proxy defined in Section 6 of version 3 of the license.
++
++    This library is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++    Lesser General Public License for more details.
++
++    You should have received a copy of the GNU Lesser General Public
++    License along with this library.  If not, see <https://www.gnu.org/licenses/>.
++*/
++
++#ifndef KBUSYINDICATORWIDGET_H
++#define KBUSYINDICATORWIDGET_H
++
++#include <kwidgetsaddons_export.h>
++
++#include <QWidget>
++
++/**
++ * @brief Rotating spinning icon to indicate busyness
++ *
++ * When you need to communicate to the user that your application is busy with
++ * something you'll want to use a KBusyIndicatorWidget to display an infinately
++ * spinnning indicator icon.
++ *
++ * A way of using this widget is to combine it with a QLabel to construct a
++ * status line:
++ *
++ * ```
++ * auto layout = new QHBoxLayout;
++ * layout->addWidget(new KBusyIndicatorWidget);
++ * layout->addWidget(new QLabel(QStringLiteral("Waterig the flowers...")));
++ * ```
++ *
++ * @image html kbusyindicatorwidget.png "KBusyIndicatorWidget with label"
++ *
++ * KBusyIndicatorWidget is set apart from KPixmapSequenceWidget in that it
++ * does not render a pixmap sequence but rather animates a scaled Icon.
++ * It can support multiple semi-abitrary sizes and quality is only limited
++ * by the resolution of available icons. It is also easier to use as its use
++ * is more specific.
++ *
++ * @since 5.61.0
++ */
++class KWIDGETSADDONS_EXPORT KBusyIndicatorWidget : public QWidget
++{
++    Q_OBJECT
++public:
++    explicit KBusyIndicatorWidget(QWidget *parent = nullptr);
++    ~KBusyIndicatorWidget() override;
++
++    QSize minimumSizeHint() const override;
++
++protected:
++    void showEvent(QShowEvent *event) override;
++    void hideEvent(QHideEvent *event) override;
++    void resizeEvent(QResizeEvent *event) override;
++    void paintEvent(QPaintEvent *) override;
++    bool event(QEvent *event) override;
++
++private:
++    class KBusyIndicatorWidgetPrivate *const d;
++};
++
++#endif // KBUSYINDICATORWIDGET_H
+diff --git tests/CMakeLists.txt tests/CMakeLists.txt
+index 9975049..c5ca8f6 100644
+--- tests/CMakeLists.txt
++++ tests/CMakeLists.txt
+@@ -13,6 +13,7 @@ endmacro()
+ 
+ kwidgetsaddons_executable_tests(
+   kanimatedbuttontest
++  kbusyindicatorwidgettest
+   kcharselecttest
+   kcollapsiblegroupboxtest
+   kdatepicktest
+diff --git tests/kbusyindicatorwidgettest.cpp tests/kbusyindicatorwidgettest.cpp
+new file mode 100644
+index 0000000..911f5ec
+--- /dev/null
++++ tests/kbusyindicatorwidgettest.cpp
+@@ -0,0 +1,56 @@
++/*
++    Copyright 2019 Harald Sitter <sitter@kde.org>
++
++    This library is free software; you can redistribute it and/or
++    modify it under the terms of the GNU Lesser General Public
++    License as published by the Free Software Foundation; either
++    version 2.1 of the License, or (at your option) version 3, or any
++    later version accepted by the membership of KDE e.V. (or its
++    successor approved by the membership of KDE e.V.), which shall
++    act as a proxy defined in Section 6 of version 3 of the license.
++
++    This library is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++    Lesser General Public License for more details.
++
++    You should have received a copy of the GNU Lesser General Public
++    License along with this library.  If not, see <https://www.gnu.org/licenses/>.
++*/
++
++#include "kbusyindicatorwidget.h"
++
++#include <QApplication>
++#include <QLabel>
++#include <QPushButton>
++#include <QVBoxLayout>
++
++int main(int argc, char **argv)
++{
++    QApplication app(argc, argv);
++
++    QWidget window;
++    window.setBaseSize(128, 128);
++    auto layout = new QVBoxLayout(&window);
++
++    auto busyWidget = new QWidget(&window);
++    auto busyLayout = new QHBoxLayout(busyWidget);
++    auto busyIndicator = new KBusyIndicatorWidget(&window);
++    auto busyLabel = new QLabel(QStringLiteral("Busy..."), &window);
++    busyLayout->addWidget(busyIndicator);
++    busyLayout->addWidget(busyLabel);
++
++    auto toggle = new QPushButton(QStringLiteral("Toggle Visible"), &window);
++
++    QObject::connect(toggle, &QPushButton::clicked,
++            busyWidget, [=] {
++        busyWidget->setVisible(!busyWidget->isVisible());
++    });
++
++    layout->addWidget(toggle);
++    layout->addWidget(busyWidget);
++    layout->setAlignment(Qt::AlignTop);
++
++    window.show();
++    return app.exec();
++}
