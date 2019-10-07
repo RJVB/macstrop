@@ -1,0 +1,111 @@
+diff --git kdevplatform/project/filemanagerlistjob.cpp kdevplatform/project/filemanagerlistjob.cpp
+index 7d8f87c8b8..2549141804 100644
+--- kdevplatform/project/filemanagerlistjob.cpp
++++ kdevplatform/project/filemanagerlistjob.cpp
+@@ -31,6 +31,7 @@
+ #include <QtConcurrentRun>
+ #include <QDir>
+ #include <QTimer>
++#include <QSemaphore>
+ 
+ #include <interfaces/icore.h>
+ #include <interfaces/iruncontroller.h>
+@@ -96,11 +97,36 @@ public:
+     FileManagerListJob* m_proxied;
+ };
+ 
++class QSemaLocker
++{
++public:
++    QSemaLocker(QSemaphore *sem, int n)
++        : m_sem(sem)
++        , m_resources(n)
++    {
++        if (sem) {
++            sem->acquire(n);
++        }
++    }
++
++    ~QSemaLocker()
++    {
++        if (m_sem) {
++            m_sem->release(m_resources);
++        }
++    }
++
++private:
++    QSemaphore* m_sem;
++    int m_resources;
++};
++
+ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item, bool recursive)
+     : KIO::Job(), m_item(item), m_project(item->project())
+     // cache *a copy* of the item info, without parent info so we own it completely
+     , m_basePath(item->path())
+     , m_aborted(false)
++    , m_listing(new QSemaphore(1))
+     , m_emitWatchDir(!qEnvironmentVariableIsSet("KDEV_PROJECT_INTREE_DIRWATCHING_MODE"))
+     , m_recursive(true) // sic!
+     , m_started(false)
+@@ -128,7 +154,7 @@ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item, bool recursive)
+ FileManagerListJob::~FileManagerListJob()
+ {
+     // lock and abort to ensure our background list job is stopped
+-    std::lock_guard<std::recursive_mutex> lock(m_listing);
++    m_listing->acquire(1);
+     m_aborted = true;
+     if (m_rcProxy) {
+         m_rcProxy->done();
+@@ -138,6 +164,8 @@ FileManagerListJob::~FileManagerListJob()
+     m_project = nullptr;
+     m_rcProxy = nullptr;
+     m_basePath = Path();
++    m_listing->release(1);
++    delete m_listing;
+ }
+ 
+ ProjectFolderItem* FileManagerListJob::item() const
+@@ -218,10 +246,9 @@ void FileManagerListJob::startNextJob()
+     m_project = m_item->project();
+     if (m_item->path().isLocalFile()) {
+         // optimized version for local projects using QDir directly
+-        // start locking to ensure we don't get destroyed while waiting for the list to finish
+-        m_listing.lock();
+         QtConcurrent::run([this] (const Path& path) {
+-            std::lock_guard<std::recursive_mutex> lock(m_listing, std::adopt_lock);
++            // start locking to ensure we don't get destroyed while waiting for the list to finish
++            QSemaLocker lock(m_listing, 1);
+             if (m_aborted) {
+                 return;
+             }
+diff --git kdevplatform/project/filemanagerlistjob.h kdevplatform/project/filemanagerlistjob.h
+index 383c702f43..9b7c61bf0c 100644
+--- kdevplatform/project/filemanagerlistjob.h
++++ kdevplatform/project/filemanagerlistjob.h
+@@ -23,8 +23,6 @@
+ #include <KIO/Job>
+ #include <QQueue>
+ 
+-#include <mutex>
+-
+ // uncomment to time import jobs
+ // #define TIME_IMPORT_JOB
+ 
+@@ -34,6 +32,8 @@
+ 
+ #include "path.h"
+ 
++class QSemaphore;
++
+ namespace KDevelop
+ {
+ class ProjectFolderItem;
+@@ -107,7 +107,7 @@ private:
+     KIO::UDSEntryList entryList;
+     // kill does not delete the job instantaneously
+     QAtomicInt m_aborted;
+-    std::recursive_mutex m_listing;
++    QSemaphore* m_listing;
+ 
+ #ifdef TIME_IMPORT_JOB
+     QElapsedTimer m_timer;
