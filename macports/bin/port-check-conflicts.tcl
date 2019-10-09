@@ -23,7 +23,8 @@ proc printUsage {} {
     puts ""
     puts "port-name\[s\] is the name of a port(s) to check"
     puts "port-name can also be the path to a destroot directory"
-    puts "  (for checking projects that are not yet available as a port)"
+    puts "  (for checking projects that are not yet available as a port;"
+    puts "   in this case it can be followed by a reference port name)"
 }
 
 
@@ -272,21 +273,37 @@ if {[llength $::argv] == 0} {
     exit 2
 }
 
-foreach portName $::argv {
+set argc [llength $::argv]
+
+for {set i 0} {${i} < ${argc}} {incr i} {
+    set arg "[lindex $::argv ${i}]"
     set pWD ""
     set OK 0
-    if {[file exists ${portName}] && [file type ${portName}] eq "directory"} {
-        if {!${missing}} {
+    if {[file exists ${arg}] && [file type ${arg}] eq "directory"} {
+        set narg "[lindex $::argv [expr ${i} + 1]]"
+        if {${narg} ne "" && (![file exists ${narg}] || [file type ${narg}] ne "directory")} {
+            set portName ${narg}
+            set _WD_port ${portName}
+            incr i
+        } else {
+            set portName ""
+        }
+        if {!${missing} || ${portName} ne ""} {
             # we're pointed to a directory
-            set pWD ${portName}
+            set pWD ${arg}
             cd ${pWD}
             set OK 1
-            ui_msg "Checking in directory ${pWD}"
+            if {${portName} ne ""} {
+                ui_msg "Checking in directory ${pWD}, comparing to port:${portName}"
+            } else {
+                ui_msg "Checking in directory ${pWD}"
+            }
         } else {
             ui_error "\"Missing\" mode needs a portname, not a destroot directory!"
             exit 2
         }
-    } elseif {${_WD_port} ne ${portName}} {
+    } elseif {${_WD_port} ne ${arg}} {
+        set portName ${arg}
         set _WD_port ${portName}
         set pWD [port_workdir ${portName}]
         ui_msg "Checking port:${portName}: ${pWD}"
