@@ -19,7 +19,7 @@
 default build_dir           {${workpath}/build}
 default source_dir          {${worksrcpath}}
 
-option meson.build_type
+options meson.build_type
 default meson.build_type    custom
 
 namespace eval meson {
