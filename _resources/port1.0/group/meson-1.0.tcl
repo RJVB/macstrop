@@ -19,6 +19,9 @@
 default build_dir           {${workpath}/build}
 default source_dir          {${worksrcpath}}
 
+option meson.build_type
+default meson.build_type    custom
+
 namespace eval meson {
     proc build.dir {} {
         return "[option build_dir]"
@@ -41,7 +44,6 @@ depends_skip_archcheck-append \
                             meson \
                             ninja
 
-# TODO: --buildtype=plain tells Meson not to add its own flags to the command line. This gives the packager total control on used flags.
 default configure.cmd       {${prefix}/bin/meson}
 default configure.post_args {[list [option source_dir] "."]}
 configure.universal_args-delete \
@@ -65,7 +67,7 @@ pre-configure {
                             --reconfigure
     }
     configure.pre_args-append \
-                            --buildtype=custom
+                            --buildtype=${meson.build_type}
 }
 
 proc meson.save_configure_cmd {{save_log_too ""}} {
