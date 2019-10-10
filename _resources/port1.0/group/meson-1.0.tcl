@@ -21,18 +21,17 @@ default source_dir          {${worksrcpath}}
 
 namespace eval meson {
     proc build.dir {} {
-#         global muniversal.current_arch
-#         if {[info exists muniversal.current_arch]} {
-#             ui_info "build.dir -> [option build_dir]-${muniversal.current_arch}"
-#             return "[option build_dir]-${muniversal.current_arch}"
-#         } else {
-            return "[option build_dir]"
-#         }
+        return "[option build_dir]"
     }
 
+# not needed since we're invoking meson in the build_dir
 #     proc get_post_args {} {
-#         global source_dir
-#         return "${source_dir} ."
+#         global configure.dir build_dir muniversal.current_arch
+#         if {[info exists muniversal.current_arch]} {
+#             return "${configure.dir} ${build_dir}-${muniversal.current_arch}"
+#         } else {
+#             return "${configure.dir} ${build_dir}"
+#         }
 #     }
 }
 
@@ -129,4 +128,3 @@ proc meson.save_configure_cmd {{save_log_too ""}} {
         }
     }
 }
-
