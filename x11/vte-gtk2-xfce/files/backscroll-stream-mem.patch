@@ -1,0 +1,474 @@
+Description: use memory-based circular buffer "stream" for the non-infinite
+ scrollback state. This delays stream initialization so that the true size
+ of the desired scrollback state can be discovered. This also means that
+ changing the scrollback size in the middle of using a stream means you
+ won't change the backend stream type.
+Author: Kees Cook <kees@ubuntu.com>
+Ubuntu-Bug: https://bugs.launchpad.net/ubuntu/+source/vte/+bug/778872
+Bug: https://bugzilla.gnome.org/show_bug.cgi?id=664611
+
+Index: vte-0.28.2/src/vtestream-mem.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ vte-0.28.2/src/vtestream-mem.h	2012-03-07 14:47:42.822382527 -0800
+@@ -0,0 +1,321 @@
++/*
++ * Copyright (C) 2009,2010 Red Hat, Inc.
++ * Copyright (C) 2012 Kees Cook
++ *
++ * This is free software; you can redistribute it and/or modify it under
++ * the terms of the GNU Library General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public
++ * License along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ *
++ * Red Hat Author(s): Behdad Esfahbod
++ * Ubuntu Authors(s): Kees Cook <kees@ubuntu.com>
++ */
++
++#include <string.h>
++#include <unistd.h>
++#include <errno.h>
++
++#include <gio/gunixinputstream.h>
++
++/*
++ * VteMemStream: A memory-based stream
++ */
++
++struct mem_region {
++	gchar * region;
++	gsize allocated; /* How much memory exists in the region. */
++	gsize length; /* Current length of valid written data in the region. */
++	gsize seekpos; /* Where in the region we are positioned from seeking. */
++};
++
++typedef struct _VteMemStream {
++	VteStream parent;
++
++	/* The first is for the write head, second is for last page */
++	struct mem_region page[2];
++	gsize offset[2]; /* Offset into... ? */
++} VteMemStream;
++
++typedef VteStreamClass VteMemStreamClass;
++
++static GType _vte_mem_stream_get_type (void);
++#define VTE_TYPE_MEM_STREAM _vte_mem_stream_get_type ()
++
++G_DEFINE_TYPE (VteMemStream, _vte_mem_stream, VTE_TYPE_STREAM)
++
++static void
++_vte_mem_stream_init (VteMemStream *stream G_GNUC_UNUSED)
++{
++}
++
++VteStream *
++_vte_mem_stream_new (void)
++{
++	return (VteStream *) g_object_new (VTE_TYPE_MEM_STREAM, NULL);
++}
++
++static void
++_vte_mem_stream_finalize (GObject *object)
++{
++	VteMemStream *stream = (VteMemStream *) object;
++	gint i;
++
++	for (i = 0; i < 2; i ++) {
++		if (stream->page[i].region) g_free (stream->page[i].region);
++		memset(&stream->page[i], 0, sizeof (stream->page[i]));
++		stream->offset[i] = 0;
++	}
++
++	G_OBJECT_CLASS (_vte_mem_stream_parent_class)->finalize(object);
++}
++
++static gsize
++_mem_xseek (VteMemStream *stream, gint id, gsize pos, int whence)
++{
++	g_assert (id == 0 || id == 1);
++
++	switch (whence) {
++	case SEEK_SET:
++		if (pos > stream->page[id].length)
++			pos = stream->page[id].length;
++		stream->page[id].seekpos = pos;
++		break;
++	case SEEK_END:
++		stream->page[id].seekpos = stream->page[id].length;
++		break;
++	}
++	return stream->page[id].seekpos;
++}
++
++static gsize
++_mem_xread (VteMemStream *stream, gint id, char *data, gsize len)
++{
++	g_assert (id == 0 || id == 1);
++
++	if (G_UNLIKELY (len && !stream->page[id].region))
++		return 0;
++
++	if (len > stream->page[id].length - stream->page[id].seekpos)
++		len = stream->page[id].length - stream->page[id].seekpos;
++
++	g_memmove (data, stream->page[id].region + stream->page[id].seekpos, len);
++	stream->page[id].seekpos += len;
++
++	return len;
++}
++
++static void
++_mem_xwrite (VteMemStream *stream, gint id, const char *data, gsize len)
++{
++	g_assert (id == 0 || id == 1);
++
++	if (G_UNLIKELY (!stream->page[id].region))
++		return;
++
++	while (stream->page[id].seekpos + len > stream->page[id].allocated) {
++		gsize want = stream->page[id].allocated * 2;
++		stream->page[id].region = g_realloc (stream->page[id].region, want);
++		/* TODO: handle alloc failure. */
++		stream->page[id].allocated = want;
++	}
++
++	g_memmove (stream->page[id].region + stream->page[id].seekpos, data, len);
++	stream->page[id].seekpos += len;
++	if (stream->page[id].seekpos > stream->page[id].length)
++		stream->page[id].length = stream->page[id].seekpos;
++}
++
++static void
++_mem_xtruncate (VteMemStream *stream, gint id, gsize size)
++{
++	g_assert (id == 0 || id == 1);
++
++	if (G_UNLIKELY (!stream->page[id].region))
++		return;
++
++	/* This only expects the region to be reduced in size. */
++	g_assert (size <= stream->page[id].length);
++
++	stream->page[id].region = g_realloc(stream->page[id].region, size);
++	/* TODO: handle alloc failure. */
++	stream->page[id].length = stream->page[id].allocated = size;
++	if (stream->page[id].seekpos > size)
++		stream->page[id].seekpos = size;
++}
++
++static gboolean
++_mem_xwrite_contents (VteMemStream *stream, gint id, GOutputStream *output,
++		  GCancellable *cancellable, GError **error)
++{
++	gboolean ret;
++	gsize written;
++
++	g_assert (id == 0 || id == 1);
++
++	if (G_UNLIKELY (!stream->page[id].region))
++		return TRUE;
++
++	ret = g_output_stream_write_all (output,
++					 stream->page[id].region + stream->page[id].seekpos,
++					 stream->page[id].length - stream->page[id].seekpos,
++					 &written, cancellable, error);
++	stream->page[id].seekpos = stream->page[id].length;
++
++	return ret;
++}
++
++static void
++_vte_mem_stream_reset (VteStream *astream, gsize offset)
++{
++	VteMemStream *stream = (VteMemStream *) astream;
++
++	if (stream->page[0].region) _mem_xtruncate (stream, 0, 0);
++	if (stream->page[1].region) _mem_xtruncate (stream, 1, 0);
++
++	stream->offset[0] = stream->offset[1] = offset;
++}
++
++static inline void
++_vte_mem_stream_ensure_region0 (VteMemStream *stream)
++{
++	if (G_LIKELY (stream->page[0].region))
++		return;
++
++	stream->page[0].allocated = 4096;	/* Arbitrary initial size. */
++	stream->page[0].region = g_malloc(stream->page[0].allocated);
++	/* TODO: how to handle malloc failure? */
++}
++
++static gsize
++_vte_mem_stream_append (VteStream *astream, const char *data, gsize len)
++{
++	VteMemStream *stream = (VteMemStream *) astream;
++	gsize ret;
++
++	_vte_mem_stream_ensure_region0 (stream);
++
++	ret = _mem_xseek (stream, 0, 0, SEEK_END);
++	_mem_xwrite (stream, 0, data, len);
++
++	return stream->offset[0] + ret;
++}
++
++static gboolean
++_vte_mem_stream_read (VteStream *astream, gsize offset, char *data, gsize len)
++{
++	VteMemStream *stream = (VteMemStream *) astream;
++	gsize l;
++
++	if (G_UNLIKELY (offset < stream->offset[1]))
++		return FALSE;
++
++	if (offset < stream->offset[0]) {
++		_mem_xseek (stream, 1, offset - stream->offset[1], SEEK_SET);
++		l = _mem_xread (stream, 1, data, len);
++		offset += l; data += l; len -= l; if (!len) return TRUE;
++	}
++
++	_mem_xseek (stream, 0, offset - stream->offset[0], SEEK_SET);
++	l = _mem_xread (stream, 0, data, len);
++	offset += l; data += l; len -= l; if (!len) return TRUE;
++
++	return FALSE;
++}
++
++static void
++_vte_mem_stream_swap_regions (VteMemStream *stream)
++{
++	struct mem_region temp;
++
++	temp = stream->page[0];
++	stream->page[0] = stream->page[1];
++	stream->page[1] = temp;
++}
++
++static void
++_vte_mem_stream_truncate (VteStream *astream, gsize offset)
++{
++	VteMemStream *stream = (VteMemStream *) astream;
++
++	if (G_UNLIKELY (offset < stream->offset[1])) {
++		_mem_xtruncate (stream, 1, 0);
++		stream->offset[1] = offset;
++	}
++
++	if (G_UNLIKELY (offset < stream->offset[0])) {
++		_mem_xtruncate (stream, 0, 0);
++		stream->offset[0] = stream->offset[1];
++		_vte_mem_stream_swap_regions (stream);
++	} else {
++		_mem_xtruncate (stream, 0, offset - stream->offset[0]);
++	}
++}
++
++static void
++_vte_mem_stream_new_page (VteStream *astream)
++{
++	VteMemStream *stream = (VteMemStream *) astream;
++
++	stream->offset[1] = stream->offset[0];
++	if (stream->page[0].region)
++		stream->offset[0] += _mem_xseek (stream, 0, 0, SEEK_END);
++	_vte_mem_stream_swap_regions (stream);
++	_mem_xtruncate (stream, 0, 0);
++}
++
++static gsize
++_vte_mem_stream_head (VteStream *astream)
++{
++	VteMemStream *stream = (VteMemStream *) astream;
++
++	if (stream->page[0].region)
++		return stream->offset[0] + _mem_xseek (stream, 0, 0, SEEK_END);
++	else
++		return stream->offset[0];
++}
++
++static gboolean
++_vte_mem_stream_write_contents (VteStream *astream, GOutputStream *output,
++				 gsize offset,
++				 GCancellable *cancellable, GError **error)
++{
++	VteMemStream *stream = (VteMemStream *) astream;
++
++	if (G_UNLIKELY (offset < stream->offset[1]))
++		return FALSE;
++
++	if (offset < stream->offset[0]) {
++		_mem_xseek (stream, 1, offset - stream->offset[1], SEEK_SET);
++		if (!_mem_xwrite_contents (stream, 1, output, cancellable, error))
++			return FALSE;
++		offset = stream->offset[0];
++	}
++
++	_mem_xseek (stream, 0, offset - stream->offset[0], SEEK_SET);
++	return _mem_xwrite_contents (stream, 0, output, cancellable, error);
++}
++
++static void
++_vte_mem_stream_class_init (VteMemStreamClass *klass)
++{
++	GObjectClass *gobject_class = G_OBJECT_CLASS (klass);
++
++	gobject_class->finalize = _vte_mem_stream_finalize;
++
++	klass->reset = _vte_mem_stream_reset;
++	klass->append = _vte_mem_stream_append;
++	klass->read = _vte_mem_stream_read;
++	klass->truncate = _vte_mem_stream_truncate;
++	klass->new_page = _vte_mem_stream_new_page;
++	klass->head = _vte_mem_stream_head;
++	klass->write_contents = _vte_mem_stream_write_contents;
++}
+Index: vte-0.28.2/src/vtestream.h
+===================================================================
+--- vte-0.28.2.orig/src/vtestream.h	2012-03-07 10:23:14.998517196 -0800
++++ vte-0.28.2/src/vtestream.h	2012-03-07 10:23:52.055018606 -0800
+@@ -43,6 +43,8 @@
+ 
+ VteStream *
+ _vte_file_stream_new (void);
++VteStream *
++_vte_mem_stream_new (void);
+ 
+ G_END_DECLS
+ 
+Index: vte-0.28.2/src/ring.c
+===================================================================
+--- vte-0.28.2.orig/src/ring.c	2012-03-07 11:17:05.896949593 -0800
++++ vte-0.28.2/src/ring.c	2012-03-07 14:42:35.626333589 -0800
+@@ -49,6 +49,25 @@
+ #define _vte_ring_validate(ring) G_STMT_START {} G_STMT_END
+ #endif
+ 
++static void
++_vte_ring_ensure_stream (VteRing *ring)
++{
++	if (G_LIKELY(ring->attr_stream))
++		return;
++
++	if (ring->max >= G_MAXLONG) {
++		/* "Infinite" scroll-back buffer limit, file-backed. */
++		ring->attr_stream = _vte_file_stream_new ();
++		ring->text_stream = _vte_file_stream_new ();
++		ring->row_stream = _vte_file_stream_new ();
++	} else {
++		/* Predefined scroll-back buffer limit, memory-backed. */
++		ring->attr_stream = _vte_mem_stream_new ();
++		ring->text_stream = _vte_mem_stream_new ();
++		ring->row_stream = _vte_mem_stream_new ();
++	}
++}
++
+ 
+ void
+ _vte_ring_init (VteRing *ring, gulong max_rows)
+@@ -62,10 +81,6 @@
+ 	ring->mask = 31;
+ 	ring->array = g_malloc0 (sizeof (ring->array[0]) * (ring->mask + 1));
+ 
+-	ring->attr_stream = _vte_file_stream_new ();
+-	ring->text_stream = _vte_file_stream_new ();
+-	ring->row_stream = _vte_file_stream_new ();
+-
+ 	ring->last_attr.text_offset = 0;
+ 	ring->last_attr.attr.i = basic_cell.i.attr;
+ 	ring->utf8_buffer = g_string_sized_new (128);
+@@ -81,6 +96,8 @@
+ {
+ 	gulong i;
+ 
++	_vte_ring_ensure_stream (ring);
++
+ 	for (i = 0; i <= ring->mask; i++)
+ 		_vte_row_data_fini (&ring->array[i]);
+ 
+@@ -103,12 +120,14 @@
+ static gboolean
+ _vte_ring_read_row_record (VteRing *ring, VteRowRecord *record, gulong position)
+ {
++	_vte_ring_ensure_stream (ring);
+ 	return _vte_stream_read (ring->row_stream, position * sizeof (*record), (char *) record, sizeof (*record));
+ }
+ 
+ static void
+ _vte_ring_append_row_record (VteRing *ring, const VteRowRecord *record, gulong position)
+ {
++	_vte_ring_ensure_stream (ring);
+ 	_vte_stream_append (ring->row_stream, (const char *) record, sizeof (*record));
+ }
+ 
+@@ -121,6 +140,7 @@
+ 	int i;
+ 
+ 	_vte_debug_print (VTE_DEBUG_RING, "Freezing row %lu.\n", position);
++	_vte_ring_ensure_stream (ring);
+ 
+ 	record.text_offset = _vte_stream_head (ring->text_stream);
+ 	record.attr_offset = _vte_stream_head (ring->attr_stream);
+@@ -183,6 +203,7 @@
+ 	GString *buffer = ring->utf8_buffer;
+ 
+ 	_vte_debug_print (VTE_DEBUG_RING, "Thawing row %lu.\n", position);
++	_vte_ring_ensure_stream (ring);
+ 
+ 	_vte_row_data_clear (row);
+ 
+@@ -266,6 +287,7 @@
+ _vte_ring_reset_streams (VteRing *ring, gulong position)
+ {
+ 	_vte_debug_print (VTE_DEBUG_RING, "Reseting streams to %lu.\n", position);
++	_vte_ring_ensure_stream (ring);
+ 
+ 	_vte_stream_reset (ring->row_stream, position * sizeof (VteRowRecord));
+ 	_vte_stream_reset (ring->text_stream, 0);
+@@ -281,6 +303,7 @@
+ _vte_ring_new_page (VteRing *ring)
+ {
+ 	_vte_debug_print (VTE_DEBUG_RING, "Starting new stream page at %lu.\n", ring->writable);
++	_vte_ring_ensure_stream (ring);
+ 
+ 	_vte_stream_new_page (ring->attr_stream);
+ 	_vte_stream_new_page (ring->text_stream);
+@@ -608,6 +631,7 @@
+ 	gulong i;
+ 
+ 	_vte_debug_print(VTE_DEBUG_RING, "Writing contents to GOutputStream.\n");
++	_vte_ring_ensure_stream (ring);
+ 
+ 	if (ring->start < ring->writable) {
+ 		VteRowRecord record;
+Index: vte-0.28.2/src/vtestream.c
+===================================================================
+--- vte-0.28.2.orig/src/vtestream.c	2012-03-07 11:41:24.427419860 -0800
++++ vte-0.28.2/src/vtestream.c	2012-03-07 12:55:14.227826250 -0800
+@@ -31,3 +31,4 @@
+ 
+ #include "vtestream-base.h"
+ #include "vtestream-file.h"
++#include "vtestream-mem.h"
+Index: vte-0.28.2/src/Makefile.am
+===================================================================
+--- vte-0.28.2.orig/src/Makefile.am	2012-03-07 12:55:40.912155853 -0800
++++ vte-0.28.2/src/Makefile.am	2012-03-07 12:55:49.460261440 -0800
+@@ -80,6 +80,7 @@
+ 	vtestream.h \
+ 	vtestream-base.h \
+ 	vtestream-file.h \
++	vtestream-mem.h \
+ 	vtetc.c \
+ 	vtetc.h \
+ 	vtetree.c \
