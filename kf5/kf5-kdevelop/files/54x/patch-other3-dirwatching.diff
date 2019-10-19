@@ -368,7 +368,7 @@ index 18ba57b99d5c403790a3599c219d500c13b2fb93..b40f35c401cbfd7fb4a49343646ed197
      }
  
 diff --git kdevplatform/project/filemanagerlistjob.cpp kdevplatform/project/filemanagerlistjob.cpp
-index 5b8305ffd4..82aec18d95 100644
+index 70ac9df59dc8210e0d8347bb10e77e19dcd0615a..5c6dd0b944a1d65969a8e94758ed3fda73caa21a 100644
 --- kdevplatform/project/filemanagerlistjob.cpp
 +++ kdevplatform/project/filemanagerlistjob.cpp
 @@ -24,11 +24,16 @@
@@ -388,17 +388,18 @@ index 5b8305ffd4..82aec18d95 100644
  
  using namespace KDevelop;
  
-@@ -45,8 +50,15 @@ bool isChildItem(ProjectBaseItem* parent, ProjectBaseItem* child)
- }
- }
+@@ -61,8 +66,16 @@ private:
+     QSemaphore* m_sem;
+ };
  
 -FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
--    : KIO::Job(), m_item(item), m_aborted(false)
+-    : KIO::Job(), m_item(item), m_aborted(false), m_listing(1)
 +FileManagerListJob::FileManagerListJob(ProjectFolderItem* item, bool recursive)
 +    : KIO::Job(), m_item(item), m_project(item->project())
 +    // cache *a copy* of the item info, without parent info so we own it completely
 +    , m_basePath(item->path())
 +    , m_aborted(false)
++    , m_listing(1)
 +    , m_emitWatchDir(!qEnvironmentVariableIsSet("KDEV_PROJECT_INTREE_DIRWATCHING_MODE"))
 +    , m_recursive(true) // sic!
 +    , m_started(false)
@@ -406,7 +407,7 @@ index 5b8305ffd4..82aec18d95 100644
  {
      qRegisterMetaType<KIO::UDSEntryList>("KIO::UDSEntryList");
      qRegisterMetaType<KIO::Job*>();
-@@ -58,6 +70,8 @@ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
+@@ -74,6 +87,8 @@ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
      connect( this, &FileManagerListJob::nextJob, this, &FileManagerListJob::startNextJob, Qt::QueuedConnection );
  
      addSubDir(item);
@@ -415,13 +416,10 @@ index 5b8305ffd4..82aec18d95 100644
  
  #ifdef TIME_IMPORT_JOB
      m_timer.start();
-@@ -66,19 +80,60 @@ FileManagerListJob::FileManagerListJob(ProjectFolderItem* item)
- 
- FileManagerListJob::~FileManagerListJob()
- {
--    // lock and abort to ensure our background list job is stopped
-     std::lock_guard<std::recursive_mutex> lock(m_listing);
+@@ -86,16 +101,58 @@ FileManagerListJob::~FileManagerListJob()
      m_aborted = true;
+     m_listing.acquire();
+     Q_ASSERT(m_listing.available() == 0);
 +    ICore::self()->runController()->unregisterJob(this);
 +    m_item = nullptr;
 +    m_project = nullptr;
@@ -440,12 +438,12 @@ index 5b8305ffd4..82aec18d95 100644
  
 -void FileManagerListJob::addSubDir( ProjectFolderItem* item )
 +QQueue<ProjectFolderItem*> FileManagerListJob::itemQueue() const
- {
++ {
 +    return m_listQueue;
 +}
 +
 +Path FileManagerListJob::basePath() const
-+{
+ {
 +    return m_basePath;
 +}
 +
@@ -478,7 +476,7 @@ index 5b8305ffd4..82aec18d95 100644
  void FileManagerListJob::handleRemovedItem(ProjectBaseItem* item)
  {
      // NOTE: the item could be (partially) destroyed already, thus it's not save
-@@ -108,6 +163,7 @@ void FileManagerListJob::startNextJob()
+@@ -125,6 +182,7 @@ void FileManagerListJob::startNextJob()
  #endif
  
      m_item = m_listQueue.dequeue();
@@ -486,7 +484,7 @@ index 5b8305ffd4..82aec18d95 100644
      if (m_item->path().isLocalFile()) {
          // optimized version for local projects using QDir directly
          // start locking to ensure we don't get destroyed while waiting for the list to finish
-@@ -122,8 +178,12 @@ void FileManagerListJob::startNextJob()
+@@ -139,8 +197,12 @@ void FileManagerListJob::startNextJob()
              if (m_aborted) {
                  return;
              }
@@ -500,7 +498,7 @@ index 5b8305ffd4..82aec18d95 100644
                  KIO::UDSEntry entry;
  #if KIO_VERSION < QT_VERSION_CHECK(5,48,0)
                  entry.insert(KIO::UDSEntry::UDS_NAME, info.fileName());
-@@ -146,7 +206,9 @@ void FileManagerListJob::startNextJob()
+@@ -163,7 +225,9 @@ void FileManagerListJob::startNextJob()
                  }
                  return entry;
              });
@@ -511,7 +509,7 @@ index 5b8305ffd4..82aec18d95 100644
          }, m_item->path());
      } else {
          KIO::ListJob* job = KIO::listDir( m_item->path().toUrl(), KIO::HideProgressInfo );
-@@ -190,7 +252,11 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
+@@ -207,7 +271,11 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
      emit entries(this, m_item, entriesIn);
  
      if( m_listQueue.isEmpty() ) {
@@ -523,7 +521,7 @@ index 5b8305ffd4..82aec18d95 100644
  
  #ifdef TIME_IMPORT_JOB
          qCDebug(PROJECT) << "TIME FOR LISTJOB:" << m_timer.elapsed();
-@@ -202,14 +268,65 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
+@@ -219,14 +287,65 @@ void FileManagerListJob::handleResults(const KIO::UDSEntryList& entriesIn)
  
  void FileManagerListJob::abort()
  {
@@ -590,12 +588,12 @@ index 5b8305ffd4..82aec18d95 100644
 +    m_disposable = enabled;
 +}
 diff --git kdevplatform/project/filemanagerlistjob.h kdevplatform/project/filemanagerlistjob.h
-index 4308fe8de7..4ef688abaf 100644
+index a753c5cd5b548efcd62d67cfc2c0a1f06ece2fff..6b9763d68a59643eff9baaea279c388f944ae2d2 100644
 --- kdevplatform/project/filemanagerlistjob.h
 +++ kdevplatform/project/filemanagerlistjob.h
-@@ -32,29 +32,62 @@
- #include <QElapsedTimer>
+@@ -32,29 +32,63 @@
  #endif
+ 
  
 +#include "path.h"
 +
@@ -603,6 +601,7 @@ index 4308fe8de7..4ef688abaf 100644
  {
  class ProjectFolderItem;
  class ProjectBaseItem;
++class RunControllerProxy;
 +class IProject;
  
  class FileManagerListJob : public KIO::Job
@@ -658,7 +657,7 @@ index 4308fe8de7..4ef688abaf 100644
  
  private Q_SLOTS:
      void slotEntries(KIO::Job* job, const KIO::UDSEntryList& entriesIn );
-@@ -67,6 +100,10 @@ private:
+@@ -67,6 +101,10 @@ private:
      QQueue<ProjectFolderItem*> m_listQueue;
      /// current base dir
      ProjectFolderItem* m_item;
@@ -669,7 +668,7 @@ index 4308fe8de7..4ef688abaf 100644
      KIO::UDSEntryList entryList;
      // kill does not delete the job instantaneously
      QAtomicInt m_aborted;
-@@ -77,6 +114,11 @@ private:
+@@ -77,6 +115,11 @@ private:
      QElapsedTimer m_subTimer;
      qint64 m_subWaited = 0;
  #endif
