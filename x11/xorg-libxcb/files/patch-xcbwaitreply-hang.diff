@@ -1,0 +1,54 @@
+diff --git a/src/xcb_conn.c b/src/xcb_conn.c
+index 7d096371646ec8668ba5a7eaac13588eb6f8308c..418b1b7c97fd5ab4cfa6b4b934936f81004d2117 100644
+--- a/src/xcb_conn.c
++++ b/src/xcb_conn.c
+@@ -475,15 +475,20 @@ int _xcb_conn_wait(xcb_connection_t *c, pthread_cond_t *cond, struct iovec **vec
+ 
+     pthread_mutex_unlock(&c->iolock);
+     do {
++        errno = 0;
+ #if USE_POLL
+         ret = poll(&fd, 1, -1);
+         /* If poll() returns an event we didn't expect, such as POLLNVAL, treat
+          * it as if it failed. */
+         if(ret >= 0 && (fd.revents & ~fd.events))
+         {
++            fprintf(stderr, "_xcb_conn_wait(): poll() returned an unexpected event; treating as failure\n");
+             ret = -1;
+             break;
+         }
++        if (errno) {
++            fprintf(stderr, "_xcb_conn_wait(): poll() got error \"%s\" (%d)\n", strerror(errno), errno);
++        }
+ #else
+         ret = select(c->fd + 1, &rfds, &wfds, 0, 0);
+ #endif
+diff --git a/src/xcb_in.c b/src/xcb_in.c
+index 733d749594937f71a50fabfc8d727983ebfb2514..9cbfdadb0698801d74e8c8f1d12dfacc71ba420d 100644
+--- a/src/xcb_in.c
++++ b/src/xcb_in.c
+@@ -512,9 +512,22 @@ static void *wait_for_reply(xcb_connection_t *c, uint64_t request, xcb_generic_e
+ 
+         insert_reader(&c->in.readers, &reader, request, &cond);
+ 
+-        while(!poll_for_reply(c, request, &ret, e))
+-            if(!_xcb_conn_wait(c, &cond, 0, 0))
++        errno = 0;
++        int loops = 0;
++        while(!poll_for_reply(c, request, &ret, e)) {
++            int ret;
++            if(!(ret = _xcb_conn_wait(c, &cond, 0, 0))) {
+                 break;
++            } else if (loops > 10) {
++                fprintf(stderr, "_xcb_conn_wait() returned %d %dx", ret, loops);
++                if (errno) {
++                    fprintf(stderr, " (%s ; %d)", ret, strerror(errno), errno);
++                }
++                fputs("\n", stderr);
++            }
++            errno = 0;
++            loops += 1;
++        }
+ 
+         remove_reader(&c->in.readers, &reader);
+         pthread_cond_destroy(&cond);
