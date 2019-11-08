@@ -60,7 +60,9 @@ set preserve_runtime_library_dir "previous/${subport}"
 proc preserve_libraries {srcdir patternlist} {
     global prefix subport destroot preserve_runtime_library_dir
     if {[variant_isset preserve_runtime_libraries]} {
-        if {[file type ${srcdir}] eq "directory"} {
+        if {![file exists ${srcdir}]} {
+            ui_debug "Source for previous runtime libraries (${srcdir}) does not exist"
+        } elseif {[file type ${srcdir}] eq "directory"} {
             set prevdir "${preserve_runtime_library_dir}"
             xinstall -m 755 -d ${destroot}${srcdir}/${prevdir}
             ui_debug "preserve_libraries ${srcdir} ${patternlist}"
