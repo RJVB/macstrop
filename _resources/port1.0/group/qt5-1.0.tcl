@@ -41,7 +41,7 @@
 # PortGroup             qt5 1.0
 
 ### testing testing testing ###
-PortGroup           qt5-mac 1.0
+PortGroup           qt5-stock 1.0
 return
 ###############################
 

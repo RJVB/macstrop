@@ -42,7 +42,7 @@
 # Define qt5.depends_qtwebengine before including the portgroup to add
 # a dependency on qt5-kde-qtwebengine .
 
-# shameless copy from the qt5-mac 1.0 PortGroup
+# shameless copy from the qt5-stock 1.0 PortGroup
 # Qt has what is calls reference configurations, which are said to be thoroughly tested
 # Qt also has configurations which are occasionally tested
 # see http://doc.qt.io/qt-5/supported-platforms.html#reference-configurations
@@ -77,7 +77,7 @@ if {[tbool just_want_qt5_version_info]} {
 # first, check if port:qt5-kde or a port:qt5-kde-devel is installed, or if we're on Mac OS X 10.6
 # NB: the qt5-kde-devel ports may never exist officially in MacPorts but is used locally by KF5 port maintainers!
 # NB2 : ${prefix} isn't set by portindex but registry_active can be used!!
-# NB3 : this is a simpler variant of the equivalent block in qt5-1.0.tcl and qt5-mac-1.0.tcl;
+# NB3 : this is a simpler variant of the equivalent block in qt5-1.0.tcl and qt5-stock-1.0.tcl.tcl;
 # it can be because we have strict(er) control over who includes this, and the tests are redundant
 # if we come here via one of the aforementioned PortGroup files.
 if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10
@@ -149,7 +149,7 @@ if {[file exists ${prefix}/libexec/qt5/plugins/platforms/libqcocoa.dylib]
 if {[info exists qt5.using_kde] && !${qt5.using_kde}} {
     # checks if the other Qt5 PortGroup has already been included.
     # NB: this works only when that happened through the qt5-1.0.tcl!
-    ui_error "qt5-kde-1.0.tcl is being imported after qt5-mac-1.0.tcl"
+    ui_error "qt5-kde-1.0.tcl is being imported after qt5-stock-1.0.tcl.tcl"
     return -code error "importing 2 incompatible Qt5 PortGroups"
 }
 ####################################################
@@ -231,7 +231,7 @@ if {![info exists qt_cmake_module_dir]} {
 global qt5_is_concurrent
 set qt5_is_concurrent       1
 
-# NB: these have all already been set by the mainstream Qt5 PG (qt5-mac-1.0.tcl)
+# NB: these have all already been set by the mainstream Qt5 PG (qt5-stock-1.0.tcl.tcl)
 # that port family's layout is different so we have to reset everything here.
 # NB: That means we have to keep the variable list in sync!
 set qt_dir                  ${prefix}/libexec/${qt_name}

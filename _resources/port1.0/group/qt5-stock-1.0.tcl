@@ -3,7 +3,7 @@
 # This portgroup defines standard settings when using Qt5 (the "stock" Qt5 port).
 #
 # Usage:
-# PortGroup     qt5-mac 1.0
+# PortGroup     qt5-stock 1.0
 
 global available_qt_versions
 array set available_qt_versions {
