@@ -24,7 +24,11 @@ array set available_qt_versions {
 # see https://doc.qt.io/qt-5/supported-platforms-and-configurations.html
 
 proc qt5.get_default_name {} {
-    global os.major
+    global os.major os.platform
+
+    if {${os.platform} ne "darwin"} {
+        return qt5
+    }
 
     # see https://doc.qt.io/qt-5/supported-platforms-and-configurations.html
     # for older versions, see https://web.archive.org/web/*/http://doc.qt.io/qt-5/supported-platforms-and-configurations.html
@@ -115,6 +119,7 @@ proc qt5.get_default_name {} {
         #
         # macOS Sierra (10.12)
         #
+        # Qt 5.13: Supported
         # Qt 5.12: Supported
         # Qt 5.11: Supported
         # Qt 5.10: Supported
@@ -128,6 +133,7 @@ proc qt5.get_default_name {} {
         #
         # macOS High Sierra (10.13)
         #
+        # Qt 5.13: Supported
         # Qt 5.12: Supported
         # Qt 5.11: Supported
         # Qt 5.10: Supported
@@ -138,7 +144,17 @@ proc qt5.get_default_name {} {
         #
         # macOS Mojave (10.14)
         #
+        # Qt 5.13: Supported
         # Qt 5.12: Supported
+        #
+        return qt5
+        #
+    } elseif { ${os.major} == 19 } {
+        #
+        # macOS Catalina (10.15)
+        #
+        # Qt 5.13: Not Supported but seems to work
+        # Qt 5.12: Not Supported but seems to work
         #
         return qt5
         #
@@ -161,6 +177,7 @@ set qt5.version    [lindex $available_qt_versions(${qt5.name}) 1]
 foreach {qt_test_name qt_test_info} [array get available_qt_versions] {
     set qt_test_base_port [lindex ${qt_test_info} 0]
     if {![catch {set installed [lindex [registry_active ${qt_test_base_port}] 0]}]} {
+        ui_debug "Already installed Qt5 version: ${qt_test_name} (${qt_test_base_port})"
         set qt5.name       ${qt_test_name}
         set qt5.base_port  ${qt_test_base_port}
         set qt5.version    [lindex $installed 1]
@@ -280,6 +297,9 @@ set qt_lupdate_cmd     ${qt_dir}/bin/lupdate
 # standard PKGCONFIG path
 global qt_pkg_config_dir
 set qt_pkg_config_dir   ${qt_libs_dir}/pkgconfig
+
+global qt_install_registry
+set qt_install_registry ${qt_dir}/registry
 
 namespace eval qt5pg {
     ############################################################################### Component Format
@@ -640,6 +660,19 @@ if {[info exists qt5.prefer_kde]} {
     # set it to an empty value so that it can be referenced without side-effects.
     global qt_cmake_defines
     set qt_cmake_defines ""
+}
+
+if {[file exists "${qt_install_registry}/qt5-qtbase+qt5stock_kde"]} {
+    if {![variant_exists qt5stock_kde]} {
+        variant qt5stock_kde description {default variant set for the \"stock\" port:qt5* adapted for KDE, and ports that depend on them} {}
+    }
+    # it should no longer be necessary to set qt5kde but we will continue to do so for now.
+    if {[variant_isset qt5stock_kde]} {
+        ui_debug "+qt5stock_kde is set for port:${subport}"
+    } else {
+        ui_debug "+qt5stock_kde is not yet set but will be for port:${subport}"
+    }
+    default_variants    +qt5stock_kde
 }
 ###########################################################################################
 
