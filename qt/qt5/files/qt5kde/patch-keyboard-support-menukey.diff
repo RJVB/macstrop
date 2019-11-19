@@ -1,0 +1,126 @@
+diff --git src/plugins/platforms/cocoa/qcocoakeymapper.h src/plugins/platforms/cocoa/qcocoakeymapper.h
+index 2624f19978b3dd5ced73f9d68062fe211a61fb0e..22868c2a165dc983ca7f28666fe99715767a1e0a 100644
+--- src/plugins/platforms/cocoa/qcocoakeymapper.h
++++ src/plugins/platforms/cocoa/qcocoakeymapper.h
+@@ -85,7 +85,7 @@ public:
+     QList<int> possibleKeys(const QKeyEvent *event) const;
+     bool updateKeyboard();
+     void deleteLayouts();
+-    void updateKeyMap(unsigned short macVirtualKey, QChar unicodeKey);
++    void updateKeyMap(unsigned short macVirtualKey, const QKeyEvent *event);
+     void clearMappings();
+ 
+ private:
+diff --git src/plugins/platforms/cocoa/qcocoakeymapper.mm src/plugins/platforms/cocoa/qcocoakeymapper.mm
+index 350ae4b9be56ab92d185a6d70a2213524a895aca..dc9599d5e3f5a43511d6f67a865a0247a8d57408 100644
+--- src/plugins/platforms/cocoa/qcocoakeymapper.mm
++++ src/plugins/platforms/cocoa/qcocoakeymapper.mm
+@@ -262,12 +262,25 @@ static qt_mac_enum_mapper qt_mac_private_unicode[] = {
+     {   0,    QT_MAC_MAP_ENUM(0) }
+ };
+ 
+-static int qt_mac_get_key(int modif, const QChar &key, int virtualKey)
++static int qt_mac_get_key(int modif, const QChar &key, int virtualKey, const QKeyEvent *event)
+ {
+ #ifdef DEBUG_KEY_BINDINGS
+-    qDebug("**Mapping key: %d (0x%04x) - %d (0x%04x)", key.unicode(), key.unicode(), virtualKey, virtualKey);
++    if (event) {
++        qDebug("**Mapping key: %d (0x%04x|0x%04x) - %d (0x%04x)", key.unicode(), key.unicode(), event->key(), virtualKey, virtualKey);
++    } else {
++        qDebug("**Mapping key: %d (0x%04x) - %d (0x%04x)", key.unicode(), key.unicode(), virtualKey, virtualKey);
++    }
+ #endif
+ 
++    if (event) {
++        int rawKey = event->key();
++        // check if the event's key "code" can be a 16 bit Unicode QChar or if not
++        // if it's in the appropriate range corresponding to extended Qt::Key_* codes
++        if (rawKey > 0xffff && rawKey >= Qt::Key_Escape && rawKey < Qt::Key_unknown) {
++            return rawKey;
++        }
++    }
++
+     if (key == kClearCharCode && virtualKey == 0x47)
+         return Qt::Key_Clear;
+ 
+@@ -402,16 +415,20 @@ void QCocoaKeyMapper::clearMappings()
+     updateKeyboard();
+ }
+ 
+-void QCocoaKeyMapper::updateKeyMap(unsigned short macVirtualKey, QChar unicodeKey)
++void QCocoaKeyMapper::updateKeyMap(unsigned short macVirtualKey, const QKeyEvent *event)
+ {
+     updateKeyboard();
+ 
+     if (keyLayout[macVirtualKey])
+         return;
+ 
++    QChar unicodeKey = QChar(event->key());
+     UniCharCount buffer_size = 10;
+     UniChar buffer[buffer_size];
+     keyLayout[macVirtualKey] = new KeyboardLayoutItem;
++#ifdef DEBUG_KEY_BINDINGS
++    qDebug("updateKeyMap for virtual key = 0x%02x unicodeKey=0x%04x!", (uint)macVirtualKey, unicodeKey);
++#endif
+     for (int i = 0; i < 16; ++i) {
+         UniCharCount out_buffer_size = 0;
+         keyLayout[macVirtualKey]->qtKey[i] = 0;
+@@ -421,19 +438,19 @@ void QCocoaKeyMapper::updateKeyMap(unsigned short macVirtualKey, QChar unicodeKe
+                                       keyboard_kind, 0, &keyboard_dead, buffer_size, &out_buffer_size, buffer);
+         if (err == noErr && out_buffer_size) {
+             const QChar unicode(buffer[0]);
+-            int qtkey = qt_mac_get_key(keyModifier, unicode, macVirtualKey);
++            int qtkey = qt_mac_get_key(keyModifier, unicode, macVirtualKey, NULL);
+             if (qtkey == Qt::Key_unknown)
+                 qtkey = unicode.unicode();
+             keyLayout[macVirtualKey]->qtKey[i] = qtkey;
+         } else {
+-            int qtkey = qt_mac_get_key(keyModifier, unicodeKey, macVirtualKey);
++            int qtkey = qt_mac_get_key(keyModifier, unicodeKey, macVirtualKey, event);
+             if (qtkey == Qt::Key_unknown)
+                 qtkey = unicodeKey.unicode();
+             keyLayout[macVirtualKey]->qtKey[i] = qtkey;
+         }
+     }
+ #ifdef DEBUG_KEY_MAPS
+-    qDebug("updateKeyMap for virtual key = 0x%02x!", (uint)macVirtualKey);
++    qDebug("updateKeyMap for virtual key = 0x%02x unicodeKey=0x%04x!", (uint)macVirtualKey, unicodeKey);
+     for (int i = 0; i < 16; ++i) {
+         qDebug("    [%d] (%d,0x%02x,'%c')", i,
+                keyLayout[macVirtualKey]->qtKey[i],
+@@ -446,7 +463,7 @@ void QCocoaKeyMapper::updateKeyMap(unsigned short macVirtualKey, QChar unicodeKe
+ QList<int> QCocoaKeyMapper::possibleKeys(const QKeyEvent *event) const
+ {
+     QList<int> ret;
+-    const_cast<QCocoaKeyMapper *>(this)->updateKeyMap(event->nativeVirtualKey(), QChar(event->key()));
++    const_cast<QCocoaKeyMapper *>(this)->updateKeyMap(event->nativeVirtualKey(), event);
+ 
+     KeyboardLayoutItem *kbItem = keyLayout[event->nativeVirtualKey()];
+ 
+diff --git src/plugins/platforms/cocoa/qnsview_keys.mm src/plugins/platforms/cocoa/qnsview_keys.mm
+index ad751279bb19afacc44793fe079592a798478fa7..1449dade4d77bacf283b22d2d18f93a41ef04ae1 100644
+--- src/plugins/platforms/cocoa/qnsview_keys.mm
++++ src/plugins/platforms/cocoa/qnsview_keys.mm
+@@ -121,6 +121,22 @@
+ 
+     if (eventType == QEvent::KeyPress) {
+ 
++        if (keyCode == Qt::Key_Menu && modifiers == Qt::NoModifier) {
++            QPoint globalPos, pos;
++            if (window) {
++                QNSView *targetView = (QNSView*)(window->winId());
++                QPointF qtWindowPoint, qtScreenPoint;
++                [targetView convertFromScreen:[nsevent locationInWindow] toWindowPoint:&qtWindowPoint andScreenPoint:&qtScreenPoint];
++                globalPos = qtScreenPoint.toPoint();
++                pos = qtWindowPoint.toPoint();
++            }
++            QWindowSystemInterface::handleContextMenuEvent(window, false, pos, globalPos, modifiers);
++            // Handling a context menu may result in closing the window
++            if (!m_platformWindow) {
++                return true;
++            }
++        }
++
+         if (m_composingText.isEmpty()) {
+             m_sendKeyEvent = !QWindowSystemInterface::handleShortcutEvent(window, timestamp, keyCode,
+                 modifiers, nativeScanCode, nativeVirtualKey, nativeModifiers, text, [nsevent isARepeat], 1);

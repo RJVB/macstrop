@@ -1,0 +1,145 @@
+diff --git src/corelib/tools/qregexp.cpp src/corelib/tools/qregexp.cpp
+index ef24c952eb09109af16d3fa84e7812da2d60ba3b..b210701f6a5af33451b8c0937ccc8475d706b4fa 100644
+--- src/corelib/tools/qregexp.cpp
++++ src/corelib/tools/qregexp.cpp
+@@ -39,6 +39,7 @@
+ 
+ #include "qregexp.h"
+ 
++#include "qobject.h"
+ #include "qalgorithms.h"
+ #include "qbitarray.h"
+ #include "qcache.h"
+@@ -52,6 +53,7 @@
+ #include "qstringlist.h"
+ #include "qstringmatcher.h"
+ #include "qvector.h"
++#include "qcoreapplication.h"
+ 
+ #include <limits.h>
+ #include <algorithm>
+@@ -3822,12 +3824,75 @@ struct QRECache
+ };
+ Q_GLOBAL_STATIC(QRECache, engineCache)
+ static QBasicMutex engineCacheMutex;
++
++class EngineCache :
++#ifndef QT_BOOTSTRAPPED
++    public QObject,
++#endif
++    public QCache<QRegExpEngineKey, QRegExpEngine>
++{
++#ifndef QT_BOOTSTRAPPED
++    Q_OBJECT
++#endif
++public:
++    EngineCache()
++        : QCache<QRegExpEngineKey, QRegExpEngine>()
++    {
++#ifndef QT_BOOTSTRAPPED
++        if (QCoreApplication::instance()) {
++            connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &EngineCache::takeDown);
++        }
++#endif
++    }
++
++    bool isAvailable(bool forAdding)
++    {
++        if (!m_isAvailable) {
++            if (forAdding) {
++                qDebug() << "globalEngineCache: new items can no longer be added";
++            } else {
++                qDebug() << "globalEngineCache has already been emptied";
++            }
++        }
++        return m_isAvailable;
++    }
++
++public Q_SLOTS:
++    // take down the cache when the application is about to quit. Emptying the
++    // cache at this time is our best bet to get rid of any entries that reference
++    // QStrings which belong to dynamically loaded code. Deleting such entries after
++    // unloading the code would cause a crash or worse, execution of unknown code.
++    // Note that this is only protects against code (plugins) that is unloaded automatic
++    // during shutdown.
++    void takeDown()
++    {
++        // take the cache offline
++        m_isAvailable = false;
++        qDebug() << "globalEngineCache discarding" << size() << "entries";
++        engineCacheMutex.lock();
++        clear();
++        if (!isEmpty()) {
++            qWarning() << "globalEngineCache wasn't emptied completely; remain:" << size();
++        }
++        engineCacheMutex.unlock();
++    }
++
++private:
++    bool m_isAvailable = true;
++};
++Q_GLOBAL_STATIC(EngineCache, globalEngineCache)
+ #endif // QT_NO_REGEXP_OPTIM
+ 
+ static void derefEngine(QRegExpEngine *eng, const QRegExpEngineKey &key)
+ {
+ #if !defined(QT_NO_REGEXP_OPTIM)
+-    QMutexLocker locker(&engineCacheMutex);
++    bool locked;
++    if (globalEngineCache() && globalEngineCache()->isAvailable(true)) {
++        engineCacheMutex.lock();
++        locked = true;
++    } else {
++        locked = false;
++    }
+     if (!eng->ref.deref()) {
+         if (QRECache *c = engineCache()) {
+             c->unusedEngines.insert(key, eng, 4 + key.pattern.length() / 4);
+@@ -3836,6 +3901,9 @@ static void derefEngine(QRegExpEngine *eng, const QRegExpEngineKey &key)
+             delete eng;
+         }
+     }
++    if (locked) {
++        engineCacheMutex.unlock();
++    }
+ #else
+     Q_UNUSED(key);
+     if (!eng->ref.deref())
+@@ -3848,7 +3916,13 @@ static void prepareEngine_helper(QRegExpPrivate *priv)
+     Q_ASSERT(!priv->eng);
+ 
+ #if !defined(QT_NO_REGEXP_OPTIM)
+-    QMutexLocker locker(&engineCacheMutex);
++    bool locked;
++    if (globalEngineCache() && globalEngineCache()->isAvailable(false)) {
++        engineCacheMutex.lock();
++        locked = true;
++    } else {
++        locked = false;
++    }
+     if (QRECache *c = engineCache()) {
+         priv->eng = c->unusedEngines.take(priv->engineKey);
+         if (!priv->eng)
+@@ -3859,8 +3933,14 @@ static void prepareEngine_helper(QRegExpPrivate *priv)
+             priv->eng->ref.ref();
+ 
+         c->usedEngines.insert(priv->engineKey, priv->eng);
++        if (locked) {
++            engineCacheMutex.unlock();
++        }
+         return;
+     }
++    if (locked) {
++        engineCacheMutex.unlock();
++    }
+ #endif // QT_NO_REGEXP_OPTIM
+ 
+     priv->eng = new QRegExpEngine(priv->engineKey);
+@@ -4609,3 +4689,7 @@ QDebug operator<<(QDebug dbg, const QRegExp &r)
+ #endif
+ 
+ QT_END_NAMESPACE
++
++#ifndef QT_BOOTSTRAPPED
++#include "qregexp.moc"
++#endif

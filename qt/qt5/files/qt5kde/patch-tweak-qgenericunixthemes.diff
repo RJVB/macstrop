@@ -1,0 +1,133 @@
+diff --git src/platformsupport/themes/genericunix/qgenericunixthemes.cpp src/platformsupport/themes/genericunix/qgenericunixthemes.cpp
+index 6db25a90da0e09e9f65e3b5f512c7b1e90f11935..d40cecba05d146450547d4fb0ce47cc766e9948e 100644
+--- src/platformsupport/themes/genericunix/qgenericunixthemes.cpp
++++ src/platformsupport/themes/genericunix/qgenericunixthemes.cpp
+@@ -48,6 +48,8 @@
+ #include <QtCore/QFileInfo>
+ #include <QtCore/QFile>
+ #include <QtCore/QDebug>
++#undef QT_NO_DEBUG
++#undef QT_NO_DEBUG_OUTPUT
+ #include <QtCore/QHash>
+ #if QT_CONFIG(mimetype)
+ #include <QtCore/QMimeDatabase>
+@@ -177,7 +179,7 @@ QStringList QGenericUnixTheme::xdgIconThemePaths()
+ 
+     QString xdgDirString = QFile::decodeName(qgetenv("XDG_DATA_DIRS"));
+     if (xdgDirString.isEmpty())
+-        xdgDirString = QLatin1String("/usr/local/share/:/usr/share/");
++        xdgDirString = QLatin1String("@PREFIX@/share/:/usr/share/");
+     const auto xdgDirs = xdgDirString.splitRef(QLatin1Char(':'));
+     for (const QStringRef &xdgDir : xdgDirs) {
+         const QFileInfo xdgIconsDir(xdgDir + QLatin1String("/icons"));
+@@ -191,7 +193,7 @@ QStringList QGenericUnixTheme::xdgIconThemePaths()
+ QStringList QGenericUnixTheme::iconFallbackPaths()
+ {
+     QStringList paths;
+-    const QFileInfo pixmapsIconsDir(QStringLiteral("/usr/share/pixmaps"));
++    const QFileInfo pixmapsIconsDir(QStringLiteral("@PREFIX@/share/pixmaps"));
+     if (pixmapsIconsDir.isDir())
+         paths.append(pixmapsIconsDir.absoluteFilePath());
+ 
+@@ -273,7 +275,9 @@ public:
+     QKdeThemePrivate(const QStringList &kdeDirs, int kdeVersion)
+         : kdeDirs(kdeDirs)
+         , kdeVersion(kdeVersion)
+-    { }
++    {
++        qWarning() << Q_FUNC_INFO << "kdeVersion=" << kdeVersion << "kdeDirs=" << kdeDirs;
++    }
+ 
+     static QString kdeGlobals(const QString &kdeDir, int kdeVersion)
+     {
+@@ -849,7 +853,9 @@ QPlatformTheme *QGenericUnixTheme::createUnixTheme(const QString &name)
+ #endif
+     if (name == QLatin1String(QGnomeTheme::name))
+         return new QGnomeTheme;
+-    return nullptr;
++//     return nullptr;
++    // On OS X prefer to return something valid always?
++    return new QGenericUnixTheme;
+ }
+ 
+ QStringList QGenericUnixTheme::themeNames()
+diff --git src/plugins/platforms/cocoa/qcocoaintegration.mm src/plugins/platforms/cocoa/qcocoaintegration.mm
+index 1eed6b558243b08ad8815afe38e6b251314412e0..cfaf56a03e08b8c2744bb2e4297f55a13b56233e 100644
+--- src/plugins/platforms/cocoa/qcocoaintegration.mm
++++ src/plugins/platforms/cocoa/qcocoaintegration.mm
+@@ -74,6 +74,8 @@
+ 
+ #include <IOKit/graphics/IOGraphicsLib.h>
+ 
++#include <private/qgenericunixthemes_p.h>
++
+ static void initResources()
+ {
+     Q_INIT_RESOURCE(qcocoaresources);
+@@ -471,14 +473,33 @@ QCocoaDrag *QCocoaIntegration::drag() const
+ 
+ QStringList QCocoaIntegration::themeNames() const
+ {
+-    return QStringList(QLatin1String(QCocoaTheme::name));
++    QStringList themes;
++    themes.push_back(QLatin1String(QCocoaTheme::name));
++    const QByteArray kdeSessionVersion = qgetenv("KDE_SESSION_VERSION");
++    const int kdeVersion = kdeSessionVersion.toInt();
++    if (kdeVersion >= 4)
++        themes.push_back(QLatin1String("kde"));
++    return themes;
+ }
+ 
+ QPlatformTheme *QCocoaIntegration::createPlatformTheme(const QString &name) const
+ {
+-    if (name == QLatin1String(QCocoaTheme::name))
++    // qWarning() << "QCocoaIntegration::createPlatformTheme(" << name << ")";
++    if (name == QLatin1String(QCocoaTheme::name)) {
++        // qWarning() << "returning the QCocoaTheme";
+         return new QCocoaTheme;
+-    return QPlatformIntegration::createPlatformTheme(name);
++    }
++    QPlatformTheme *unixTheme = QGenericUnixTheme::createUnixTheme(name);
++    if (unixTheme) {
++        qDebug() << "returning QGenericUnixTheme" << unixTheme;
++        return unixTheme;
++    }
++    else {
++        unixTheme = QPlatformIntegration::createPlatformTheme(name);
++        qDebug() << "returning QPlatformIntegration::createPlatformTheme(" << name << ")=" << unixTheme;
++        return unixTheme;
++//         return QPlatformIntegration::createPlatformTheme(name);
++    }
+ }
+ 
+ QCocoaServices *QCocoaIntegration::services() const
+diff --git src/plugins/styles/mac/qmacstyle_mac.mm src/plugins/styles/mac/qmacstyle_mac.mm
+index 07651fc20610d39657b9f35cffa39f1395952f74..0e26b4ab78c327ed2873a057b7f7092962322df1 100644
+--- src/plugins/styles/mac/qmacstyle_mac.mm
++++ src/plugins/styles/mac/qmacstyle_mac.mm
+@@ -4056,7 +4056,10 @@ void QMacStyle::drawControl(ControlElement ce, const QStyleOption *opt, QPainter
+             // (QComboMenuItem is internal and should never be seen by the
+             // outside world, unless they read the source, in which case, it's
+             // their own fault).
+-            const bool nonDefaultFont = p->font() != qt_app_fonts_hash()->value("QComboMenuItem");
++//             const bool nonDefaultFont = p->font() != qt_app_fonts_hash()->value("QComboMenuItem");
++            // We support non-native themes in this patched Qt version, so we cannot rely on the result
++            // of the test above. It's best to presume it always returns true.
++            const bool nonDefaultFont = true;
+ 
+             if (!myTab.documentMode && (myTab.state & State_Selected) && (myTab.state & State_Active))
+                 if (const auto *tabBar = qobject_cast<const QTabBar *>(w))
+
+diff --git qtbase/src/platformsupport/themes/themes.pro qtbase/src/platformsupport/themes/themes.pro
+# index aeed4d2..2ebd5e0 100644
+# --- qtbase/src/platformsupport/themes/themes.pro
+# +++ qtbase/src/platformsupport/themes/themes.pro
+# @@ -6,7 +6,7 @@ CONFIG += static internal_module
+#  
+#  DEFINES += QT_NO_CAST_FROM_ASCII
+#  
+# -unix:!darwin: \
+# +unix: \
+#      include($$PWD/genericunix/genericunix.pri)
+#  
+# HEADERS += \
