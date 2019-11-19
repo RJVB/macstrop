@@ -29,7 +29,8 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 #
-# This portgroup defines standard settings when using qmake with qt5-kde.
+# This portgroup defines standard settings when using qmake with qt5-kde,
+# or the experimental tweaked mainstream port:qt5 with the +qt5stock_kde variant set.
 # Not to be used directly.
 # Typical usage that allows install-from-scratch of a port that prefers qt5-kde
 # but will still work when port:qt5 is already installed:
@@ -40,7 +41,7 @@
 # transfer control if qt5.using_kde isn't set, which is the case only
 # when port:qt5-kde is installed and the Qt5 PortGroup has processed
 # that fact.
-if {![tbool qt5.using_kde]} {
+if {![tbool qt5.using_kde] && ![variant_exists qt5stock_kde] && ![variant_isset qt5stock_kde]} {
     ui_warn "The qmake5-kde PortGroup shouldn't be called directly"
     # We don't allow ourselves to be called directly. This ensures
     # that we get all the options declarations from the mainstream
@@ -55,8 +56,13 @@ if {![tbool qt5.using_kde]} {
 namespace eval qt5 {
     set dont_include_twice      yes
 }
+if {[tbool qt5.using_kde]} {
 # include qt5-kde only once from here
-PortGroup                       qt5-kde 1.0
+    PortGroup                   qt5-kde 1.0
+} elseif {[variant_exists qt5stock_kde] && [variant_isset qt5stock_kde] && ![info exists qt_dir]} {
+    ui_debug "+qt5stock_kde is set; we must use the qt5-stock PG"
+    PortGroup                   qt5-stock 1.0
+}
 namespace eval qt5 {
     unset dont_include_twice
 }
@@ -186,9 +192,9 @@ pre-configure {
         puts ${qt5::cache} "QMAKE_LINK_SHLIB=${configure.cxx}"
         if {[info exists configure.ar] && [info exists configure.nm] && [info exists configure.ranlib]} {
             if {[option LTO.use_archive_helpers]} {
-                    puts ${qt5::cache} "QMAKE_AR=${configure.ar} cqs"
-                    puts ${qt5::cache} "QMAKE_NM=${configure.nm} -P"
-                    puts ${qt5::cache} "QMAKE_RANLIB=${configure.ranlib} -s"
+                puts ${qt5::cache} "QMAKE_AR=${configure.ar} cqs"
+                puts ${qt5::cache} "QMAKE_NM=${configure.nm} -P"
+                puts ${qt5::cache} "QMAKE_RANLIB=${configure.ranlib} -s"
             }
         } elseif {[string match *clang++-mp* ${configure.cxx}]} {
                 set QMAKE_AR [string map {"clang++" "llvm-ar"} ${configure.cxx}]
@@ -196,7 +202,7 @@ pre-configure {
                 set QMAKE_RANLIB [string map {"clang++" "llvm-ranlib"} ${configure.cxx}]
                 puts ${qt5::cache} "QMAKE_AR=${QMAKE_AR} cqs"
                 puts ${qt5::cache} "QMAKE_NM=${QMAKE_NM} -P"
-                puts ${qt5::cache} "QMAKE_RANLIB=${QMAKE_RANLIB} -s"
+                puts ${qt5::cache} "QMAKE_RANLIB=${QMAKE_RANLIB}"
         }
         puts ${qt5::cache} "QMAKE_AR_LTCG=\$\$QMAKE_AR"
         puts ${qt5::cache} "QMAKE_NM_LTCG=\$\$QMAKE_NM"

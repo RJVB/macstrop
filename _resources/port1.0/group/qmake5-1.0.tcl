@@ -34,13 +34,18 @@ platform macosx {
     }
 }
 
-### transfer control to the qt5-kde variant if necessary
-### The qt5 PortGroup determines this
+###RJVB### transfer control to the qt5-kde variant if necessary
+###RJVB### The qt5 PortGroup determines this
 if {[tbool qt5.using_kde]} {
+    ui_debug "qt5.using_kde is set; we must use the qmake5-kde PG"
+    PortGroup qmake5-kde 1.0
+    return
+} elseif {[variant_exists qt5stock_kde] && [variant_isset qt5stock_kde]} {
+    ui_debug "+qt5stock_kde is set; we must use the qmake5-kde PG"
     PortGroup qmake5-kde 1.0
     return
 }
-###
+###RJVB###
 
 pre-configure {
     #

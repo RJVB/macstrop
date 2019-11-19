@@ -204,8 +204,14 @@ if {[tbool just_want_qt5_version_info]} {
 
 # standard install directory
 global qt_dir
-set qt_dir               ${prefix}/libexec/qt5
-# set qt_dir               ${prefix}/libexec/qt512
+###RJVB###
+if {${os.platform} eq "darwin"} {
+    set qt_dir           ${prefix}/libexec/qt5
+} else {
+    # let's use another prefix for now...
+    set qt_dir           ${prefix}/libexec/qt512
+}
+###RJVB###
 
 # standard Qt non-.app executables directory
 global qt_bins_dir
@@ -601,8 +607,8 @@ namespace eval qt5pg {
 # first, check if port:qt5-kde or a port:qt5-kde-devel is installed, or if we're on Mac OS X 10.6
 # NB: the qt5-kde-devel ports may never exist officially in MacPorts but is used locally by KF5 port maintainers!
 # NB2 : ${prefix} isn't set by portindex but registry_active can be used!!
-if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10
-        || ([catch {registry_active "qt5-kde"}] == 0 || [catch {registry_active "qt5-kde-devel"}] == 0) } {
+if {![variant_isset qt5stock_kde] && ([file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10
+        || ([catch {registry_active "qt5-kde"}] == 0 || [catch {registry_active "qt5-kde-devel"}] == 0)) } {
     set qt5PGname "qt5-kde"
 } elseif {[file exists ${prefix}/libexec/qt5/plugins/platforms/libqcocoa.dylib]
         && [file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
@@ -679,6 +685,24 @@ if {[file exists "${qt_install_registry}/qt5-qtbase+qt5stock_kde"]} {
         ui_debug "+qt5stock_kde is not yet set but will be for port:${subport}"
     }
     default_variants    +qt5stock_kde
+}
+# borrowed from qt5-kde-1.0.tcl:
+proc qt5.active_version {} {
+    global prefix
+    namespace upvar ::qt5 active_version av
+    if {[info exists av]} {
+        return ${av}
+    }
+    if {[info exists building_qt5]} {
+        set av ${version}
+        return ${av}
+    } elseif {[file exists ${prefix}/bin/pkg-config]} {
+        if {![catch {set av [exec ${prefix}/bin/pkg-config --modversion Qt5Core]} err]} {
+            return ${av}
+        }
+        # else: Qt5 isn't installed yet
+    }
+    return 0.0.0
 }
 ###########################################################################################
 
