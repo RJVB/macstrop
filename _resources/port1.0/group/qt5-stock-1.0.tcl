@@ -24,11 +24,14 @@ array set available_qt_versions {
 # see https://doc.qt.io/qt-5/supported-platforms-and-configurations.html
 
 proc qt5.get_default_name {} {
-    global os.major os.platform
+    global os.major
 
+    ###RJVB###
+    global os.platform
     if {${os.platform} ne "darwin"} {
         return qt5
     }
+    ###RJVB###
 
     # see https://doc.qt.io/qt-5/supported-platforms-and-configurations.html
     # for older versions, see https://web.archive.org/web/*/http://doc.qt.io/qt-5/supported-platforms-and-configurations.html
@@ -202,6 +205,7 @@ if {[tbool just_want_qt5_version_info]} {
 # standard install directory
 global qt_dir
 set qt_dir               ${prefix}/libexec/qt5
+# set qt_dir               ${prefix}/libexec/qt512
 
 # standard Qt non-.app executables directory
 global qt_bins_dir
@@ -298,8 +302,10 @@ set qt_lupdate_cmd     ${qt_dir}/bin/lupdate
 global qt_pkg_config_dir
 set qt_pkg_config_dir   ${qt_libs_dir}/pkgconfig
 
+###RJVB###
 global qt_install_registry
 set qt_install_registry ${qt_dir}/registry
+###RJVB###
 
 namespace eval qt5pg {
     ############################################################################### Component Format
@@ -733,6 +739,9 @@ if {[vercmp ${qt5.version} 5.10]>=0} {
     }
 }
 
+###RJVB###
+if {${os.platform} eq "darwin"} {
+###RJVB###
 if {[vercmp ${qt5.version} 5.9]>=0} {
     # in version 5.9, QT changed how it handles multiple architectures
     # see http://web.archive.org/web/20170621174843/http://doc.qt.io/qt-5/osx.html
@@ -781,6 +790,42 @@ if {[vercmp ${qt5.version} 5.9]>=0} {
     set qt_qmake_spec_32 macx-clang-32
     set qt_qmake_spec_64 macx-clang
 }
+###RJVB###
+} elseif {${os.platform} eq "linux"} {
+    if {[string match *clang* ${configure.compiler}]} {
+        set qt_qmake_spec_32    linux-clang
+        set qt_qmake_spec_64    linux-clang
+        pre-configure {
+            # this has probably not been taken care of:
+            if {![string match "*-std=c++*" ${configure.cxxflags}]} {
+                configure.cxxflags-append \
+                                -std=c++11
+            }
+        }
+    } else {
+        set qt_qmake_spec_32    linux-g++
+        set qt_qmake_spec_64    linux-g++-64
+#         compiler.blacklist-append \
+#                                 clang
+    }
+} else {
+    if {[string match *clang* ${configure.compiler}]} {
+        set qt_qmake_spec_32    "${os.platform}-clang"
+        pre-configure {
+            # this has probably not been taken care of:
+            if {![string match "*-std=c++*" ${configure.cxxflags}]} {
+                configure.cxxflags-append \
+                                -std=c++11
+            }
+        }
+    } else {
+        set qt_qmake_spec_32    "${os.platform}-g++"
+#         compiler.blacklist-append \
+#                                 clang
+    }
+    set qt_qmake_spec_64        ${qt_qmake_spec_32}
+}
+###RJVB###
 
 default qt_qmake_spec {[qt5pg::get_default_spec]}
 
