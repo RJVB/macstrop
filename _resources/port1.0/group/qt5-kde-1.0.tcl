@@ -601,7 +601,7 @@ if {![tbool QT53] && ![tbool qt5.no_LTO_variant] && ![variant_exists LTO]} {
 
 if {![info exists building_qt5]} {
     if {${os.platform} ne "darwin"} {
-        configure.ldflags-append        -Wl,-rpath,${qt_libs_dir}
+        configure.ldflags-append        -Wl,-rpath,${qt_libs_dir} -Wl,-rpath,${prefix}/${build_arch}-linux-gnu
     }
 }
 

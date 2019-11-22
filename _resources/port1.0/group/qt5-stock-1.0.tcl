@@ -704,6 +704,12 @@ proc qt5.active_version {} {
     }
     return 0.0.0
 }
+# add rpaths on ~darwin
+if {![info exists building_qt5]} {
+    if {${os.platform} ne "darwin"} {
+        configure.ldflags-append -Wl,-rpath,${qt_libs_dir} -Wl,-rpath,${prefix}/${build_arch}-linux-gnu
+    }
+}
 ###########################################################################################
 
 if {[tbool just_want_qt5_variables]} {
