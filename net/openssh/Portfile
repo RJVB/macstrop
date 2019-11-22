@@ -1,0 +1,313 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
+PortSystem          1.0
+
+PortGroup           compiler_blacklist_versions 1.0
+
+name                openssh
+version             8.1p1
+revision            7
+categories          net
+platforms           darwin
+maintainers         nomaintainer
+license             BSD
+installs_libs       no
+conflicts           lsh
+
+description         OpenSSH secure login server
+
+long_description    OpenSSH is a FREE version of the SSH protocol suite of \
+                    network connectivity tools that increasing numbers of people on the \
+                    Internet are coming to rely on. Many users of telnet, rlogin, ftp, \
+                    and other such programs might not realize that their password is \
+                    transmitted across the Internet unencrypted, but it is. OpenSSH \
+                    encrypts all traffic (including passwords) to effectively eliminate \
+                    eavesdropping, connection hijacking, and other network-level \
+                    attacks. Additionally, OpenSSH provides a myriad of secure \
+                    tunneling capabilities, as well as a variety of authentication \
+                    methods.
+
+homepage            https://www.openbsd.org/openssh/
+
+checksums           rmd160  0d9bcaa22b77a8e26fbe4804ea4ae017e45b1568 \
+                    sha256  02f5dbef3835d0753556f973cd57b4c19b6b1f6cd24c03445e23ac77ca1b93ff
+#                     size    1625894
+
+master_sites        openbsd:OpenSSH/portable \
+                    ftp://ftp.cise.ufl.edu/pub/mirrors/openssh/portable/ \
+                    http://openbsd.mirrors.pair.com/OpenSSH/portable
+
+if {${name} eq ${subport}} {
+    depends_lib         path:lib/libssl.dylib:openssl \
+                        port:libedit \
+                        port:ncurses \
+                        port:zlib
+    depends_run         port:ssh-copy-id
+
+    # the HPN patch needs this, so rewrite all other patches to support it, too
+    patch.args          -p1
+    patchfiles          launchd.patch \
+                        pam.patch \
+                        patch-sandbox-darwin.c-apple-sandbox-named-external.diff \
+                        patch-sshd.c-apple-sandbox-named-external.diff \
+                        macports-config.patch \
+                        patch-openbsd_compat-memmem-bug.diff
+    platform darwin {
+        patchfiles-append \
+                        0002-Apple-keychain-integration-other-changes.patch
+    } else {
+        # other patches below depend on 0002 but we cannot build keychain.m elsewhere than on Mac,
+        # so use a crippled patchfile that doesn't touch the Makefile
+        patchfiles-append \
+                        0002-not-Apple-keychain-integration-other-changes.patch
+    }
+
+
+    # We need a couple of patches
+    # - pam.patch
+    #   getpwnam(3) on OS X always returns "*********" in the pw_passwd field even
+    #   when run as root, so it can't be used for authentication. This patch just
+    #   forces the use of PAM regardless of the configuration.
+    # - patch-*-apple-sandbox-named-external.diff
+    #   Use Apple's sandbox_init(3) in addition to standard privilege separation.
+    #   This requires a sandbox profile (which we provide) and the sandbox_init(3)
+    #   call before the chroot(2) to privsep-path (${prefix}/var/empty), or it will
+    #   fail to load the sandbox description and libsandbox.1.dylib.
+    # - 0002-Apple-keychain-integration-other-changes.patch
+    #   Adds Apple Keychain integration and ssh-agent's launchd mode
+    # - macports-config.patch
+    #   Changes the default configuration from the upstream-provided one by popular
+    #   request.
+
+    post-patch {
+        # reinplace prefix in path to sandbox definition added by
+        # patch-sandbox-darwin.c-apple-sandbox-named-external.diff
+        reinplace "s|@PREFIX@|${prefix}|g" ${worksrcpath}/sandbox-darwin.c
+    }
+
+    pre-configure {
+        use_autoreconf  [expr ![file exists ${worksrcpath}/config.log]]
+    }
+
+    # strnvis(3) isn't actually "broken".  OpenBSD decided to be special and flip
+    # the order of arguments to strnvis and considers everyone else to be broken.
+    configure.cppflags-append -DBROKEN_STRNVIS=1
+
+    platform darwin {
+        # Use Apple's sandboxing feature
+        configure.cppflags-append -D__APPLE_SANDBOX_NAMED_EXTERNAL__ \
+                                  -D__APPLE_API_STRICT_CONFORMANCE
+        configure.ldflags-append  -Wl,-search_paths_first
+    }
+    configure.args      --with-ssl-dir=${prefix} \
+                        --sysconfdir=${prefix}/etc/ssh \
+                        --with-privsep-path=/var/empty \
+                        --with-md5-passwords \
+                        --with-pid-dir=${prefix}/var/run \
+                        --with-pam \
+                        --mandir=${prefix}/share/man \
+                        --with-zlib=${prefix} \
+                        --without-kerberos5 \
+                        --with-libedit \
+                        --with-pie \
+                        --without-xauth \
+                        --without-ldns
+    platform darwin {
+        configure.args-append \
+                        --with-audit=bsm \
+                        --with-keychain=apple
+    } else {
+        configure.args-append \
+                        --with-audit=linux
+    }
+
+    use_parallel_build  yes
+    build.post_args     -wk
+
+    platform macosx {
+        if {${os.major} <= 11} {
+            # clang is required to build the new Apple Keychain integration due
+            # to it using the Object Subscripting feature, c.f. #59397.
+            # We'll keep it simple and just blacklist any gcc version, cc
+            # (which could be anything), system clang versions prior to those
+            # shipped with Xcode 4.4.
+            # Regarding the macports-clang versions, any version in the
+            # MacPorts tree should suit our needs, since the clang
+            # documentation lists FOSS clang/llvm 3.1 as the first version to
+            # support Object Subscripting and the oldest version in our tree is
+            # now 3.3.
+            compiler.blacklist-append   *gcc* cc {clang < 421}
+        }
+    }
+
+    destroot.target     install-nokeys
+
+    test.run            yes
+    test.target         tests
+
+    post-destroot {
+        destroot.keepdirs ${destroot}${prefix}/var/run
+
+        # switch default port to avoid conflict with system sshd
+        reinplace "s|#Port 22|Port 2222|g" ${destroot}${prefix}/etc/ssh/sshd_config
+
+        # install sandbox definition
+        xinstall -m 755 -d ${destroot}${prefix}/share/${name}
+        xinstall -m 644 ${filespath}/com.openssh.sshd.sb ${destroot}${prefix}/share/${name}
+
+        file rename "${destroot}${prefix}/etc/ssh/sshd_config" "${destroot}${prefix}/etc/ssh/sshd_config.example"
+        file rename "${destroot}${prefix}/etc/ssh/ssh_config" "${destroot}${prefix}/etc/ssh/ssh_config.example"
+    }
+
+    post-activate {
+        if {![file exists "${prefix}/etc/ssh/sshd_config"]} {
+            copy "${prefix}/etc/ssh/sshd_config.example" "${prefix}/etc/ssh/sshd_config"
+        }
+        if {![file exists "${prefix}/etc/ssh/ssh_config"]} {
+            copy "${prefix}/etc/ssh/ssh_config.example" "${prefix}/etc/ssh/ssh_config"
+        }
+    }
+
+    platform darwin {
+        notes-append "
+                    Apple's keychain integration and launchd changes are now\
+                    included by default, not just with the gsskex variant.\
+
+                    The parameters were changed from -m/-M to -A/-K in\
+                    accordance with Apple's changes, because upstream started\
+                    using the former switches themselves recently."
+    }
+
+    variant xauth description {Build with support for xauth} {
+        configure.args-replace  --without-xauth \
+                                --with-xauth=${prefix}/bin/xauth
+        platform darwin {
+            depends_run-append  port:xauth
+        }
+    }
+
+    variant hpn conflicts gsskex description {Apply high performance patch} {
+        # Current location(s):
+        #   https://github.com/rapier1/openssh-portable/
+        #   http://www.freshports.org/security/openssh-portable/
+        #     (is usually quick in updating the HPN patch for new versions,
+        #      take a look there, too.)
+
+        # Formerly taken directly from FreeBSD as a distfile, now copied over
+        # from either upstream at or FreeBSD's ports directory and rebased.
+        set hpn_patchfile       ${name}-${version}-hpnssh14v18
+        patchfiles-append       ${hpn_patchfile}.diff \
+                                ${hpn_patchfile}-openssl-1.1.diff
+    }
+
+    variant gsskex conflicts hpn requires kerberos5 description "Add OpenSSH GSSAPI key exchange patch" {
+        patchfiles-append       openssh-8.1p1-gsskex-all-20141021-mp-20191015.patch
+        configure.ldflags-append \
+                                -Wl,-pie
+        configure.cflags-append -fPIE
+        configure.args-append   --with-4in6 \
+                                --disable-utmp \
+                                --disable-wtmp \
+                                --with-privsep-user=_sshd
+    }
+
+    variant kerberos5 description "Add Kerberos5 support" {
+        depends_lib-append      port:kerberos5
+        configure.args-delete   --without-kerberos5
+        configure.args-append   --with-kerberos5=${prefix}
+
+        if {${os.platform} eq "darwin"} {
+            post-extract {
+                xinstall -m 0755 -W "${filespath}" slogin "${worksrcpath}/"
+            }
+
+            pre-configure {
+                reinplace -W "${worksrcpath}" "s|@@PREFIX@@|${prefix}|" slogin
+            }
+
+            post-destroot {
+                xinstall -m 0755 ${worksrcpath}/slogin \
+                                 ${destroot}${prefix}/bin/
+            }
+        }
+    }
+
+    variant ldns description "Use ldns for DNSSEC support" {
+        configure.args-replace  --without-ldns \
+                                --with-ldns
+        depends_lib-append      port:ldns
+    }
+
+    default_variants            +kerberos5 +xauth
+
+    platform darwin {
+        # create link to /usr/include/pam because 'security' was renamed to 'pam'
+        # in OS X.
+        # And then again back to security in 10.6.
+        if {${os.major} < 10} {
+            pre-configure {
+                xinstall -d ${workpath}/include
+                file delete ${workpath}/include/security
+                ln -s /usr/include/pam ${workpath}/include/security
+                configure.cppflags-append "-I${workpath}/include"
+            }
+        }
+    }
+
+    platform darwin 9 {
+        # 10.5/ppc doesn't like the sandbox file we supply
+        configure.cppflags-delete -D__APPLE_SANDBOX_NAMED_EXTERNAL__
+    }
+
+    startupitem.create  yes
+    startupitem.name    OpenSSH
+    startupitem.start   \
+        "if \[ -x ${prefix}/sbin/sshd \]; then
+            if \[ ! -f ${prefix}/etc/ssh/ssh_host_dsa_key \]; then
+                ${prefix}/bin/ssh-keygen -t dsa -f \\
+                ${prefix}/etc/ssh/ssh_host_dsa_key -N \"\" -C `hostname`
+            fi
+            if \[ ! -f ${prefix}/etc/ssh/ssh_host_rsa_key \]; then
+                ${prefix}/bin/ssh-keygen -t rsa -f \\
+                ${prefix}/etc/ssh/ssh_host_rsa_key -N \"\" -C `hostname`
+            fi
+            if \[ ! -f ${prefix}/etc/ssh/ssh_host_ecdsa_key \]; then
+                ${prefix}/bin/ssh-keygen -t ecdsa -f \\
+                ${prefix}/etc/ssh/ssh_host_ecdsa_key -N \"\" -C `hostname`
+            fi
+            if \[ ! -f ${prefix}/etc/ssh/ssh_host_ed25519_key \]; then
+                ${prefix}/bin/ssh-keygen -t ed25519 -f \\
+                ${prefix}/etc/ssh/ssh_host_ed25519_key -N \"\" -C `hostname`
+            fi
+            ${prefix}/sbin/sshd
+        fi"
+    startupitem.stop    \
+        "if \[ -r ${prefix}/var/run/sshd.pid \]; then
+            kill `cat ${prefix}/var/run/sshd.pid`
+        fi"
+}
+
+subport ssh-copy-id {
+    revision            0
+    platforms           darwin freebsd
+    supported_archs     noarch
+    maintainers         {l2dy @l2dy} openmaintainer
+    description         Shell script to install your public key(s) on a remote machine
+    long_description    ${description}
+
+    # Make sure to not create multiple copies of the same distfile.
+    distname            openssh-${version}
+    dist_subdir         openssh
+
+    use_configure       no
+    build               {}
+
+    destroot {
+        xinstall -m 755 ${worksrcpath}/contrib/ssh-copy-id ${destroot}${prefix}/bin
+        xinstall -m 644 ${worksrcpath}/contrib/ssh-copy-id.1 ${destroot}${prefix}/share/man/man1
+    }
+}
+
+livecheck.type      regex
+livecheck.url       https://ftp.openbsd.org/pub/OpenBSD/OpenSSH/portable/
+livecheck.regex     openssh-(\[5-9\]+.\[0-9\]+p\[0-9\]+)[quotemeta ${extract.suffix}]
