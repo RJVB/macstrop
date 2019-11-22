@@ -93,6 +93,7 @@ set args $argv
     set os_arch ${macports::os_arch}
     set portpath "./"
     set portbuildpath "./"
+    set prefix_frozen ${macports::prefix}
     package require port 1.0
     ### init done
 
