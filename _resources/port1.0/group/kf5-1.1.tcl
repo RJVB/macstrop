@@ -152,7 +152,7 @@ if {${kf5::includecounter} == 0} {
     }
 
     # kf5.py* variable definitions (now kf5::py* namespaced variables) were
-    # here; moved to kf5-frameworks-1.0.tcl
+    # here; moved to kf5_frameworks-1.0.tcl
 
     platform darwin {
         variant nativeQSP description {use the native Apple-style QStandardPaths locations} {}
@@ -535,8 +535,8 @@ if {[info exists kf5.project]} {
 ### resides in the same directory as ourselves.
 ### Do NOT impose this restriction if we're reading a copy stored in the registry!
 if {[string first "registry/portgroup" ${kf5::currentportgroupdir}] < 0} {
-    if {![file exists ${kf5::currentportgroupdir}/kf5-frameworks-1.0.tcl]} {
-        ui_error "The kf5 1.0 and kf5-frameworks 1.0 PortGroups should reside in the same directory"
+    if {![file exists ${kf5::currentportgroupdir}/kf5_frameworks-1.0.tcl]} {
+        ui_error "The kf5 1.0 and kf5_frameworks 1.0 PortGroups should reside in the same directory"
         return -code error "KF5 PortGroup installation error"
     }
 } else {
@@ -546,7 +546,7 @@ if {[string first "registry/portgroup" ${kf5::currentportgroupdir}] < 0} {
 ### more things that should or needs to be parsed only once:
 
 if {${kf5::includecounter} == 0} {
-    PortGroup kf5-frameworks 1.0
+    PortGroup kf5_frameworks 1.0
     # TODO: raise error if inclusion failed
 
     if {[variant_isset docs]} {
