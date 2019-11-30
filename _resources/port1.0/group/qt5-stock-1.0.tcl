@@ -710,6 +710,75 @@ if {![info exists building_qt5]} {
         configure.ldflags-append -Wl,-rpath,${qt_libs_dir} -Wl,-rpath,${prefix}/${build_arch}-linux-gnu
     }
 }
+
+# create a wrapper script in ${prefix}/bin for an application bundle in qt_apps_dir
+options qt5.wrapper_env_additions
+default qt5.wrapper_env_additions ""
+
+proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""}} {
+    global qt_dir qt_apps_dir destroot prefix os.platform qt5.wrapper_env_additions subport
+    if {${os.platform} eq "darwin"} {
+        if {${appdir} eq ""} {
+            set appdir ${qt_apps_dir}
+        }
+        if {${bundlename} eq ""} {
+            set bundlename ${wrappername}
+        }
+        if {${bundleexec} eq ""} {
+            set bundleexec [file tail ${bundlename}]
+        }
+    } else {
+        # no app bundles on this platform, but provide the same API by pretending there are.
+        # If unset, use ${subport} to guess the exec. name because evidently we cannot
+        # symlink ${wrappername} onto itself.
+        if {${appdir} eq ""} {
+            set appdir ${prefix}/bin
+        }
+        if {${bundlename} eq ""} {
+            set bundlename ${subport}
+        }
+        if {${bundleexec} eq ""} {
+            set bundleexec ${bundlename}
+        }
+    }
+    if {${bundleexec} eq "${prefix}/bin/${wrappername}"
+            || "${appdir}/${bundleexec}" eq "${prefix}/bin/${wrappername}"} {
+        ui_error "qt5.add_app_wrapper: wrapper ${wrappername} would overwrite executable ${bundleexec}: ignoring!"
+        return;
+    }
+    xinstall -m 755 -d ${destroot}${prefix}/bin
+    if {![catch {set fd [open "${destroot}${prefix}/bin/${wrappername}" "w"]} err]} {
+        # this wrapper exists to a large extent to improve integration of "pure" qt5
+        # apps with KF5 apps, in particular through the use of the KDE platform theme plugin
+        # Hence the reference to KDE things in the preamble.
+        set wrapper_env_additions "[join ${qt5.wrapper_env_additions}]"
+        if {${wrapper_env_additions} ne ""} {
+            puts ${fd} "# Additional env. variables specified by port:${subport} :"
+            puts ${fd} "export ${wrapper_env_additions}"
+            puts ${fd} "#"
+        }
+        if {${os.platform} eq "darwin"} {
+            if {[file dirname ${bundleexec}] eq "."} {
+                puts ${fd} "exec ${qt_dir}/thisQt.sh \"${appdir}/${bundlename}.app/Contents/MacOS/${bundleexec}\" \"\$\@\""
+            } else {
+                # fully qualified bundleexec, use "as is"
+                puts ${fd} "exec ${qt_dir}/thisQt.sh \"${bundleexec}\" \"\$\@\""
+            }
+        } else {
+            if {[file dirname ${bundleexec}] eq "."} {
+                puts ${fd} "exec ${qt_dir}/thisQt.sh \"${appdir}/${bundleexec}\" \"\$\@\""
+            } else {
+                puts ${fd} "exec ${qt_dir}/thisQt.sh \"${bundleexec}\" \"\$\@\""
+            }
+        }
+        close ${fd}
+        system "chmod 755 ${destroot}${prefix}/bin/${wrappername}"
+    } else {
+        ui_error "Failed to (re)create \"${destroot}${prefix}/bin/${wrappername}\" : ${err}"
+        return -code error ${err}
+    }
+}
+
 ###########################################################################################
 
 if {[tbool just_want_qt5_variables]} {

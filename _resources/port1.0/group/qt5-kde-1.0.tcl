@@ -741,10 +741,10 @@ default qt5.wrapper_env_additions ""
 
 proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""}} {
     global qt_apps_dir destroot prefix os.platform qt5.wrapper_env_additions subport
-    if {${appdir} eq ""} {
-        set appdir ${qt_apps_dir}
-    }
     if {${os.platform} eq "darwin"} {
+        if {${appdir} eq ""} {
+            set appdir ${qt_apps_dir}
+        }
         if {${bundlename} eq ""} {
             set bundlename ${wrappername}
         }
@@ -755,6 +755,9 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
         # no app bundles on this platform, but provide the same API by pretending there are.
         # If unset, use ${subport} to guess the exec. name because evidently we cannot
         # symlink ${wrappername} onto itself.
+        if {${appdir} eq ""} {
+            set appdir ${prefix}/bin
+        }
         if {${bundlename} eq ""} {
             set bundlename ${subport}
         }
