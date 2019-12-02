@@ -164,8 +164,8 @@ proc cmake::module_path {} {
         set modpath [option cmake_share_module_dir]
     }
     return [list \
-        -DCMAKE_MODULE_PATH="${modpath}" \
-        -DCMAKE_PREFIX_PATH="${modpath}"
+        -DCMAKE_MODULE_PATH="[lindex ${modpath} 0]" \
+        -DCMAKE_PREFIX_PATH="[lindex ${modpath} 0]"
     ]
 }
 
