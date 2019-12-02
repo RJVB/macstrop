@@ -1,0 +1,3097 @@
+diff --git a/Source/PlatformQt.cmake b/Source/PlatformQt.cmake
+index 7f0a542726bc..a2c84ee7b1c6 100644
+--- a/Source/PlatformQt.cmake
++++ b/Source/PlatformQt.cmake
+@@ -33,8 +33,12 @@ if (USE_MINIMAL_DEBUG_INFO AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+         target_compile_options(gtest          PRIVATE -g0 -O1)
+     endif ()
+ 
+-    target_compile_options(WebKit            PRIVATE -g1 -O1 -fdebug-types-section)
+-    target_compile_options(WebKit2           PRIVATE -g1 -O1 -fdebug-types-section)
++    target_compile_options(WebKit            PRIVATE -g1 -O1)
++    target_compile_options(WebKit2           PRIVATE -g1 -O1)
++    if (NOT APPLE)
++        target_compile_options(WebKit        PRIVATE -fdebug-types-section)
++        target_compile_options(WebKit2       PRIVATE -fdebug-types-section)
++    endif ()
+ endif ()
+ 
+ if (USE_MINIMAL_DEBUG_INFO_MSVC AND MSVC AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+@@ -50,6 +54,15 @@ if (USE_MINIMAL_DEBUG_INFO_MSVC AND MSVC AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+     endif ()
+ endif ()
+ 
++if (FORCE_DEBUG_INFO)
++    if (COMPILER_IS_GCC_OR_CLANG)
++        if (NOT APPLE)
++            target_compile_options(WebKit        PRIVATE -fdebug-types-section)
++            target_compile_options(WebKit2       PRIVATE -fdebug-types-section)
++        endif ()
++    endif ()
++endif ()
++
+ # GTest
+ 
+ if (TARGET gtest)
+@@ -74,6 +87,29 @@ target_include_directories(WebKitWidgets INTERFACE
+     $<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR}/QtWebKitWidgets>
+ )
+ 
++if (QT_ORIGIN_RPATH)
++    set(WEBKIT_SHARED_LIBRARY_TARGETS WebKit)
++
++    if (TARGET WebKitWidgets)
++        list(APPEND WEBKIT_SHARED_LIBRARY_TARGETS WebKitWidgets)
++    endif ()
++
++    if (TARGET WebKit2)
++        set(WEBKIT2_EXECUTABLES WebProcess NetworkProcess)
++        if (ENABLE_PLUGIN_PROCESS)
++            list(APPEND WEBKIT2_EXECUTABLES PluginProcess)
++        endif ()
++        if (ENABLE_DATABASE_PROCESS)
++            list(APPEND WEBKIT2_EXECUTABLES DatabaseProcess)
++        endif ()
++        set_target_properties(${WEBKIT2_EXECUTABLES} PROPERTIES INSTALL_RPATH "\$ORIGIN/../lib")
++        set_target_properties(qmlwebkitplugin PROPERTIES INSTALL_RPATH "\$ORIGIN/../../lib")
++        set_target_properties(qmlwebkitexperimentalplugin PROPERTIES INSTALL_RPATH "\$ORIGIN/../../../lib")
++    endif ()
++
++    set_target_properties(${WEBKIT_SHARED_LIBRARY_TARGETS} PROPERTIES INSTALL_RPATH "\$ORIGIN")
++endif ()
++
+ set(QTWEBKIT_PACKAGE_INIT "
+ macro(find_dependency_with_major_and_minor _dep _major _minor)
+     find_dependency(\${_dep} \"\${_major}.\${_minor}\")
+@@ -110,6 +146,18 @@ list(REMOVE_DUPLICATES Qt5@MODULE_NAME@_PRIVATE_INCLUDE_DIRS)
+ list(REMOVE_DUPLICATES Qt5@MODULE_NAME@_DEFINITIONS)
+ list(REMOVE_DUPLICATES Qt5@MODULE_NAME@_COMPILE_DEFINITIONS)
+ list(REMOVE_DUPLICATES Qt5@MODULE_NAME@_EXECUTABLE_COMPILE_FLAGS)
++
++# Fixup order of configurations to match behavior of other Qt modules
++# See also https://bugreports.qt.io/browse/QTBUG-29186
++get_target_property(_configurations Qt5::@MODULE_NAME@ IMPORTED_CONFIGURATIONS)
++list(FIND _configurations RELEASE _index)
++if (\${_index} GREATER -1)
++    list(REMOVE_AT _configurations \${_index})
++    list(INSERT _configurations 0 RELEASE)
++    set_property(TARGET Qt5::@MODULE_NAME@ PROPERTY IMPORTED_CONFIGURATIONS \"\${_configurations}\")
++endif ()
++unset(_configurations)
++unset(_index)
+ ")
+ 
+ set(MODULE_NAME WebKit)
+@@ -149,17 +197,18 @@ install(FILES
+     COMPONENT Data
+ )
+ 
++# We need to install separate config files for debug and release, so use "Code" component
+ install(EXPORT WebKitTargets
+     FILE WebKitTargets.cmake
+     NAMESPACE Qt5::
+     DESTINATION "${KDE_INSTALL_CMAKEPACKAGEDIR}/Qt5WebKit"
+-    COMPONENT Data
++    COMPONENT Code
+ )
+ install(EXPORT Qt5WebKitWidgetsTargets
+     FILE Qt5WebKitWidgetsTargets.cmake
+     NAMESPACE Qt5::
+     DESTINATION "${KDE_INSTALL_CMAKEPACKAGEDIR}/Qt5WebKitWidgets"
+-    COMPONENT Data
++    COMPONENT Code
+ )
+ 
+ # Documentation
+diff --git a/Source/WebCore/PlatformQt.cmake b/Source/WebCore/PlatformQt.cmake
+index cd2e79d5db3c..99c625dc3737 100644
+--- a/Source/WebCore/PlatformQt.cmake
++++ b/Source/WebCore/PlatformQt.cmake
+@@ -283,6 +283,7 @@ list(APPEND WebCore_SYSTEM_INCLUDE_DIRECTORIES
+     ${Qt5Gui_INCLUDE_DIRS}
+     ${Qt5Gui_PRIVATE_INCLUDE_DIRS}
+     ${Qt5Network_INCLUDE_DIRS}
++    ${Qt5Network_PRIVATE_INCLUDE_DIRS}
+     ${Qt5Sensors_INCLUDE_DIRS}
+     ${SQLITE_INCLUDE_DIR}
+     ${ZLIB_INCLUDE_DIRS}
+diff --git a/Source/WebCore/platform/Cursor.cpp b/Source/WebCore/platform/Cursor.cpp
+index 014efa5f584b..722181bc1fa7 100644
+--- a/Source/WebCore/platform/Cursor.cpp
++++ b/Source/WebCore/platform/Cursor.cpp
+@@ -154,7 +154,9 @@ Cursor::Cursor(Image* image, const IntPoint& hotSpot)
+ #if ENABLE(MOUSE_CURSOR_SCALE)
+     , m_imageScaleFactor(1)
+ #endif
++#if !PLATFORM(QT)
+     , m_platformCursor(nullptr)
++#endif
+ {
+ }
+ 
+@@ -164,7 +166,9 @@ Cursor::Cursor(Image* image, const IntPoint& hotSpot, float scale)
+     , m_image(image)
+     , m_hotSpot(determineHotSpot(image, hotSpot))
+     , m_imageScaleFactor(scale)
++#if !PLATFORM(QT)
+     , m_platformCursor(0)
++#endif
+ {
+ }
+ #endif
+@@ -174,7 +178,9 @@ Cursor::Cursor(Type type)
+ #if ENABLE(MOUSE_CURSOR_SCALE)
+     , m_imageScaleFactor(1)
+ #endif
++#if !PLATFORM(QT)
+     , m_platformCursor(nullptr)
++#endif
+ {
+ }
+ 
+@@ -182,7 +188,7 @@ Cursor::Cursor(Type type)
+ PlatformCursor Cursor::platformCursor() const
+ {
+     ensurePlatformCursor();
+-    return m_platformCursor.get();
++    return m_platformCursor ? &m_platformCursor.value() : nullptr;
+ }
+ #elif !PLATFORM(COCOA)
+ 
+diff --git a/Source/WebCore/platform/Cursor.h b/Source/WebCore/platform/Cursor.h
+index 86d714903afa..a81783e5fbfe 100644
+--- a/Source/WebCore/platform/Cursor.h
++++ b/Source/WebCore/platform/Cursor.h
+@@ -42,6 +42,7 @@ typedef HICON HCURSOR;
+ #include "GRefPtrGtk.h"
+ #elif PLATFORM(QT)
+ #include <QCursor>
++#include <wtf/Optional.h>
+ #endif
+ 
+ #if USE(APPKIT)
+@@ -140,7 +141,9 @@ namespace WebCore {
+ #if ENABLE(MOUSE_CURSOR_SCALE)
+             , m_imageScaleFactor(1)
+ #endif
++#if !PLATFORM(QT)
+             , m_platformCursor(nullptr)
++#endif
+ #endif // !PLATFORM(IOS)
+         {
+         }
+@@ -182,7 +185,7 @@ namespace WebCore {
+ #endif
+ 
+ #if PLATFORM(QT)
+-        mutable std::unique_ptr<QCursor> m_platformCursor;
++        mutable Optional<QCursor> m_platformCursor;
+ #elif !USE(APPKIT)
+         mutable PlatformCursor m_platformCursor;
+ #else
+diff --git a/Source/WebCore/platform/graphics/qt/FontCustomPlatformDataQt.cpp b/Source/WebCore/platform/graphics/qt/FontCustomPlatformDataQt.cpp
+index 908d881f1218..2c8571ace5d3 100644
+--- a/Source/WebCore/platform/graphics/qt/FontCustomPlatformDataQt.cpp
++++ b/Source/WebCore/platform/graphics/qt/FontCustomPlatformDataQt.cpp
+@@ -41,7 +41,7 @@ std::unique_ptr<FontCustomPlatformData> createFontCustomPlatformData(SharedBuffe
+     const QByteArray fontData(buffer.data(), buffer.size());
+ 
+     // Pixel size doesn't matter at this point, it is set in FontCustomPlatformData::fontPlatformData.
+-    QRawFont rawFont(fontData, /*pixelSize = */0, QFont::PreferDefaultHinting);
++    QRawFont rawFont(fontData, /*pixelSize = */0, QFont::PreferVerticalHinting);
+     if (!rawFont.isValid())
+         return 0;
+ 
+diff --git a/Source/WebCore/platform/graphics/qt/FontPlatformDataQt.cpp b/Source/WebCore/platform/graphics/qt/FontPlatformDataQt.cpp
+index 2ed4a98c33f6..8727bccabc8e 100644
+--- a/Source/WebCore/platform/graphics/qt/FontPlatformDataQt.cpp
++++ b/Source/WebCore/platform/graphics/qt/FontPlatformDataQt.cpp
+@@ -105,7 +105,9 @@ FontPlatformData::FontPlatformData(const FontDescription& description, const Ato
+     font.setLetterSpacing(QFont::AbsoluteSpacing, letterSpacing);
+ 
+     if (!FontCascade::shouldUseSmoothing())
+-        font.setStyleStrategy(QFont::NoAntialias);
++        font.setStyleStrategy(static_cast<QFont::StyleStrategy>(QFont::NoAntialias | QFont::ForceOutline));
++    else
++        font.setStyleStrategy(QFont::ForceOutline);
+ 
+     m_data->bold = font.bold();
+     // WebKit allows font size zero but QFont does not. We will return
+diff --git a/Source/WebCore/platform/graphics/qt/GradientQt.cpp b/Source/WebCore/platform/graphics/qt/GradientQt.cpp
+index 3412cfadd3f5..2c3dec5bac3f 100644
+--- a/Source/WebCore/platform/graphics/qt/GradientQt.cpp
++++ b/Source/WebCore/platform/graphics/qt/GradientQt.cpp
+@@ -66,6 +66,10 @@ QGradient* Gradient::platformGradient()
+     qreal lastStop(0.0);
+     const qreal lastStopDiff = 0.0000001;
+     while (stopIterator != m_stops.end()) {
++        // Drop gradient stops after 1.0 to avoid overwriting color at 1.0
++        if (lastStop >= 1)
++            break;
++
+         stopColor.setRgbF(stopIterator->red, stopIterator->green, stopIterator->blue, stopIterator->alpha);
+         if (qFuzzyCompare(lastStop, qreal(stopIterator->stop)))
+             lastStop = stopIterator->stop + lastStopDiff;
+@@ -78,6 +82,8 @@ QGradient* Gradient::platformGradient()
+                 lastStop += innerRadius / outerRadius;
+         }
+ 
++        // Clamp stop position to 1.0, otherwise QGradient will ignore it
++        // https://bugs.webkit.org/show_bug.cgi?id=41484
+         qreal stopPosition = qMin(lastStop, qreal(1.0f));
+ 
+         if (m_radial && reversed)
+diff --git a/Source/WebCore/platform/graphics/qt/GraphicsContextQt.cpp b/Source/WebCore/platform/graphics/qt/GraphicsContextQt.cpp
+index 1e041050e5a0..72db3ebaf8d0 100644
+--- a/Source/WebCore/platform/graphics/qt/GraphicsContextQt.cpp
++++ b/Source/WebCore/platform/graphics/qt/GraphicsContextQt.cpp
+@@ -151,6 +151,11 @@ static inline QPainter::CompositionMode toQtCompositionMode(BlendMode op)
+         return QPainter::CompositionMode_Difference;
+     case BlendModeExclusion:
+         return QPainter::CompositionMode_Exclusion;
++    case BlendModePlusLighter:
++        return QPainter::CompositionMode_Plus;
++    case BlendModePlusDarker:
++        // there is no exact match, but this is the closest
++        return QPainter::CompositionMode_Darken;
+     case BlendModeHue:
+     case BlendModeSaturation:
+     case BlendModeColor:
+@@ -1595,7 +1600,7 @@ void GraphicsContext::set3DTransform(const TransformationMatrix& transform)
+ 
+ void GraphicsContext::setURLForRect(const URL& url, const IntRect& rect)
+ {
+-#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0)
++#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0) && !defined(QT_NO_PDF)
+     if (paintingDisabled())
+         return;
+ 
+diff --git a/Source/WebCore/platform/network/qt/CookieJarQt.cpp b/Source/WebCore/platform/network/qt/CookieJarQt.cpp
+index d1cf87fdd0f8..0e05e677bc0a 100644
+--- a/Source/WebCore/platform/network/qt/CookieJarQt.cpp
++++ b/Source/WebCore/platform/network/qt/CookieJarQt.cpp
+@@ -123,7 +123,7 @@ String cookieRequestHeaderFieldValue(const NetworkStorageSession& session, const
+ 
+ bool cookiesEnabled(const NetworkStorageSession& session, const URL& /*firstParty*/, const URL& /*url*/)
+ {
+-    return true;
++    return session.context() ? session.context()->networkAccessManager()->cookieJar() : SharedCookieJarQt::shared();
+ }
+ 
+ bool getRawCookies(const NetworkStorageSession& session, const URL& /*firstParty*/, const URL& /*url*/, Vector<Cookie>& rawCookies)
+diff --git a/Source/WebCore/platform/network/qt/QNetworkReplyHandler.cpp b/Source/WebCore/platform/network/qt/QNetworkReplyHandler.cpp
+index 0ce68838ed2e..7924595582ac 100644
+--- a/Source/WebCore/platform/network/qt/QNetworkReplyHandler.cpp
++++ b/Source/WebCore/platform/network/qt/QNetworkReplyHandler.cpp
+@@ -41,6 +41,29 @@
+ 
+ #include <QCoreApplication>
+ 
++#if USE(HTTP2) && QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
++
++#include <private/http2protocol_p.h>
++#include <cstdlib>
++
++// Redefine private bits which are not currenly exported from QtNetwork
++
++QT_BEGIN_NAMESPACE
++
++namespace Http2 {
++const char *http2ParametersPropertyName = "QT_HTTP2_PARAMETERS_PROPERTY";
++
++ProtocolParameters::ProtocolParameters()
++{
++    settingsFrameData[Settings::INITIAL_WINDOW_SIZE_ID] = qtDefaultStreamReceiveWindowSize;
++    settingsFrameData[Settings::ENABLE_PUSH_ID] = 0;
++}
++}
++
++QT_END_NAMESPACE
++
++#endif // USE(HTTP2) && QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
++
+ static const int gMaxRedirections = 10;
+ 
+ namespace WebCore {
+@@ -588,19 +611,10 @@ void QNetworkReplyHandler::sendResponseIfNeeded()
+                               m_replyWrapper->reply()->header(QNetworkRequest::ContentLengthHeader).toLongLong(),
+                               m_replyWrapper->encoding());
+ 
+-    if (url.isLocalFile()) {
+-        if (client->usesAsyncCallbacks()) {
+-            setLoadingDeferred(true);
+-            client->didReceiveResponseAsync(m_resourceHandle, response);
+-        } else
+-            client->didReceiveResponse(m_resourceHandle, response);
+-        return;
+-    }
+-
+-    // The status code is equal to 0 for protocols not in the HTTP family.
+-    int statusCode = m_replyWrapper->reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+ 
+     if (url.protocolIsInHTTPFamily()) {
++        // The status code is equal to 0 for protocols not in the HTTP family.
++        int statusCode = m_replyWrapper->reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+         response.setHTTPStatusCode(statusCode);
+         response.setHTTPStatusText(m_replyWrapper->reply()->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toByteArray().constData());
+ 
+@@ -783,6 +797,18 @@ QNetworkReply* QNetworkReplyHandler::sendNetworkRequest(QNetworkAccessManager* m
+     if (!manager)
+         return 0;
+ 
++#if USE(HTTP2) && QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
++    static const bool alpnIsSupported = ResourceRequest::alpnIsSupported();
++    if (alpnIsSupported && !manager->property(Http2::http2ParametersPropertyName).isValid()) {
++        Http2::ProtocolParameters params;
++        // QTBUG-77308
++        params.maxSessionReceiveWindowSize = Http2::maxSessionReceiveWindowSize / 2;
++        // Enable HTTP/2 push
++        params.settingsFrameData[Http2::Settings::ENABLE_PUSH_ID] = 1;
++        manager->setProperty(Http2::http2ParametersPropertyName, QVariant::fromValue(params));
++    }
++#endif
++
+     const QUrl url = m_request.url();
+ 
+     // Post requests on files and data don't really make sense, but for
+diff --git a/Source/WebCore/platform/network/qt/ResourceRequest.h b/Source/WebCore/platform/network/qt/ResourceRequest.h
+index e74d9024c919..1154d56a012e 100644
+--- a/Source/WebCore/platform/network/qt/ResourceRequest.h
++++ b/Source/WebCore/platform/network/qt/ResourceRequest.h
+@@ -29,6 +29,13 @@
+ 
+ #include "ResourceRequestBase.h"
+ 
++// HTTP/2 is implemented since Qt 5.8, but various QtNetwork bugs make it unusable in browser with Qt < 5.10.1
++// We also don't enable HTTP/2 for unencrypted connections because of possible compatibility issues; it can be
++// enabled manually by user application via custom QNAM subclass
++#if QT_VERSION >= QT_VERSION_CHECK(5, 10, 1)
++#define USE_HTTP2 1
++#endif
++
+ QT_BEGIN_NAMESPACE
+ class QNetworkRequest;
+ QT_END_NAMESPACE
+@@ -63,6 +70,12 @@ class NetworkingContext;
+ 
+         QNetworkRequest toNetworkRequest(NetworkingContext* = 0) const;
+ 
++#if USE(HTTP2)
++        // Don't enable HTTP/2 when ALPN support status is unknown
++        static bool alpnIsSupported();
++#endif
++
++
+     private:
+         friend class ResourceRequestBase;
+ 
+diff --git a/Source/WebCore/platform/network/qt/ResourceRequestQt.cpp b/Source/WebCore/platform/network/qt/ResourceRequestQt.cpp
+index 694e2a7648f2..310738449b75 100644
+--- a/Source/WebCore/platform/network/qt/ResourceRequestQt.cpp
++++ b/Source/WebCore/platform/network/qt/ResourceRequestQt.cpp
+@@ -27,21 +27,12 @@
+ #include <QNetworkRequest>
+ #include <QUrl>
+ 
+-// HTTP/2 is implemented since Qt 5.8, but various QtNetwork bugs make it unusable in browser with Qt < 5.10.1
+-// We also don't enable HTTP/2 for unencrypted connections because of possible compatibility issues; it can be
+-// enabled manually by user application via custom QNAM subclass
+-#if QT_VERSION >= QT_VERSION_CHECK(5, 10, 1)
++#if USE(HTTP2)
+ #include <QSslSocket>
+-#define USE_HTTP2 1
+-
+-// Don't enable HTTP/2 when ALPN support status is unknown
+-// Before QTBUG-65903 is implemented there is no better way than to check OpenSSL version
+-static bool alpnIsSupported()
+-{
+-    return QSslSocket::sslLibraryVersionNumber() > 0x10002000L &&
+-        QSslSocket::sslLibraryVersionString().startsWith(QLatin1String("OpenSSL"));
+-}
++#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
++#include <QHttp2Configuration>
+ #endif
++#endif // USE(HTTP2)
+ 
+ namespace WebCore {
+ 
+@@ -70,6 +61,25 @@ static inline QByteArray stringToByteArray(const String& string)
+     return QString(string).toLatin1();
+ }
+ 
++#if USE(HTTP2)
++bool ResourceRequest::alpnIsSupported()
++{
++    // Before QTBUG-65903 is implemented there is no better way than to check OpenSSL version
++    return QSslSocket::sslLibraryVersionNumber() > 0x10002000L &&
++        QSslSocket::sslLibraryVersionString().startsWith(QLatin1String("OpenSSL"));
++}
++
++#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
++static QHttp2Configuration createHttp2Configuration()
++{
++    QHttp2Configuration params;
++    params.setServerPushEnabled(true);
++    return params;
++}
++#endif
++
++#endif
++
+ QNetworkRequest ResourceRequest::toNetworkRequest(NetworkingContext *context) const
+ {
+     QNetworkRequest request;
+@@ -79,8 +89,13 @@ QNetworkRequest ResourceRequest::toNetworkRequest(NetworkingContext *context) co
+ 
+ #if USE(HTTP2)
+     static const bool NegotiateHttp2ForHttps = alpnIsSupported();
+-    if (originalUrl.protocolIs("https") && NegotiateHttp2ForHttps)
++    if (originalUrl.protocolIs("https") && NegotiateHttp2ForHttps) {
++#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
++        static const auto params = createHttp2Configuration();
++        request.setHttp2Configuration(params);
++#endif
+         request.setAttribute(QNetworkRequest::HTTP2AllowedAttribute, true);
++    }
+ #endif // USE(HTTP2)
+ 
+     const HTTPHeaderMap &headers = httpHeaderFields();
+diff --git a/Source/WebCore/platform/qt/CursorQt.cpp b/Source/WebCore/platform/qt/CursorQt.cpp
+index 4a62cec829dc..6f27b671ca56 100644
+--- a/Source/WebCore/platform/qt/CursorQt.cpp
++++ b/Source/WebCore/platform/qt/CursorQt.cpp
+@@ -49,7 +49,7 @@ Cursor::Cursor(const Cursor& other)
+     , m_image(other.m_image)
+     , m_hotSpot(other.m_hotSpot)
+ #ifndef QT_NO_CURSOR
+-    , m_platformCursor(other.m_platformCursor ? std::make_unique<QCursor>(*other.m_platformCursor)  : nullptr)
++    , m_platformCursor(other.m_platformCursor)
+ #endif
+ {
+ }
+@@ -62,18 +62,18 @@ Cursor& Cursor::operator=(const Cursor& other)
+     m_image = other.m_image;
+     m_hotSpot = other.m_hotSpot;
+ #ifndef QT_NO_CURSOR
+-    m_platformCursor = other.m_platformCursor ? std::make_unique<QCursor>(*other.m_platformCursor) : nullptr;
++    m_platformCursor = other.m_platformCursor;
+ #endif
+     return *this;
+ }
+ 
+ #ifndef QT_NO_CURSOR
+-static std::unique_ptr<QCursor> createCustomCursor(Image* image, const IntPoint& hotSpot)
++static Optional<QCursor> createCustomCursor(Image* image, const IntPoint& hotSpot)
+ {
+     if (!image->nativeImageForCurrentFrame())
+-        return nullptr;
++        return Nullopt;
+     IntPoint effectiveHotSpot = determineHotSpot(image, hotSpot);
+-    return std::make_unique<QCursor>(*(image->nativeImageForCurrentFrame()), effectiveHotSpot.x(), effectiveHotSpot.y());
++    return QCursor(*(image->nativeImageForCurrentFrame()), effectiveHotSpot.x(), effectiveHotSpot.y());
+ }
+ #endif
+ 
+@@ -85,117 +85,117 @@ void Cursor::ensurePlatformCursor() const
+ 
+     switch (m_type) {
+     case Pointer:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::ArrowCursor);
++        m_platformCursor = QCursor(Qt::ArrowCursor);
+         break;
+     case Cross:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::CrossCursor);
++        m_platformCursor = QCursor(Qt::CrossCursor);
+         break;
+     case Hand:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::PointingHandCursor);
++        m_platformCursor = QCursor(Qt::PointingHandCursor);
+         break;
+     case IBeam:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::IBeamCursor);
++        m_platformCursor = QCursor(Qt::IBeamCursor);
+         break;
+     case Wait:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::WaitCursor);
++        m_platformCursor = QCursor(Qt::WaitCursor);
+         break;
+     case Help:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::WhatsThisCursor);
++        m_platformCursor = QCursor(Qt::WhatsThisCursor);
+         break;
+     case EastResize:
+     case EastPanning:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SizeHorCursor);
++        m_platformCursor = QCursor(Qt::SizeHorCursor);
+         break;
+     case NorthResize:
+     case NorthPanning:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SizeVerCursor);
++        m_platformCursor = QCursor(Qt::SizeVerCursor);
+         break;
+     case NorthEastResize:
+     case NorthEastPanning:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SizeBDiagCursor);
++        m_platformCursor = QCursor(Qt::SizeBDiagCursor);
+         break;
+     case NorthWestResize:
+     case NorthWestPanning:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SizeFDiagCursor);
++        m_platformCursor = QCursor(Qt::SizeFDiagCursor);
+         break;
+     case SouthResize:
+     case SouthPanning:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SizeVerCursor);
++        m_platformCursor = QCursor(Qt::SizeVerCursor);
+         break;
+     case SouthEastResize:
+     case SouthEastPanning:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SizeFDiagCursor);
++        m_platformCursor = QCursor(Qt::SizeFDiagCursor);
+         break;
+     case SouthWestResize:
+     case SouthWestPanning:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SizeBDiagCursor);
++        m_platformCursor = QCursor(Qt::SizeBDiagCursor);
+         break;
+     case WestResize:
+     case WestPanning:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SizeHorCursor);
++        m_platformCursor = QCursor(Qt::SizeHorCursor);
+         break;
+     case NorthSouthResize:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SizeVerCursor);
++        m_platformCursor = QCursor(Qt::SizeVerCursor);
+         break;
+     case EastWestResize:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SizeHorCursor);
++        m_platformCursor = QCursor(Qt::SizeHorCursor);
+         break;
+     case NorthEastSouthWestResize:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SizeBDiagCursor);
++        m_platformCursor = QCursor(Qt::SizeBDiagCursor);
+         break;
+     case NorthWestSouthEastResize:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SizeFDiagCursor);
++        m_platformCursor = QCursor(Qt::SizeFDiagCursor);
+         break;
+     case ColumnResize:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SplitHCursor);
++        m_platformCursor = QCursor(Qt::SplitHCursor);
+         break;
+     case RowResize:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SplitVCursor);
++        m_platformCursor = QCursor(Qt::SplitVCursor);
+         break;
+     case MiddlePanning:
+     case Move:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::SizeAllCursor);
++        m_platformCursor = QCursor(Qt::SizeAllCursor);
+         break;
+     case None:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::BlankCursor);
++        m_platformCursor = QCursor(Qt::BlankCursor);
+         break;
+     case NoDrop:
+     case NotAllowed:
+-        m_platformCursor = std::make_unique<QCursor>(Qt::ForbiddenCursor);
++        m_platformCursor = QCursor(Qt::ForbiddenCursor);
+         break;
+     case Grab:
+     case Grabbing:
+         notImplemented();
+-        m_platformCursor = std::make_unique<QCursor>(Qt::ArrowCursor);
++        m_platformCursor = QCursor(Qt::ArrowCursor);
+         break;
+     case VerticalText:
+-        m_platformCursor = std::make_unique<QCursor>(QPixmap(QStringLiteral(":/webkit/resources/verticalTextCursor.png")), 7, 7);
++        m_platformCursor = QCursor(QPixmap(QStringLiteral(":/webkit/resources/verticalTextCursor.png")), 7, 7);
+         break;
+     case Cell:
+-        m_platformCursor = std::make_unique<QCursor>(QPixmap(QStringLiteral(":/webkit/resources/cellCursor.png")), 7, 7);
++        m_platformCursor = QCursor(QPixmap(QStringLiteral(":/webkit/resources/cellCursor.png")), 7, 7);
+         break;
+     case ContextMenu:
+-        m_platformCursor = std::make_unique<QCursor>(QPixmap(QStringLiteral(":/webkit/resources/contextMenuCursor.png")), 3, 2);
++        m_platformCursor = QCursor(QPixmap(QStringLiteral(":/webkit/resources/contextMenuCursor.png")), 3, 2);
+         break;
+     case Alias:
+-        m_platformCursor = std::make_unique<QCursor>(QPixmap(QStringLiteral(":/webkit/resources/aliasCursor.png")), 11, 3);
++        m_platformCursor = QCursor(QPixmap(QStringLiteral(":/webkit/resources/aliasCursor.png")), 11, 3);
+         break;
+     case Progress:
+-        m_platformCursor = std::make_unique<QCursor>(QPixmap(QStringLiteral(":/webkit/resources/progressCursor.png")), 3, 2);
++        m_platformCursor = QCursor(QPixmap(QStringLiteral(":/webkit/resources/progressCursor.png")), 3, 2);
+         break;
+     case Copy:
+-        m_platformCursor = std::make_unique<QCursor>(QPixmap(QStringLiteral(":/webkit/resources/copyCursor.png")), 3, 2);
++        m_platformCursor = QCursor(QPixmap(QStringLiteral(":/webkit/resources/copyCursor.png")), 3, 2);
+         break;
+     case ZoomIn:
+-        m_platformCursor = std::make_unique<QCursor>(QPixmap(QStringLiteral(":/webkit/resources/zoomInCursor.png")), 7, 7);
++        m_platformCursor = QCursor(QPixmap(QStringLiteral(":/webkit/resources/zoomInCursor.png")), 7, 7);
+         break;
+     case ZoomOut:
+-        m_platformCursor = std::make_unique<QCursor>(QPixmap(QStringLiteral(":/webkit/resources/zoomOutCursor.png")), 7, 7);
++        m_platformCursor = QCursor(QPixmap(QStringLiteral(":/webkit/resources/zoomOutCursor.png")), 7, 7);
+         break;
+     case Custom:
+         m_platformCursor = createCustomCursor(m_image.get(), m_hotSpot);
+         if (!m_platformCursor)
+-            m_platformCursor = std::make_unique<QCursor>(Qt::ArrowCursor);
++            m_platformCursor = QCursor(Qt::ArrowCursor);
+         break;
+     default:
+         ASSERT_NOT_REACHED();
+diff --git a/Source/WebCore/platform/qt/RunLoopQt.cpp b/Source/WebCore/platform/qt/RunLoopQt.cpp
+deleted file mode 100644
+index 501bd5c123b0..000000000000
+--- a/Source/WebCore/platform/qt/RunLoopQt.cpp
++++ /dev/null
+@@ -1,166 +0,0 @@
+-/*
+- * Copyright (C) 2010 Apple Inc. All rights reserved.
+- * Copyright (C) 2010 Nokia Corporation and/or its subsidiary(-ies)
+- *
+- * Redistribution and use in source and binary forms, with or without
+- * modification, are permitted provided that the following conditions
+- * are met:
+- * 1. Redistributions of source code must retain the above copyright
+- *    notice, this list of conditions and the following disclaimer.
+- * 2. Redistributions in binary form must reproduce the above copyright
+- *    notice, this list of conditions and the following disclaimer in the
+- *    documentation and/or other materials provided with the distribution.
+- *
+- * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+- * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+- * THE POSSIBILITY OF SUCH DAMAGE.
+- */
+-
+-#include "config.h"
+-#include "RunLoop.h"
+-
+-#include <QAbstractEventDispatcher>
+-#include <QCoreApplication>
+-#include <QMetaMethod>
+-#include <QMetaObject>
+-#include <QObject>
+-#include <QTimerEvent>
+-
+-namespace WebCore {
+-
+-class RunLoop::TimerObject : public QObject {
+-    Q_OBJECT
+-public:
+-    TimerObject(RunLoop* runLoop) : m_runLoop(runLoop)
+-    {
+-        int methodIndex = metaObject()->indexOfMethod("performWork()");
+-        m_method = metaObject()->method(methodIndex);
+-    }
+-
+-    Q_SLOT void performWork() { m_runLoop->performWork(); }
+-    inline void wakeUp() { m_method.invoke(this, Qt::QueuedConnection); }
+-
+-protected:
+-    virtual void timerEvent(QTimerEvent* event)
+-    {
+-        RunLoop::TimerBase::timerFired(m_runLoop, event->timerId());
+-    }
+-
+-private:
+-    RunLoop* m_runLoop;
+-    QMetaMethod m_method;
+-};
+-
+-static QEventLoop* currentEventLoop;
+-
+-void RunLoop::run()
+-{
+-    static bool mainEventLoopIsRunning = false;
+-    if (!mainEventLoopIsRunning) {
+-        mainEventLoopIsRunning = true;
+-        QCoreApplication::exec();
+-        mainEventLoopIsRunning = false;
+-    } else {
+-        QEventLoop eventLoop;
+-
+-        QEventLoop* previousEventLoop = currentEventLoop;
+-        currentEventLoop = &eventLoop;
+-
+-        eventLoop.exec();
+-
+-        currentEventLoop = previousEventLoop;
+-    }
+-}
+-
+-void RunLoop::stop()
+-{
+-    if (currentEventLoop)
+-        currentEventLoop->exit();
+-    else
+-        QCoreApplication::exit();
+-}
+-
+-RunLoop::RunLoop()
+-    : m_timerObject(new TimerObject(this))
+-{
+-}
+-
+-RunLoop::~RunLoop()
+-{
+-    delete m_timerObject;
+-}
+-
+-void RunLoop::wakeUp()
+-{
+-    m_timerObject->wakeUp();
+-}
+-
+-// RunLoop::Timer
+-
+-void RunLoop::TimerBase::timerFired(RunLoop* runLoop, int ID)
+-{
+-    TimerMap::iterator it = runLoop->m_activeTimers.find(ID);
+-    ASSERT(it != runLoop->m_activeTimers.end());
+-    TimerBase* timer = it->value;
+-
+-    if (!timer->m_isRepeating) {
+-        // Stop the timer (calling stop would need another hash table lookup).
+-        runLoop->m_activeTimers.remove(it);
+-        runLoop->m_timerObject->killTimer(timer->m_ID);
+-        timer->m_ID = 0;
+-    }
+-
+-    timer->fired();
+-}
+-
+-RunLoop::TimerBase::TimerBase(RunLoop* runLoop)
+-    : m_runLoop(runLoop)
+-    , m_ID(0)
+-    , m_isRepeating(false)
+-{
+-}
+-
+-RunLoop::TimerBase::~TimerBase()
+-{
+-    stop();
+-}
+-
+-void RunLoop::TimerBase::start(double nextFireInterval, bool repeat)
+-{
+-    stop();
+-    int millis = static_cast<int>(nextFireInterval * 1000);
+-    m_isRepeating = repeat;
+-    m_ID = m_runLoop->m_timerObject->startTimer(millis);
+-    ASSERT(m_ID);
+-    m_runLoop->m_activeTimers.set(m_ID, this);
+-}
+-
+-void RunLoop::TimerBase::stop()
+-{
+-    if (!m_ID)
+-        return;
+-    TimerMap::iterator it = m_runLoop->m_activeTimers.find(m_ID);
+-    if (it == m_runLoop->m_activeTimers.end())
+-        return;
+-
+-    m_runLoop->m_activeTimers.remove(it);
+-    m_runLoop->m_timerObject->killTimer(m_ID);
+-    m_ID = 0;
+-}
+-
+-bool RunLoop::TimerBase::isActive() const
+-{
+-    return m_ID;
+-}
+-
+-#include "RunLoopQt.moc"
+-
+-} // namespace WebCore
+diff --git a/Source/WebKit/CMakeLists.txt b/Source/WebKit/CMakeLists.txt
+index 04117d5633a3..c845856da6f6 100644
+--- a/Source/WebKit/CMakeLists.txt
++++ b/Source/WebKit/CMakeLists.txt
+@@ -64,6 +64,11 @@ if (${PORT} STREQUAL "Qt")
+         install(FILES $<TARGET_PDB_FILE:WebKit> DESTINATION "${BIN_INSTALL_DIR}" OPTIONAL)
+     endif ()
+ 
++    if (SEPARATE_DEBUG_INFO)
++        QTWEBKIT_SEPARATE_DEBUG_INFO(WebKit WebKit_DEBUG_INFO)
++        install(FILES ${WebKit_DEBUG_INFO} DESTINATION "${LIB_INSTALL_DIR}" OPTIONAL)
++    endif ()
++
+     if (NOT MSVC)
+         ADD_PREFIX_HEADER(WebKit "${WEBKIT_DIR}/qt/WebKitPrefix.h")
+     endif ()
+diff --git a/Source/WebKit/PlatformQt.cmake b/Source/WebKit/PlatformQt.cmake
+index 2bd6342bec94..9aed9906e364 100644
+--- a/Source/WebKit/PlatformQt.cmake
++++ b/Source/WebKit/PlatformQt.cmake
+@@ -858,6 +858,11 @@ if (MSVC AND NOT QT_STATIC_BUILD)
+     install(FILES $<TARGET_PDB_FILE:WebKitWidgets> DESTINATION "${BIN_INSTALL_DIR}" OPTIONAL)
+ endif ()
+ 
++if (SEPARATE_DEBUG_INFO)
++    QTWEBKIT_SEPARATE_DEBUG_INFO(WebKitWidgets WebKitWidgets_DEBUG_INFO)
++    install(FILES ${WebKitWidgets_DEBUG_INFO} DESTINATION "${LIB_INSTALL_DIR}" OPTIONAL)
++endif ()
++
+ if (NOT MSVC AND WIN32)
+     ADD_PREFIX_HEADER(WebKitWidgets "qt/WebKitWidgetsPrefix.h")
+ endif ()
+@@ -904,7 +909,3 @@ endif ()
+ if (ENABLE_WEBKIT2)
+     add_subdirectory(qt/declarative)
+ endif ()
+-
+-if (ENABLE_API_TESTS)
+-    add_subdirectory(qt/tests)
+-endif ()
+diff --git a/Source/WebKit/qt/Api/qwebsettings.cpp b/Source/WebKit/qt/Api/qwebsettings.cpp
+index d552cec172fd..3cbb831afa18 100644
+--- a/Source/WebKit/qt/Api/qwebsettings.cpp
++++ b/Source/WebKit/qt/Api/qwebsettings.cpp
+@@ -600,6 +600,7 @@ QWebSettings::QWebSettings()
+     d->attributes.insert(QWebSettings::FullScreenSupportEnabled, true);
+     d->attributes.insert(QWebSettings::ImagesEnabled, true);
+     d->attributes.insert(QWebSettings::AllowRunningInsecureContent, false);
++    d->attributes.insert(QWebSettings::ErrorPageEnabled, true);
+     d->offlineStorageDefaultQuota = 5 * 1024 * 1024;
+     d->defaultTextEncoding = QLatin1String("iso-8859-1");
+     d->thirdPartyCookiePolicy = AlwaysAllowThirdPartyCookies;
+@@ -936,10 +937,8 @@ void QWebSettings::clearMemoryCaches()
+ 
+     // FastMalloc has lock-free thread specific caches that can only be cleared from the thread itself.
+     WebCore::StorageThread::releaseFastMallocFreeMemoryInAllThreads();
+-#if ENABLE(WORKERS)
+     WebCore::WorkerThread::releaseFastMallocFreeMemoryInAllThreads();
+-#endif
+-    WTF::releaseFastMallocFreeMemory();        
++    WTF::releaseFastMallocFreeMemory();
+ }
+ 
+ /*!
+diff --git a/Source/WebKit/qt/Api/qwebsettings.h b/Source/WebKit/qt/Api/qwebsettings.h
+index 0b0a1f00a435..2c22fb46e677 100644
+--- a/Source/WebKit/qt/Api/qwebsettings.h
++++ b/Source/WebKit/qt/Api/qwebsettings.h
+@@ -92,7 +92,8 @@ class QWEBKIT_EXPORT QWebSettings {
+         WebSecurityEnabled,
+         FullScreenSupportEnabled,
+         ImagesEnabled,
+-        AllowRunningInsecureContent
++        AllowRunningInsecureContent,
++        ErrorPageEnabled
+     };
+     enum WebGraphic {
+         MissingImageGraphic,
+diff --git a/Source/WebKit/qt/WebCoreSupport/FrameLoaderClientQt.h b/Source/WebKit/qt/WebCoreSupport/FrameLoaderClientQt.h
+index 8465db721f46..8bfc1d46e687 100644
+--- a/Source/WebKit/qt/WebCoreSupport/FrameLoaderClientQt.h
++++ b/Source/WebKit/qt/WebCoreSupport/FrameLoaderClientQt.h
+@@ -32,9 +32,7 @@
+ 
+ #include "FormState.h"
+ #include "FrameLoaderClient.h"
+-#include "HTMLFormElement.h"
+ #include "ResourceResponse.h"
+-#include "SharedBuffer.h"
+ #include "URL.h"
+ #include <QUrl>
+ #include <qobject.h>
+diff --git a/Source/WebKit/qt/WebCoreSupport/ProgressTrackerClientQt.cpp b/Source/WebKit/qt/WebCoreSupport/ProgressTrackerClientQt.cpp
+index 7cf620bd464a..4e7f61d63e11 100644
+--- a/Source/WebKit/qt/WebCoreSupport/ProgressTrackerClientQt.cpp
++++ b/Source/WebKit/qt/WebCoreSupport/ProgressTrackerClientQt.cpp
+@@ -26,9 +26,11 @@
+ #include "config.h"
+ #include "ProgressTrackerClientQt.h"
+ 
++#include "Document.h"
+ #include "EventHandler.h"
+ #include "Frame.h"
+ #include "FrameLoaderClientQt.h"
++#include "HTMLFormElement.h"
+ #include "ProgressTracker.h"
+ #include "QWebFrameAdapter.h"
+ #include "QWebPageAdapter.h"
+diff --git a/Source/WebKit/qt/WebCoreSupport/QWebFrameAdapter.cpp b/Source/WebKit/qt/WebCoreSupport/QWebFrameAdapter.cpp
+index df28e9f21f2c..841d0544aa10 100644
+--- a/Source/WebKit/qt/WebCoreSupport/QWebFrameAdapter.cpp
++++ b/Source/WebKit/qt/WebCoreSupport/QWebFrameAdapter.cpp
+@@ -31,6 +31,7 @@
+ #include "FrameLoaderClientQt.h"
+ #include "FrameView.h"
+ #include "HTMLCollection.h"
++#include "HTMLFormElement.h"
+ #include "HTMLMetaElement.h"
+ #include "HTTPParsers.h"
+ #include "HitTestResult.h"
+diff --git a/Source/WebKit/qt/WebCoreSupport/QWebFrameData.cpp b/Source/WebKit/qt/WebCoreSupport/QWebFrameData.cpp
+index d09ad3a35e3f..f3f1534e0732 100644
+--- a/Source/WebKit/qt/WebCoreSupport/QWebFrameData.cpp
++++ b/Source/WebKit/qt/WebCoreSupport/QWebFrameData.cpp
+@@ -21,6 +21,8 @@
+ #include "config.h"
+ #include "QWebFrameData.h"
+ 
++#include "Document.h"
++#include "HTMLFormElement.h"
+ #include "FrameLoaderClientQt.h"
+ #include "MainFrame.h"
+ #include "Page.h"
+diff --git a/Source/WebKit/qt/WidgetApi/qwebpage.cpp b/Source/WebKit/qt/WidgetApi/qwebpage.cpp
+index f8d8c0abc239..261e032fdd72 100644
+--- a/Source/WebKit/qt/WidgetApi/qwebpage.cpp
++++ b/Source/WebKit/qt/WidgetApi/qwebpage.cpp
+@@ -663,16 +663,6 @@ void QWebPagePrivate::createWebInspector(QObject** inspectorView, QWebPageAdapte
+     QWebPage* page = new WebKit::InspectorClientWebPage;
+     *inspectorView = page->view();
+     *inspectorPage = page->d;
+-
+-    // FIXME: Find out what's going on with Settings
+-    page->settings()->setAttribute(QWebSettings::AcceleratedCompositingEnabled, false);
+-
+-    // We treat "qrc:" scheme as local, but by default local content is not allowed to use
+-    // LocalStorage which is required for Inspector to work.
+-    // See https://bugs.webkit.org/show_bug.cgi?id=155265
+-    // Alternatively we can make "qrc:" scheme non-local like GTK port does:
+-    // https://bugs.webkit.org/show_bug.cgi?id=155497
+-    page->settings()->setAttribute(QWebSettings::LocalContentCanAccessRemoteUrls, true);
+ }
+ 
+ #ifndef QT_NO_MENU
+@@ -3219,7 +3209,7 @@ bool QWebPage::supportsExtension(Extension extension) const
+     if (extension == ChooseMultipleFilesExtension)
+         return true;
+ #endif
+-    return extension == ErrorPageExtension;
++    return extension == ErrorPageExtension && d->settings->testAttribute(QWebSettings::ErrorPageEnabled);
+ }
+ 
+ /*!
+diff --git a/Source/WebKit/qt/WidgetSupport/InspectorClientWebPage.cpp b/Source/WebKit/qt/WidgetSupport/InspectorClientWebPage.cpp
+index 8e5427b23e8f..9b2ba7dfd43e 100644
+--- a/Source/WebKit/qt/WidgetSupport/InspectorClientWebPage.cpp
++++ b/Source/WebKit/qt/WidgetSupport/InspectorClientWebPage.cpp
+@@ -41,7 +41,21 @@ InspectorClientWebPage::InspectorClientWebPage()
+     QWebView* view = new QWebView;
+     view->setPage(this);
+     setParent(view);
++    settings()->setAttribute(QWebSettings::JavascriptEnabled, true);
++#if !ENABLE(DEVELOPER_MODE)
++    settings()->setAttribute(QWebSettings::DeveloperExtrasEnabled, false);
++#endif
+     connect(mainFrame(), SIGNAL(javaScriptWindowObjectCleared()), SLOT(javaScriptWindowObjectCleared()));
++
++    // FIXME: Find out what's going on with Settings
++    settings()->setAttribute(QWebSettings::AcceleratedCompositingEnabled, false);
++
++    // We treat "qrc:" scheme as local, but by default local content is not allowed to use
++    // LocalStorage which is required for Inspector to work.
++    // See https://bugs.webkit.org/show_bug.cgi?id=155265
++    // Alternatively we can make "qrc:" scheme non-local like GTK port does:
++    // https://bugs.webkit.org/show_bug.cgi?id=155497
++    settings()->setAttribute(QWebSettings::LocalContentCanAccessRemoteUrls, true);
+ }
+ 
+ QWebPage* InspectorClientWebPage::createWindow(QWebPage::WebWindowType)
+diff --git a/Source/WebKit2/PlatformQt.cmake b/Source/WebKit2/PlatformQt.cmake
+index 5883096eb405..a033f1cf153f 100644
+--- a/Source/WebKit2/PlatformQt.cmake
++++ b/Source/WebKit2/PlatformQt.cmake
+@@ -156,6 +156,9 @@ list(APPEND WebKit2_SOURCES
+     UIProcess/gstreamer/WebPageProxyGStreamer.cpp
+ 
+     UIProcess/qt/BackingStoreQt.cpp
++    UIProcess/qt/ColorChooserContextObject.h
++    UIProcess/qt/DialogContextObjects.h
++    UIProcess/qt/ItemSelectorContextObject.cpp
+     UIProcess/qt/PageViewportControllerClientQt.cpp
+     UIProcess/qt/QrcSchemeHandler.cpp
+     UIProcess/qt/QtDialogRunner.cpp
+diff --git a/Source/WebKit2/UIProcess/API/qt/tests/inspectorserver/inspectorserver.pro b/Source/WebKit2/UIProcess/API/qt/tests/inspectorserver/inspectorserver.pro
+new file mode 100644
+index 000000000000..4a8d86f80897
+--- /dev/null
++++ b/Source/WebKit2/UIProcess/API/qt/tests/inspectorserver/inspectorserver.pro
+@@ -0,0 +1,4 @@
++include(../tests.pri)
++SOURCES += $${TARGET}.cpp
++QT += webkit-private
++DEFINES += IMPORT_DIR=\"\\\"$${ROOT_BUILD_DIR}$${QMAKE_DIR_SEP}imports\\\"\"
+diff --git a/Source/WebKit2/UIProcess/API/qt/tests/publicapi/publicapi.pro b/Source/WebKit2/UIProcess/API/qt/tests/publicapi/publicapi.pro
+new file mode 100644
+index 000000000000..02dc197c79e7
+--- /dev/null
++++ b/Source/WebKit2/UIProcess/API/qt/tests/publicapi/publicapi.pro
+@@ -0,0 +1,3 @@
++include(../tests.pri)
++SOURCES += $${TARGET}.cpp
++QT += webkit-private
+diff --git a/Source/WebKit2/UIProcess/API/qt/tests/qmltests/DesktopBehavior.pro b/Source/WebKit2/UIProcess/API/qt/tests/qmltests/DesktopBehavior.pro
+new file mode 100644
+index 000000000000..e8ac901f14d2
+--- /dev/null
++++ b/Source/WebKit2/UIProcess/API/qt/tests/qmltests/DesktopBehavior.pro
+@@ -0,0 +1,18 @@
++include(../tests.pri)
++SOURCES += tst_qmltests.cpp
++TARGET = tst_qmltests_DesktopBehavior
++OBJECTS_DIR = .obj_DesktopBehavior
++
++QT += webkit-private
++CONFIG += testcase
++
++QT += qmltest
++
++DEFINES += DISABLE_FLICKABLE_VIEWPORT=1
++# Test the QML files under DesktopBehavior in the source repository.
++DEFINES += QUICK_TEST_SOURCE_DIR=\"\\\"$$PWD$${QMAKE_DIR_SEP}DesktopBehavior\\\"\"
++DEFINES += IMPORT_DIR=\"\\\"$${ROOT_BUILD_DIR}$${QMAKE_DIR_SEP}imports\\\"\"
++
++OTHER_FILES += \
++    DesktopBehavior/* \
++    common/*
+diff --git a/Source/WebKit2/UIProcess/API/qt/tests/qmltests/WebView.pro b/Source/WebKit2/UIProcess/API/qt/tests/qmltests/WebView.pro
+new file mode 100644
+index 000000000000..6c67da96e200
+--- /dev/null
++++ b/Source/WebKit2/UIProcess/API/qt/tests/qmltests/WebView.pro
+@@ -0,0 +1,19 @@
++include(../tests.pri)
++SOURCES += tst_qmltests.cpp
++TARGET = tst_qmltests_WebView
++OBJECTS_DIR = .obj_WebView
++
++QT += webkit-private
++CONFIG += testcase
++
++QT += qmltest
++
++# Test the QML files under WebView in the source repository.
++DEFINES += QUICK_TEST_SOURCE_DIR=\"\\\"$$PWD$${QMAKE_DIR_SEP}WebView\\\"\"
++DEFINES += IMPORT_DIR=\"\\\"$${ROOT_BUILD_DIR}$${QMAKE_DIR_SEP}imports\\\"\"
++
++OTHER_FILES += \
++    WebView/* \
++    common/*
++
++RESOURCES = resources.qrc
+diff --git a/Source/WebKit2/UIProcess/API/qt/tests/qmltests/qmltests.pro b/Source/WebKit2/UIProcess/API/qt/tests/qmltests/qmltests.pro
+new file mode 100644
+index 000000000000..8ddc4484efc1
+--- /dev/null
++++ b/Source/WebKit2/UIProcess/API/qt/tests/qmltests/qmltests.pro
+@@ -0,0 +1,3 @@
++TEMPLATE = subdirs
++
++SUBDIRS += DesktopBehavior.pro WebView.pro
+diff --git a/Source/WebKit2/UIProcess/API/qt/tests/qquickwebview/qquickwebview.pro b/Source/WebKit2/UIProcess/API/qt/tests/qquickwebview/qquickwebview.pro
+new file mode 100644
+index 000000000000..4a8d86f80897
+--- /dev/null
++++ b/Source/WebKit2/UIProcess/API/qt/tests/qquickwebview/qquickwebview.pro
+@@ -0,0 +1,4 @@
++include(../tests.pri)
++SOURCES += $${TARGET}.cpp
++QT += webkit-private
++DEFINES += IMPORT_DIR=\"\\\"$${ROOT_BUILD_DIR}$${QMAKE_DIR_SEP}imports\\\"\"
+diff --git a/Source/WebKit2/UIProcess/API/qt/tests/qrawwebview/qrawwebview.pro b/Source/WebKit2/UIProcess/API/qt/tests/qrawwebview/qrawwebview.pro
+new file mode 100644
+index 000000000000..02dc197c79e7
+--- /dev/null
++++ b/Source/WebKit2/UIProcess/API/qt/tests/qrawwebview/qrawwebview.pro
+@@ -0,0 +1,3 @@
++include(../tests.pri)
++SOURCES += $${TARGET}.cpp
++QT += webkit-private
+diff --git a/Source/WebKit2/UIProcess/API/qt/tests/tests.pri b/Source/WebKit2/UIProcess/API/qt/tests/tests.pri
+new file mode 100644
+index 000000000000..a1133530daae
+--- /dev/null
++++ b/Source/WebKit2/UIProcess/API/qt/tests/tests.pri
+@@ -0,0 +1,20 @@
++TEMPLATE = app
++
++VPATH += $$_PRO_FILE_PWD_
++TARGET = tst_$$TARGET
++
++INCLUDEPATH += $$PWD
++SOURCES +=  ../util.cpp
++
++QT += testlib webkit
++have?(QTQUICK) {
++    QT += qml quick quick-private
++    HEADERS += ../bytearraytestdata.h \
++               ../util.h
++
++    SOURCES += ../bytearraytestdata.cpp
++}
++WEBKIT += wtf # For platform macros
++
++DEFINES += TESTS_SOURCE_DIR=\\\"$$PWD\\\" \
++           QWP_PATH=\\\"$${ROOT_BUILD_DIR}/bin\\\"
+diff --git a/Source/WebKit2/UIProcess/qt/ColorChooserContextObject.h b/Source/WebKit2/UIProcess/qt/ColorChooserContextObject.h
+new file mode 100644
+index 000000000000..0af685b61f0e
+--- /dev/null
++++ b/Source/WebKit2/UIProcess/qt/ColorChooserContextObject.h
+@@ -0,0 +1,57 @@
++/*
++ * Copyright (C) 2012 Intel Corporation. All rights reserved.
++ * Copyright (C) 2012 Nokia Corporation and/or its subsidiary(-ies)
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public License
++ * along with this library; see the file COPYING.LIB.  If not, write to
++ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ *
++ */
++
++#pragma once
++
++#include <QColor>
++#include <QObject>
++#include <QRectF>
++
++namespace WebKit {
++
++class ColorChooserContextObject : public QObject {
++    Q_OBJECT
++    Q_PROPERTY(QColor currentColor READ currentColor CONSTANT FINAL)
++    Q_PROPERTY(QRectF elementRect READ elementRect CONSTANT FINAL)
++
++public:
++    ColorChooserContextObject(const QColor& color, const QRectF& rect)
++        : m_currentColor(color)
++        , m_rect(rect)
++    {
++    }
++
++    QColor currentColor() const { return m_currentColor; }
++    QRectF elementRect() const { return m_rect; }
++
++    Q_INVOKABLE void accept(const QColor& color) { emit accepted(color); }
++    Q_INVOKABLE void reject() { emit rejected(); }
++
++Q_SIGNALS:
++    void accepted(const QColor&);
++    void rejected();
++
++private:
++    QColor m_currentColor;
++    QRectF m_rect;
++};
++
++} // namespace WebKit
+diff --git a/Source/WebKit2/UIProcess/qt/DialogContextObjects.h b/Source/WebKit2/UIProcess/qt/DialogContextObjects.h
+new file mode 100644
+index 000000000000..c6257125e8b4
+--- /dev/null
++++ b/Source/WebKit2/UIProcess/qt/DialogContextObjects.h
+@@ -0,0 +1,287 @@
++/*
++ * Copyright (C) 2011 Nokia Corporation and/or its subsidiary(-ies)
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public License
++ * along with this program; see the file COPYING.LIB.  If not, write to
++ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ *
++ */
++
++#pragma once
++
++#include "QtDialogRunner.h"
++#include "WKRetainPtr.h"
++#include "WKStringQt.h"
++#include "qtwebsecurityorigin_p.h"
++
++namespace WebKit {
++
++// All dialogs need a way to support the state of the
++// dialog being done/finished/dismissed. This is handled
++// in the dialog base context.
++class DialogContextBase : public QObject {
++    Q_OBJECT
++
++public:
++    DialogContextBase()
++        : QObject()
++        , m_dismissed(false)
++    {
++    }
++
++public Q_SLOTS:
++    // Allows clients to call dismiss() directly, while also
++    // being able to hook up signals to automatically also
++    // dismiss the dialog since it's a slot.
++
++    void dismiss()
++    {
++        m_dismissed = true;
++        emit dismissed();
++    }
++
++Q_SIGNALS:
++    void dismissed();
++
++private:
++    // We store the dismissed state so that run() can check to see if a
++    // dialog has already been dismissed before spinning an event loop.
++    bool m_dismissed;
++    friend void QtDialogRunner::run();
++};
++
++class DialogContextObject : public DialogContextBase {
++    Q_OBJECT
++    Q_PROPERTY(QString message READ message CONSTANT)
++    Q_PROPERTY(QString defaultValue READ defaultValue CONSTANT)
++
++public:
++    DialogContextObject(const QString& message, const QString& defaultValue = QString())
++        : DialogContextBase()
++        , m_message(message)
++        , m_defaultValue(defaultValue)
++    {
++        connect(this, SIGNAL(accepted(QString)), SLOT(dismiss()));
++        connect(this, SIGNAL(rejected()), SLOT(dismiss()));
++    }
++    QString message() const { return m_message; }
++    QString defaultValue() const { return m_defaultValue; }
++
++public Q_SLOTS:
++    void accept(const QString& result = QString()) { emit accepted(result); }
++    void reject() { emit rejected(); }
++
++Q_SIGNALS:
++    void accepted(const QString& result);
++    void rejected();
++
++private:
++    QString m_message;
++    QString m_defaultValue;
++};
++
++class BaseAuthenticationContextObject : public DialogContextBase {
++    Q_OBJECT
++    Q_PROPERTY(QString hostname READ hostname CONSTANT)
++    Q_PROPERTY(QString prefilledUsername READ prefilledUsername CONSTANT)
++
++public:
++    BaseAuthenticationContextObject(const QString& hostname, const QString& prefilledUsername)
++        : DialogContextBase()
++        , m_hostname(hostname)
++        , m_prefilledUsername(prefilledUsername)
++    {
++        connect(this, SIGNAL(accepted(QString, QString)), SLOT(dismiss()));
++        connect(this, SIGNAL(rejected()), SLOT(dismiss()));
++    }
++
++    QString hostname() const { return m_hostname; }
++    QString prefilledUsername() const { return m_prefilledUsername; }
++
++public Q_SLOTS:
++    void accept(const QString& username, const QString& password) { emit accepted(username, password); }
++    void reject() { emit rejected(); }
++
++Q_SIGNALS:
++    void accepted(const QString& username, const QString& password);
++    void rejected();
++
++private:
++    QString m_hostname;
++    QString m_prefilledUsername;
++};
++
++class HttpAuthenticationDialogContextObject : public BaseAuthenticationContextObject {
++    Q_OBJECT
++    Q_PROPERTY(QString realm READ realm CONSTANT)
++
++public:
++    HttpAuthenticationDialogContextObject(const QString& hostname, const QString& realm, const QString& prefilledUsername)
++        : BaseAuthenticationContextObject(hostname, prefilledUsername)
++        , m_realm(realm)
++    {
++    }
++
++    QString realm() const { return m_realm; }
++
++private:
++    QString m_realm;
++};
++
++class ProxyAuthenticationDialogContextObject : public BaseAuthenticationContextObject {
++    Q_OBJECT
++    Q_PROPERTY(quint16 port READ port CONSTANT)
++
++public:
++    ProxyAuthenticationDialogContextObject(const QString& hostname, quint16 port, const QString& prefilledUsername)
++        : BaseAuthenticationContextObject(hostname, prefilledUsername)
++        , m_port(port)
++    {
++    }
++
++    quint16 port() const { return m_port; }
++
++private:
++    quint16 m_port;
++};
++
++class CertificateVerificationDialogContextObject : public DialogContextBase {
++    Q_OBJECT
++    Q_PROPERTY(QString hostname READ hostname CONSTANT)
++
++public:
++    CertificateVerificationDialogContextObject(const QString& hostname)
++        : DialogContextBase()
++        , m_hostname(hostname)
++    {
++        connect(this, SIGNAL(accepted()), SLOT(dismiss()));
++        connect(this, SIGNAL(rejected()), SLOT(dismiss()));
++    }
++
++    QString hostname() const { return m_hostname; }
++
++public Q_SLOTS:
++    void accept() { emit accepted(); }
++    void reject() { emit rejected(); }
++
++Q_SIGNALS:
++    void accepted();
++    void rejected();
++
++private:
++    QString m_hostname;
++};
++
++class FilePickerContextObject : public DialogContextBase {
++    Q_OBJECT
++    Q_PROPERTY(QStringList fileList READ fileList CONSTANT)
++    Q_PROPERTY(bool allowMultipleFiles READ allowMultipleFiles CONSTANT)
++
++public:
++    FilePickerContextObject(const QStringList& selectedFiles, bool allowMultiple)
++        : DialogContextBase()
++        , m_allowMultiple(allowMultiple)
++        , m_fileList(selectedFiles)
++    {
++        connect(this, SIGNAL(fileSelected(QStringList)), SLOT(dismiss()));
++        connect(this, SIGNAL(rejected()), SLOT(dismiss()));
++    }
++
++    QStringList fileList() const { return m_fileList; }
++    bool allowMultipleFiles() const { return m_allowMultiple;}
++
++public Q_SLOTS:
++    void reject() { emit rejected();}
++    void accept(const QVariant& path)
++    {
++        QStringList filesPath = path.toStringList();
++
++        if (filesPath.isEmpty()) {
++            emit rejected();
++            return;
++        }
++
++        // For single file upload, send only the first element if there are more than one file paths
++        if (!m_allowMultiple && filesPath.count() > 1)
++            filesPath = QStringList(filesPath.at(0));
++        emit fileSelected(filesPath);
++    }
++
++Q_SIGNALS:
++    void rejected();
++    void fileSelected(const QStringList&);
++
++private:
++    bool m_allowMultiple;
++    QStringList m_fileList;
++};
++
++class DatabaseQuotaDialogContextObject : public DialogContextBase {
++    Q_OBJECT
++    Q_PROPERTY(QString databaseName READ databaseName CONSTANT)
++    Q_PROPERTY(QString displayName READ displayName CONSTANT)
++    Q_PROPERTY(quint64 currentQuota READ currentQuota CONSTANT)
++    Q_PROPERTY(quint64 currentOriginUsage READ currentOriginUsage CONSTANT)
++    Q_PROPERTY(quint64 currentDatabaseUsage READ currentDatabaseUsage CONSTANT)
++    Q_PROPERTY(quint64 expectedUsage READ expectedUsage CONSTANT)
++    Q_PROPERTY(QtWebSecurityOrigin* origin READ securityOrigin CONSTANT)
++
++public:
++    DatabaseQuotaDialogContextObject(const QString& databaseName, const QString& displayName, WKSecurityOriginRef securityOrigin, quint64 currentQuota, quint64 currentOriginUsage, quint64 currentDatabaseUsage, quint64 expectedUsage)
++        : DialogContextBase()
++        , m_databaseName(databaseName)
++        , m_displayName(displayName)
++        , m_currentQuota(currentQuota)
++        , m_currentOriginUsage(currentOriginUsage)
++        , m_currentDatabaseUsage(currentDatabaseUsage)
++        , m_expectedUsage(expectedUsage)
++    {
++        WKRetainPtr<WKStringRef> scheme = adoptWK(WKSecurityOriginCopyProtocol(securityOrigin));
++        WKRetainPtr<WKStringRef> host = adoptWK(WKSecurityOriginCopyHost(securityOrigin));
++
++        m_securityOrigin.setScheme(WKStringCopyQString(scheme.get()));
++        m_securityOrigin.setHost(WKStringCopyQString(host.get()));
++        m_securityOrigin.setPort(static_cast<int>(WKSecurityOriginGetPort(securityOrigin)));
++
++        connect(this, SIGNAL(accepted(quint64)), SLOT(dismiss()));
++        connect(this, SIGNAL(rejected()), SLOT(dismiss()));
++    }
++
++    QString databaseName() const { return m_databaseName; }
++    QString displayName() const { return m_displayName; }
++    quint64 currentQuota() const { return m_currentQuota; }
++    quint64 currentOriginUsage() const { return m_currentOriginUsage; }
++    quint64 currentDatabaseUsage() const { return m_currentDatabaseUsage; }
++    quint64 expectedUsage() const { return m_expectedUsage; }
++    QtWebSecurityOrigin* securityOrigin() { return &m_securityOrigin; }
++
++public Q_SLOTS:
++    void accept(quint64 size) { emit accepted(size); }
++    void reject() { emit rejected(); }
++
++Q_SIGNALS:
++    void accepted(quint64 size);
++    void rejected();
++
++private:
++    QString m_databaseName;
++    QString m_displayName;
++    quint64 m_currentQuota;
++    quint64 m_currentOriginUsage;
++    quint64 m_currentDatabaseUsage;
++    quint64 m_expectedUsage;
++    QtWebSecurityOrigin m_securityOrigin;
++};
++
++} // namespace WebKit
+diff --git a/Source/WebKit2/UIProcess/qt/ItemSelectorContextObject.cpp b/Source/WebKit2/UIProcess/qt/ItemSelectorContextObject.cpp
+new file mode 100644
+index 000000000000..a78fe496426b
+--- /dev/null
++++ b/Source/WebKit2/UIProcess/qt/ItemSelectorContextObject.cpp
+@@ -0,0 +1,181 @@
++/*
++ * Copyright (C) 2010 Apple Inc. All rights reserved.
++ * Copyright (C) 2011 Nokia Corporation and/or its subsidiary(-ies)
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
++ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
++ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
++ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
++ * THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "config.h"
++#include "ItemSelectorContextObject.h"
++
++#include "PlatformPopupMenuData.h"
++#include "WebPopupItem.h"
++#include "WebPopupMenuProxyQt.h"
++#include "qquickwebview_p.h"
++#include "qquickwebview_p_p.h"
++#include <QtCore/QAbstractListModel>
++#include <QtQml/QQmlContext>
++#include <QtQml/QQmlEngine>
++
++using namespace WebCore;
++
++namespace WebKit {
++
++ItemSelectorContextObject::ItemSelectorContextObject(const QRectF& elementRect, const Vector<WebPopupItem>& webPopupItems, bool multiple)
++    : m_elementRect(elementRect)
++    , m_items(webPopupItems, multiple)
++{
++    connect(&m_items, SIGNAL(indexUpdated()), SLOT(onIndexUpdate()));
++}
++
++void ItemSelectorContextObject::onIndexUpdate()
++{
++    // Send the update for multi-select list.
++    if (m_items.multiple())
++        emit acceptedWithOriginalIndex(m_items.selectedOriginalIndex());
++}
++
++
++void ItemSelectorContextObject::accept(int index)
++{
++    // If the index is not valid for multi-select lists, just hide the pop up as the selected indices have
++    // already been sent.
++    if ((index == -1) && m_items.multiple())
++        emit done();
++    else {
++        if (index != -1)
++            m_items.toggleItem(index);
++        emit acceptedWithOriginalIndex(m_items.selectedOriginalIndex());
++    }
++}
++
++static QHash<int, QByteArray> createRoleNamesHash()
++{
++    QHash<int, QByteArray> roles;
++    roles[Qt::DisplayRole] = "text";
++    roles[Qt::ToolTipRole] = "tooltip";
++    roles[PopupMenuItemModel::GroupRole] = "group";
++    roles[PopupMenuItemModel::EnabledRole] = "enabled";
++    roles[PopupMenuItemModel::SelectedRole] = "selected";
++    roles[PopupMenuItemModel::IsSeparatorRole] = "isSeparator";
++    return roles;
++}
++
++PopupMenuItemModel::PopupMenuItemModel(const Vector<WebPopupItem>& webPopupItems, bool multiple)
++    : m_selectedModelIndex(-1)
++    , m_allowMultiples(multiple)
++{
++    buildItems(webPopupItems);
++}
++
++QHash<int, QByteArray> PopupMenuItemModel::roleNames() const
++{
++    static QHash<int, QByteArray> roles = createRoleNamesHash();
++    return roles;
++}
++
++QVariant PopupMenuItemModel::data(const QModelIndex& index, int role) const
++{
++    if (!index.isValid() || index.row() < 0 || index.row() >= m_items.size())
++        return QVariant();
++
++    const Item& item = m_items[index.row()];
++    if (item.isSeparator) {
++        if (role == IsSeparatorRole)
++            return true;
++        return QVariant();
++    }
++
++    switch (role) {
++    case Qt::DisplayRole:
++        return item.text;
++    case Qt::ToolTipRole:
++        return item.toolTip;
++    case GroupRole:
++        return item.group;
++    case EnabledRole:
++        return item.enabled;
++    case SelectedRole:
++        return item.selected;
++    case IsSeparatorRole:
++        return false;
++    }
++
++    return QVariant();
++}
++
++void PopupMenuItemModel::select(int index)
++{
++    toggleItem(index);
++    emit indexUpdated();
++}
++
++void PopupMenuItemModel::toggleItem(int index)
++{
++    int oldIndex = m_selectedModelIndex;
++    if (index < 0 || index >= m_items.size())
++        return;
++    Item& item = m_items[index];
++    if (!item.enabled)
++        return;
++
++    m_selectedModelIndex = index;
++    if (m_allowMultiples)
++        item.selected = !item.selected;
++    else {
++        if (index == oldIndex)
++            return;
++        item.selected = true;
++        if (oldIndex != -1) {
++            Item& oldItem = m_items[oldIndex];
++            oldItem.selected = false;
++            emit dataChanged(this->index(oldIndex), this->index(oldIndex));
++        }
++    }
++
++    emit dataChanged(this->index(index), this->index(index));
++}
++
++int PopupMenuItemModel::selectedOriginalIndex() const
++{
++    if (m_selectedModelIndex == -1)
++        return -1;
++    return m_items[m_selectedModelIndex].originalIndex;
++}
++
++void PopupMenuItemModel::buildItems(const Vector<WebPopupItem>& webPopupItems)
++{
++    QString currentGroup;
++    m_items.reserveInitialCapacity(webPopupItems.size());
++    for (int i = 0; i < webPopupItems.size(); i++) {
++        const WebPopupItem& webPopupItem = webPopupItems[i];
++        if (webPopupItem.m_isLabel) {
++            currentGroup = webPopupItem.m_text;
++            continue;
++        }
++        if (webPopupItem.m_isSelected && !m_allowMultiples)
++            m_selectedModelIndex = m_items.size();
++        m_items.append(Item(webPopupItem, currentGroup, i));
++    }
++}
++
++} // namespace WebKit
+diff --git a/Source/WebKit2/UIProcess/qt/ItemSelectorContextObject.h b/Source/WebKit2/UIProcess/qt/ItemSelectorContextObject.h
+new file mode 100644
+index 000000000000..ad63893d6319
+--- /dev/null
++++ b/Source/WebKit2/UIProcess/qt/ItemSelectorContextObject.h
+@@ -0,0 +1,119 @@
++/*
++ * Copyright (C) 2010 Apple Inc. All rights reserved.
++ * Copyright (C) 2011 Nokia Corporation and/or its subsidiary(-ies)
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
++ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
++ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
++ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
++ * THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#pragma once
++
++#include "WebPopupItem.h"
++#include <QtCore/QAbstractListModel>
++#include <QtCore/QRectF>
++#include <wtf/Vector.h>
++
++namespace WebKit {
++
++class PopupMenuItemModel final : public QAbstractListModel {
++    Q_OBJECT
++
++public:
++    enum Roles {
++        GroupRole = Qt::UserRole,
++        EnabledRole = Qt::UserRole + 1,
++        SelectedRole = Qt::UserRole + 2,
++        IsSeparatorRole = Qt::UserRole + 3
++    };
++
++    PopupMenuItemModel(const Vector<WebPopupItem>&, bool multiple);
++    int rowCount(const QModelIndex& parent = QModelIndex()) const final { return m_items.size(); }
++    QVariant data(const QModelIndex&, int role = Qt::DisplayRole) const final;
++    QHash<int, QByteArray> roleNames() const final;
++
++    Q_INVOKABLE void select(int);
++
++    int selectedOriginalIndex() const;
++    bool multiple() const { return m_allowMultiples; }
++    void toggleItem(int);
++
++Q_SIGNALS:
++    void indexUpdated();
++
++private:
++    struct Item {
++        Item(const WebPopupItem& webPopupItem, const QString& group, int originalIndex)
++            : text(webPopupItem.m_text)
++            , toolTip(webPopupItem.m_toolTip)
++            , group(group)
++            , originalIndex(originalIndex)
++            , enabled(webPopupItem.m_isEnabled)
++            , selected(webPopupItem.m_isSelected)
++            , isSeparator(webPopupItem.m_type == WebPopupItem::Separator)
++        { }
++
++        QString text;
++        QString toolTip;
++        QString group;
++        // Keep track of originalIndex because we don't add the label (group) items to our vector.
++        int originalIndex;
++        bool enabled;
++        bool selected;
++        bool isSeparator;
++    };
++
++    void buildItems(const Vector<WebPopupItem>& webPopupItems);
++
++    Vector<Item> m_items;
++    int m_selectedModelIndex;
++    bool m_allowMultiples;
++};
++
++class ItemSelectorContextObject : public QObject {
++    Q_OBJECT
++    Q_PROPERTY(QRectF elementRect READ elementRect CONSTANT FINAL)
++    Q_PROPERTY(QObject* items READ items CONSTANT FINAL)
++    Q_PROPERTY(bool allowMultiSelect READ allowMultiSelect CONSTANT FINAL)
++
++public:
++    ItemSelectorContextObject(const QRectF& elementRect, const Vector<WebPopupItem>&, bool multiple);
++
++    QRectF elementRect() const { return m_elementRect; }
++    PopupMenuItemModel* items() { return &m_items; }
++    bool allowMultiSelect() { return m_items.multiple(); }
++
++    Q_INVOKABLE void accept(int index = -1);
++    Q_INVOKABLE void reject() { emit done(); }
++    Q_INVOKABLE void dismiss() { emit done(); }
++
++Q_SIGNALS:
++    void acceptedWithOriginalIndex(int);
++    void done();
++
++private Q_SLOTS:
++    void onIndexUpdate();
++
++private:
++    QRectF m_elementRect;
++    PopupMenuItemModel m_items;
++};
++
++} // namespace WebKit
+diff --git a/Source/WebKit2/UIProcess/qt/QtDialogRunner.cpp b/Source/WebKit2/UIProcess/qt/QtDialogRunner.cpp
+index 5043a170f68a..2cd5828a8362 100644
+--- a/Source/WebKit2/UIProcess/qt/QtDialogRunner.cpp
++++ b/Source/WebKit2/UIProcess/qt/QtDialogRunner.cpp
+@@ -21,8 +21,7 @@
+ #include "config.h"
+ #include "QtDialogRunner.h"
+ 
+-#include "WKRetainPtr.h"
+-#include "WKStringQt.h"
++#include "DialogContextObjects.h"
+ #include "qquickwebview_p_p.h"
+ #include "qwebpermissionrequest_p.h"
+ #include <QtQml/QQmlComponent>
+@@ -43,263 +42,6 @@ QtDialogRunner::~QtDialogRunner()
+ {
+ }
+ 
+-// All dialogs need a way to support the state of the
+-// dialog being done/finished/dismissed. This is handled
+-// in the dialog base context.
+-class DialogContextBase : public QObject {
+-    Q_OBJECT
+-
+-public:
+-    DialogContextBase()
+-        : QObject()
+-        , m_dismissed(false)
+-    {
+-    }
+-
+-public Q_SLOTS:
+-    // Allows clients to call dismiss() directly, while also
+-    // being able to hook up signals to automatically also
+-    // dismiss the dialog since it's a slot.
+-
+-    void dismiss()
+-    {
+-        m_dismissed = true;
+-        emit dismissed();
+-    }
+-
+-Q_SIGNALS:
+-    void dismissed();
+-
+-private:
+-    // We store the dismissed state so that run() can check to see if a
+-    // dialog has already been dismissed before spinning an event loop.
+-    bool m_dismissed;
+-    friend void QtDialogRunner::run();
+-};
+-
+-class DialogContextObject : public DialogContextBase {
+-    Q_OBJECT
+-    Q_PROPERTY(QString message READ message CONSTANT)
+-    Q_PROPERTY(QString defaultValue READ defaultValue CONSTANT)
+-
+-public:
+-    DialogContextObject(const QString& message, const QString& defaultValue = QString())
+-        : DialogContextBase()
+-        , m_message(message)
+-        , m_defaultValue(defaultValue)
+-    {
+-        connect(this, SIGNAL(accepted(QString)), SLOT(dismiss()));
+-        connect(this, SIGNAL(rejected()), SLOT(dismiss()));
+-    }
+-    QString message() const { return m_message; }
+-    QString defaultValue() const { return m_defaultValue; }
+-
+-public Q_SLOTS:
+-    void accept(const QString& result = QString()) { emit accepted(result); }
+-    void reject() { emit rejected(); }
+-
+-Q_SIGNALS:
+-    void accepted(const QString& result);
+-    void rejected();
+-
+-private:
+-    QString m_message;
+-    QString m_defaultValue;
+-};
+-
+-class BaseAuthenticationContextObject : public DialogContextBase {
+-    Q_OBJECT
+-    Q_PROPERTY(QString hostname READ hostname CONSTANT)
+-    Q_PROPERTY(QString prefilledUsername READ prefilledUsername CONSTANT)
+-
+-public:
+-    BaseAuthenticationContextObject(const QString& hostname, const QString& prefilledUsername)
+-        : DialogContextBase()
+-        , m_hostname(hostname)
+-        , m_prefilledUsername(prefilledUsername)
+-    {
+-        connect(this, SIGNAL(accepted(QString, QString)), SLOT(dismiss()));
+-        connect(this, SIGNAL(rejected()), SLOT(dismiss()));
+-    }
+-
+-    QString hostname() const { return m_hostname; }
+-    QString prefilledUsername() const { return m_prefilledUsername; }
+-
+-public Q_SLOTS:
+-    void accept(const QString& username, const QString& password) { emit accepted(username, password); }
+-    void reject() { emit rejected(); }
+-
+-Q_SIGNALS:
+-    void accepted(const QString& username, const QString& password);
+-    void rejected();
+-
+-private:
+-    QString m_hostname;
+-    QString m_prefilledUsername;
+-};
+-
+-class HttpAuthenticationDialogContextObject : public BaseAuthenticationContextObject {
+-    Q_OBJECT
+-    Q_PROPERTY(QString realm READ realm CONSTANT)
+-
+-public:
+-    HttpAuthenticationDialogContextObject(const QString& hostname, const QString& realm, const QString& prefilledUsername)
+-        : BaseAuthenticationContextObject(hostname, prefilledUsername)
+-        , m_realm(realm)
+-    {
+-    }
+-
+-    QString realm() const { return m_realm; }
+-
+-private:
+-    QString m_realm;
+-};
+-
+-class ProxyAuthenticationDialogContextObject : public BaseAuthenticationContextObject {
+-    Q_OBJECT
+-    Q_PROPERTY(quint16 port READ port CONSTANT)
+-
+-public:
+-    ProxyAuthenticationDialogContextObject(const QString& hostname, quint16 port, const QString& prefilledUsername)
+-        : BaseAuthenticationContextObject(hostname, prefilledUsername)
+-        , m_port(port)
+-    {
+-    }
+-
+-    quint16 port() const { return m_port; }
+-
+-private:
+-    quint16 m_port;
+-};
+-
+-class CertificateVerificationDialogContextObject : public DialogContextBase {
+-    Q_OBJECT
+-    Q_PROPERTY(QString hostname READ hostname CONSTANT)
+-
+-public:
+-    CertificateVerificationDialogContextObject(const QString& hostname)
+-        : DialogContextBase()
+-        , m_hostname(hostname)
+-    {
+-        connect(this, SIGNAL(accepted()), SLOT(dismiss()));
+-        connect(this, SIGNAL(rejected()), SLOT(dismiss()));
+-    }
+-
+-    QString hostname() const { return m_hostname; }
+-
+-public Q_SLOTS:
+-    void accept() { emit accepted(); }
+-    void reject() { emit rejected(); }
+-
+-Q_SIGNALS:
+-    void accepted();
+-    void rejected();
+-
+-private:
+-    QString m_hostname;
+-};
+-
+-class FilePickerContextObject : public DialogContextBase {
+-    Q_OBJECT
+-    Q_PROPERTY(QStringList fileList READ fileList CONSTANT)
+-    Q_PROPERTY(bool allowMultipleFiles READ allowMultipleFiles CONSTANT)
+-
+-public:
+-    FilePickerContextObject(const QStringList& selectedFiles, bool allowMultiple)
+-        : DialogContextBase()
+-        , m_allowMultiple(allowMultiple)
+-        , m_fileList(selectedFiles)
+-    {
+-        connect(this, SIGNAL(fileSelected(QStringList)), SLOT(dismiss()));
+-        connect(this, SIGNAL(rejected()), SLOT(dismiss()));
+-    }
+-
+-    QStringList fileList() const { return m_fileList; }
+-    bool allowMultipleFiles() const { return m_allowMultiple;}
+-
+-public Q_SLOTS:
+-    void reject() { emit rejected();}
+-    void accept(const QVariant& path)
+-    {
+-        QStringList filesPath = path.toStringList();
+-
+-        if (filesPath.isEmpty()) {
+-            emit rejected();
+-            return;
+-        }
+-
+-        // For single file upload, send only the first element if there are more than one file paths
+-        if (!m_allowMultiple && filesPath.count() > 1)
+-            filesPath = QStringList(filesPath.at(0));
+-        emit fileSelected(filesPath);
+-    }
+-
+-Q_SIGNALS:
+-    void rejected();
+-    void fileSelected(const QStringList&);
+-
+-private:
+-    bool m_allowMultiple;
+-    QStringList m_fileList;
+-};
+-
+-class DatabaseQuotaDialogContextObject : public DialogContextBase {
+-    Q_OBJECT
+-    Q_PROPERTY(QString databaseName READ databaseName CONSTANT)
+-    Q_PROPERTY(QString displayName READ displayName CONSTANT)
+-    Q_PROPERTY(quint64 currentQuota READ currentQuota CONSTANT)
+-    Q_PROPERTY(quint64 currentOriginUsage READ currentOriginUsage CONSTANT)
+-    Q_PROPERTY(quint64 currentDatabaseUsage READ currentDatabaseUsage CONSTANT)
+-    Q_PROPERTY(quint64 expectedUsage READ expectedUsage CONSTANT)
+-    Q_PROPERTY(QtWebSecurityOrigin* origin READ securityOrigin CONSTANT)
+-
+-public:
+-    DatabaseQuotaDialogContextObject(const QString& databaseName, const QString& displayName, WKSecurityOriginRef securityOrigin, quint64 currentQuota, quint64 currentOriginUsage, quint64 currentDatabaseUsage, quint64 expectedUsage)
+-        : DialogContextBase()
+-        , m_databaseName(databaseName)
+-        , m_displayName(displayName)
+-        , m_currentQuota(currentQuota)
+-        , m_currentOriginUsage(currentOriginUsage)
+-        , m_currentDatabaseUsage(currentDatabaseUsage)
+-        , m_expectedUsage(expectedUsage)
+-    {
+-        WKRetainPtr<WKStringRef> scheme = adoptWK(WKSecurityOriginCopyProtocol(securityOrigin));
+-        WKRetainPtr<WKStringRef> host = adoptWK(WKSecurityOriginCopyHost(securityOrigin));
+-
+-        m_securityOrigin.setScheme(WKStringCopyQString(scheme.get()));
+-        m_securityOrigin.setHost(WKStringCopyQString(host.get()));
+-        m_securityOrigin.setPort(static_cast<int>(WKSecurityOriginGetPort(securityOrigin)));
+-
+-        connect(this, SIGNAL(accepted(quint64)), SLOT(dismiss()));
+-        connect(this, SIGNAL(rejected()), SLOT(dismiss()));
+-    }
+-
+-    QString databaseName() const { return m_databaseName; }
+-    QString displayName() const { return m_displayName; }
+-    quint64 currentQuota() const { return m_currentQuota; }
+-    quint64 currentOriginUsage() const { return m_currentOriginUsage; }
+-    quint64 currentDatabaseUsage() const { return m_currentDatabaseUsage; }
+-    quint64 expectedUsage() const { return m_expectedUsage; }
+-    QtWebSecurityOrigin* securityOrigin() { return &m_securityOrigin; }
+-
+-public Q_SLOTS:
+-    void accept(quint64 size) { emit accepted(size); }
+-    void reject() { emit rejected(); }
+-
+-Q_SIGNALS:
+-    void accepted(quint64 size);
+-    void rejected();
+-
+-private:
+-    QString m_databaseName;
+-    QString m_displayName;
+-    quint64 m_currentQuota;
+-    quint64 m_currentOriginUsage;
+-    quint64 m_currentDatabaseUsage;
+-    quint64 m_expectedUsage;
+-    QtWebSecurityOrigin m_securityOrigin;
+-};
+-
+ void QtDialogRunner::run()
+ {
+     DialogContextBase* context = static_cast<DialogContextBase*>(m_dialogContext->contextObject());
+@@ -476,5 +218,5 @@ void QtDialogRunner::onDatabaseQuotaAccepted(quint64 quota)
+ 
+ } // namespace WebKit
+ 
+-#include "QtDialogRunner.moc"
++#include "moc_DialogContextObjects.cpp"
+ #include "moc_QtDialogRunner.cpp"
+diff --git a/Source/WebKit2/UIProcess/qt/WebColorPickerQt.cpp b/Source/WebKit2/UIProcess/qt/WebColorPickerQt.cpp
+index 031c32d9ee12..c37099654085 100644
+--- a/Source/WebKit2/UIProcess/qt/WebColorPickerQt.cpp
++++ b/Source/WebKit2/UIProcess/qt/WebColorPickerQt.cpp
+@@ -22,6 +22,7 @@
+ #include "config.h"
+ #include "WebColorPickerQt.h"
+ 
++#include "ColorChooserContextObject.h"
+ #include "qquickwebview_p.h"
+ #include "qquickwebview_p_p.h"
+ #include <QtQml/QQmlContext>
+@@ -31,33 +32,6 @@ using namespace WebCore;
+ 
+ namespace WebKit {
+ 
+-class ColorChooserContextObject : public QObject {
+-    Q_OBJECT
+-    Q_PROPERTY(QColor currentColor READ currentColor CONSTANT FINAL)
+-    Q_PROPERTY(QRectF elementRect READ elementRect CONSTANT FINAL)
+-
+-public:
+-    ColorChooserContextObject(const QColor& color, const QRectF& rect)
+-        : m_currentColor(color)
+-        , m_rect(rect)
+-    {
+-    }
+-
+-    QColor currentColor() const { return m_currentColor; }
+-    QRectF elementRect() const { return m_rect; }
+-
+-    Q_INVOKABLE void accept(const QColor& color) { emit accepted(color); }
+-    Q_INVOKABLE void reject() { emit rejected(); }
+-
+-Q_SIGNALS:
+-    void accepted(const QColor&);
+-    void rejected();
+-
+-private:
+-    QColor m_currentColor;
+-    QRectF m_rect;
+-};
+-
+ WebColorPickerQt::WebColorPickerQt(WebColorPicker::Client* client, QQuickWebView* webView, const Color& initialColor, const IntRect& elementRect)
+     : WebColorPicker(client)
+     , m_webView(webView)
+@@ -149,5 +123,4 @@ void WebColorPickerQt::endPicker()
+ 
+ } // namespace WebKit
+ 
+-#include "WebColorPickerQt.moc"
+ #include "moc_WebColorPickerQt.cpp"
+diff --git a/Source/WebKit2/UIProcess/qt/WebPopupMenuProxyQt.cpp b/Source/WebKit2/UIProcess/qt/WebPopupMenuProxyQt.cpp
+index 249de62ec43b..066e273a9b0f 100644
+--- a/Source/WebKit2/UIProcess/qt/WebPopupMenuProxyQt.cpp
++++ b/Source/WebKit2/UIProcess/qt/WebPopupMenuProxyQt.cpp
+@@ -27,6 +27,7 @@
+ #include "config.h"
+ #include "WebPopupMenuProxyQt.h"
+ 
++#include "ItemSelectorContextObject.h"
+ #include "PlatformPopupMenuData.h"
+ #include "WebPopupItem.h"
+ #include "qquickwebview_p.h"
+@@ -39,229 +40,6 @@ using namespace WebCore;
+ 
+ namespace WebKit {
+ 
+-static QHash<int, QByteArray> createRoleNamesHash();
+-
+-class PopupMenuItemModel final : public QAbstractListModel {
+-    Q_OBJECT
+-
+-public:
+-    enum Roles {
+-        GroupRole = Qt::UserRole,
+-        EnabledRole = Qt::UserRole + 1,
+-        SelectedRole = Qt::UserRole + 2,
+-        IsSeparatorRole = Qt::UserRole + 3
+-    };
+-
+-    PopupMenuItemModel(const Vector<WebPopupItem>&, bool multiple);
+-    int rowCount(const QModelIndex& parent = QModelIndex()) const final { return m_items.size(); }
+-    QVariant data(const QModelIndex&, int role = Qt::DisplayRole) const final;
+-    QHash<int, QByteArray> roleNames() const final;
+-
+-    Q_INVOKABLE void select(int);
+-
+-    int selectedOriginalIndex() const;
+-    bool multiple() const { return m_allowMultiples; }
+-    void toggleItem(int);
+-
+-Q_SIGNALS:
+-    void indexUpdated();
+-
+-private:
+-    struct Item {
+-        Item(const WebPopupItem& webPopupItem, const QString& group, int originalIndex)
+-            : text(webPopupItem.m_text)
+-            , toolTip(webPopupItem.m_toolTip)
+-            , group(group)
+-            , originalIndex(originalIndex)
+-            , enabled(webPopupItem.m_isEnabled)
+-            , selected(webPopupItem.m_isSelected)
+-            , isSeparator(webPopupItem.m_type == WebPopupItem::Separator)
+-        { }
+-
+-        QString text;
+-        QString toolTip;
+-        QString group;
+-        // Keep track of originalIndex because we don't add the label (group) items to our vector.
+-        int originalIndex;
+-        bool enabled;
+-        bool selected;
+-        bool isSeparator;
+-    };
+-
+-    void buildItems(const Vector<WebPopupItem>& webPopupItems);
+-
+-    Vector<Item> m_items;
+-    int m_selectedModelIndex;
+-    bool m_allowMultiples;
+-};
+-
+-class ItemSelectorContextObject : public QObject {
+-    Q_OBJECT
+-    Q_PROPERTY(QRectF elementRect READ elementRect CONSTANT FINAL)
+-    Q_PROPERTY(QObject* items READ items CONSTANT FINAL)
+-    Q_PROPERTY(bool allowMultiSelect READ allowMultiSelect CONSTANT FINAL)
+-
+-public:
+-    ItemSelectorContextObject(const QRectF& elementRect, const Vector<WebPopupItem>&, bool multiple);
+-
+-    QRectF elementRect() const { return m_elementRect; }
+-    PopupMenuItemModel* items() { return &m_items; }
+-    bool allowMultiSelect() { return m_items.multiple(); }
+-
+-    Q_INVOKABLE void accept(int index = -1);
+-    Q_INVOKABLE void reject() { emit done(); }
+-    Q_INVOKABLE void dismiss() { emit done(); }
+-
+-Q_SIGNALS:
+-    void acceptedWithOriginalIndex(int);
+-    void done();
+-
+-private Q_SLOTS:
+-    void onIndexUpdate();
+-
+-private:
+-    QRectF m_elementRect;
+-    PopupMenuItemModel m_items;
+-};
+-
+-ItemSelectorContextObject::ItemSelectorContextObject(const QRectF& elementRect, const Vector<WebPopupItem>& webPopupItems, bool multiple)
+-    : m_elementRect(elementRect)
+-    , m_items(webPopupItems, multiple)
+-{
+-    connect(&m_items, SIGNAL(indexUpdated()), SLOT(onIndexUpdate()));
+-}
+-
+-void ItemSelectorContextObject::onIndexUpdate()
+-{
+-    // Send the update for multi-select list.
+-    if (m_items.multiple())
+-        emit acceptedWithOriginalIndex(m_items.selectedOriginalIndex());
+-}
+-
+-
+-void ItemSelectorContextObject::accept(int index)
+-{
+-    // If the index is not valid for multi-select lists, just hide the pop up as the selected indices have
+-    // already been sent.
+-    if ((index == -1) && m_items.multiple())
+-        emit done();
+-    else {
+-        if (index != -1)
+-            m_items.toggleItem(index);
+-        emit acceptedWithOriginalIndex(m_items.selectedOriginalIndex());
+-    }
+-}
+-
+-static QHash<int, QByteArray> createRoleNamesHash()
+-{
+-    QHash<int, QByteArray> roles;
+-    roles[Qt::DisplayRole] = "text";
+-    roles[Qt::ToolTipRole] = "tooltip";
+-    roles[PopupMenuItemModel::GroupRole] = "group";
+-    roles[PopupMenuItemModel::EnabledRole] = "enabled";
+-    roles[PopupMenuItemModel::SelectedRole] = "selected";
+-    roles[PopupMenuItemModel::IsSeparatorRole] = "isSeparator";
+-    return roles;
+-}
+-
+-PopupMenuItemModel::PopupMenuItemModel(const Vector<WebPopupItem>& webPopupItems, bool multiple)
+-    : m_selectedModelIndex(-1)
+-    , m_allowMultiples(multiple)
+-{
+-    buildItems(webPopupItems);
+-}
+-
+-QHash<int, QByteArray> PopupMenuItemModel::roleNames() const
+-{
+-    static QHash<int, QByteArray> roles = createRoleNamesHash();
+-    return roles;
+-}
+-
+-QVariant PopupMenuItemModel::data(const QModelIndex& index, int role) const
+-{
+-    if (!index.isValid() || index.row() < 0 || index.row() >= m_items.size())
+-        return QVariant();
+-
+-    const Item& item = m_items[index.row()];
+-    if (item.isSeparator) {
+-        if (role == IsSeparatorRole)
+-            return true;
+-        return QVariant();
+-    }
+-
+-    switch (role) {
+-    case Qt::DisplayRole:
+-        return item.text;
+-    case Qt::ToolTipRole:
+-        return item.toolTip;
+-    case GroupRole:
+-        return item.group;
+-    case EnabledRole:
+-        return item.enabled;
+-    case SelectedRole:
+-        return item.selected;
+-    case IsSeparatorRole:
+-        return false;
+-    }
+-
+-    return QVariant();
+-}
+-
+-void PopupMenuItemModel::select(int index)
+-{
+-    toggleItem(index);
+-    emit indexUpdated();
+-}
+-
+-void PopupMenuItemModel::toggleItem(int index)
+-{
+-    int oldIndex = m_selectedModelIndex;
+-    if (index < 0 || index >= m_items.size())
+-        return;
+-    Item& item = m_items[index];
+-    if (!item.enabled)
+-        return;
+-
+-    m_selectedModelIndex = index;
+-    if (m_allowMultiples)
+-        item.selected = !item.selected;
+-    else {
+-        if (index == oldIndex)
+-            return;
+-        item.selected = true;
+-        if (oldIndex != -1) {
+-            Item& oldItem = m_items[oldIndex];
+-            oldItem.selected = false;
+-            emit dataChanged(this->index(oldIndex), this->index(oldIndex));
+-        }
+-    }
+-
+-    emit dataChanged(this->index(index), this->index(index));
+-}
+-
+-int PopupMenuItemModel::selectedOriginalIndex() const
+-{
+-    if (m_selectedModelIndex == -1)
+-        return -1;
+-    return m_items[m_selectedModelIndex].originalIndex;
+-}
+-
+-void PopupMenuItemModel::buildItems(const Vector<WebPopupItem>& webPopupItems)
+-{
+-    QString currentGroup;
+-    m_items.reserveInitialCapacity(webPopupItems.size());
+-    for (int i = 0; i < webPopupItems.size(); i++) {
+-        const WebPopupItem& webPopupItem = webPopupItems[i];
+-        if (webPopupItem.m_isLabel) {
+-            currentGroup = webPopupItem.m_text;
+-            continue;
+-        }
+-        if (webPopupItem.m_isSelected && !m_allowMultiples)
+-            m_selectedModelIndex = m_items.size();
+-        m_items.append(Item(webPopupItem, currentGroup, i));
+-    }
+-}
+-
+ WebPopupMenuProxyQt::WebPopupMenuProxyQt(WebPopupMenuProxy::Client& client, QQuickWebView* webView)
+     : WebPopupMenuProxy(client)
+     , m_webView(webView)
+@@ -348,8 +126,5 @@ void WebPopupMenuProxyQt::createContext(QQmlComponent* component, QObject* conte
+ 
+ } // namespace WebKit
+ 
+-// Since we define QObjects in WebPopupMenuProxyQt.cpp, this will trigger moc to run on .cpp.
+-#include "WebPopupMenuProxyQt.moc"
+-
+ // And we can't compile the moc for WebPopupMenuProxyQt.h by itself, since it doesn't include "config.h"
+ #include "moc_WebPopupMenuProxyQt.cpp"
+diff --git a/Source/cmake/OptionsQt.cmake b/Source/cmake/OptionsQt.cmake
+index 529dadae8586..eba55cd418a6 100644
+--- a/Source/cmake/OptionsQt.cmake
++++ b/Source/cmake/OptionsQt.cmake
+@@ -13,8 +13,30 @@ set(PROJECT_VERSION_STRING "${PROJECT_VERSION}")
+ 
+ set(QT_CONAN_DIR "" CACHE PATH "Directory containing conanbuildinfo.cmake and conanfile.txt")
+ if (QT_CONAN_DIR)
++    find_program(CONAN_COMMAND NAMES conan PATHS $ENV{PIP3_PATH})
++    if (NOT CONAN_COMMAND)
++        message(FATAL_ERROR "conan executable not found. Make sure that Conan is installed and available in PATH")
++    endif ()
+     include("${QT_CONAN_DIR}/conanbuildinfo.cmake")
++
++    # Remove this workaround when libxslt package is fixed
++    string(REPLACE "include/libxslt" "include" replace_CONAN_INCLUDE_DIRS "${CONAN_INCLUDE_DIRS}")
++    set(CONAN_INCLUDE_DIRS ${replace_CONAN_INCLUDE_DIRS})
++
++    # Remove this workaround when libxml2 package is fixed
++    set(_BACKUP_CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH})
+     conan_basic_setup()
++    set(CMAKE_MODULE_PATH ${_BACKUP_CMAKE_MODULE_PATH})
++    unset(_BACKUP_CMAKE_MODULE_PATH)
++
++    # Because we've reset CMAKE_MODULE_PATH, FindZLIB from Conan is not used, which causes error with MinGW
++    if (NOT QT_BUNDLED_ZLIB)
++        if (NOT CONAN_ZLIB_ROOT)
++            message(FATAL_ERROR "CONAN_ZLIB_ROOT is not set")
++        endif ()
++        set(ZLIB_ROOT ${CONAN_ZLIB_ROOT})
++        message(STATUS "ZLIB_ROOT: ${ZLIB_ROOT}")
++    endif ()
+ 
+     install(CODE "
+         set(_conan_imports_dest \${CMAKE_INSTALL_PREFIX})
+@@ -24,10 +46,13 @@ if (QT_CONAN_DIR)
+             set(_conan_imports_dest \"\${_absolute_destdir}\${_conan_imports_dest}\")
+         endif ()
+ 
++        message(\"Importing dependencies from conan to \${_conan_imports_dest}\")
+         execute_process(
+-            COMMAND conan imports -f \"${QT_CONAN_DIR}/conanfile.txt\" --dest \${_conan_imports_dest}
++            COMMAND \"${CONAN_COMMAND}\" imports --import-folder \${_conan_imports_dest} \"${QT_CONAN_DIR}/conanfile.txt\"
+             WORKING_DIRECTORY \"${QT_CONAN_DIR}\"
++            RESULT_VARIABLE _conan_imports_result
+         )
++        message(\"conan imports result: \${_conan_imports_result}\")
+ 
+         set(_conan_imports_manifest \"\${_conan_imports_dest}/conan_imports_manifest.txt\")
+         if (EXISTS \${_conan_imports_manifest})
+@@ -131,6 +156,24 @@ macro(QTWEBKIT_GENERATE_MOC_FILES_H _target)
+     endforeach ()
+ endmacro()
+ 
++macro(QTWEBKIT_SEPARATE_DEBUG_INFO _target _target_debug)
++    if (UNIX AND NOT APPLE)
++        if (NOT CMAKE_OBJCOPY)
++            message(WARNING "CMAKE_OBJCOPY is not defined - debug information will not be split")
++        else ()
++            set(_target_file "$<TARGET_FILE:${_target}>")
++            set(${_target_debug} "${_target_file}.debug")
++            add_custom_command(TARGET ${_target} POST_BUILD
++                COMMAND ${CMAKE_OBJCOPY} --only-keep-debug ${_target_file} ${${_target_debug}}
++                COMMAND ${CMAKE_OBJCOPY} --strip-debug ${_target_file}
++                COMMAND ${CMAKE_OBJCOPY} --add-gnu-debuglink=${${_target_debug}} ${_target_file}
++                VERBATIM
++            )
++            unset(_target_file)
++        endif ()
++    endif ()
++endmacro()
++
+ set(CMAKE_MACOSX_RPATH ON)
+ 
+ add_definitions(-DBUILDING_QT__=1)
+@@ -144,6 +187,7 @@ if (COMPILER_IS_GCC_OR_CLANG)
+     add_definitions(-DQT_NO_DYNAMIC_CAST)
+ endif ()
+ 
++# Align build product names with QMake conventions
+ if (WIN32)
+     if (${CMAKE_BUILD_TYPE} MATCHES "Debug")
+         set(CMAKE_DEBUG_POSTFIX d)
+@@ -151,6 +195,8 @@ if (WIN32)
+ 
+     set(CMAKE_SHARED_LIBRARY_PREFIX "")
+     set(CMAKE_SHARED_MODULE_PREFIX "")
++    # QMake doesn't treat import libraries as a separate product kind
++    set(CMAKE_IMPORT_LIBRARY_SUFFIX "${CMAKE_STATIC_LIBRARY_SUFFIX}")
+ endif ()
+ 
+ WEBKIT_OPTION_BEGIN()
+@@ -295,6 +341,7 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SYSTEM_MALLOC PUBLIC OFF)
+ # we need a value different from the default defined in WebKitFeatures.cmake.
+ # Changing these options is completely unsupported.
+ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_3D_TRANSFORMS PRIVATE ON)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_CSS_COMPOSITING PRIVATE ON)
+ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_CSS_IMAGE_SET PRIVATE ON)
+ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_CSS_REGIONS PRIVATE ON)
+ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_CSS_SHAPES PRIVATE ON)
+@@ -601,6 +648,9 @@ endif ()
+ find_package(Qt5 ${REQUIRED_QT_VERSION} REQUIRED COMPONENTS ${QT_REQUIRED_COMPONENTS})
+ 
+ CHECK_QT5_PRIVATE_INCLUDE_DIRS(Gui private/qhexstring_p.h)
++if (Qt5_VERSION VERSION_GREATER 5.10.1)
++    CHECK_QT5_PRIVATE_INCLUDE_DIRS(Network private/http2protocol_p.h)
++endif ()
+ if (ENABLE_WEBKIT2)
+     CHECK_QT5_PRIVATE_INCLUDE_DIRS(Quick private/qsgrendernode_p.h)
+ endif ()
+@@ -665,6 +715,19 @@ if (WIN32 AND COMPILER_IS_GCC_OR_CLANG)
+     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-keep-inline-dllexport")
+ endif ()
+ 
++# See also FORCE_DEBUG_INFO in Source/PlatformQt.cmake
++if (FORCE_DEBUG_INFO)
++    if (COMPILER_IS_GCC_OR_CLANG)
++        # Enable debug info in Release builds
++        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -g")
++        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g")
++    endif ()
++    if (USE_LD_GOLD)
++       set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gdb-index")
++       set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gdb-index")
++    endif ()
++endif ()
++
+ if (APPLE)
+     SET_AND_EXPOSE_TO_BUILD(HAVE_QOS_CLASSES 1)
+ endif ()
+diff --git a/Source/cmake/WebKitMacros.cmake b/Source/cmake/WebKitMacros.cmake
+index a3e95cd28eb3..9467d11b6858 100644
+--- a/Source/cmake/WebKitMacros.cmake
++++ b/Source/cmake/WebKitMacros.cmake
+@@ -288,10 +288,10 @@ macro(WEBKIT_FRAMEWORK _target)
+     if (APPLE AND NOT PORT STREQUAL "GTK" AND NOT ${${_target}_LIBRARY_TYPE} MATCHES STATIC)
+         set_target_properties(${_target} PROPERTIES FRAMEWORK TRUE)
+         if (${_target}_PUBLIC_HEADERS)
+-            set_target_properties(${_target} PROPERTIES PUBLIC_HEADER "${${_target}_PUBLIC_HEADERS}}")
++            set_target_properties(${_target} PROPERTIES PUBLIC_HEADER "${${_target}_PUBLIC_HEADERS}")
+             if (${_target}_PRIVATE_HEADERS)
+                 foreach (CURRENT_PRIVATE_HEADER ${${_target}_PRIVATE_HEADERS})
+-                    set_property(SOURCE ${CURRENT_PRIVATE_HEADER} PROPERTY MACOSX_PACKAGE_LOCATION ${${_target}_PRIVATE_HEADERS_LOCATION} )
++                    set_property(SOURCE ${CURRENT_PRIVATE_HEADER} PROPERTY MACOSX_PACKAGE_LOCATION ${${_target}_PRIVATE_HEADERS_LOCATION})
+                 endforeach ()
+             endif ()
+         endif ()
+diff --git a/Tools/QtTestBrowser/CMakeLists.txt b/Tools/QtTestBrowser/CMakeLists.txt
+index ccd8e0ff2d67..19827fd02cac 100644
+--- a/Tools/QtTestBrowser/CMakeLists.txt
++++ b/Tools/QtTestBrowser/CMakeLists.txt
+@@ -48,6 +48,10 @@ qt_wrap_cpp(WebKit QtTestBrowser_SOURCES
+     webinspector.h
+ )
+ 
++qt5_add_resources(QtTestBrowser_SOURCES
++    QtTestBrowser.qrc
++)
++
+ if (Qt5OpenGL_FOUND)
+     list(APPEND QtTestBrowser_SYSTEM_INCLUDE_DIRECTORIES
+         ${Qt5OpenGL_INCLUDE_DIRS}
+diff --git a/Tools/QtTestBrowser/webpage.cpp b/Tools/QtTestBrowser/webpage.cpp
+index a0efed1d88b2..6188e4ca23b0 100644
+--- a/Tools/QtTestBrowser/webpage.cpp
++++ b/Tools/QtTestBrowser/webpage.cpp
+@@ -80,27 +80,6 @@ void WebPage::applyProxy()
+     }
+ }
+ 
+-bool WebPage::supportsExtension(QWebPage::Extension extension) const
+-{
+-    if (extension == ChooseMultipleFilesExtension || extension == QWebPage::ErrorPageExtension)
+-        return true;
+-    return false;
+-}
+-
+-bool WebPage::extension(Extension extension, const ExtensionOption* option, ExtensionReturn* output)
+-{
+-    if (extension == ChooseMultipleFilesExtension)
+-        return QWebPage::extension(extension, option, output);
+-
+-    const QWebPage::ErrorPageExtensionOption* info = static_cast<const QWebPage::ErrorPageExtensionOption*>(option);
+-    QWebPage::ErrorPageExtensionReturn* errorPage = static_cast<QWebPage::ErrorPageExtensionReturn*>(output);
+-
+-    errorPage->content = QString("<html><head><title>Failed loading page</title></head><body>%1</body></html>")
+-        .arg(info->errorString).toUtf8();
+-
+-    return true;
+-}
+-
+ bool WebPage::acceptNavigationRequest(QWebFrame* frame, const QNetworkRequest& request, NavigationType type)
+ {
+     QObject* view = parent();
+diff --git a/Tools/QtTestBrowser/webpage.h b/Tools/QtTestBrowser/webpage.h
+index 0238354aa8bc..77a19c14f035 100644
+--- a/Tools/QtTestBrowser/webpage.h
++++ b/Tools/QtTestBrowser/webpage.h
+@@ -46,8 +46,6 @@ class WebPage : public QWebPage {
+ 
+     QWebPage* createWindow(QWebPage::WebWindowType) override;
+     QObject* createPlugin(const QString&, const QUrl&, const QStringList&, const QStringList&) override;
+-    bool supportsExtension(QWebPage::Extension) const override;
+-    bool extension(Extension, const ExtensionOption*, ExtensionReturn*) override;
+ 
+     bool acceptNavigationRequest(QWebFrame*, const QNetworkRequest&, NavigationType) override;
+ 
+diff --git a/Tools/Scripts/build-webkit b/Tools/Scripts/build-webkit
+index b8a4bd1e2c8d..fbaee1c0de80 100755
+--- a/Tools/Scripts/build-webkit
++++ b/Tools/Scripts/build-webkit
+@@ -240,10 +240,6 @@ if (isInspectorFrontend()) {
+ }
+ 
+ if (isCMakeBuild() && (!isAnyWindows() || isQt())) {
+-    if ($shouldInstall) {
+-        $makeArgs .= ($makeArgs ? " " : "") . "install";
+-    }
+-
+     # Visual Studio generator doesn't support -j switch
+     if (canUseNinja() || !isAnyWindows()) {
+         # By default we build using all of the available CPUs.
+@@ -258,6 +254,10 @@ if (isCMakeBuild() && (!isAnyWindows() || isQt())) {
+     removeCMakeCache(@featureArgs);
+ 
+     buildCMakeProjectOrExit($clean, $prefixPath, $makeArgs, (cmakeBasedPortArguments(), @featureArgs), $cmakeArgs);
++
++    if ($shouldInstall) {
++        installCMakeProjectOrExit();
++    }
+ }
+ 
+ my $baseProductDir = baseProductDir();
+diff --git a/Tools/Scripts/webkitdirs.pm b/Tools/Scripts/webkitdirs.pm
+index 84b18c7b6e41..afe4af015e75 100755
+--- a/Tools/Scripts/webkitdirs.pm
++++ b/Tools/Scripts/webkitdirs.pm
+@@ -2145,6 +2145,13 @@ sub buildCMakeProjectOrExit($$$@)
+     return 0;
+ }
+ 
++sub installCMakeProjectOrExit
++{
++    my $returnCode = exitStatus(system(qw(cmake -P cmake_install.cmake)));
++    exit($returnCode) if $returnCode;
++    return 0;
++}
++
+ sub cmakeBasedPortArguments()
+ {
+     return ();
+diff --git a/Tools/Scripts/webkitperl/FeatureList.pm b/Tools/Scripts/webkitperl/FeatureList.pm
+index 067779122f3d..919c858753b0 100644
+--- a/Tools/Scripts/webkitperl/FeatureList.pm
++++ b/Tools/Scripts/webkitperl/FeatureList.pm
+@@ -233,7 +233,7 @@ my @features = (
+       define => "ENABLE_CSS_REGIONS", default => 1, value => \$cssRegionsSupport },
+ 
+     { option => "css-compositing", desc => "Toggle CSS Compositing support",
+-      define => "ENABLE_CSS_COMPOSITING", default => isAppleWebKit(), value => \$cssCompositingSupport },
++      define => "ENABLE_CSS_COMPOSITING", default => (isAppleWebKit() || isQt()), value => \$cssCompositingSupport },
+ 
+     { option => "custom-elements", desc => "Toggle custom elements support",
+       define => "ENABLE_CUSTOM_ELEMENTS", default => (isAppleMacWebKit() || isIOSWebKit()), value => \$customElementsSupport },
+diff --git a/Tools/qmake/projects/run_cmake.pro b/Tools/qmake/projects/run_cmake.pro
+index ff6d1d5624b2..71872664b33b 100644
+--- a/Tools/qmake/projects/run_cmake.pro
++++ b/Tools/qmake/projects/run_cmake.pro
+@@ -35,7 +35,7 @@ build_pass|!debug_and_release {
+     static_runtime: CMAKE_CONFIG += USE_STATIC_RUNTIME=ON
+ 
+     QT_FOR_CONFIG += gui-private
+-    !qtConfig(system-jpeg):qtConfig(jpeg) {
++    !win32:!qtConfig(system-jpeg):qtConfig(jpeg) {
+         # Use QImageReader for JPEG
+         CMAKE_CONFIG += USE_LIBJPEG=OFF
+     }
+@@ -63,6 +63,11 @@ build_pass|!debug_and_release {
+         CMAKE_CONFIG += USE_MINIMAL_DEBUG_INFO_MSVC=ON
+     }
+ 
++    !macos {
++        force_debug_info: CMAKE_CONFIG += FORCE_DEBUG_INFO=ON
++        qtConfig(separate_debug_info): CMAKE_CONFIG += SEPARATE_DEBUG_INFO=ON
++    }
++
+     macos {
+         # Reuse the cached sdk version value from mac/sdk.prf if available
+         # otherwise query for it.
+@@ -81,6 +86,8 @@ build_pass|!debug_and_release {
+         !qt_framework: CMAKE_CONFIG += MACOS_BUILD_FRAMEWORKS=OFF
+     }
+ 
++    linux:isEqual(EXTRA_RPATHS, "."): CMAKE_CONFIG += QT_ORIGIN_RPATH=ON
++
+     !isEmpty(use_ninja): cmake_args += "-G Ninja"
+ 
+     equals(QMAKE_HOST.os, Windows) {
+diff --git a/Tools/qt/jhbuild-qt-5.4.modules b/Tools/qt/jhbuild-qt-5.4.modules
+index 19433512901d..0bffc61a04bb 100644
+--- a/Tools/qt/jhbuild-qt-5.4.modules
++++ b/Tools/qt/jhbuild-qt-5.4.modules
+@@ -69,6 +69,7 @@
+       <patch file="qtbase-5.4-add-macros-for-enabling-disabling-warnings.patch" strip="1"/>
+       <patch file="qtbase-5.4-fix-Clang-warning-about-inconsistent-use-of-C-11-ove.patch" strip="1"/>
+       <patch file="qtbase-5.4-fix-gcc-Wsuggest-override-warning-on-Q_OBJECT.patch" strip="1"/>
++      <patch file="qtbase-5.4-fix-QTBUG-77231.patch" strip="1"/>
+     </branch>
+     <dependencies>
+       <dep package="fontconfig"/>
+diff --git a/Tools/qt/jhbuild.modules b/Tools/qt/jhbuild.modules
+index b3e0c510105f..2c8ba13841ee 100644
+--- a/Tools/qt/jhbuild.modules
++++ b/Tools/qt/jhbuild.modules
+@@ -17,7 +17,6 @@
+       <dep package="gst-plugins-good"/>
+       <dep package="gst-plugins-bad"/>
+       <dep package="gst-libav"/>
+-      <dep package="openwebrtc"/>
+       <dep package="qt"/>
+       <if condition-set="linux">
+         <dep package="llvm"/>
+@@ -75,7 +74,8 @@
+     </branch>
+   </autotools>
+ 
+-  <autotools id="harfbuzz" autogen-sh="configure">
++  <autotools id="harfbuzz" autogen-sh="configure"
++             autogenargs="--with-cairo=no">
+     <dependencies>
+       <dep package="icu"/>
+     </dependencies>
+@@ -107,22 +107,21 @@
+     </branch>
+   </autotools>
+ 
+-  <autotools id="fontconfig" 
+-             autogen-sh="configure"
+-             autogenargs="--enable-libxml2">
++  <autotools id="fontconfig"
++             autogenargs="--enable-libxml2 --disable-docs"
++             supports-non-srcdir-builds="no">
++    <if condition-set="macos">
++      <autogenargs value="--with-add-fonts=/System/Library/Fonts,/Library/Fonts,~/Library/Fonts"/>
++    </if>
+     <dependencies>
+       <dep package="freetype6"/>
+       <dep package="libxml2"/>
+     </dependencies>
+-    <branch module="software/fontconfig/release/fontconfig-2.11.1.tar.gz" version="2.11.1"
++    <branch module="software/fontconfig/release/fontconfig-2.12.4.tar.bz2" version="2.12.4"
+             repo="freedesktop.org"
+-            hash="sha256:b6b066c7dce3f436fdc0dfbae9d36122b38094f4f53bd8dffd45e195b0540d8d"
+-            md5sum="e75e303b4f7756c2b16203a57ac87eba">
+-      <patch file="fontconfig-2.11.1-no-bitmaps.patch" strip="0"/>
+-    </branch>
++            hash="sha256:668293fcc4b3c59765cdee5cee05941091c0879edcc24dfec5455ef83912e45c"/>
+   </autotools>
+ 
+-
+   <autotools id="libxml2" supports-non-srcdir-builds="no"
+              autogen-sh="./autogen.sh; ./configure --without-python --without-valid --without-xinclude --without-xptr --without-c14n --without-catalog --without-regexps --without-zlib --without-lzma --without-schemas --without-schematron --without-threads --without-legacy --without-http --without-iconv --with-icu">
+     <dependencies>
+@@ -221,46 +220,6 @@
+             md5sum="361638fa45466c5050bcde6bfe10fa46"/>
+   </autotools>
+ 
+-  <autotools id="libusrsctp" supports-non-srcdir-builds="no" autogen-sh="./bootstrap; ./configure --disable-warnings-as-errors">
+-    <branch repo="github.com" module="sctplab/usrsctp.git" checkoutdir="usrsctp" tag="078ff3252f73327e0ac11d6fd5eff62011f6646e"/>
+-   </autotools>
+-
+-   <autotools id="gst-plugins-openwebrtc" supports-parallel-builds="no" supports-non-srcdir-builds="no" autogen-sh="./autogen.sh; ./configure">
+-     <if condition-set="macos">
+-       <makeargs value="CFLAGS+=-Wno-error"/>
+-     </if>
+-     <dependencies>
+-       <dep package="gst-plugins-base"/>
+-       <dep package="libusrsctp"/>
+-     </dependencies>
+-    <branch repo="github.com" module="EricssonResearch/openwebrtc-gst-plugins.git" checkoutdir="gst-plugins-openwebrtc" tag="e359b67484af90f416ea35e301205d2b53c77a14"/>
+-   </autotools>
+-
+-  <autotools id="libnice" supports-non-srcdir-builds="no">
+-    <dependencies>
+-      <dep package="gstreamer"/>
+-    </dependencies>
+-    <branch repo="nice.freedesktop.org" module="releases/libnice-0.1.10.tar.gz" checkoutdir="libnice" version="0.1.10"
+-            hash="sha256:1dbfb663b730889ae8cab13a2913fe557d581f70b513c918bbbd0b7d3eefebc9"
+-            md5sum="27b62d0093ce29a39df1c6fcf0bb4396" size="903083">
+-    </branch>
+-  </autotools>
+-
+-  <autotools id="openwebrtc" autogenargs="--enable-bridge=no --enable-owr-gst=yes --disable-tests">
+-     <if condition-set="macos">
+-       <makeargs value="CFLAGS+=-Wno-error"/>
+-     </if>
+-    <dependencies>
+-      <dep package="gst-plugins-openwebrtc"/>
+-      <dep package="libnice"/>
+-     </dependencies>
+-    <branch repo="github.com-tarball" module="EricssonResearch/openwebrtc/archive/13516c7f79a0c48bb411464f7613d4b426c70f5b.tar.gz" checkoutdir="openwebrtc" version="13516c7f79a0c48bb411464f7613d4b426c70f5b"
+-            hash="sha256:c849d36d97c17a198a5d9c180f13f14c7897c9236e2384ea11029e23b09b59ac"
+-            md5sum="13516c7f79a0c48bb411464f7613d4b426c70f5b.tar.gz" size="258936">
+-      <patch file="openwebrtc-no-gtk-doc.patch" strip="1"/>
+-    </branch>
+-  </autotools>
+-
+   <autotools id="icu"
+              autogen-sh="./source/configure"
+              autogenargs="--disable-samples --enable-weak-threads">
+diff --git a/Tools/qt/make-release.pl b/Tools/qt/make-release.pl
+new file mode 100755
+index 000000000000..facc3124f0c6
+--- /dev/null
++++ b/Tools/qt/make-release.pl
+@@ -0,0 +1,69 @@
++#!/usr/bin/env perl
++# Copyright (C) 2019 Konstantin Tokarev <annulen@yandex.ru>
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions
++# are met:
++# 1. Redistributions of source code must retain the above copyright
++#    notice, this list of conditions and the following disclaimer.
++# 2. Redistributions in binary form must reproduce the above copyright
++#    notice, this list of conditions and the following disclaimer in the
++#    documentation and/or other materials provided with the distribution.
++#
++# THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
++# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
++# THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
++# PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
++# BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
++# THE POSSIBILITY OF SUCH DAMAGE.
++
++use Cwd;
++use File::Basename;
++use strict;
++use warnings;
++
++sub usage {
++    my $msg = shift || "";
++    die $msg . "Usage: cd snapshot/repo/path; $0 <version>";
++}
++
++scalar @ARGV == 1 || usage();
++
++my $version = shift;
++
++-f "ChangeLog" && die "This script must be run in snapshots repository";
++-d ".git" || usage();
++
++`LC_ALL=C LANG=C git status` =~ "nothing to commit, working tree clean" or die "Snapshots working tree is dirty";
++
++my $snapshotTag = "v$version";
++my $originalTag = "qtwebkit-$version";
++
++`git tag -l $snapshotTag` && print "Found $snapshotTag\n" || die "Tag $snapshotTag is not found";
++`git tag -l $originalTag` && print "Found $originalTag\n" || die "Tag $originalTag is not found";
++
++my $originalTagHash = `git log -1 --format=format:"%H" $originalTag`;
++chomp $originalTagHash;
++
++open (my $gitShow, "-|", "git show -s --format=%B $snapshotTag") or die "Failed to run git show: $!";
++while (<$gitShow>) {
++    if (/^Import WebKit commit ([0-9a-f]+)$/) {
++        print "Snaphot imported tag = $1\n";
++        unless ($1 eq $originalTagHash) {
++            die "Imported tag '$snapshotTag' does not point to '$originalTag' ('$originalTagHash')";
++        }
++        last;
++    }
++}
++
++# Now we are ok, let's finally make tarball
++my $cmd = "git archive --prefix=$originalTag/ $snapshotTag | xz -9 > $originalTag.tar.xz";
++print "$cmd\n";
++system($cmd) == 0 or die "git archive failed: $!";
++
++# TODO: Upload to GitHub?
+diff --git a/Tools/qt/make-snapshot.pl b/Tools/qt/make-snapshot.pl
+index 2c2af1a9faa1..8b189059c75c 100755
+--- a/Tools/qt/make-snapshot.pl
++++ b/Tools/qt/make-snapshot.pl
+@@ -53,7 +53,7 @@ sub usage {
+     "tar -xf $src_repo/snapshot.tar --strip-components=1",
+     "git add -A",
+     "rm $src_repo/snapshot.tar",
+-    "git commit -m 'Import WebKit commit $commit'"
++    "git commit -m 'Import QtWebKit commit $commit'"
+ );
+ 
+ my $cmd = join " && ", @commands;
+diff --git a/Tools/qt/manifest.txt b/Tools/qt/manifest.txt
+index 39414cc5f914..364b7d464c38 100644
+--- a/Tools/qt/manifest.txt
++++ b/Tools/qt/manifest.txt
+@@ -157,3 +157,5 @@ file Tools/Scripts/webkitperl/FeatureList.pm
+ file Tools/jhbuild/jhbuildutils.py
+ file WebKit.pro
+ file .qmake.conf
++
++directory tests
+diff --git a/Tools/qt/patches/fontconfig-2.11.1-no-bitmaps.patch b/Tools/qt/patches/fontconfig-2.11.1-no-bitmaps.patch
+deleted file mode 100644
+index 03babba2d77a..000000000000
+--- a/Tools/qt/patches/fontconfig-2.11.1-no-bitmaps.patch
++++ /dev/null
+@@ -1,10 +0,0 @@
+---- conf.d/Makefile.in.old	2016-06-23 19:00:01.309774583 +0300
+-+++ conf.d/Makefile.in	2016-06-23 19:00:23.542159140 +0300
+-@@ -341,6 +341,7 @@
+- 	65-fonts-persian.conf \
+- 	65-nonlatin.conf \
+- 	69-unifont.conf \
+-+	70-no-bitmaps.conf \
+- 	80-delicious.conf \
+- 	90-synthetic.conf
+- 
+diff --git a/Tools/qt/patches/openwebrtc-no-gtk-doc.patch b/Tools/qt/patches/openwebrtc-no-gtk-doc.patch
+deleted file mode 100644
+index fb665e7d2ed9..000000000000
+--- a/Tools/qt/patches/openwebrtc-no-gtk-doc.patch
++++ /dev/null
+@@ -1,60 +0,0 @@
+-diff --git a/autogen.sh b/autogen.sh
+-index 2c45ea9..878cf05 100755
+---- a/autogen.sh
+-+++ b/autogen.sh
+-@@ -6,27 +6,42 @@
+- srcdir=`dirname $0`
+- (test -d $srcdir/m4) || mkdir $srcdir/m4
+- 
+--pushd $srcdir > /dev/null
+--gtkdocize && \
+--autoreconf --verbose --force --install --make || {
+-- echo 'autogen.sh failed';
+-- exit 1;
+--}
+--
+--popd > /dev/null
+--
+--while test "x$@" != "x" ; do
+--optarg=`expr "x$@" : 'x[^=]*=\(.*\)'`
+--case "$@" in
+-+for ag_option in $@
+-+do
+-+case $ag_option in
+-   --noconfigure)
+-       NOCONFIGURE=defined
+-   AUTOGEN_EXT_OPT="$AUTOGEN_EXT_OPT --noconfigure"
+-       echo "+ configure run disabled"
+--      shift
+-+      ;;
+-+  --disable-gtk-doc)
+-+      enable_gtk_doc=no
+-+      echo "+ gtk-doc disabled"
+-       ;;
+- esac
+- done
+- 
+-+pushd $srcdir > /dev/null
+-+
+-+if test x$enable_gtk_doc = xno; then
+-+    if test -f gtk-doc.make; then :; else
+-+       echo "EXTRA_DIST = missing-gtk-doc" > gtk-doc.make
+-+    fi
+-+    echo "WARNING: You have disabled gtk-doc."
+-+    echo "         As a result, you will not be able to generate the API"
+-+    echo "         documentation and 'make dist' will not work."
+-+    echo
+-+else
+-+    gtkdocize || exit $?
+-+fi
+-+
+-+autoreconf --verbose --force --install --make || {
+-+ echo 'autogen.sh failed';
+-+ exit 1;
+-+}
+-+
+-+popd > /dev/null
+-+
+- for arg do CONFIGURE_EXT_OPT="$CONFIGURE_EXT_OPT $arg"; done
+- if test ! -z "$CONFIGURE_EXT_OPT"
+- then
+diff --git a/Tools/qt/patches/qtbase-5.4-fix-QTBUG-77231.patch b/Tools/qt/patches/qtbase-5.4-fix-QTBUG-77231.patch
+new file mode 100644
+index 000000000000..6858e585c6a8
+--- /dev/null
++++ b/Tools/qt/patches/qtbase-5.4-fix-QTBUG-77231.patch
+@@ -0,0 +1,50 @@
++--- a/src/gui/painting/qdrawhelper.cpp	2014-12-05 19:24:36.000000000 +0300
+++++ b/src/gui/painting/qdrawhelper.cpp	2019-08-03 15:31:42.034910641 +0300
++@@ -3506,8 +3506,10 @@
++ }
++ 
++ /*
++-   if Sca.Da + Dca.Sa >= Sa.Da
+++   if Sca.Da + Dca.Sa > Sa.Da
++        Dca' = Sa.Da + Sca.(1 - Da) + Dca.(1 - Sa)
+++   else if Sca == Sa
+++       Dca' = Dca.Sa + Sca.(1 - Da) + Dca.(1 - Sa)
++    otherwise
++        Dca' = Dca.Sa/(1-Sca/Sa) + Sca.(1 - Da) + Dca.(1 - Sa)
++ */
++@@ -3518,8 +3520,10 @@
++     const int src_da = src * da;
++ 
++     const int temp = src * (255 - da) + dst * (255 - sa);
++-    if (src_da + dst_sa >= sa_da)
+++    if (src_da + dst_sa > sa_da)
++         return qt_div_255(sa_da + temp);
+++    else if (src == sa || sa == 0)
+++        return qt_div_255(temp);
++     else
++         return qt_div_255(255 * dst_sa / (255 - 255 * src / sa) + temp);
++ }
++@@ -3589,8 +3593,10 @@
++ }
++ 
++ /*
++-   if Sca.Da + Dca.Sa <= Sa.Da
+++   if Sca.Da + Dca.Sa < Sa.Da
++        Dca' = Sca.(1 - Da) + Dca.(1 - Sa)
+++   else if Sca == 0
+++       Dca' = Dca.Sa + Sca.(1 - Da) + Dca.(1 - Sa)
++    otherwise
++        Dca' = Sa.(Sca.Da + Dca.Sa - Sa.Da)/Sca + Sca.(1 - Da) + Dca.(1 - Sa)
++ */
++@@ -3602,8 +3608,10 @@
++ 
++     const int temp = src * (255 - da) + dst * (255 - sa);
++ 
++-    if (src == 0 || src_da + dst_sa <= sa_da)
+++    if (src_da + dst_sa < sa_da)
++         return qt_div_255(temp);
+++    else if (src == 0)
+++        return qt_div_255(dst_sa + temp);
++     return qt_div_255(sa * (src_da + dst_sa - sa_da) / src + temp);
++ }
++ 
+diff --git a/Tools/qt/update-wip-qtwebkit-refs b/Tools/qt/update-wip-qtwebkit-refs
+new file mode 100755
+index 000000000000..b37f31ddde25
+--- /dev/null
++++ b/Tools/qt/update-wip-qtwebkit-refs
+@@ -0,0 +1,47 @@
++#!/usr/bin/env perl
++# Copyright (C) 2019 Konstantin Tokarev <annulen@yandex.ru>
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions
++# are met:
++# 1. Redistributions of source code must retain the above copyright
++#    notice, this list of conditions and the following disclaimer.
++# 2. Redistributions in binary form must reproduce the above copyright
++#    notice, this list of conditions and the following disclaimer in the
++#    documentation and/or other materials provided with the distribution.
++#
++# THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
++# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
++# THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
++# PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
++# BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
++# THE POSSIBILITY OF SUCH DAMAGE.
++
++use strict;
++use warnings;
++
++sub usage { print "Usage: $0 <remote> <commit>\n"; exit(1); }
++
++my ($remote, $commit) = @ARGV;
++defined $remote or usage();
++defined $commit or usage();
++
++print "Remote '$remote': ", `git remote get-url $remote`, "\n";
++$? == 0 or die "git exited with code $?";
++
++print `git --no-pager log --color -n1 --decorate=full $commit`;
++$? == 0 or die "git exited with code $?";
++
++print "\nDo you really want to switch wip/qtwebkit/5.212 to this commit? [y/N]";
++my $answer = <STDIN>;
++chomp $answer;
++lc $answer eq "y" or die "Got '$answer', exiting";
++
++print "git push -f $remote $commit:refs/heads/wip/qtwebkit/5.212 && git push -f $remote $commit:refs/staging/wip/qtwebkit/5.212\n";
++`git push -f $remote $commit:refs/heads/wip/qtwebkit/5.212 && git push -f $remote $commit:refs/staging/wip/qtwebkit/5.212`;
++$? == 0 or die "git exited with code $?";
