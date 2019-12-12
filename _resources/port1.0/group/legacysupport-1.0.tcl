@@ -9,16 +9,30 @@ options legacysupport.newest_darwin_requires_legacy
 default legacysupport.newest_darwin_requires_legacy 15
 
 proc add_legacysupport {} {
-    
-    global prefix
-    global os.platform os.major
-    global legacysupport.newest_darwin_requires_legacy
 
-    set MPLegacyIncDir  ${prefix}/include/LegacySupport
-    set AddLDFlag       -lMacportsLegacySupport
-    set AddCFlag        -I${MPLegacyIncDir}
-    set AddCIncPath     C_INCLUDE_PATH=${MPLegacyIncDir}
-    set AddCppIncPath   CPLUS_INCLUDE_PATH=${MPLegacyIncDir}
+    global prefix \
+           os.platform os.major \
+           legacysupport.newest_darwin_requires_legacy
+
+    set MPLegacyIncDir ${prefix}/include/LegacySupport
+    set AddLDFlag      -lMacportsLegacySupport
+    set AddCFlag       -I${MPLegacyIncDir}
+    set AddCIncPath       C_INCLUDE_PATH=${MPLegacyIncDir}
+    set AddCppIncPath CPLUS_INCLUDE_PATH=${MPLegacyIncDir}
+
+    # Delete everything first to avoid duplicate values
+
+    # port dependency
+    depends_lib-delete path:lib/libMacportsLegacySupport.dylib:legacy-support
+
+    # configure options
+    configure.ldflags-delete  ${AddLDFlag}
+    configure.cflags-delete   ${AddCFlag}
+    configure.cppflags-delete ${AddCFlag}
+
+    # Include Dirs
+    configure.env-delete ${AddCIncPath} ${AddCppIncPath}
+    build.env-delete     ${AddCIncPath} ${AddCppIncPath}
 
     if {${os.platform} eq "darwin" && ${os.major} <= ${legacysupport.newest_darwin_requires_legacy}} {
 
@@ -27,7 +41,7 @@ proc add_legacysupport {} {
 
         # Depend on the support library or devel version if installed
         depends_lib-append path:lib/libMacportsLegacySupport.dylib:legacy-support
-        
+
         # Add to configure options
         configure.ldflags-append    ${AddLDFlag}
         configure.cflags-append     ${AddCFlag}
@@ -41,7 +55,7 @@ proc add_legacysupport {} {
         # with MacPorts setting of CPATH
         configure.env-append ${AddCIncPath} ${AddCppIncPath}
         build.env-append     ${AddCIncPath} ${AddCppIncPath}
-        
+
     } else {
 
         # Remove build support
@@ -70,4 +84,3 @@ proc add_legacysupport {} {
 # indicating being declared twice in port lint --nitpick
 add_legacysupport
 port::register_callback add_legacysupport
-
