@@ -1,5 +1,4 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
-# $Id: kf5-1.0.tcl 134210 2015-03-20 06:40:18Z mk@macports.org $
 
 # Copyright (c) 2015 The MacPorts Project
 # All rights reserved.
@@ -53,7 +52,9 @@ default langselect_dirs_dir     {}
 if {[variant_isset langselect]} {
     post-destroot {
         if {[file exists ${prefix}/etc/macports/locales.tcl] &&
-            ([file exists ${destroot}${prefix}/share/locale] || [file exists [join ${langselect_qm_dir}]])
+            ([file exists ${destroot}${prefix}/share/locale] || \
+            [file exists [join ${langselect_qm_dir}]] || \
+            [file exists ${destroot}${prefix}/share/man])
         } {
             if {[catch {source "${prefix}/etc/macports/locales.tcl"} err]} {
                 ui_error "Error reading ${prefix}/etc/macports/locales.tcl: $err"
@@ -61,13 +62,18 @@ if {[variant_isset langselect]} {
             }
         }
         if {[info exists keep_languages]} {
-            foreach l [glob -nocomplain ${destroot}${prefix}/share/locale/* ${destroot}${prefix}/share/doc/HTML/*] {
-                set lang [file tail ${l}]
-                if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
-                    ui_info "rm ${l}"
-                    file delete -force ${l}
-                } else {
-                    ui_debug "won't delete ${l} (${lang})"
+            foreach d [list ${destroot}${prefix}/share/locale ${destroot}${prefix}/share/doc/HTML ${destroot}${prefix}/share/man] {
+                foreach l [glob -nocomplain ${d}/*] {
+                    set lang [file tail ${l}]
+                    if {[lsearch -exact ${keep_languages} ${lang}] eq "-1" && \
+                        [string compare -length 3 ${lang} "man"] &&
+                        [string compare -length 3 ${lang} "cat"]
+                    } {
+                        ui_info "rm ${l}"
+                        file delete -force ${l}
+                    } else {
+                        ui_debug "won't delete ${l} (${lang})"
+                    }
                 }
             }
             if {[file exists [join ${langselect_qm_dir}]]} {
