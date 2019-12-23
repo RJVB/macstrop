@@ -3,18 +3,29 @@
 PortSystem          1.0
 
 name                phonon
-version             4.10.2
+
+if {${subport} eq ${name}} {
+    version             4.10.3
+    checksums           rmd160 7a1934b45a6d54d0803edf0a3cd6d7b5b4ecc1e7 \
+                        sha256 2e8b145669afa0e93833e4064b657677abc9413e4007fa5ddc91397c9bddc295
+#                         size   336724
+#     revision            0
+} else {
+    # Qt4 support was dropped in 4.11
+    version             4.11.1
+    checksums           rmd160  035bb6e70e678593cf83673691fb69c8eb0c2248 \
+                        sha256  b4431ea2600df8137a717741ad9ebc7f7ec1649fa3e138541d8f42597144de2d
+#                         size    314732
+}
+
 license             {LGPL-2.1 LGPL-3}
 maintainers         {michaelld @michaelld} openmaintainer
-description         Cross Platform Multimedia API used by KDE4
+description         Cross Platform Multimedia API used by Qt applications
 platforms           darwin
 homepage            http://phonon.kde.org
 master_sites        kde:stable/${name}/${version}
 use_xz              yes
 distname            phonon-${version}
-checksums           rmd160  844ce24ca09fc6b47b5045fb58c304812fad27fa \
-                    sha256  34edb1985778575eb7004e4e45151cd7bc995f61ddd6ce3b050b97b7bd778809
-#                     size    322176
 
 variant demos description {Build the demos} {
     configure.args-append   -DPHONON_BUILD_DEMOS:BOOL=ON
@@ -35,10 +46,10 @@ subport ${name}-qt5 {
     if {[variant_isset master]} {
         fetch.type      git
         git.url         git://anongit.kde.org/phonon
-        git.branch      f7575f8befb7f0e37ecb6023a9237267bae3675c
-        # v4.10.2-4-gf7575f8b
+        git.branch      76b3f63f8e1742d4a181aacfb847ac0cee9731d0
+        # v4.11.0-10-g76b3f63f
         set base_version ${version}
-        version         4.10.2.4
+        version         4.11.0.10
         post-configure {
             if {[vercmp ${version} ${base_version}] == 0} {
                 ui_warn "The +master variant provides the same version as the standard variant, currently"
@@ -47,19 +58,14 @@ subport ${name}-qt5 {
         worksrcdir      ${name}-git
         distname        ${name}-git
     }
+    patchfiles-append   patch-support-older-qt5.diff
 
     qt5.depends_component \
                         qttools
 
     depends_build-append    path:share/ECM/cmake/ECMConfig.cmake:kde-extra-cmake-modules
 
-    if {[info procs "cmake.save_configure_cmd"] ne ""} {
-        cmake.save_configure_cmd "log too"
-    }
-
-    configure.args-append   -DPHONON_BUILD_PHONON4QT5:BOOL=ON \
-                            -DAPPLE_SUPPRESS_X11_WARNING=ON \
-                            -DCMAKE_DISABLE_FIND_PACKAGE_Qt5Declarative=ON
+    configure.args-append   -DAPPLE_SUPPRESS_X11_WARNING=ON
 
     set LPH libphonon4qt5
     post-destroot {
@@ -96,23 +102,17 @@ subport ${name}-qt5 {
     }
 }
 
-default_variants    +compversion440
-
-# fix use of CMAKE_INSTALL_NAME to be an absolute path
-# (RJVB: why is this necessary?)
-patchfiles-append   patch-cmake_FindPhononInternal.cmake.diff
-
-# fix MODULE names to end in .dylib instead of .so
-patchfiles-append   patch-cmake_PhononMacros.cmake.diff
-
 variant pulseaudio description "Build Phonon with additional support for PulseAudio" {
     depends_lib-append port:pulseaudio
     configure.args-append \
-        -DPULSEAUDIO_INCLUDE_DIR=${prefix}/include \
-        -DPULSEAUDIO_LIBRARY=${prefix}/lib/libpulse.dylib \
-        -DPULSEAUDIO_MAINLOOP_LIBRARY=${prefix}/lib/libpulse-mainloop-glib.dylib \
         -DWITH_PulseAudio=ON \
         -DPHONON_PULSESUPPORT=YES
+    platform darwin {
+#         configure.args-append \
+#             -DPULSEAUDIO_INCLUDE_DIR=${prefix}/include \
+#             -DPULSEAUDIO_LIBRARY=${prefix}/lib/libpulse.dylib \
+#             -DPULSEAUDIO_MAINLOOP_LIBRARY=${prefix}/lib/libpulse-mainloop-glib.dylib \
+    }
 }
 
 if {![variant_isset pulseaudio]} {
@@ -134,10 +134,21 @@ if {${subport} ne "${name}-qt5"} {
     # -- Using CMake automoc builtin
     depends_build-append    port:automoc
 
+    # fix use of CMAKE_INSTALL_NAME to be an absolute path
+    # (RJVB: why is this necessary?)
+    patchfiles-append   qt4/patch-cmake_FindPhononInternal.cmake.diff
+    # fix MODULE names to end in .dylib instead of .so
+    patchfiles-append   qt4/patch-cmake_PhononMacros.cmake.diff
+
     variant compversion440 description {Build libraries with compatibility version 4.4.0 for existing Qt4 installs expecting that} {
         # fix the library compatibility version to be 4.4.0
-        patchfiles-append   patch-CMakeLists.txt.diff
+        patchfiles-append   qt4/patch-CMakeLists.txt.diff
     }
+    default_variants    +compversion440
+
+    configure.args-append   \
+        -DPHONON_INSTALL_QT_EXTENSIONS_INTO_SYSTEM_QT=true \
+        -DCMAKE_DISABLE_FIND_PACKAGE_QZeitgeist=ON
 
     set LPH libphonon
     post-destroot {
@@ -184,7 +195,11 @@ if {${subport} ne "${name}-qt5"} {
     }
 }
 
-cmake.out_of_source         yes
+if {[info procs "cmake.save_configure_cmd"] ne ""} {
+   cmake.save_configure_cmd "log too"
+}
+
+build.post_args-append      -k
 
 post-patch {
     set rel_mp_qt_cmake_dir [strsed ${qt_cmake_module_dir} "g@${prefix}/@@"]
@@ -196,13 +211,9 @@ if {[info exists qt_cmake_defines]} {
     configure.args-append   \
         ${qt_cmake_defines}
 }
-# nb: there is no WITH_QZeitgeist option, keeping it out of nostalgia
-configure.args-append   \
-    -DPHONON_INSTALL_QT_EXTENSIONS_INTO_SYSTEM_QT=true \
-    -DWITH_QZeitgeist=OFF
 
 configure.ldflags-append -F${qt_frameworks_dir}
 
 livecheck.type      regex
 livecheck.url       http://mirrors.mit.edu/kde/stable/${name}/
-livecheck.regex     ">(\[0-9.\]+)<"
+livecheck.regex     ">(\[0-9.\]+)/<"
