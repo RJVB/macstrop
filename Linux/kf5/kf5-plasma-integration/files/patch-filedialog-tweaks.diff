@@ -1,0 +1,108 @@
+diff --git a/src/platformtheme/kdeplatformfiledialoghelper.cpp b/src/platformtheme/kdeplatformfiledialoghelper.cpp
+index cc47b68a3991b76aef82e6915524ecbc9f6f8e0e..5c6975ff38b0f1126e297337db5e4c50c479d15c 100644
+--- a/src/platformtheme/kdeplatformfiledialoghelper.cpp
++++ b/src/platformtheme/kdeplatformfiledialoghelper.cpp
+@@ -40,6 +40,8 @@
+ #include <QPushButton>
+ #include <QWindow>
+ #include <QTextStream>
++#include <QFileDialog>
++#include <QDebug>
+ 
+ namespace
+ {
+@@ -98,6 +100,7 @@ KDEPlatformFileDialog::KDEPlatformFileDialog()
+     : KDEPlatformFileDialogBase()
+     , m_fileWidget(new KFileWidget(QUrl(), this))
+ {
++    m_fileWidget->setObjectName(QStringLiteral("KDEPlatformFileDialogFileWidget"));
+     setLayout(new QVBoxLayout);
+     connect(m_fileWidget, &KFileWidget::filterChanged, this, &KDEPlatformFileDialogBase::filterSelected);
+     layout()->addWidget(m_fileWidget);
+@@ -270,8 +273,21 @@ KDEPlatformFileDialogHelper::KDEPlatformFileDialogHelper()
+ 
+ KDEPlatformFileDialogHelper::~KDEPlatformFileDialogHelper()
+ {
+-    saveSize();
+-    delete m_dialog;
++    if (!m_dialogReparented) {
++        saveSize();
++        if (m_replaced) {
++            if (auto layout = m_parentWidget->layout()) {
++                if (auto old = layout->replaceWidget(m_dialog, m_replaced)) {
++                    qWarning() << Q_FUNC_INFO << old;
++                }
++            } else {
++                qWarning() << Q_FUNC_INFO << "delete" << m_replaced;
++                m_replaced->deleteLater();
++                m_replaced = nullptr;
++            }
++        }
++        delete m_dialog;
++    }
+ }
+ 
+ void KDEPlatformFileDialogHelper::initializeDialog()
+@@ -383,11 +399,38 @@ void KDEPlatformFileDialogHelper::restoreSize()
+ 
+ bool KDEPlatformFileDialogHelper::show(Qt::WindowFlags windowFlags, Qt::WindowModality windowModality, QWindow *parent)
+ {
++    m_parentWidget = parent ? QWidget::find(parent->winId()) : nullptr;
++    if (m_parentWidget) {
++        qWarning() << Q_FUNC_INFO << this << m_dialog << parent << m_parentWidget;
++        qWarning() << "\t" << m_parentWidget->property("QFileDialogInstance");
++        qWarning() << "\t" << m_parentWidget->findChildren<QFileDialog*>();
++    }
+     initializeDialog();
++    if (m_parentWidget) {
++        auto fDialogs = m_parentWidget->findChildren<QFileDialog*>();
++        if (!fDialogs.isEmpty()) {
++            auto fDialog = fDialogs.at(0);
++            if (auto layout = m_parentWidget->layout()) {
++                restoreSize();
++                if (m_dialog->windowHandle()) {
++                    fDialog->resize(m_dialog->windowHandle()->size());
++                }
++                if (auto old = layout->replaceWidget(fDialog, m_dialog)) {
++                    m_replaced = fDialog;
++                }
++            }
++//             m_dialogReparented = true;
++//             m_dialog->setParent(m_parentWidget);
++            windowFlags = fDialog->windowFlags();
++            windowModality = fDialog->windowModality();
++        }
++    }
+     m_dialog->setWindowFlags(windowFlags);
+     m_dialog->setWindowModality(windowModality);
+-    restoreSize();
+-    m_dialog->windowHandle()->setTransientParent(parent);
++    if (!m_replaced) {
++        restoreSize();
++        m_dialog->windowHandle()->setTransientParent(parent);
++    }
+     // Use a delayed show here to delay show() after the internal Qt invisible QDialog.
+     // The delayed call shouldn't matter, because for other "real" native QPlatformDialog
+     // implementation like Mac and Windows, the native dialog is not necessarily
+diff --git a/src/platformtheme/kdeplatformfiledialoghelper.h b/src/platformtheme/kdeplatformfiledialoghelper.h
+index 88362649369435f48b06f103978d585e09df3ef9..8b685600749c6d2a19a78f884ae9bde59ed45ece 100644
+--- a/src/platformtheme/kdeplatformfiledialoghelper.h
++++ b/src/platformtheme/kdeplatformfiledialoghelper.h
+@@ -25,6 +25,7 @@
+ #include "kdeplatformfiledialogbase_p.h"
+ 
+ class KFileWidget;
++class QFileDialog;
+ class KDEPlatformFileDialog : public KDEPlatformFileDialogBase
+ {
+     Q_OBJECT
+@@ -83,6 +84,9 @@ private:
+     bool m_directorySet = false;
+     bool m_fileSelected = false;
+     bool m_dialogInitialized = false;
++    bool m_dialogReparented = false;
++    QWidget *m_parentWidget = nullptr;
++    QFileDialog *m_replaced = nullptr;
+ };
+ 
+ #endif // KDEPLATFORMFILEDIALOGHELPER_H
