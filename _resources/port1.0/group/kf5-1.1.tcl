@@ -531,6 +531,9 @@ proc kf5.set_project {project} {
         }
         distname            ${project}-${kf5.version}.git
     } else {
+#         See
+#         https://kde.org/info/releases-19.12.1.php
+#         for new/different download locations for Applications 19.12.1 (and future) releases.
         master_sites        https://download.kde.org/${dbranch}/${f}
     }
 }
