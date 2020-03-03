@@ -69,6 +69,15 @@ if {${kf5::includecounter} == 0} {
     }
 }
 
+if {${os.platform} eq "darwin" && ${os.major} <= 13} {
+    depends_fetch-append \
+                    bin:wget:wget
+    # avoid certificate issues on kde.org
+    fetch {
+        system "wget ${master_sites}/${distname}${extract.suffix} --no-check-certificate --progress=bar:force -O ${distpath}/${distname}${extract.suffix}"
+    }
+}
+
 ########################################################################
 # Projects including the 'kf5' port group can optionally set
 #
