@@ -1,0 +1,267 @@
+diff --git kdevplatform/sublime/CMakeLists.txt kdevplatform/sublime/CMakeLists.txt
+index 5148529afa..5c95d122d0 100644
+--- kdevplatform/sublime/CMakeLists.txt
++++ kdevplatform/sublime/CMakeLists.txt
+@@ -30,6 +30,8 @@ set(sublime_LIB_SRCS
+ 
+     message.cpp
+     messagewidget.cpp
++
++    kwidgetstyleselector.cpp
+ )
+ declare_qt_logging_category(sublime_LIB_SRCS
+     TYPE LIBRARY
+diff --git kdevplatform/sublime/kwidgetstyleselector.cpp kdevplatform/sublime/kwidgetstyleselector.cpp
+new file mode 100644
+index 0000000000..712a21e5ce
+--- /dev/null
++++ kdevplatform/sublime/kwidgetstyleselector.cpp
+@@ -0,0 +1,152 @@
++/* This file is part of the KDE project
++ * Copyright (C) 2016 René J.V. Bertin <rjvbertin@gmail.com>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public License
++ * along with this library; see the file COPYING.LIB.  If not, write to
++ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ */
++
++#include "kwidgetstyleselector.h"
++
++#ifdef Q_OS_WIN
++#include <QSysInfo>
++#endif
++#include <QString>
++#include <QAction>
++#include <QIcon>
++#include <QStyle>
++#include <QStyleFactory>
++#include <QApplication>
++#include <QDebug>
++
++#include <kactionmenu.h>
++#include <ksharedconfig.h>
++#include <kconfiggroup.h>
++#include <klocalizedstring.h>
++
++static QString getDefaultStyle(const char *fallback=Q_NULLPTR)
++{
++    KSharedConfigPtr kdeGlobals = KSharedConfig::openConfig(QStringLiteral("kdeglobals"), KConfig::NoGlobals);
++    KConfigGroup cg(kdeGlobals, "KDE");
++    if (!fallback) {
++#ifdef Q_OS_OSX
++        fallback = "Macintosh";
++#elif defined(Q_OS_WIN)
++        // taken from QWindowsTheme::styleNames()
++        if (QSysInfo::windowsVersion() >= QSysInfo::WV_VISTA) {
++            fallback = "WindowsVista";
++        } else if (QSysInfo::windowsVersion() >= QSysInfo::WV_XP) {
++            fallback = "WindowsXP";
++        } else {
++            fallback = "Windows";
++        }
++#else
++        fallback = "Breeze";
++#endif
++    }
++    return cg.readEntry("widgetStyle", fallback);
++}
++
++KWidgetStyleSelector::KWidgetStyleSelector(QObject *parent)
++    : QObject(parent)
++    , m_widgetStyle(QString())
++    , m_parent(parent)
++{
++}
++
++KWidgetStyleSelector::~KWidgetStyleSelector()
++{
++}
++
++KActionMenu *KWidgetStyleSelector::createStyleSelectionMenu(const QIcon &icon, const QString &text,
++                                                            const QString &selectedStyleName, QObject *parent)
++{
++    // Taken from Kdenlive:
++    // Widget themes for non KDE users
++    if (!parent) {
++        parent = m_parent;
++    }
++    KActionMenu *stylesAction= new KActionMenu(icon, text, parent);
++    QActionGroup *stylesGroup = new QActionGroup(stylesAction);
++
++    QStringList availableStyles = QStyleFactory::keys();
++    QString desktopStyle = QApplication::style()->objectName();
++    QString defaultStyle = getDefaultStyle();
++
++    // Add default style action
++    QAction *defaultStyleAction = new QAction(i18n("Default"), stylesGroup);
++    defaultStyleAction->setCheckable(true);
++    stylesAction->addAction(defaultStyleAction);
++    m_widgetStyle = selectedStyleName;
++    bool setStyle = false;
++    if (m_widgetStyle.isEmpty()) {
++        if (desktopStyle.compare(defaultStyle, Qt::CaseInsensitive) == 0) {
++            defaultStyleAction->setChecked(true);
++            m_widgetStyle = defaultStyleAction->text();
++        } else {
++            m_widgetStyle = desktopStyle;
++        }
++    } else if (selectedStyleName.compare(desktopStyle, Qt::CaseInsensitive)) {
++        setStyle = true;
++    }
++
++    foreach(const QString &style, availableStyles) {
++        QAction *a = new QAction(style, stylesGroup);
++        a->setCheckable(true);
++        a->setData(style);
++        if (style.compare(defaultStyle, Qt::CaseInsensitive) == 0) {
++            QFont defFont = a->font();
++            defFont.setBold(true);
++            a->setFont(defFont);
++        }
++        if (m_widgetStyle.compare(style, Qt::CaseInsensitive) == 0) {
++            a->setChecked(true);
++            if (setStyle) {
++                // selectedStyleName was not empty and the
++                // the style exists: activate it.
++                activateStyle(style);
++            }
++        }
++        stylesAction->addAction(a);
++    }
++    connect(stylesGroup, &QActionGroup::triggered, this, [&](QAction *a) {
++        activateStyle(a->data().toString());
++    });
++    return stylesAction;
++}
++
++KActionMenu *KWidgetStyleSelector::createStyleSelectionMenu(const QString &text,
++                                                            const QString &selectedStyleName, QObject *parent)
++{
++    return createStyleSelectionMenu(QIcon(), text, selectedStyleName, parent);
++}
++
++KActionMenu *KWidgetStyleSelector::createStyleSelectionMenu(const QString &selectedStyleName, QObject *parent)
++{
++    return createStyleSelectionMenu(QIcon(), i18n("Style"), selectedStyleName, parent);
++}
++
++QString KWidgetStyleSelector::currentStyle() const
++{
++    if (m_widgetStyle.isEmpty() || m_widgetStyle == QStringLiteral("Default")) {
++        return getDefaultStyle();
++    }
++    return m_widgetStyle;
++}
++
++void KWidgetStyleSelector::activateStyle(const QString &styleName)
++{
++    m_widgetStyle = styleName;
++    QApplication::setStyle(QStyleFactory::create(currentStyle()));
++}
+diff --git kdevplatform/sublime/kwidgetstyleselector.h kdevplatform/sublime/kwidgetstyleselector.h
+new file mode 100644
+index 0000000000..3bcd6bd4aa
+--- /dev/null
++++ kdevplatform/sublime/kwidgetstyleselector.h
+@@ -0,0 +1,53 @@
++/* This file is part of the KDE project
++ * Copyright (C) 2016 René J.V. Bertin <rjvbertin@gmail.com>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public License
++ * along with this library; see the file COPYING.LIB.  If not, write to
++ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ */
++
++#ifndef KWIDGETSTYLESELECTOR_H
++
++// #include <kconfigwidgets_export.h>
++
++#include <QObject>
++
++class QString;
++class QIcon;
++class QAction;
++class KActionMenu;
++
++class /*KCONFIGWIDGETS_EXPORT*/ KWidgetStyleSelector : public QObject
++{
++    Q_OBJECT
++public:
++    explicit KWidgetStyleSelector(QObject *parent = nullptr);
++    virtual ~KWidgetStyleSelector();
++
++    KActionMenu *createStyleSelectionMenu(const QIcon &icon, const QString &text, const QString &selectedStyleName=QString(), QObject *parent=nullptr);
++    KActionMenu *createStyleSelectionMenu(const QString &text, const QString &selectedStyleName=QString(), QObject *parent=nullptr);
++    KActionMenu *createStyleSelectionMenu(const QString &selectedStyleName=QString(), QObject *parent=nullptr);
++
++    QString currentStyle() const;
++
++public Q_SLOTS:
++    void activateStyle(const QString &styleName);
++
++private:
++    QString m_widgetStyle;
++    QObject *m_parent;
++};
++
++#define KWIDGETSTYLESELECTOR_H
++#endif
+diff --git kdevplatform/sublime/mainwindow_p.cpp kdevplatform/sublime/mainwindow_p.cpp
+index c575dfa9f5d0876d3dda6e82f4a67cd00daf0335..7ea6da4db4208cc4cd73339a9893a36e443c6905 100644
+--- kdevplatform/sublime/mainwindow_p.cpp
++++ kdevplatform/sublime/mainwindow_p.cpp
+@@ -46,6 +46,8 @@
+ #include "messagewidget.h"
+ #include <debug.h>
+ 
++#include "kwidgetstyleselector.h"
++
+ class IdealToolBar : public QToolBar
+ {
+     Q_OBJECT
+@@ -140,6 +142,10 @@ MainWindowPrivate::MainWindowPrivate(MainWindow *w, Controller* controller)
+     action = new KActionMenu(i18n("Tool Views"), this);
+     ac->addAction(QStringLiteral("docks_submenu"), action);
+ 
++    KWidgetStyleSelector *styleSelector = new KWidgetStyleSelector(this);
++    KActionMenu *stylesAction = styleSelector->createStyleSelectionMenu();
++    ac->addAction(QStringLiteral("widgetstyle_submenu"), stylesAction);
++
+     idealController = new IdealController(m_mainWindow);
+ 
+     m_leftToolBar = new IdealToolBar(i18n("Left Button Bar"), true, idealController->leftBarWidget, m_mainWindow);
+diff --git app/kdevelopui.rc app/kdevelopui.rc
+index fd6021d0e2..b7b355148c 100644
+--- app/kdevelopui.rc
++++ app/kdevelopui.rc
+@@ -172,6 +172,8 @@
+     <DefineGroup append="show_toolbar_merge" name="show_toolbar_merge"/>
+     <DefineGroup append="show_merge" name="show_merge" />
+     <DefineGroup append="configure_merge" name="configure_merge" />
++    <Separator/>
++    <Action name="widgetstyle_submenu"/>
+   </Menu>
+ 
+   <Menu name="help">

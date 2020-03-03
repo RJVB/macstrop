@@ -1,0 +1,1628 @@
+diff --git a/kdevplatform/language/CMakeLists.txt b/kdevplatform/language/CMakeLists.txt
+index 8cadf4b7345f0a6e7a3493489c94f05860334468..7da28f66af75be710a73f6d45c8de8202a5112c5 100644
+--- a/kdevplatform/language/CMakeLists.txt
++++ b/kdevplatform/language/CMakeLists.txt
+@@ -11,6 +11,16 @@ remove_definitions(
+     -DQT_NO_CAST_FROM_ASCII
+ )
+ 
++include(FindPkgConfig)
++# find LMDB and lmdbxx
++find_path(LMDBXX_INCLUDE_DIRS NAMES "lmdb++.h" HINTS "$ENV{LMDB_DIR}/include")
++find_path(LMDB_INCLUDE_DIRS NAMES "lmdb.h" HINTS "$ENV{LMDB_DIR}/include")
++find_library(LMDB_LIBRARIES NAMES lmdb HINTS $ENV{LMDB_DIR}/lib)
++find_package_handle_standard_args(LMDB DEFAULT_MSG LMDB_INCLUDE_DIRS LMDB_LIBRARIES)
++find_package_handle_standard_args(LMDBXX DEFAULT_MSG LMDBXX_INCLUDE_DIRS)
++pkg_check_modules(PKG_LZ4 liblz4 REQUIRED)
++find_package_handle_standard_args(LZ4 DEFAULT_MSG PKG_LZ4_INCLUDEDIR PKG_LZ4_LIBRARIES)
++
+ if(BUILD_TESTING)
+     add_subdirectory(highlighting/tests)
+     add_subdirectory(duchain/tests)
+@@ -53,6 +63,7 @@ set(KDevPlatformLanguage_LIB_SRCS
+     duchain/localindexeddeclaration.cpp
+     duchain/topducontext.cpp
+     duchain/topducontextdynamicdata.cpp
++    duchain/topducontextdynamicdata_p.cpp
+     duchain/topducontextutils.cpp
+     duchain/functiondefinition.cpp
+     duchain/declaration.cpp
+@@ -182,6 +193,8 @@ ki18n_wrap_ui(KDevPlatformLanguage_LIB_SRCS
+ 
+ kdevplatform_add_library(KDevPlatformLanguage SOURCES ${KDevPlatformLanguage_LIB_SRCS})
+ target_include_directories(KDevPlatformLanguage PRIVATE ${Boost_INCLUDE_DIRS})
++target_include_directories(KDevPlatformLanguage PRIVATE ${LMDB_INCLUDE_DIRS} ${LMDBXX_INCLUDE_DIRS} ${PKG_LZ4_INCLUDEDIR})
++kde_source_files_enable_exceptions(duchain/topducontextdynamicdata_p.cpp)
+ target_link_libraries(KDevPlatformLanguage
+ PUBLIC
+     KDev::Serialization
+@@ -197,6 +210,7 @@ PRIVATE
+     KF5::IconThemes
+     Grantlee5::Templates
+ )
++target_link_libraries(KDevPlatformLanguage LINK_PRIVATE ${LMDB_LIBRARIES} ${PKG_LZ4_LIBRARIES})
+ 
+ install(FILES
+     assistant/renameaction.h
+diff --git a/kdevplatform/language/duchain/tests/CMakeLists.txt b/kdevplatform/language/duchain/tests/CMakeLists.txt
+index f70f3cac9dae77f3b7dbc1904ec623658ee37bea..cf18bd316bb17716c255d646af12ba89ed4fc516 100644
+--- a/kdevplatform/language/duchain/tests/CMakeLists.txt
++++ b/kdevplatform/language/duchain/tests/CMakeLists.txt
+@@ -11,6 +11,12 @@ add_target_compile_flag_if_supported(test_identifier PRIVATE -Wno-self-assign-ov
+ ecm_add_test(test_stringhelpers.cpp
+     LINK_LIBRARIES Qt5::Test KDev::Tests KDev::Language)
+ 
++set(topcontextstore_SRCS test_topcontextstore.cpp)
++qt5_add_resources(topcontextstore_SRCS test_topcontextstore.qrc)
++ecm_add_test(${topcontextstore_SRCS}
++    TEST_NAME test_topcontextstore
++    LINK_LIBRARIES Qt5::Test KDev::Tests KDev::Language)
++
+ if(NOT COMPILER_OPTIMIZATIONS_DISABLED)
+     ecm_add_test(bench_hashes.cpp
+         LINK_LIBRARIES Qt5::Test KDev::Tests KDev::Language)
+diff --git a/kdevplatform/language/duchain/tests/test_topcontextstore.cpp b/kdevplatform/language/duchain/tests/test_topcontextstore.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..a5183f0526d6eb804a0a20df935031471da8c196
+--- /dev/null
++++ b/kdevplatform/language/duchain/tests/test_topcontextstore.cpp
+@@ -0,0 +1,360 @@
++/*
++ * This file is part of KDevelop
++ *
++ * Copyright 2018 R.J.V. Bertin <rjvbertin@gmail.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU Library General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public
++ * License along with this program; if not, write to the
++ * Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ */
++
++// with LMDB, the store is about 1.1x larger than the length of the stored values (but
++// our LZ4 compression can reach as much as a 2x reduction in average value size).
++// with KyotoCabinet-lzo, the store is about 1.76x smaller than the length of the stored values
++
++// timing results on Linux 4.14 running on an 1.6Ghz Intel N3150 and ZFSonLinux 0.7.6
++
++// KDEV_TOPCONTEXTS_USE_FILES:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 6000 items, max length= 38494 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 115232709 total key bytes: 24000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 6000 keys (last flushed): 1.583 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 6000 keys: 0.445 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 6000 keys: 0.736 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 3426ms
++// ## Idem, with only 1500 keys
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38484 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 28350833 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 0.351 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.092 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.232 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 1171ms
++// ## idem, on NFS:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 6000 items, max length= 38488 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 115800253 total key bytes: 24000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 6000 keys (last flushed): 108.579 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 6000 keys: 50.502 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 6000 keys: 27.651 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 194162ms
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38462 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29375929 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 26.459 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 11.778 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 6.494 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 51921ms
++// KDEV_TOPCONTEXTS_USE_LMDB:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38424 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29024029 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 1.585 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.126 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.517 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreFlush() Flushing the database to disk: 0.656 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreFlush()
++// total 14M
++// 512 -rw-r--r-- 1 bertin bertin 8.0K May  8 14:19 lock.mdb
++// 14M -rw-r--r-- 1 bertin bertin  27M May  8 14:19 data.mdb
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 18941ms
++// ********* Finished testing of TestTopDUContextStore *********
++// average LZ4 compression ratio: 1.95162; 1501 compressed of 3000
++// ## idem, on NFS:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38496 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29311234 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 12.362 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.113 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.221 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreFlush() Flushing the database to disk: 8.763 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreFlush()
++// total 26M
++// 8.0K -rw-r--r-- 1 bertin bertin 8.0K May  8  2018 lock.mdb
++//  26M -rw-r--r-- 1 bertin bertin  26M May  8  2018 data.mdb
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 91060ms
++// ********* Finished testing of TestTopDUContextStore *********
++// average LZ4 compression ratio: 1.95829; 1499 compressed of 3000
++
++// ## on a 2.7Ghz i7 running Mac OS X 10.9.5
++// KDEV_TOPCONTEXTS_USE_FILES:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 6000 items, max length= 38495 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 115547442 total key bytes: 24000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 6000 keys (last flushed): 1.622 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 6000 keys: 0.13 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 6000 keys: 0.924 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 8829ms
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38463 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 28304777 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 0.299 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.032 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.208 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 3508ms
++// KDEV_TOPCONTEXTS_USE_LMDB:
++// QINFO  : TestTopDUContextStore::benchTopContextStore() 1500 items, max length= 38474 from sample of length 38497
++// QINFO  : TestTopDUContextStore::benchTopContextStore()  total value bytes: 29277850 total key bytes: 6000
++// QINFO  : TestTopDUContextStore::benchTopContextStore() Writing 1500 keys (last flushed): 0.267 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStore()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRead() Reading 1500 keys: 0.028 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRead()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreRemove() Removing 1500 keys: 0.035 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreRemove()
++// QINFO  : TestTopDUContextStore::benchTopContextStoreFlush() Flushing the database to disk: 0.188 seconds
++// PASS   : TestTopDUContextStore::benchTopContextStoreFlush()
++// total 52984
++//    16 -rw-r--r--  1 bertin  bertin   8.0K May  8 14:44 lock.mdb
++// 52968 -rw-r--r--  1 bertin  bertin    26M May  8 14:44 data.mdb
++// PASS   : TestTopDUContextStore::cleanupTestCase()
++// Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 4704ms
++// ********* Finished testing of TestTopDUContextStore *********
++// average LZ4 compression ratio: 1.95736; 1500 compressed of 3000
++
++#include "test_topcontextstore.h"
++
++#include <unistd.h>
++
++#include <QTest>
++#include <QDir>
++
++#include <tests/autotestshell.h>
++#include <tests/testcore.h>
++
++#include <language/duchain/duchain.h>
++#include <language/codegen/coderepresentation.h>
++
++#include <language/duchain/topducontextdynamicdata_p.h>
++#include <language/duchain/topducontextdynamicdata.h>
++
++QTEST_MAIN(TestTopDUContextStore)
++
++using namespace KDevelop;
++
++uint TestTopDUContextStore::testKeys = 16;
++uint TestTopDUContextStore::benchKeys = 1500;
++
++static QString basePath()
++{
++    return globalItemRepositoryRegistry().path() + "/topcontexts/";
++}
++
++void TestTopDUContextStore::initTestCase()
++{
++    AutoTestShell::init();
++    TestCore::initialize(Core::NoUi);
++
++    DUChain::self()->disablePersistentStorage();
++    CodeRepresentation::setDiskChangesForbidden(true);
++    QDir().mkpath(basePath());
++
++    // fetch real TopDUContext data from the qresource
++    // (data obtained from a KDevelop project of the KDevelop source).
++    QFile qfp(QStringLiteral(":/topcontextdata.base64"));
++    if (qfp.open(QIODevice::ReadOnly)) {
++        realData = QByteArray::fromBase64(qfp.readAll());
++        qfp.close();
++    }
++}
++
++void TestTopDUContextStore::cleanupTestCase()
++{
++#ifdef Q_OS_UNIX
++    system(QStringLiteral("ls -lshtr %1").arg(basePath()).toLatin1().constData());
++#endif
++    TestCore::shutdown();
++}
++
++void TestTopDUContextStore::testTopContextStore_data()
++{
++    QTest::addColumn<uint>("key");
++    QTest::addColumn<QByteArray>("value");
++    QTest::addColumn<int>("size");
++
++    for (uint i = 0 ; i < benchKeys ; ++i) {
++        TopDUContextStore writer(i);
++        QByteArray data;
++        uint size;
++        if (i == 0 /*|| i >= testKeys*/) {
++          // 1st key/value pair will use the stored real data so that we can
++          // test our own LZ4 compression scheme in the LMDB backend (random
++          // values won't compress).
++          // The additional values >= testKeys serve to prime the database store
++          // to a mostly constant size.
++          data = realData;
++        } else {
++          size = qrand() * 32767.0 / RAND_MAX;
++          data.resize(size);
++          char *d = data.data();
++          for (uint j = 0 ; j < size ; ++j) {
++              d[j] = qrand() * 256.0 / RAND_MAX;
++          }
++        }
++        if (i < testKeys) {
++            // we store all keys that will be used in the benchmark so the store will be primed
++            // but only do write/read/exists/remove verifications for the requested number of items.
++            QTest::newRow("keyval") << i << data << data.size();
++        }
++        if (writer.open(QIODevice::WriteOnly)) {
++            writer.write(data.constData(), data.size());
++            writer.commit();
++            const auto errString = writer.errorString();
++            if (!errString.isEmpty() && errString != "Unknown error") {
++                qCritical() << "Failed to write entry for key" << i << "to" << writer.fileName() << ":" << writer.errorString();
++            } else {
++                QVERIFY(writer.flush());
++            }
++        } else {
++            qCritical() << "Failed to open" << writer.fileName();
++        }
++    }
++    sync();
++}
++
++void TestTopDUContextStore::testTopContextStore()
++{
++    QFETCH(uint, key);
++    QFETCH(QByteArray, value);
++    QFETCH(int, size);
++
++    TopDUContextStore reader(key);
++    QByteArray testval;
++    if (reader.open(QIODevice::ReadOnly)) {
++        testval = reader.readAll();
++        if (testval.isEmpty() && !reader.errorString().isEmpty()) {
++            qCritical() << "Failed to read entry for key" << key  << "from" << reader.fileName() << ":" << reader.errorString();
++        }
++    } else {
++        qCritical() << "Failed to open" << reader.fileName();
++    }
++    QCOMPARE(testval.size(), size);
++    QCOMPARE(testval, value);
++    QVERIFY(TopDUContextStore::exists(key));
++    QVERIFY(TopDUContextStore::remove(key));
++    QVERIFY(!TopDUContextStore::exists(key));
++}
++
++void TestTopDUContextStore::benchTopContextStore_data()
++{
++    uint maxSize = 0, totalSize = 0;
++    benchValues.reserve(benchKeys);
++    // subsample random strings from the real topcontext data
++    // (always from the left, there should be no interest to
++    // randomising the offset).
++    for (uint i = 0 ; i < benchKeys ; ++i) {
++        uint size = qrand() * double(realData.size()) / RAND_MAX;
++        if (size > maxSize) {
++            maxSize = size;
++        }
++        benchValues.append(realData.left(size));
++        totalSize += size;
++        if (i >= testKeys) {
++          // remove keys that weren't removed in testTopContextStore()
++          // so we will time writing, not overwriting
++          TopDUContextStore::remove(i);
++        }
++    }
++    sync();
++    sleep(1);
++    qInfo() << benchValues.size() << "items, max length=" << maxSize << "from sample of length" << realData.size();
++    qInfo() << "\ttotal value bytes:" << totalSize << "total key bytes:" << benchKeys * sizeof(uint);
++}
++
++// benchmarks don't use QBENCHMARK because they're not suitable for being
++// called multiple times.
++void TestTopDUContextStore::benchTopContextStore()
++{
++    QElapsedTimer timer;
++    timer.start();
++    for (uint i = 0 ; i < benchKeys ; ++i) {
++        TopDUContextStore writer(i);
++        if (writer.open(QIODevice::WriteOnly)) {
++            QByteArray data = benchValues.at(i);
++            writer.write(data.constData(), data.size());
++            writer.commit();
++            if (i == benchKeys - 1) {
++              writer.flush();
++            }
++        }
++    }
++    qInfo() << "Writing" << benchKeys << "keys (last flushed):" << timer.elapsed() / 1000.0 << "seconds";
++}
++
++#include <unistd.h>
++void TestTopDUContextStore::benchTopContextStoreRead()
++{
++    QElapsedTimer timer;
++    timer.start();
++    for (uint i = 0 ; i < benchKeys ; ++i)
++    {
++        TopDUContextStore reader(i);
++        if (reader.open(QIODevice::ReadOnly)) {
++#if defined(KDEV_TOPCONTEXTS_USE_FILES) && !defined(KDEV_TOPCONTEXTS_DONT_MMAP)
++            uchar* data = reader.map(0, reader.size());
++            reader.commit();
++#else
++            QByteArray data = reader.readAll();
++#endif
++        }
++    }
++    qInfo() << "Reading" << benchKeys << "keys:" << timer.elapsed() / 1000.0 << "seconds";
++}
++
++void TestTopDUContextStore::benchTopContextStoreRemove()
++{
++    QElapsedTimer timer;
++    timer.start();
++    for (uint i = 0 ; i < benchKeys ; ++i)
++    {
++        TopDUContextStore::remove(i);
++    }
++    qInfo() << "Removing" << benchKeys << "keys:" << timer.elapsed() / 1000.0 << "seconds";
++}
++
++void TestTopDUContextStore::benchTopContextStoreFlush()
++{
++#ifndef KDEV_TOPCONTEXTS_USE_FILES
++    QElapsedTimer timer;
++    timer.start();
++    TopDUContextStore writer(0);
++    if (writer.open(QIODevice::WriteOnly)) {
++        writer.flush();
++    }
++    qInfo() << "Flushing the database to disk:" << timer.elapsed() / 1000.0 << "seconds";
++#endif
++}
+diff --git a/kdevplatform/language/duchain/tests/test_topcontextstore.h b/kdevplatform/language/duchain/tests/test_topcontextstore.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..aed8526fdafb2dce5ed3f853535339dd0dbf7978
+--- /dev/null
++++ b/kdevplatform/language/duchain/tests/test_topcontextstore.h
+@@ -0,0 +1,51 @@
++/*
++ * This file is part of KDevelop
++ *
++ * Copyright 2018 R.J.V. Bertin <rjvbertin@gmail.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU Library General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public
++ * License along with this program; if not, write to the
++ * Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ */
++
++#ifndef KDEVPLATFORM_TEST_TOPCONTEXTSTORE_H
++#define KDEVPLATFORM_TEST_TOPCONTEXTSTORE_H
++
++#include <QObject>
++#include <QVector>
++#include <QByteArray>
++
++class TestTopDUContextStore : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void initTestCase();
++    void cleanupTestCase();
++    void testTopContextStore_data();
++    void testTopContextStore();
++
++    void benchTopContextStore_data();
++    void benchTopContextStore();
++    void benchTopContextStoreRead();
++    void benchTopContextStoreRemove();
++    void benchTopContextStoreFlush();
++
++private:
++    static uint testKeys;
++    static uint benchKeys;
++    QByteArray realData;
++    QVector<QByteArray> benchValues;
++};
++
++#endif // KDEVPLATFORM_TEST_TOPCONTEXTSTORE_H
+diff --git a/kdevplatform/language/duchain/tests/test_topcontextstore.qrc b/kdevplatform/language/duchain/tests/test_topcontextstore.qrc
+new file mode 100644
+index 0000000000000000000000000000000000000000..96c262be846f42c3dcb137c055dee1a331c44116
+--- /dev/null
++++ b/kdevplatform/language/duchain/tests/test_topcontextstore.qrc
+@@ -0,0 +1,7 @@
++<!DOCTYPE RCC>
++<RCC version="1.0">
++<qresource>
++  <file>topcontextdata.base64</file>
++</qresource>
++</RCC>
++
+diff --git a/kdevplatform/language/duchain/tests/topcontextdata.base64 b/kdevplatform/language/duchain/tests/topcontextdata.base64
+new file mode 100644
+index 0000000000000000000000000000000000000000..a7327aa844a488e18558171d2be63261c750c065
+--- /dev/null
++++ b/kdevplatform/language/duchain/tests/topcontextdata.base64
+@@ -0,0 +1 @@
++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QLAHq8BwACAAEAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAQAADwAAAAABAAAWAAAAAAARADsXAABAAAAAPrQLALy8BwACAAEAAAAAAAAAAAAAAAAAPBYBAAADAwABAAAAAgAAAAAAAAABAQAACgAAAAEBAAARAAAAAAAJAAAAAAAAAAAAHiQBANK8BwACAAEAAAAAAAAAAAAAAAAAqRUBAAECAAACAQAACAAAAAIBAAAPAAAAAAAJAAAAAAAAAAAAsCQBAOi8BwACAAEAAAAAAAAAAAAAAAAAahYBAAECAAADAQAAAgAAAAMBAAAJAAAAAAAHAAAAAAAAAAAAXLQLALy8BwACAAEAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAQAADwAAAAABAAAWAAAAAAARADsXAABBAAAAPrQLALy8BwACAAEAAAAAAAAAAAAAAAAAPBYBAAADAwABAAAAAgAAAAAAAAABAQAACgAAAAEBAAARAAAAAAAJAAAAAAAAAAAAHiQBANK8BwACAAEAAAAAAAAAAAAAAAAAqRUBAAECAEACAQAACAAAAAIBAAAPAAAAAAAJAAAAAAAAAAAAsCQBAOi8BwACAAEAAAAAAAAAAAAAAAAAahYBAAECAAAGAQAADgAAAAYBAAAaAAAAAAAHAAAAAAAAAAAAmLQLAP68BwACAAEAAAAAAAAAAAAAAAAAAAAAAAAGAAAGAQAAKwAAAAYBAAAsAAAAAAAHAAAAAAAAAAAA3LQLAHJQAwACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAGAQAAPQAAAAYBAAA+AAAAAAAHAAAAAAAAAAAA3LQLAIhQAwACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAWAQAADgAAABYBAAAaAAAAAAAHAAAAAAAAAAAACLULACq9BwACAAEAAAAAAAAAAAAAAAAAAAAAAAAGAAAWAQAAJQAAABYBAAApAAAAAAAHAAAAAAAAAAAAKrULAJYCAQACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAWAQAAMQAAABYBAAA3AAAAAAAHAAAAAAAAAAAAsCQBAFa9BwACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAWAQAAPwAAABYBAABFAAAAAAAHAAAAAAAAAAAAsCQBAGy9BwACAAEAAAAAAAAAAAAAAAAAAAAAAAECAAAWAQAATQ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
+\ No newline at end of file
+diff --git a/kdevplatform/language/duchain/topducontextdynamicdata.cpp b/kdevplatform/language/duchain/topducontextdynamicdata.cpp
+index a296f454a6edcc1763ffbe19372f69e0238f09fd..bd4f717b91b35afe9d433aad68ce29eafc16ef30 100644
+--- a/kdevplatform/language/duchain/topducontextdynamicdata.cpp
++++ b/kdevplatform/language/duchain/topducontextdynamicdata.cpp
+@@ -18,6 +18,7 @@
+    Boston, MA 02110-1301, USA.
+  */
+ 
++#include "topducontextdynamicdata_p.h"
+ #include "topducontextdynamicdata.h"
+ 
+ #include <typeinfo>
+@@ -37,12 +38,17 @@
+ #include <debug.h>
+ 
+ //#define DEBUG_DATA_INFO
++#include <QElapsedTimer>
+ 
+ //This might be problematic on some systems, because really many mmaps are created
++#if defined(KDEV_TOPCONTEXTS_USE_FILES) && !defined(KDEV_TOPCONTEXTS_DONT_MMAP)
+ #define USE_MMAP
++#endif
++
+ using namespace KDevelop;
+ 
+ namespace {
++
+ /**
+  * Serialize @p item into @p data and update @p totalDataOffset.
+  *
+@@ -159,16 +165,6 @@ void verifyDataInfo(const TopDUContextDynamicData::ItemDataInfo& info,
+ #endif
+ }
+ 
+-QString basePath()
+-{
+-    return globalItemRepositoryRegistry().path() + QLatin1String("/topcontexts/");
+-}
+-
+-QString pathForTopContext(const uint topContextIndex)
+-{
+-    return basePath() + QString::number(topContextIndex);
+-}
+-
+ enum LoadType {
+     PartialLoad, ///< Only load the direct member data
+     FullLoad   ///< Load everything, including appended lists
+@@ -176,16 +172,16 @@ enum LoadType {
+ template <typename F>
+ void loadTopDUContextData(const uint topContextIndex, LoadType loadType, F callback)
+ {
+-    QFile file(pathForTopContext(topContextIndex));
+-    if (!file.open(QIODevice::ReadOnly)) {
++    TopDUContextStore store(topContextIndex);
++    if (!store.open(QIODevice::ReadOnly)) {
+         return;
+     }
+ 
+     uint readValue;
+-    file.read(reinterpret_cast<char*>(&readValue), sizeof(uint));
++    store.read(reinterpret_cast<char*>(&readValue), sizeof(uint));
+     // now readValue is filled with the top-context data size
+     Q_ASSERT(readValue >= sizeof(TopDUContextData));
+-    const QByteArray data = file.read(loadType == FullLoad ? readValue : sizeof(TopDUContextData));
++    const QByteArray data = store.read(loadType == FullLoad ? readValue : sizeof(TopDUContextData));
+     const auto* topData = reinterpret_cast<const TopDUContextData*>(data.constData());
+     callback(topData);
+ }
+@@ -216,6 +212,7 @@ Q_DECL_CONSTEXPR bool isSharedDataItem<ProblemPointer>()
+ {
+     return true;
+ }
++
+ }
+ 
+ //BEGIN DUChainItemStorage
+@@ -379,7 +376,7 @@ Item TopDUContextDynamicData::DUChainItemStorage<Item>::itemForIndex(uint index)
+     }
+ 
+     if (index == 0 || index > static_cast<uint>(items.size())) {
+-        qCWarning(LANGUAGE) << "item index out of bounds:" << index << "count:" << items.size();
++        qCDebug(LANGUAGE) << "item index out of bounds:" << index << "count:" << items.size();
+         return {};
+     }
+     const uint realIndex = index - 1;
+@@ -398,12 +395,17 @@ Item TopDUContextDynamicData::DUChainItemStorage<Item>::itemForIndex(uint index)
+             reinterpret_cast<const DUChainBaseData*>(data->pointerInData(offsets[realIndex].dataOffset))
+                         );
+ 
+-        auto& item = items[realIndex];
+-        item = dynamic_cast<typename PtrType<Item>::value>(DUChainItemSystem::self().create(itemData));
+-        if (!item) {
+-            //When this happens, the item has not been registered correctly.
+-            //We can stop here, because else we will get crashes later.
+-            qCritical() << "Failed to load item with identity" << itemData->classId;
++        if (itemData) {
++            auto& item = items[realIndex];
++            item = dynamic_cast<typename PtrType<Item>::value>(DUChainItemSystem::self().create(itemData));
++            if (!item) {
++              //When this happens, the item has not been registered correctly.
++              //We can stop here, because else we will get crashes later.
++              qCritical() << "Failed to load item with identity" << itemData->classId;
++              return {};
++            }
++        } else {
++            qCritical() << "Failed to load item at realIndex" << realIndex << "itemData=" << itemData;
+             return {};
+         }
+ 
+@@ -419,7 +421,7 @@ Item TopDUContextDynamicData::DUChainItemStorage<Item>::itemForIndex(uint index)
+                    "Potentially, the context has been deleted without deleting its children.");
+         item->rebuildDynamicData(parent, index);
+     } else {
+-        qCWarning(LANGUAGE) << "invalid item for index" << index << offsets.size() <<
++        qCDebug(LANGUAGE) << "invalid item for index" << index << offsets.size() <<
+             offsets.value(realIndex).dataOffset;
+     }
+ 
+@@ -437,27 +439,27 @@ void TopDUContextDynamicData::DUChainItemStorage<Item>::deleteOnDisk()
+ }
+ 
+ template <class Item>
+-void TopDUContextDynamicData::DUChainItemStorage<Item>::loadData(QFile* file) const
++void TopDUContextDynamicData::DUChainItemStorage<Item>::loadData(TopDUContextStore* store) const
+ {
+     Q_ASSERT(offsets.isEmpty());
+     Q_ASSERT(items.isEmpty());
+ 
+     uint readValue;
+-    file->read(reinterpret_cast<char*>(&readValue), sizeof(uint));
++    store->read(reinterpret_cast<char*>(&readValue), sizeof(uint));
+     offsets.resize(readValue);
+ 
+-    file->read(reinterpret_cast<char*>(offsets.data()), sizeof(ItemDataInfo) * offsets.size());
++    store->read(reinterpret_cast<char*>(offsets.data()), sizeof(ItemDataInfo) * offsets.size());
+ 
+     //Fill with zeroes for now, will be initialized on-demand
+     items.resize(offsets.size());
+ }
+ 
+ template <class Item>
+-void TopDUContextDynamicData::DUChainItemStorage<Item>::writeData(QFile* file)
++void TopDUContextDynamicData::DUChainItemStorage<Item>::writeData(TopDUContextStore* store)
+ {
+     uint writeValue = offsets.size();
+-    file->write(reinterpret_cast<const char*>(&writeValue), sizeof(uint));
+-    file->write(reinterpret_cast<const char*>(offsets.data()), sizeof(ItemDataInfo) * offsets.size());
++    store->write(reinterpret_cast<const char*>(&writeValue), sizeof(uint));
++    store->write(reinterpret_cast<const char*>(offsets.data()), sizeof(ItemDataInfo) * offsets.size());
+ }
+ 
+ //END DUChainItemStorage
+@@ -509,7 +511,7 @@ void KDevelop::TopDUContextDynamicData::unmap()
+ 
+ bool TopDUContextDynamicData::fileExists(uint topContextIndex)
+ {
+-    return QFile::exists(pathForTopContext(topContextIndex));
++    return TopDUContextStore::exists(topContextIndex);
+ }
+ 
+ QList<IndexedDUContext> TopDUContextDynamicData::loadImporters(uint topContextIndex)
+@@ -555,39 +557,39 @@ void TopDUContextDynamicData::loadData() const
+     Q_ASSERT(!m_dataLoaded);
+     Q_ASSERT(m_data.isEmpty());
+ 
+-    auto* file = new QFile(pathForTopContext(m_topContext->ownIndex()));
+-    bool open = file->open(QIODevice::ReadOnly);
++    auto* store = new TopDUContextStore(m_topContext->ownIndex());
++    bool open = store->open(QIODevice::ReadOnly);
+     Q_UNUSED(open);
+     Q_ASSERT(open);
+-    Q_ASSERT(file->size());
++    Q_ASSERT(store->size());
+ 
+     //Skip the offsets, we're already read them
+     //Skip top-context data
+     uint readValue;
+-    file->read(reinterpret_cast<char*>(&readValue), sizeof(uint));
+-    file->seek(readValue + file->pos());
++    store->read(reinterpret_cast<char*>(&readValue), sizeof(uint));
++    store->seek(readValue + store->pos());
+ 
+-    m_contexts.loadData(file);
+-    m_declarations.loadData(file);
+-    m_problems.loadData(file);
++    m_contexts.loadData(store);
++    m_declarations.loadData(store);
++    m_problems.loadData(store);
+ 
+ #ifdef USE_MMAP
+ 
+-    m_mappedData = file->map(file->pos(), file->size() - file->pos());
++    m_mappedData = store->map(store->pos(), store->size() - store->pos());
+     if (m_mappedData) {
+-        m_mappedFile = file;
+-        m_mappedDataSize = file->size() - file->pos();
+-        file->close(); //Close the file, so there is less open file descriptors(May be problematic)
++        m_mappedFile = store;
++        m_mappedDataSize = store->size() - store->pos();
++        store->close(); //Close the store, so there are less open file descriptors(May be problematic)
+     } else {
+-        qCDebug(LANGUAGE) << "Failed to map" << file->fileName();
++        qCDebug(LANGUAGE) << "Failed to map" << store->fileName();
+     }
+ 
+ #endif
+ 
+     if (!m_mappedFile) {
+-        QByteArray data = file->readAll();
++        QByteArray data = store->readAll();
+         m_data.append({data, ( uint )data.size()});
+-        delete file;
++        delete store;
+     }
+ 
+     m_dataLoaded = true;
+@@ -595,22 +597,22 @@ void TopDUContextDynamicData::loadData() const
+ 
+ TopDUContext* TopDUContextDynamicData::load(uint topContextIndex)
+ {
+-    QFile file(pathForTopContext(topContextIndex));
+-    if (file.open(QIODevice::ReadOnly)) {
+-        if (file.size() == 0) {
+-            qCWarning(LANGUAGE) << "Top-context file is empty" << file.fileName();
++    TopDUContextStore store(topContextIndex);
++    if(store.open(QIODevice::ReadOnly)) {
++        if(store.size() == 0) {
++            qCWarning(LANGUAGE) << "Top-context store is empty" << store.fileName();
+             return nullptr;
+         }
+ 
+         uint readValue;
+-        file.read(reinterpret_cast<char*>(&readValue), sizeof(uint));
++        store.read(reinterpret_cast<char*>(&readValue), sizeof(uint));
+         //now readValue is filled with the top-context data size
+-        QByteArray topContextData = file.read(readValue);
++        QByteArray topContextData = store.read(readValue);
+ 
+         auto* topData = reinterpret_cast<DUChainBaseData*>(topContextData.data());
+         auto* ret = dynamic_cast<TopDUContext*>(DUChainItemSystem::self().create(topData));
+         if (!ret) {
+-            qCWarning(LANGUAGE) << "Cannot load a top-context from file" << file.fileName() <<
++            qCWarning(LANGUAGE) << "Cannot load a top-context from store" << store.fileName() <<
+                 "- the required language-support for handling ID" << topData->classId << "is probably not loaded";
+             return nullptr;
+         }
+@@ -650,12 +652,22 @@ void TopDUContextDynamicData::deleteOnDisk()
+ 
+     m_onDisk = false;
+ 
+-    bool successfullyRemoved = QFile::remove(filePath());
++    bool successfullyRemoved = TopDUContextStore::remove(m_topContext->ownIndex());
+     Q_UNUSED(successfullyRemoved);
+     Q_ASSERT(successfullyRemoved);
+     qCDebug(LANGUAGE) << "deletion ready";
+ }
+ 
++QString TopDUContextDynamicData::basePath()
++{
++    return globalItemRepositoryRegistry().path() + QLatin1String("/topcontexts/");
++}
++
++QString TopDUContextDynamicData::pathForTopContext(const uint topContextIndex)
++{
++    return basePath() + QString::number(topContextIndex);
++}
++
+ QString KDevelop::TopDUContextDynamicData::filePath() const
+ {
+     return pathForTopContext(m_topContext->ownIndex());
+@@ -737,33 +749,57 @@ void TopDUContextDynamicData::store()
+ 
+     QDir().mkpath(basePath());
+ 
+-    QFile file(filePath());
+-    if (file.open(QIODevice::WriteOnly)) {
+-        file.resize(0);
++    QElapsedTimer timer;
++    qint64 nBytes = 0;
++    if (Q_LIKELY(QFileInfo(basePath()).isWritable())) {
++        timer.start();
++        TopDUContextStore store(m_topContext->ownIndex());
++        if(store.open(QIODevice::WriteOnly)) {
+ 
+-        file.write(reinterpret_cast<const char*>(&topContextDataSize), sizeof(uint));
+-        for (const ArrayWithPosition& pos : qAsConst(m_topContextData)) {
+-            file.write(pos.array.constData(), pos.position);
+-        }
++            store.resize(0);
++
++            store.write(( char* )&topContextDataSize, sizeof(uint));
++            for (const ArrayWithPosition& pos : qAsConst(m_topContextData)) {
++                store.write(pos.array.constData(), pos.position);
++            }
+ 
+-        m_contexts.writeData(&file);
+-        m_declarations.writeData(&file);
+-        m_problems.writeData(&file);
++            m_contexts.writeData(&store);
++            m_declarations.writeData(&store);
++            m_problems.writeData(&store);
+ 
+-        for (const ArrayWithPosition& pos : qAsConst(m_data)) {
+-            file.write(pos.array.constData(), pos.position);
+-        }
++            for (const ArrayWithPosition& pos : qAsConst(m_data)) {
++                store.write(pos.array.constData(), pos.position);
++            }
+ 
+-        m_onDisk = true;
++            m_onDisk = true;
+ 
+-        if (file.size() == 0) {
+-            qCWarning(LANGUAGE) << "Saving zero size top ducontext data";
++            nBytes = store.size();
++            if (nBytes == 0) {
++                qCWarning(LANGUAGE) << "Saving zero size top ducontext data";
++            }
++            store.commit();
++        } else {
++            qCWarning(LANGUAGE) << "Cannot open topcontext" << store.fileName() << "for writing:" << store.errorString();
+         }
+-        file.close();
++//       qCDebug(LANGUAGE) << "stored" << m_topContext->url().str() << m_topContext->ownIndex() << "import-count:" << m_topContext->importedParentContexts().size();
+     } else {
+-        qCWarning(LANGUAGE) << "Cannot open top-context for writing";
++        static bool warned = false;
++        if (!warned) {
++            qCWarning(LANGUAGE) << "Topcontexts directory" << basePath() << "is not writable, topcontext files won't be stored.";
++            warned = true;
++        }
++    }
++    if (timer.isValid()) {
++        auto elapsed = timer.elapsed();
++        static quint64 totalBytes = 0;
++        static double totalElapsed = 0.0;
++        totalBytes += nBytes;
++        totalElapsed += elapsed / 1000.0;
++        if (totalBytes && totalElapsed >= 0.5) {
++            qCDebug(LANGUAGE) << "Stored" << totalBytes << "topcontext bytes at" << totalBytes / totalElapsed << "bytes/second";
++            totalBytes = 0, totalElapsed = 0.0;
++        }
+     }
+-//   qCDebug(LANGUAGE) << "stored" << m_topContext->url().str() << m_topContext->ownIndex() << "import-count:" << m_topContext->importedParentContexts().size();
+ }
+ 
+ TopDUContextDynamicData::ItemDataInfo TopDUContextDynamicData::writeDataInfo(const ItemDataInfo& info,
+diff --git a/kdevplatform/language/duchain/topducontextdynamicdata.h b/kdevplatform/language/duchain/topducontextdynamicdata.h
+index 47defc2364683c4cdfeba36ef8209c877bbe0032..a06edf3a08fde4fb4fad7baf24902ae5876c5c16 100644
+--- a/kdevplatform/language/duchain/topducontextdynamicdata.h
++++ b/kdevplatform/language/duchain/topducontextdynamicdata.h
+@@ -1,5 +1,5 @@
+ /* This is part of KDevelop
+-    Copyright 2008 David Nolden <david.nolden.kdevelop@art-master.de>
++   Copyright 2018 R.J.V. Bertin <rjvbertin@gmail.com>
+ 
+    This library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Library General Public
+@@ -21,10 +21,9 @@
+ 
+ #include <QVector>
+ #include <QByteArray>
++#include <QFile>
+ #include "problem.h"
+ 
+-class QFile;
+-
+ namespace KDevelop {
+ class TopDUContext;
+ class DUContext;
+@@ -33,6 +32,14 @@ class IndexedString;
+ class IndexedDUContext;
+ class DUChainBaseData;
+ 
++#ifdef KDEV_TOPCONTEXTS_USE_FILES
++class TopDUContextFile;
++using TopDUContextStore = TopDUContextFile;
++#else
++class TopDUContextLMDB;
++using TopDUContextStore = TopDUContextLMDB;
++#endif
++
+ ///This class contains dynamic data of a top-context, and also the repository that contains all the data within this top-context.
+ class TopDUContextDynamicData
+ {
+@@ -118,6 +125,9 @@ public:
+         uint position;
+     };
+ 
++    static QString basePath();
++    static QString pathForTopContext(const uint topContextIndex);
++
+ private:
+     bool hasChanged() const;
+ 
+@@ -153,8 +163,8 @@ private:
+         void deleteOnDisk();
+         bool isItemForIndexLoaded(uint index) const;
+ 
+-        void loadData(QFile* file) const;
+-        void writeData(QFile* file);
++        void loadData(TopDUContextStore* file) const;
++        void writeData(TopDUContextStore* file);
+ 
+         //May contain zero items if they were deleted
+         mutable QVector<Item> items;
+@@ -174,7 +184,7 @@ private:
+     bool m_onDisk;
+     mutable bool m_dataLoaded;
+ 
+-    mutable QFile* m_mappedFile;
++    mutable TopDUContextStore* m_mappedFile;
+     mutable uchar* m_mappedData;
+     mutable size_t m_mappedDataSize;
+     mutable bool m_itemRetrievalForbidden;
+diff --git a/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp b/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..debbbf4b2fdee3313c6c55cd33fe198a60aa8a77
+--- /dev/null
++++ b/kdevplatform/language/duchain/topducontextdynamicdata_p.cpp
+@@ -0,0 +1,590 @@
++/* This  is part of KDevelop
++
++   Copyright 2018 R.J.V. Bertin <rjvbertin@gmail.com>
++
++   This library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU Library General Public
++   License version 2 as published by the Free Software Foundation.
++
++   This library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++   Library General Public License for more details.
++
++   You should have received a copy of the GNU Library General Public License
++   along with this library; see the file COPYING.LIB.  If not, write to
++   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++   Boston, MA 02110-1301, USA.
++*/
++
++#include "topducontextdynamicdata_p.h"
++#include "topducontextdynamicdata.h"
++
++#include <QFileInfo>
++
++#ifndef KDEV_TOPCONTEXTS_USE_FILES
++#include <lmdb++.h>
++// we roll our own compression
++#include <lz4.h>
++#endif
++
++#include <debug.h>
++
++//#define DEBUG_DATA_INFO
++
++using namespace KDevelop;
++
++#ifndef KDEV_TOPCONTEXTS_USE_FILES
++
++bool TopDUContextDB::open(QIODevice::OpenMode mode, const QString &backendName)
++{
++    if (isValid() && !m_currentKey.isEmpty()) {
++        int lmMode = mode == QIODevice::ReadOnly ? MDB_RDONLY : 0;
++        if (lmMode == MDB_RDONLY && !currentKeyExists()) {
++            // migration: see if the index file exists
++            if (migrateFromFile()) {
++                return true;
++            }
++            m_errorString = QStringLiteral("No item #") + QByteArray::number(m_currentIndex) + QStringLiteral(" in database");
++            return false;
++        }
++        m_mode = lmMode;
++        m_currentValue.clear();
++        m_currentLen = 0;
++        m_readCursor = -1;
++        m_errorString.clear();
++        return true;
++    }
++    m_errorString = QStringLiteral("%1 database backend not initialised properly").arg(backendName);
++    return false;
++}
++
++QString TopDUContextDB::fileName() const
++{
++    return TopDUContextDynamicData::basePath() + "...#" + QByteArray::number(m_currentIndex);
++}
++
++QString TopDUContextDB::errorString() const
++{
++    return m_errorString;
++}
++
++bool TopDUContextDB::resize(qint64)
++{
++    return m_mode != MDB_RDONLY;
++}
++
++qint64 TopDUContextDB::write(const char *data, qint64 len)
++{
++    if (m_mode != MDB_RDONLY) {
++        m_currentValue.append(QByteArray::fromRawData(data, len));
++        m_currentLen += len;
++        return len;
++    }
++    return 0;
++}
++
++// read the current key value into m_currentValue if necessary, and return the
++// requested @p maxSize bytes from the current read position in @p data. Update
++// the read position afterwards, and reset m_currentValue when all data has
++// been returned.
++// Special case: data==NULL and maxSize==-1; return the number of remaining bytes
++// and do NOT reset m_currentValue
++qint64 TopDUContextDB::read(char *data, qint64 maxSize)
++{
++    if (isValid() && !m_currentKey.isEmpty() && m_mode == MDB_RDONLY) {
++        if (!getCurrentKeyValue()) {
++            return -1;
++        }
++        if (m_readCursor >= 0 && m_readCursor < m_currentLen) {
++            qint64 rlen = m_currentLen - m_readCursor;
++            if (Q_LIKELY(maxSize >= 0)) {
++                if (maxSize < rlen) {
++                    rlen = maxSize;
++                }
++                const char *val = m_currentValue.constData();
++                memcpy(data, &val[m_readCursor], rlen);
++                m_readCursor += rlen;
++                if (m_readCursor >= m_currentLen) {
++                    // all read, clear the cache
++                    m_currentValue.clear();
++                    m_currentLen = 0;
++                    m_readCursor = -1;
++                }
++            } else {
++                // special case: don't update m_readCursor;
++            }
++            return rlen;
++        }
++    }
++    return -1;
++}
++
++QByteArray TopDUContextDB::read(qint64 maxSize)
++{
++    QByteArray data;
++    data.resize(maxSize);
++    auto len = read(data.data(), maxSize);
++    data.resize(len >= 0 ? len : 0);
++    return data;
++}
++
++// Reads all the remaining data, returned as a QByteArray
++QByteArray TopDUContextDB::readAll()
++{
++    QByteArray data;
++    auto readLen = read(nullptr, -1);
++    if (readLen > 0) {
++        // should always be true:
++        if (Q_LIKELY(m_readCursor >= 0 && m_readCursor + readLen <= m_currentValue.size())) {
++            if (m_readCursor == 0) {
++                data = m_currentValue;
++            } else {
++                data.resize(readLen);
++                const char *val = m_currentValue.constData();
++                memcpy(data.data(), &val[m_readCursor], readLen);
++            }
++        } else {
++            qCWarning(LANGUAGE) << Q_FUNC_INFO << "m_readCursor=" << m_readCursor << "readLen=" << readLen
++              << "m_currentValue.size=" << m_currentValue.size();
++            if (readLen == m_currentValue.size()) {
++                // m_readCursor should have been 0!!!
++                qCWarning(LANGUAGE) << "\tm_readCursor should have been 0!!";
++                data = m_currentValue;
++            }
++        }
++        // all read, clear the cache
++        m_currentValue.clear();
++        m_currentLen = 0;
++        m_readCursor = -1;
++    }
++    return data;
++}
++
++qint64 TopDUContextDB::pos() const
++{
++    return m_readCursor < 0 ? 0 : m_readCursor;
++}
++
++bool TopDUContextDB::seek(qint64 pos)
++{
++    if (pos <= m_currentLen) {
++        m_readCursor = pos;
++        return true;
++    }
++    return false;
++}
++
++qint64 TopDUContextDB::size()
++{
++    if (!m_currentLen && m_mode == MDB_RDONLY) {
++        // cache the key value
++        read(nullptr, -1);
++    }
++    return m_currentLen;
++}
++
++QByteArray TopDUContextDB::indexKey(uint idx)
++{
++    return QByteArray::number(idx);
++}
++
++// NB: @p idx must point to a variable that will not be outlived by the returned QByteArray!
++QByteArray TopDUContextDB::indexKey(uint *idx)
++{
++    return QByteArray::fromRawData(reinterpret_cast<const char *>(idx), sizeof(uint));
++}
++
++bool TopDUContextDB::migrateFromFile()
++{
++    TopDUContextFile migrateFile(m_currentIndex);
++    if (migrateFile.open(QIODevice::ReadOnly)) {
++        // should we care about empty files here?
++        qCDebug(LANGUAGE) << "Migrating" << migrateFile.fileName();
++        const QByteArray content = migrateFile.readAll();
++        migrateFile.close();
++        m_mode = 0;
++        m_currentValue = content;
++        m_currentLen = content.size();
++        // commit() will reset the key so we need to cache it
++        const QByteArray key = m_currentKey;
++        m_errorString.clear();
++        commit();
++        if (m_errorString.isEmpty()) {
++            // migration was successful, remove the file
++            QFile::remove(migrateFile.fileName());
++        }
++        m_errorString.clear();
++        // take care that we don't have to read the data back in
++        m_currentKey = key;
++        m_currentValue = content;
++        m_currentLen = content.size();
++        m_readCursor = 0;
++        m_mode = MDB_RDONLY;
++        return true;
++    }
++    return false;
++}
++
++// TopDUContextLMDB : wraps the QFile API needed for TopDUContexts around LMDB
++
++static QString lmdbxx_exception_handler(const lmdb::error &e, const QString &operation)
++{
++    const QString msg = QStringLiteral("LMDB exception in \"%1\": %2").arg(operation).arg(e.what());
++    qCWarning(LANGUAGE) << msg;
++    if (qEnvironmentVariableIsSet("KDEV_TOPCONTEXTS_STORE_FAILURE_ABORT")) {
++        qFatal(msg.toLatin1().constData());
++    }
++    return msg;
++}
++
++// there is exactly 1 topcontexts directory per session, so we can make do with a single
++// global static LMDB env instance which is not exported at all (= no need to include
++// lmdb.h and/or lmdbxx.h in our own headerfile).
++
++static double compRatioSum = 0;
++static size_t compRatioN = 0;
++static size_t uncompN = 0;
++
++static void printCompRatio()
++{
++    if (compRatioN) {
++        fprintf(stderr, "average LZ4 compression ratio: %g; %lu compressed of %lu\n",
++            compRatioSum / compRatioN, compRatioN, compRatioN + uncompN);
++    }
++}
++
++class LMDBHook
++{
++public:
++    ~LMDBHook()
++    {
++      if (s_envExists) {
++          s_lmdbEnv.close();
++          s_envExists = false;
++          delete[] s_lz4CompState;
++          printCompRatio();
++      }
++    }
++
++    static bool init()
++    {
++        if (!s_envExists) {
++            s_errorString.clear();
++            try {
++                s_lmdbEnv = lmdb::env::create();
++                // Open the environment in async mode. From the documentation:
++                // if the filesystem preserves write order [...], transactions exhibit ACI 
++                // (atomicity, consistency, isolation) properties and only lose D (durability).
++                // I.e. database integrity is maintained, but a system crash may undo the final transactions.
++                // This should be acceptable for caching self-generated data, given how much faster
++                // transactions become.
++                s_lmdbEnv.open(TopDUContextDynamicData::basePath().toLatin1().constData(), MDB_NOSYNC);
++                MDB_envinfo stat;
++                lmdb::env_info(s_lmdbEnv.handle(), &stat);
++                if (stat.me_mapsize > s_mapSize) {
++                    s_mapSize = stat.me_mapsize;
++                }
++                s_lmdbEnv.set_mapsize(s_mapSize);
++                s_lz4CompState = new char[LZ4_sizeofState()];
++                s_envExists = true;
++                qCDebug(LANGUAGE) << "s_lmdbEnv=" << s_lmdbEnv << "mapsize=" << stat.me_mapsize << "LZ4 state buffer:" << LZ4_sizeofState();
++            } catch (const lmdb::error &e) {
++                s_errorString = lmdbxx_exception_handler(e, QStringLiteral("database creation"));
++                // as per the documentation: the environment must be closed even if creation failed!
++                s_lmdbEnv.close();
++            }
++        }
++        return false;
++    }
++
++    inline lmdb::env* instance()
++    {
++        return s_envExists? &s_lmdbEnv : nullptr;
++    }
++    inline MDB_env* handle()
++    {
++        return s_envExists? s_lmdbEnv.handle() : nullptr;
++    }
++
++    void growMapSize()
++    {
++        s_mapSize *= 2;
++        qCDebug(LANGUAGE) << "\tgrowing mapsize to" << s_mapSize;
++        s_lmdbEnv.set_mapsize(s_mapSize);
++    }
++
++
++    static lmdb::env s_lmdbEnv;
++    static bool s_envExists;
++    static char* s_lz4CompState;
++    static size_t s_mapSize;
++    static QString s_errorString;
++};
++static LMDBHook LMDB;
++
++lmdb::env LMDBHook::s_lmdbEnv{nullptr};
++bool LMDBHook::s_envExists = false;
++char *LMDBHook::s_lz4CompState = nullptr;
++// set the initial map size to 64Mb
++size_t LMDBHook::s_mapSize = 1024UL * 1024UL * 64UL;
++QString LMDBHook::s_errorString;
++
++uint TopDUContextLMDB::s_DbRefCount = 0;
++
++TopDUContextLMDB::TopDUContextLMDB(uint topContextIndex)
++{
++    m_currentIndex = topContextIndex;
++    if (!LMDB.instance() && Q_LIKELY(QFileInfo(TopDUContextDynamicData::basePath()).isWritable())) {
++        if (!LMDB.init()) {
++            m_errorString = LMDB.s_errorString;
++        }
++    }
++    if (LMDB.instance()) {
++        m_currentKey = indexKey(m_currentIndex);
++        s_DbRefCount += 1;
++    }
++    m_currentLen = -1;
++    // the remaining member vars are initialised elsewhere intentionally.
++}
++
++TopDUContextLMDB::~TopDUContextLMDB()
++{
++    if (LMDB.instance()) {
++        s_DbRefCount -= 1;
++        if (s_DbRefCount <= 0) {
++            s_DbRefCount = 0;
++#ifdef DEBUG
++            flush();
++#endif
++        }
++    } else {
++        s_DbRefCount = 0;
++    }
++}
++
++bool TopDUContextLMDB::open(QIODevice::OpenMode mode)
++{
++    return TopDUContextDB::open(mode, QStringLiteral("LMDB"));
++}
++
++void TopDUContextLMDB::commit()
++{
++    if (LMDB.instance() && m_mode != MDB_RDONLY) {
++        if (m_currentValue.size() != m_currentLen) {
++            // m_currentLen is the true size
++            qCDebug(LANGUAGE) << "TopDUContextLMDB index" << QByteArray::number(m_currentIndex) << "internal size mismatch:"
++              << m_currentValue.size() << "vs" << m_currentLen;
++        }
++        char *data;
++        size_t dataLen = 0;
++        int lz4BufLen = m_currentLen > 2 * sizeof(qint64) ? LZ4_compressBound(m_currentLen) : 0;
++        lmdb::val value;
++        if (lz4BufLen) {
++            data = new char[lz4BufLen + sizeof(qint64)];
++            // compress to an qint64-sized offset into the dest buffer; the original size will be stored in
++            // those first 64 bits.
++            dataLen = LZ4_compress_fast_extState(LMDB.s_lz4CompState, m_currentValue.constData(), &data[sizeof(qint64)],
++              m_currentLen, lz4BufLen, 1);
++            if (dataLen && dataLen + sizeof(qint64) < m_currentLen) {
++                LZ4Frame frame;
++                frame.bytes = data;
++                frame.qint32Ptr[0] = m_currentLen;
++                frame.qint32Ptr[1] = dataLen;
++                value = lmdb::val(data, dataLen + sizeof(qint64));
++                compRatioSum += double(m_currentLen) / value.size();
++                compRatioN += 1;
++            } else {
++                qCDebug(LANGUAGE) << "Index" << m_currentIndex << "compression failed or useless: m_currentLen=" << m_currentLen
++                  << "compressedLen=" << dataLen << "LZ4_compressBound=" << lz4BufLen;
++                delete data;
++                dataLen = 0;
++                lz4BufLen = 0;
++            }
++        }
++        if (!dataLen) {
++            value = lmdb::val(m_currentValue.constData(), m_currentLen);
++            uncompN += 1;
++        }
++        lmdb::val key(m_currentKey.constData(), m_currentKey.size());
++        try {
++            auto txn = lmdb::txn::begin(LMDB.handle());
++            auto dbi = lmdb::dbi::open(txn, nullptr);
++            try {
++                lmdb::dbi_put(txn, dbi, key, value);
++                txn.commit();
++            } catch (const lmdb::error &e) {
++                if (e.code() == MDB_MAP_FULL) {
++                    try {
++                        qCDebug(LANGUAGE) << "aborting LMDB write to grow mapsize";
++                        txn.abort();
++                        lmdb::dbi_close(LMDB.handle(), dbi);
++                        LMDB.growMapSize();
++                        commit();
++                    } catch (const lmdb::error &e) {
++                        m_errorString = lmdbxx_exception_handler(e, QStringLiteral("growing mapsize to ")
++                            + QString::number(LMDB.s_mapSize));
++                    }
++                } else {
++                    m_errorString = lmdbxx_exception_handler(e, QStringLiteral("committing index ")
++                        + QByteArray::number(m_currentIndex) + " size " + QString::number(m_currentLen));
++                }
++            }
++        } catch (const lmdb::error &e) {
++            m_errorString = lmdbxx_exception_handler(e, QStringLiteral("committing index ")
++                + QByteArray::number(m_currentIndex) + " size " + QString::number(m_currentLen));
++        }
++        m_currentKey.clear();
++        m_currentValue.clear();
++        m_currentLen = 0;
++        if (lz4BufLen && data) {
++            delete data;
++        }
++    }
++}
++
++bool TopDUContextLMDB::flush()
++{
++    if (LMDB.instance() && m_mode != MDB_RDONLY) {
++        try {
++            return mdb_env_sync(LMDB.handle(), true) == MDB_SUCCESS;
++        } catch (const lmdb::error &e) {
++            m_errorString = lmdbxx_exception_handler(e, QStringLiteral("database flush"));
++        }
++    }
++    return false;
++}
++
++bool TopDUContextLMDB::getCurrentKeyValue()
++{
++    // we only return false if a read error occurred; if a key doesn't exist
++    // m_currentValue will remain empty.
++    bool ret = true;
++    if (m_currentValue.isEmpty()) {
++        // read the key value from storage into cache
++        try {
++            auto rtxn = lmdb::txn::begin(LMDB.handle(), nullptr, MDB_RDONLY);
++            auto dbi = lmdb::dbi::open(rtxn, nullptr);
++            auto cursor = lmdb::cursor::open(rtxn, dbi);
++            lmdb::val key(m_currentKey.constData(), m_currentKey.size());
++            lmdb::val val {};
++            bool found = cursor.get(key, val, MDB_SET);
++            if (found) {
++                bool isRaw = true;
++                if (val.size() > sizeof(qint64)) {
++                    LZ4Frame frame;
++                    frame.bytes = val.data();
++                    int orgSize = frame.qint32Ptr[0];
++                    int compressedSize = val.size() - sizeof(qint64);
++                    if (orgSize > 0 && frame.qint32Ptr[1] == compressedSize) {
++                        // size m_currentValue so decompression can go into the final destination directly
++                        m_currentValue.resize(orgSize);
++                        const auto decompSize = LZ4_decompress_safe(&frame.bytes[sizeof(qint64)],
++                            m_currentValue.data(), compressedSize, orgSize);
++                        if (decompSize == orgSize) {
++                            isRaw = false;
++                            m_currentLen = m_currentValue.size();
++                        } else {
++//                           qCDebug(LANGUAGE) << "Index" << m_currentIndex << "failed LZ4 decompression from size" << compressedSize << "to size" << orgSize;
++                        }
++                    }
++                }
++                if (isRaw) {
++//                     qCDebug(LANGUAGE) << "Index" << m_currentIndex << "is uncompressed, size=" << val.size();
++                    m_currentValue = QByteArray(val.data(), val.size());
++                    m_currentLen = m_currentValue.size();
++                }
++                m_readCursor = 0;
++            }
++            cursor.close();
++            rtxn.abort();
++        } catch (const lmdb::error &e) {
++            m_errorString = lmdbxx_exception_handler(e, QStringLiteral("reading index ") + QByteArray::number(m_currentIndex));
++            ret = false;
++        }
++    }
++    return ret;
++}
++
++bool TopDUContextLMDB::isValid()
++{
++    return LMDB.instance();
++}
++
++bool TopDUContextLMDB::currentKeyExists()
++{
++    return exists(m_currentKey);
++}
++
++bool TopDUContextLMDB::exists(const QByteArray &key)
++{
++    if (LMDB.instance()) {
++        try {
++            auto rtxn = lmdb::txn::begin(LMDB.handle(), nullptr, MDB_RDONLY);
++            auto dbi = lmdb::dbi::open(rtxn, nullptr);
++            auto cursor = lmdb::cursor::open(rtxn, dbi);
++            lmdb::val k(key.constData(), key.size());
++            bool ret = cursor.get(k, nullptr, MDB_SET);
++            cursor.close();
++            rtxn.abort();
++            return ret;
++        } catch (const lmdb::error &e) {
++            lmdbxx_exception_handler(e, QStringLiteral("checking for index") + key);
++        }
++    }
++    return false;
++}
++
++QString TopDUContextLMDB::fileName() const
++{
++    return TopDUContextDynamicData::basePath() + "data.mdb" + ":#" + QByteArray::number(m_currentIndex);
++}
++
++bool TopDUContextLMDB::exists(uint topContextIndex)
++{
++    return exists(indexKey(topContextIndex));
++}
++
++bool TopDUContextLMDB::remove(uint topContextIndex)
++{
++    if (LMDB.instance()) {
++        const auto key = indexKey(topContextIndex);
++        lmdb::val k {key.constData(), static_cast<size_t>(key.size())};
++        try {
++            auto txn = lmdb::txn::begin(LMDB.handle());
++            auto dbi = lmdb::dbi::open(txn, nullptr);
++            bool ret = lmdb::dbi_del(txn, dbi, k, nullptr);
++            txn.commit();
++            // also remove the file if it (still) exists
++            QFile::remove(TopDUContextDynamicData::pathForTopContext(topContextIndex));
++            return ret;
++        } catch (const lmdb::error &e) {
++            lmdbxx_exception_handler(e, QStringLiteral("removing index %1").arg(topContextIndex));
++        }
++    }
++    return false;
++}
++
++#endif // !KDEV_TOPCONTEXTS_USE_FILES
++
++// TopDUContextFile : thin wrapper around the QFile API needed for TopDUContexts
++// so TopDUContextLMDB can be used as a drop-in replacement instead of this class.
++TopDUContextFile::TopDUContextFile(uint topContextIndex)
++    : QFile(TopDUContextDynamicData::pathForTopContext(topContextIndex))
++{
++}
++
++bool TopDUContextFile::exists(uint topContextIndex)
++{
++    return QFile::exists(TopDUContextDynamicData::pathForTopContext(topContextIndex));
++}
++
++bool TopDUContextFile::remove(uint topContextIndex)
++{
++    return QFile::remove(TopDUContextDynamicData::pathForTopContext(topContextIndex));
++}
++
++void TopDUContextFile::commit()
++{
++    QFile::close();
++}
+diff --git a/kdevplatform/language/duchain/topducontextdynamicdata_p.h b/kdevplatform/language/duchain/topducontextdynamicdata_p.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..6ebccebba28f568334c8f292b51c2e970005d221
+--- /dev/null
++++ b/kdevplatform/language/duchain/topducontextdynamicdata_p.h
+@@ -0,0 +1,104 @@
++/* This is part of KDevelop
++   Copyright 2018 R.J.V. Bertin <rjvbertin@gmail.com>
++
++   This library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU Library General Public
++   License version 2 as published by the Free Software Foundation.
++
++   This library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++   Library General Public License for more details.
++
++   You should have received a copy of the GNU Library General Public License
++   along with this library; see the file COPYING.LIB.  If not, write to
++   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++   Boston, MA 02110-1301, USA.
++*/
++
++#ifndef KDEVPLATFORM_TOPDUCONTEXTDYNAMICDATA_P_H
++#define KDEVPLATFORM_TOPDUCONTEXTDYNAMICDATA_P_H
++
++#include <QByteArray>
++#include <QFile>
++
++#include <languageexport.h>
++
++namespace KDevelop {
++
++// #define KDEV_TOPCONTEXTS_USE_FILES
++
++// thin wrapper around QFile, implementing the default TopDUContext
++// storage mechanism but also used for migration purposes in the
++// database stores.
++class KDEVPLATFORMLANGUAGE_EXPORT TopDUContextFile : public QFile
++{
++public:
++    TopDUContextFile(uint topContextIndex);
++    void commit();
++    static bool exists(uint topContextIndex);
++    static bool remove(uint topContextIndex);
++};
++
++#if !defined(KDEV_TOPCONTEXTS_USE_FILES)
++class KDEVPLATFORMLANGUAGE_EXPORT TopDUContextDB
++{
++public:
++  virtual ~TopDUContextDB() {};
++  virtual bool open(QIODevice::OpenMode mode) = 0;
++  virtual void commit() = 0;
++  virtual bool flush() = 0;
++  bool resize(qint64);
++  qint64 write(const char* data, qint64 len);
++  qint64 read(char* data, qint64 maxSize);
++  QByteArray read(qint64 maxSize);
++  QByteArray readAll();
++  qint64 pos() const;
++  bool seek(qint64 pos);
++  qint64 size();
++  QString errorString() const;
++  QString fileName() const;
++  static bool exists(uint) { return false; };
++  static bool remove(uint) { return false; };
++
++protected:
++  bool open(QIODevice::OpenMode mode, const QString &backendName);
++  virtual bool getCurrentKeyValue() = 0;
++  virtual bool isValid() = 0;
++  virtual bool currentKeyExists() = 0;
++  static bool exists(const QByteArray&) { return false; };
++  static QByteArray indexKey(uint idx);
++  static QByteArray indexKey(uint* idx);
++  bool migrateFromFile();
++  QByteArray m_currentKey;
++  uint m_currentIndex;
++  QByteArray m_currentValue;
++  qint64 m_currentLen, m_readCursor;
++  int m_mode;
++  QString m_errorString;
++};
++
++class KDEVPLATFORMLANGUAGE_EXPORT TopDUContextLMDB : public TopDUContextDB
++{
++public:
++  typedef union { char *bytes; qint32 *qint32Ptr; } LZ4Frame;
++  TopDUContextLMDB(uint topContextIndex);
++  virtual ~TopDUContextLMDB();
++  bool open(QIODevice::OpenMode mode) override;
++  void commit() override;
++  bool flush() override;
++  QString fileName() const;
++  static bool exists(uint topContextIndex);
++  static bool remove(uint topContextIndex);
++
++protected:
++  virtual bool getCurrentKeyValue() override;
++  virtual bool isValid() override;
++  virtual bool currentKeyExists() override;
++  static bool exists(const QByteArray& key);
++  static uint s_DbRefCount;
++};
++#endif // !KDEV_TOPCONTEXTS_USE_FILES
++
++}
++#endif
