@@ -1,0 +1,124 @@
+diff --git kdevplatform/language/backgroundparser/backgroundparser.cpp kdevplatform/language/backgroundparser/backgroundparser.cpp
+index bbfa6d0c7e4aa69c0fb5068532b4338915e9cbdc..e438219f4f5499426c5cfa2bd4230c9f32294053 100644
+--- kdevplatform/language/backgroundparser/backgroundparser.cpp
++++ kdevplatform/language/backgroundparser/backgroundparser.cpp
+@@ -29,6 +29,7 @@
+ #include <QMutexLocker>
+ #include <QPointer>
+ #include <QTimer>
++#include <QElapsedTimer>
+ #include <QThread>
+ 
+ #include <KConfigGroup>
+@@ -56,6 +60,9 @@ using namespace KDevelop;
+ namespace {
+ const bool separateThreadForHighPriority = true;
+ 
++static qreal timingSum = 0;
++static qint64 timingCount = 0;
++
+ /**
+  * Elides string in @p path, e.g. "VEEERY/LONG/PATH" -> ".../LONG/PATH"
+  * - probably much faster than QFontMetrics::elidedText()
+@@ -196,6 +197,7 @@ public:
+         m_timer.setSingleShot(true);
+         m_progressTimer.setSingleShot(true);
+         m_progressTimer.setInterval(500);
++        m_totalTimer.invalidate();
+ 
+         ThreadWeaver::setDebugLevel(true, 1);
+ 
+@@ -427,7 +429,11 @@ public:
+         if (qEnvironmentVariableIsSet("KDEV_BACKGROUNDPARSER_MAXTHREADS")) {
+             m_parser->setThreadCount(qEnvironmentVariableIntValue("KDEV_BACKGROUNDPARSER_MAXTHREADS"));
+         } else {
+-            m_parser->setThreadCount(BACKWARDS_COMPATIBLE_ENTRY("Number of Threads", QThread::idealThreadCount()));
++            int defThreads = QThread::idealThreadCount();
++            if (defThreads >= 4) {
++                defThreads /= 2;
++            }
++            m_parser->setThreadCount(BACKWARDS_COMPATIBLE_ENTRY("Number of Threads", defThreads));
+         }
+ 
+         resume();
+@@ -510,6 +549,8 @@ public:
+     int m_progressMax = 0;
+     int m_progressDone = 0;
+     QTimer m_progressTimer;
++    QElapsedTimer m_totalTimer;
++    int m_totalJobs;
+ };
+ 
+ BackgroundParser::BackgroundParser(ILanguageController* languageController)
+@@ -546,6 +557,9 @@ void BackgroundParser::aboutToQuit()
+     Q_D(BackgroundParser);
+ 
+     d->m_shuttingDown = true;
++    if (timingCount) {
++        qCInfo(LANGUAGE) << "Average parsing time per file:" << timingSum / timingCount << "seconds";
++    }
+ }
+ 
+ BackgroundParser::~BackgroundParser()
+@@ -809,6 +823,10 @@ void BackgroundParser::updateProgressData()
+         if (!d->m_progressTimer.isActive()) {
+             d->m_progressTimer.start();
+         }
++        if (!d->m_totalTimer.isValid()) {
++            d->m_totalTimer.start();
++            d->m_totalJobs = d->m_maxParseJobs;
++        }
+     }
+ 
+     // Cancel progress updating and hide progress-bar when parsing is done.
+@@ -817,6 +835,17 @@ void BackgroundParser::updateProgressData()
+         if (d->m_progressTimer.isActive()) {
+             d->m_progressTimer.stop();
+         }
++        if (d->m_totalTimer.isValid()) {
++            qreal elapsed = d->m_totalTimer.elapsed() / 1000.0;
++            d->m_totalTimer.invalidate();
++            if (d->m_totalJobs > 0 && qEnvironmentVariableIsSet("KDEV_BACKGROUNDPARSER_TIMINGS") && elapsed > 0.5) {
++                if (d->m_totalJobs > 1) {
++                    qCInfo(LANGUAGE) << "Parsed" << d->m_totalJobs << "file(s) in" << elapsed << "seconds";
++                }
++                timingSum += elapsed / d->m_totalJobs;
++                timingCount += 1;
++            }
++        }
+         emit d->m_parser->hideProgress(d->m_parser);
+     }
+ }
+diff --git plugins/clang/duchain/parsesession.cpp plugins/clang/duchain/parsesession.cpp
+index e044d7968cee1793ec114b2af06e7231cad4b7d0..91c3b1188204b264d08f58c031d6c311b01e5310 100644
+--- plugins/clang/duchain/parsesession.cpp
++++ plugins/clang/duchain/parsesession.cpp
+@@ -36,6 +36,8 @@
+ #include <language/duchain/duchainlock.h>
+ #include <language/duchain/duchain.h>
+ #include <language/codegen/coderepresentation.h>
++#include <interfaces/icore.h>
++#include <interfaces/iprojectcontroller.h>
+ 
+ #include <KShell>
+ 
+@@ -220,14 +222,16 @@ ParseSessionData::ParseSessionData(const QVector<UnsavedFile>& unsavedFiles, Cla
+         flags |= CXTranslationUnit_ForSerialization;
+     } else {
+         flags |= CXTranslationUnit_CacheCompletionResults
+-#if CINDEX_VERSION_MINOR >= 32
+-              |  CXTranslationUnit_CreatePreambleOnFirstParse
+-#endif
+               |  CXTranslationUnit_PrecompiledPreamble;
+         if (environment.quality() == ClangParsingEnvironment::Unknown) {
+             flags |= CXTranslationUnit_Incomplete;
+         }
+     }
++    if (!ICore::self()->projectController()->parseAllProjectSources()) {
++#if CINDEX_VERSION_MINOR >= 32
++        flags |= CXTranslationUnit_CreatePreambleOnFirstParse;
++#endif
++    }
+ 
+     const auto tuUrl = environment.translationUnitUrl();
+     Q_ASSERT(!tuUrl.isEmpty());

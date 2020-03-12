@@ -1,0 +1,333 @@
+create and register a stub KJob in backgroundparser.cpp that calls BackgroundParser::abortAllJobs() when aborted
+and is created/deleted on the fly whenever there are new/no more parser jobs.
+
+diff --git a/kdevplatform/language/backgroundparser/backgroundparser.cpp b/kdevplatform/language/backgroundparser/backgroundparser.cpp
+index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..27a871785f741c97e7bcd4c4f27dcb30035e8d17 100644
+--- a/kdevplatform/language/backgroundparser/backgroundparser.cpp
++++ b/kdevplatform/language/backgroundparser/backgroundparser.cpp
+@@ -39,6 +40,8 @@
+ #include <ThreadWeaver/ThreadWeaver>
+ #include <ThreadWeaver/DebuggingAids>
+ 
++#include <KJob>
++
+ #include <interfaces/icore.h>
+ #include <interfaces/idocumentcontroller.h>
+ #include <interfaces/ilanguagecontroller.h>
+@@ -46,6 +49,7 @@
+ #include <interfaces/isession.h>
+ #include <interfaces/iproject.h>
+ #include <interfaces/iprojectcontroller.h>
++#include <interfaces/iruncontroller.h>
+ 
+ #include <debug.h>
+ 
+@@ -180,6 +187,26 @@ struct DocumentParsePlan
+ Q_DECLARE_TYPEINFO(DocumentParseTarget, Q_MOVABLE_TYPE);
+ Q_DECLARE_TYPEINFO(DocumentParsePlan, Q_MOVABLE_TYPE);
+ 
++class BGParserControllerProxy : public KJob
++{
++public:
++    BGParserControllerProxy(BackgroundParserPrivate *proxy);
++
++    ~BGParserControllerProxy();
++
++    void registerUrl(const IndexedString &url);
++    void unregisterUrl(const IndexedString &url);
++    bool isUrlRegistered(const IndexedString &url);
++
++    void start();
++    bool doKill();
++    void done();
++
++    BackgroundParserPrivate* m_proxied;
++    QSet<IndexedString> m_urls;
++    bool beingKilled = false;
++};
++
+ class KDevelop::BackgroundParserPrivate
+ {
+ public:
+@@ -210,6 +238,9 @@ public:
+     {
+         m_weaver.resume();
+         m_weaver.finish();
++        if (m_rcProxy) {
++            delete m_rcProxy;
++        }
+     }
+ 
+     // Non-mutex guarded functions, only call with m_mutex acquired.
+@@ -331,6 +362,9 @@ public:
+                 m_weaver.enqueue(ThreadWeaver::JobPointer(decorator));
+             } else {
+                 --m_maxParseJobs;
++                if (m_rcProxy) {
++                    m_rcProxy->unregisterUrl(url);
++                }
+             }
+ 
+             if (!m_documents.isEmpty()) {
+@@ -471,6 +509,7 @@ public:
+ 
+     BackgroundParser* m_parser;
+     ILanguageController* m_languageController;
++    BGParserControllerProxy* m_rcProxy = nullptr;
+ 
+     //Current parse-job that is executed in the additional thread
+     QPointer<QObject> specialParseJob;
+@@ -600,12 +644,12 @@ void BackgroundParser::revertAllRequests(QObject* notifyWhenReady)
+     }
+ }
+ 
+-void BackgroundParser::addDocument(const IndexedString& url, TopDUContext::Features features, int priority,
++void BackgroundParser::addControlledDocument(const IndexedString& url, TopDUContext::Features features, int priority,
+                                    QObject* notifyWhenReady, ParseJob::SequentialProcessingFlags flags, int delay)
+ {
+     Q_D(BackgroundParser);
+ 
+-    qCDebug(LANGUAGE) << "BackgroundParser::addDocument" << url << url.toUrl();
++    qCDebug(LANGUAGE) << "BackgroundParser::addControlledDocument" << url << url.toUrl();
+     Q_ASSERT(isValidURL(url));
+     QMutexLocker lock(&d->m_mutex);
+     {
+@@ -637,6 +681,18 @@ void BackgroundParser::addDocument(const IndexedString& url, TopDUContext::Featu
+     }
+ }
+ 
++void BackgroundParser::addDocument(const IndexedString& url, TopDUContext::Features features, int priority,
++                                   QObject* notifyWhenReady, ParseJob::SequentialProcessingFlags flags, int delay)
++{
++    Q_D(BackgroundParser);
++
++    if (!d->m_rcProxy) {
++        d->m_rcProxy = new BGParserControllerProxy(d);
++    }
++    d->m_rcProxy->registerUrl(url);
++    addControlledDocument(url, features, priority, notifyWhenReady, flags, delay);
++}
++
+ void BackgroundParser::removeDocument(const IndexedString& url, QObject* notifyWhenReady)
+ {
+     Q_D(BackgroundParser);
+@@ -665,6 +721,9 @@ void BackgroundParser::removeDocument(const IndexedString& url, QObject* notifyW
+             d->m_documentsForPriority[documentParsePlan.priority()].insert(url);
+         }
+     }
++    if (d->m_rcProxy) {
++        d->m_rcProxy->unregisterUrl(url);
++    }
+ }
+ 
+ void BackgroundParser::parseDocuments()
+@@ -693,11 +752,15 @@ void BackgroundParser::parseComplete(const ThreadWeaver::JobPointer& job)
+     {
+         QMutexLocker lock(&d->m_mutex);
+ 
+-        d->m_parseJobs.remove(parseJob->document());
++        const auto url = parseJob->document();
++        d->m_parseJobs.remove(url);
+ 
+         d->m_jobProgress.remove(parseJob);
+ 
+         ++d->m_doneParseJobs;
++        if (d->m_rcProxy) {
++            d->m_rcProxy->unregisterUrl(url);
++        }
+         updateProgressData();
+     }
+ 
+@@ -935,6 +1013,9 @@ void BackgroundParser::documentClosed(IDocument* document)
+         delete *urlIt;
+         d->m_managedTextDocumentUrls.erase(documentUrlIt);
+         d->m_managed.erase(urlIt);
++        if (d->m_rcProxy) {
++            d->m_rcProxy->unregisterUrl(url);
++        }
+     }
+ }
+ 
+@@ -1013,3 +1094,120 @@ void BackgroundParser::updateProgressBar()
+ 
+     emit showProgress(this, 0, d->m_progressMax, d->m_progressDone);
+ }
++
++BGParserControllerProxy::BGParserControllerProxy(BackgroundParserPrivate *proxy)
++    : KJob()
++    , m_proxied(proxy)
++{
++    setCapabilities(KJob::Killable);
++    setObjectName(QStringLiteral("Background parser jobs"));
++    ICore::self()->runController()->registerJob(this);
++}
++
++BGParserControllerProxy::~BGParserControllerProxy()
++{
++    if (m_proxied) {
++        done();
++    }
++}
++
++void BGParserControllerProxy::registerUrl(const IndexedString &url)
++{
++    if (!m_urls.contains(url)) {
++        m_urls.insert(url);
++        ICore::self()->runController()->unregisterJob(this);
++        if (m_urls.count() == 1 ) {
++            setObjectName(QStringLiteral("background parser job for") + m_urls.values().at(0).str());
++        } else {
++            setObjectName(QStringLiteral("%1 background parser jobs").arg(m_urls.count()));
++        }
++        ICore::self()->runController()->registerJob(this);
++    }
++}
++
++void BGParserControllerProxy::unregisterUrl(const IndexedString &url)
++{
++    if (m_urls.contains(url)) {
++        m_urls.remove(url);
++    }
++    if (m_urls.isEmpty()) {
++        done();
++        deleteLater();
++        qCDebug(LANGUAGE) << Q_FUNC_INFO << "last document processed, done";
++    } else {
++        ICore::self()->runController()->unregisterJob(this);
++        if (m_urls.count() == 1 ) {
++            setObjectName(QStringLiteral("background parser job for") + m_urls.values().at(0).str());
++        } else {
++            setObjectName(QStringLiteral("%1 background parser jobs").arg(m_urls.count()));
++        }
++        ICore::self()->runController()->registerJob(this);
++    }
++}
++
++bool BGParserControllerProxy::isUrlRegistered(const IndexedString &url)
++{
++    return m_urls.contains(url);
++}
++
++// we don't run anything ourselves
++void BGParserControllerProxy::start()
++{}
++
++bool BGParserControllerProxy::doKill()
++{
++    if (beingKilled) {
++        return false;
++    }
++    if (m_proxied) {
++        QMutexLocker lock(&m_proxied->m_mutex);
++        beingKilled = true;
++        bool needsResume;
++        if (!m_proxied->isSuspended()) {
++            QEventLoop loop;
++            connect(&m_proxied->m_weaver, &ThreadWeaver::Queue::suspended, &loop, &QEventLoop::quit, Qt::QueuedConnection);
++            m_proxied->suspend();
++            // wait for the weaver to be suspended so we don't cause race conditions
++            loop.exec();
++            needsResume = true;
++        } else {
++            needsResume = false;
++        }
++        for (const auto url : m_urls) {
++            auto decorator = m_proxied->m_parseJobs.value(url);
++            ParseJob *parseJob = decorator ? dynamic_cast<ParseJob*>(decorator->job()) : nullptr;
++            if (parseJob) {
++                m_proxied->m_parseJobs.remove(parseJob->document());
++                m_proxied->m_jobProgress.remove(parseJob);
++            }
++            if (decorator) {
++                m_proxied->m_weaver.dequeue(ThreadWeaver::JobPointer(decorator));
++            }
++            m_proxied->m_maxParseJobs -= 1;
++            const auto parsePlanIt = m_proxied->m_documents.find(url);
++            if (parsePlanIt != m_proxied->m_documents.end()) {
++                // Remove all mentions of this document.
++                for (const auto& target : qAsConst(parsePlanIt->targets)) {
++                    m_proxied->m_documentsForPriority[target.priority].remove(url);
++                }
++                m_proxied->m_documents.erase(parsePlanIt);
++            }
++        }
++        m_proxied->m_parser->updateProgressData();
++        m_urls.clear();
++        if (needsResume) {
++            m_proxied->resume();
++        }
++        done();
++    }
++    return true;
++}
++
++void BGParserControllerProxy::done()
++{
++    if (m_proxied) {
++        ICore::self()->runController()->unregisterJob(this);
++        m_proxied->m_rcProxy = nullptr;
++        m_proxied = nullptr;
++    }
++}
+diff --git kdevplatform/language/backgroundparser/backgroundparser.h kdevplatform/language/backgroundparser/backgroundparser.h
+index dd6877598942a1d07cdc9bd88ff61f0d8e82ba95..97ce07b1ae8d8e01efb11fdf7e7f6811cfc405c7 100644
+--- kdevplatform/language/backgroundparser/backgroundparser.h
++++ kdevplatform/language/backgroundparser/backgroundparser.h
+@@ -160,7 +160,8 @@ public Q_SLOTS:
+     void revertAllRequests(QObject* notifyWhenReady);
+ 
+     /**
+-     * Queues up the @p url to be parsed.
++     * Queues up the @p url to be parsed, assuming that the job will be under control of
++     * an existing JobController entry.
+      * @p features The minimum features that should be computed for this top-context
+      * @p priority A value that manages the order of parsing. Documents with lowest priority are parsed first.
+      * @param notifyWhenReady An optional pointer to a QObject that should contain a slot
+@@ -171,6 +172,16 @@ public Q_SLOTS:
+      * @param delay_ms The delay in milliseconds to add the job with, or one of the values of the
+      *                 ILanguageSupport::ReparseDelaySpecialValues enum.
+      */
++    void addControlledDocument(const IndexedString& url,
++                     TopDUContext::Features features = TopDUContext::VisibleDeclarationsAndContexts,
++                     int priority = 0,
++                     QObject* notifyWhenReady = nullptr,
++                     ParseJob::SequentialProcessingFlags flags = ParseJob::IgnoresSequentialProcessing,
++                     int delay_ms = ILanguageSupport::DefaultDelay);
++    /**
++     * Like @f addControlledDocument() but exposes the background parser job to a generic JobController entry.
++     * @sa BackgroundParser::addControlledDocument .
++     */
+     void addDocument(const IndexedString& url,
+                      TopDUContext::Features features = TopDUContext::VisibleDeclarationsAndContexts,
+                      int priority = 0,
+diff --git kdevplatform/language/backgroundparser/parseprojectjob.cpp kdevplatform/language/backgroundparser/parseprojectjob.cpp
+index ea9df7a031abfb18c0abc3ce4fe3dcaf8df0741b..c065a1b4b07aae7dd0e25f89c7ce9a2fbeddada0 100644
+--- kdevplatform/language/backgroundparser/parseprojectjob.cpp
++++ kdevplatform/language/backgroundparser/parseprojectjob.cpp
+@@ -150,7 +150,7 @@ void ParseProjectJob::start()
+         const auto path = IndexedString(currentDocument->url());
+         auto fileIt = d->filesToParse.find(path);
+         if (fileIt != d->filesToParse.end()) {
+-            ICore::self()->languageController()->backgroundParser()->addDocument(path,
++            ICore::self()->languageController()->backgroundParser()->addControlledDocument(path,
+                                                                                  TopDUContext::AllDeclarationsContextsAndUses, BackgroundParser::BestPriority,
+                                                                                  this);
+             d->filesToParse.erase(fileIt);
+@@ -163,7 +163,7 @@ void ParseProjectJob::start()
+         const auto path = IndexedString(document->url());
+         auto fileIt = d->filesToParse.find(path);
+         if (fileIt != d->filesToParse.end()) {
+-            ICore::self()->languageController()->backgroundParser()->addDocument(path,
++            ICore::self()->languageController()->backgroundParser()->addControlledDocument(path,
+                                                                                  TopDUContext::AllDeclarationsContextsAndUses, 10,
+                                                                                  this);
+             d->filesToParse.erase(fileIt);
+@@ -181,7 +181,7 @@ void ParseProjectJob::start()
+     // guard against reentrancy issues, see also bug 345480
+     auto crashGuard = QPointer<ParseProjectJob> {this};
+     for (const IndexedString& url : qAsConst(d->filesToParse)) {
+-        ICore::self()->languageController()->backgroundParser()->addDocument(url, processingLevel,
++        ICore::self()->languageController()->backgroundParser()->addControlledDocument(url, processingLevel,
+                                                                              BackgroundParser::InitialParsePriority,
+                                                                              this);
+         ++processed;
