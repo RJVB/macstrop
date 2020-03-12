@@ -1,3 +1,126 @@
+
+From 4ec4c053af675d21be73f8c4fe15cfa3c85fadbd Mon Sep 17 00:00:00 2001
+From: Milian Wolff <mail@milianw.de>
+Date: Mon, 9 Mar 2020 11:46:58 +0100
+Subject: [PATCH] Only cache PCH and completion results for files opened in
+ editor
+
+When opening large a project, we do not want to cache the PCH for
+all its files. This is only required for currently opened files,
+to speed up querying of code completion results.
+
+For any other files, creating the PCH would just slow down the
+parse process needlessly and also wastes memory when we keep the
+PCH in memory through the temp files in /tmp. Note how we only
+clean the DUChain when the parse job queue is idle. This also means
+we don't detach the AST nodes and thus only discard the attached TUs
+once the overall project parse job has finished.
+===
+ plugins/clang/clangparsejob.cpp        | 6 +++++-
+ plugins/clang/clangparsejob.h          | 3 ++-
+ plugins/clang/duchain/parsesession.cpp | 8 ++++----
+ plugins/clang/duchain/parsesession.h   | 7 ++++---
+ 4 files changed, 15 insertions(+), 9 deletions(-)
+===
+diff --git plugins/clang/clangparsejob.cpp plugins/clang/clangparsejob.cpp
+index 5abadc833d..f946644c87 100644
+--- plugins/clang/clangparsejob.cpp
++++ plugins/clang/clangparsejob.cpp
+@@ -164,6 +164,7 @@ DocumentChangeTracker* trackerForUrl(const IndexedString& url)
+ 
+ ClangParseJob::ClangParseJob(const IndexedString& url, ILanguageSupport* languageSupport)
+     : ParseJob(url, languageSupport)
++    , m_options(ParseSessionData::NoOption)
+ {
+     const auto tuUrl = clang()->index()->translationUnitForUrl(url);
+     bool hasBuildSystemInfo;
+@@ -214,6 +215,9 @@ ClangParseJob::ClangParseJob(const IndexedString& url, ILanguageSupport* languag
+ 
+     if (auto tracker = trackerForUrl(url)) {
+         tracker->reset();
++        m_options |= ParseSessionData::OpenedInEditor;
++    } else if (tuUrl != url && trackerForUrl(tuUrl)) {
++        m_options |= ParseSessionData::OpenedInEditor;
+     }
+ }
+ 
+@@ -383,7 +387,7 @@ void ClangParseJob::run(ThreadWeaver::JobPointer /*self*/, ThreadWeaver::Thread*
+ 
+ ParseSessionData::Ptr ClangParseJob::createSessionData() const
+ {
+-    return ParseSessionData::Ptr(new ParseSessionData(m_unsavedFiles, clang()->index(), m_environment, ParseSessionData::NoOption));
++    return ParseSessionData::Ptr(new ParseSessionData(m_unsavedFiles, clang()->index(), m_environment, m_options));
+ }
+ 
+ const ParsingEnvironment* ClangParseJob::environment() const
+diff --git plugins/clang/clangparsejob.h plugins/clang/clangparsejob.h
+index 971b8944dc..5a185938fd 100644
+--- plugins/clang/clangparsejob.h
++++ plugins/clang/clangparsejob.h
+@@ -28,9 +28,9 @@
+ #include <language/backgroundparser/parsejob.h>
+ #include "duchain/clangparsingenvironment.h"
+ #include "duchain/unsavedfile.h"
++#include "duchain/parsesession.h"
+ 
+ class ClangSupport;
+-class ParseSessionData;
+ 
+ class ClangParseJob : public KDevelop::ParseJob
+ {
+@@ -57,6 +57,7 @@ private:
+ 
+     ClangParsingEnvironment m_environment;
+     QVector<UnsavedFile> m_unsavedFiles;
++    ParseSessionData::Options m_options;
+     bool m_tuDocumentIsUnsaved = false;
+     QHash<KDevelop::IndexedString, KDevelop::ModificationRevision> m_unsavedRevisions;
+ };
+diff --git plugins/clang/duchain/parsesession.cpp plugins/clang/duchain/parsesession.cpp
+index b55e7ba7e6..27ddd1e7f6 100644
+--- plugins/clang/duchain/parsesession.cpp
++++ plugins/clang/duchain/parsesession.cpp
+@@ -218,15 +218,15 @@ ParseSessionData::ParseSessionData(const QVector<UnsavedFile>& unsavedFiles, Cla
+     }
+     if (options.testFlag(PrecompiledHeader)) {
+         flags |= CXTranslationUnit_ForSerialization;
+-    } else {
++    } else if (environment.quality() == ClangParsingEnvironment::Unknown) {
++        flags |= CXTranslationUnit_Incomplete;
++    }
++    if (options.testFlag(OpenedInEditor)) {
+         flags |= CXTranslationUnit_CacheCompletionResults
+ #if CINDEX_VERSION_MINOR >= 32
+               |  CXTranslationUnit_CreatePreambleOnFirstParse
+ #endif
+               |  CXTranslationUnit_PrecompiledPreamble;
+-        if (environment.quality() == ClangParsingEnvironment::Unknown) {
+-            flags |= CXTranslationUnit_Incomplete;
+-        }
+     }
+ 
+     const auto tuUrl = environment.translationUnitUrl();
+diff --git plugins/clang/duchain/parsesession.h plugins/clang/duchain/parsesession.h
+index 99dfcaa4aa..a1db5916fe 100644
+--- plugins/clang/duchain/parsesession.h
++++ plugins/clang/duchain/parsesession.h
+@@ -48,9 +48,10 @@ public:
+     using Ptr = QExplicitlySharedDataPointer<ParseSessionData>;
+ 
+     enum Option {
+-        NoOption,                     ///< No special options
+-        SkipFunctionBodies,           ///< Pass CXTranslationUnit_SkipFunctionBodies (likely unwanted)
+-        PrecompiledHeader             ///< Pass CXTranslationUnit_PrecompiledPreamble and others to cache precompiled headers
++        NoOption = 0,                     ///< No special options
++        SkipFunctionBodies = 1 << 0,      ///< Pass CXTranslationUnit_SkipFunctionBodies (likely unwanted)
++        PrecompiledHeader = 1 << 1,       ///< Pass CXTranslationUnit_PrecompiledPreamble and others to cache precompiled headers
++        OpenedInEditor = 1 << 2,          ///< File is currently opened in the editor
+     };
+     Q_DECLARE_FLAGS(Options, Option)
+ 
+-- 
+2.24.1
+
 diff --git kdevplatform/language/backgroundparser/backgroundparser.cpp kdevplatform/language/backgroundparser/backgroundparser.cpp
 index bbfa6d0c7e4aa69c0fb5068532b4338915e9cbdc..e438219f4f5499426c5cfa2bd4230c9f32294053 100644
 --- kdevplatform/language/backgroundparser/backgroundparser.cpp
@@ -89,36 +212,3 @@ index bbfa6d0c7e4aa69c0fb5068532b4338915e9cbdc..e438219f4f5499426c5cfa2bd4230c9f
          emit d->m_parser->hideProgress(d->m_parser);
      }
  }
-diff --git plugins/clang/duchain/parsesession.cpp plugins/clang/duchain/parsesession.cpp
-index e044d7968cee1793ec114b2af06e7231cad4b7d0..91c3b1188204b264d08f58c031d6c311b01e5310 100644
---- plugins/clang/duchain/parsesession.cpp
-+++ plugins/clang/duchain/parsesession.cpp
-@@ -36,6 +36,8 @@
- #include <language/duchain/duchainlock.h>
- #include <language/duchain/duchain.h>
- #include <language/codegen/coderepresentation.h>
-+#include <interfaces/icore.h>
-+#include <interfaces/iprojectcontroller.h>
- 
- #include <KShell>
- 
-@@ -220,14 +222,16 @@ ParseSessionData::ParseSessionData(const QVector<UnsavedFile>& unsavedFiles, Cla
-         flags |= CXTranslationUnit_ForSerialization;
-     } else {
-         flags |= CXTranslationUnit_CacheCompletionResults
--#if CINDEX_VERSION_MINOR >= 32
--              |  CXTranslationUnit_CreatePreambleOnFirstParse
--#endif
-               |  CXTranslationUnit_PrecompiledPreamble;
-         if (environment.quality() == ClangParsingEnvironment::Unknown) {
-             flags |= CXTranslationUnit_Incomplete;
-         }
-     }
-+    if (!ICore::self()->projectController()->parseAllProjectSources()) {
-+#if CINDEX_VERSION_MINOR >= 32
-+        flags |= CXTranslationUnit_CreatePreambleOnFirstParse;
-+#endif
-+    }
- 
-     const auto tuUrl = environment.translationUnitUrl();
-     Q_ASSERT(!tuUrl.isEmpty());
