@@ -993,7 +993,7 @@ if {!${private_building_qt5}} {
             if { ${qt5.name} ne "qt5" } {
                 ui_warn "Qt dependency is not the latest version but may be the latest supported on your OS"
             }
-            if { ${os.major} < 11 } {
+            if { ${os.platform} eq "darwin" && ${os.major} < 11 } {
                 ui_warn "Qt dependency is not supported on this platform and may not build"
             }
         }
