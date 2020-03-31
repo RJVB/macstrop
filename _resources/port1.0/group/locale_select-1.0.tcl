@@ -48,6 +48,9 @@ default langselect_html_dir     {}
 # optional directory (list) holding <lang> directories
 options langselect_dirs_dir
 default langselect_dirs_dir     {}
+# optional directory (list) holding *.lproj directories
+options langselect_lproj_dir
+default langselect_lproj_dir     {}
 
 if {[variant_isset langselect]} {
     post-destroot {
@@ -111,6 +114,18 @@ if {[variant_isset langselect]} {
             if {[file exists [join ${langselect_dirs_dir}]]} {
                 set ldirdir [join ${langselect_dirs_dir}]
                 foreach l [glob -nocomplain -types d ${ldirdir}/*] {
+                    set lang [file rootname [file tail ${l}]]
+                    if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
+                        ui_info "rm ${l}"
+                        file delete -force ${l}
+                    } else {
+                        ui_debug "won't delete ${l} (${lang})"
+                    }
+                }
+            }
+            if {[file exists [join ${langselect_lproj_dir}]]} {
+                set ldirdir [join ${langselect_lproj_dir}]
+                foreach l [glob -nocomplain -types d ${ldirdir}/*.lproj] {
                     set lang [file rootname [file tail ${l}]]
                     if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
                         ui_info "rm ${l}"
