@@ -179,13 +179,13 @@ proc cmake::build_dir {} {
 option_proc cmake.generator cmake::handle_generator
 proc cmake::handle_generator {option action args} {
     global cmake.generator destroot destroot.target build.cmd build.post_args
-    global depends_build destroot.post_args build.jobs subport
+    global depends_build destroot.post_args build.jobs subport prefix
     if {${action} eq "set"} {
         switch -glob [lindex ${args} 0] {
             "*Unix Makefiles*" {
                 ui_debug "Selecting the 'Unix Makefiles' generator ($args)"
                 depends_build-delete \
-                                port:ninja
+                                path:bin/ninja:ninja
                 depends_skip_archcheck-delete \
                                 ninja
                 build.cmd       make
@@ -207,14 +207,21 @@ proc cmake::handle_generator {option action args} {
             "*Ninja" {
                 ui_debug "Selecting the Ninja generator ($args)"
                 depends_build-append \
-                                port:ninja
+                                path:bin/ninja:ninja
                 depends_skip_archcheck-append \
                                 ninja
                 build.cmd       ninja
-                # force Ninja not to exceed the probably-expected CPU load by too much;
-                # for larger projects one can reach as much as build.jobs*2 CPU load otherwise.
-                # inspired by the old guideline as many compile jobs as you have CPUs, plus 1.
-                build.post_args -l[expr ${build.jobs} + 1] -v
+                if {[file exists ${prefix}/bin/samu]} {
+                    # ninja is provided by port:samu, which doesn't support `-l`
+                    # nor options given after specifying the build target
+                    build.pre_args-prepend -v
+                    build.post_args
+                } else {
+                    # force Ninja not to exceed the probably-expected CPU load by too much;
+                    # for larger projects one can reach as much as build.jobs*2 CPU load otherwise.
+                    # inspired by the old guideline as many compile jobs as you have CPUs, plus 1.
+                    build.post_args -l[expr ${build.jobs} + 1] -v
+                }
                 destroot.target install
                 # ninja needs the DESTDIR argument in the environment
                 destroot.destdir
