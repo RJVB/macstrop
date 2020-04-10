@@ -22,7 +22,7 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
  
  #include <debug.h>
  
-@@ -180,6 +187,42 @@ struct DocumentParsePlan
+@@ -180,6 +187,44 @@ struct DocumentParsePlan
  Q_DECLARE_TYPEINFO(DocumentParseTarget, Q_MOVABLE_TYPE);
  Q_DECLARE_TYPEINFO(DocumentParsePlan, Q_MOVABLE_TYPE);
  
@@ -37,15 +37,17 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
 +    /*
 +     * has the @p url been registered by this proxy controller?
 +     */
-+    bool isUrlRegistered(const KDevelop::IndexedString &url);
++    bool isUrlRegistered(const QUrl &url);
++    void registerProxy();
 +
 +    void start();
 +    bool doKill();
 +    void done();
 +
 +    BackgroundParserPrivate* m_proxied;
-+    QSet<KDevelop::IndexedString> m_urls;
++    QSet<QUrl> m_urls;
 +    bool beingKilled = false;
++    bool isRegistered = false;
 +
 +public Q_SLOTS:
 +    /*
@@ -55,17 +57,17 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
 +     * the registering with the the RunController is done in the
 +     * appropriate thread.
 +     */
-+    void registerUrl(const KDevelop::IndexedString &url);
++    void registerUrl(const QUrl &url);
 +    /**
 +     * Unregister @p url from this proxy controller.
 +     */
-+    void unregisterUrl(const KDevelop::IndexedString &url);
++    void unregisterUrl(const QUrl &url);
 +};
 +
  class KDevelop::BackgroundParserPrivate
  {
  public:
-@@ -210,6 +254,9 @@ public:
+@@ -210,6 +256,9 @@ public:
      {
          m_weaver.resume();
          m_weaver.finish();
@@ -75,18 +77,26 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
      }
  
      // Non-mutex guarded functions, only call with m_mutex acquired.
-@@ -331,6 +378,10 @@ public:
+@@ -328,9 +377,18 @@ public:
+                     specialParseJob = decorator; //This parse-job is allocated into the reserved thread
+ 
+                 m_parseJobs.insert(url, decorator);
++                if (m_bgControlledJobProxy) {
++                    // register the proxy with the ProcessController only just before
++                    // we actually start to parse a document.
++                    m_bgControlledJobProxy->registerProxy();
++                }
                  m_weaver.enqueue(ThreadWeaver::JobPointer(decorator));
              } else {
                  --m_maxParseJobs;
 +                if (m_bgControlledJobProxy) {
 +                    QMetaObject::invokeMethod(m_bgControlledJobProxy, "unregisterUrl",
-+                                              Qt::QueuedConnection, Q_ARG(const KDevelop::IndexedString, url));
++                                              Qt::QueuedConnection, Q_ARG(const QUrl, url.toUrl()));
 +                }
              }
  
              if (!m_documents.isEmpty()) {
-@@ -471,6 +526,8 @@ public:
+@@ -471,6 +533,8 @@ public:
  
      BackgroundParser* m_parser;
      ILanguageController* m_languageController;
@@ -95,7 +105,7 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
  
      //Current parse-job that is executed in the additional thread
      QPointer<QObject> specialParseJob;
-@@ -600,12 +662,12 @@ void BackgroundParser::revertAllRequests(QObject* notifyWhenReady)
+@@ -600,12 +669,12 @@ void BackgroundParser::revertAllRequests(QObject* notifyWhenReady)
      }
  }
  
@@ -110,7 +120,7 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
      Q_ASSERT(isValidURL(url));
      QMutexLocker lock(&d->m_mutex);
      {
-@@ -629,6 +691,10 @@ void BackgroundParser::addDocument(const IndexedString& url, TopDUContext::Featu
+@@ -629,6 +698,10 @@ void BackgroundParser::addDocument(const IndexedString& url, TopDUContext::Featu
              d->m_documentsForPriority[d->m_documents[url].priority()].insert(url);
              ++d->m_maxParseJobs; //So the progress-bar waits for this document
          }
@@ -121,7 +131,7 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
  
          if (delay == ILanguageSupport::DefaultDelay) {
              delay = d->m_delay;
-@@ -637,6 +703,32 @@ void BackgroundParser::addDocument(const IndexedString& url, TopDUContext::Featu
+@@ -637,6 +710,32 @@ void BackgroundParser::addDocument(const IndexedString& url, TopDUContext::Featu
      }
  }
  
@@ -147,25 +157,25 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
 +        d->m_bgControlledJobProxy = new BGParserControllerProxy(d);
 +    }
 +    QMetaObject::invokeMethod(d->m_bgControlledJobProxy, "registerUrl",
-+                              Qt::QueuedConnection, Q_ARG(const KDevelop::IndexedString, url));
++                              Qt::QueuedConnection, Q_ARG(const QUrl, url.toUrl()));
 +    addControlledDocument(url, d->m_bgControlledJobProxy, features, priority, notifyWhenReady, flags, delay);
 +}
 +
  void BackgroundParser::removeDocument(const IndexedString& url, QObject* notifyWhenReady)
  {
      Q_D(BackgroundParser);
-@@ -665,6 +757,10 @@ void BackgroundParser::removeDocument(const IndexedString& url, QObject* notifyW
+@@ -665,6 +764,10 @@ void BackgroundParser::removeDocument(const IndexedString& url, QObject* notifyW
              d->m_documentsForPriority[documentParsePlan.priority()].insert(url);
          }
      }
 +    if (d->m_bgControlledJobProxy) {
 +        QMetaObject::invokeMethod(d->m_bgControlledJobProxy, "unregisterUrl",
-+                                  Qt::QueuedConnection, Q_ARG(const KDevelop::IndexedString, url));
++                                  Qt::QueuedConnection, Q_ARG(const QUrl, url.toUrl()));
 +    }
  }
  
  void BackgroundParser::parseDocuments()
-@@ -693,11 +789,16 @@ void BackgroundParser::parseComplete(const ThreadWeaver::JobPointer& job)
+@@ -693,11 +796,16 @@ void BackgroundParser::parseComplete(const ThreadWeaver::JobPointer& job)
      {
          QMutexLocker lock(&d->m_mutex);
  
@@ -178,23 +188,12 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
          ++d->m_doneParseJobs;
 +        if (d->m_bgControlledJobProxy) {
 +            QMetaObject::invokeMethod(d->m_bgControlledJobProxy, "unregisterUrl",
-+                                      Qt::QueuedConnection, Q_ARG(const KDevelop::IndexedString, url));
++                                      Qt::QueuedConnection, Q_ARG(const QUrl, url.toUrl()));
 +        }
          updateProgressData();
      }
  
-@@ -807,6 +908,10 @@ void BackgroundParser::updateProgressData()
-         if (!d->m_progressTimer.isActive()) {
-             d->m_progressTimer.start();
-         }
-+        if (!d->m_totalTimer.isValid()) {
-+            d->m_totalTimer.start();
-+            d->m_totalJobs = d->m_maxParseJobs;
-+        }
-     }
- 
-     // Cancel progress updating and hide progress-bar when parsing is done.
-@@ -815,6 +920,17 @@ void BackgroundParser::updateProgressData()
+@@ -815,6 +931,28 @@ void BackgroundParser::updateProgressData()
          if (d->m_progressTimer.isActive()) {
              d->m_progressTimer.stop();
          }
@@ -209,16 +208,34 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
 +                timingCount += 1;
 +            }
 +        }
++        if (d->m_totalTimer.isValid()) {
++            qreal elapsed = d->m_totalTimer.elapsed() / 1000.0;
++            d->m_totalTimer.invalidate();
++            if (d->m_totalJobs > 0 && qEnvironmentVariableIsSet("KDEV_BACKGROUNDPARSER_TIMINGS") && elapsed > 0.5) {
++                if (d->m_totalJobs > 1) {
++                    qCInfo(LANGUAGE) << "Parsed" << d->m_totalJobs << "file(s) in" << elapsed << "seconds";
++                }
++                timingSum += elapsed / d->m_totalJobs;
++                timingCount += 1;
++            }
++        }
          emit d->m_parser->hideProgress(d->m_parser);
      }
  }
-@@ -935,6 +1051,13 @@ void BackgroundParser::documentClosed(IDocument* document)
+@@ -935,6 +1073,20 @@ void BackgroundParser::documentClosed(IDocument* document)
          delete *urlIt;
          d->m_managedTextDocumentUrls.erase(documentUrlIt);
          d->m_managed.erase(urlIt);
 +        if (d->m_bgControlledJobProxy) {
++            // this is why we store QUrl versions in the job proxy: documentClosed() can (and will)
++            // be called during shutdown, and in that case calling unregisterUrl() over a queued
++            // connection will mean that the calls are really queued and executed at some later
++            // point, clearly after aboutToQuit was emitted; judging from the trace output printing
++            // the url in unregisterUrl() it was receiving stale references.
++            // IndexedString::toUrl() is expensive, but that is because it makes a copy of the string, 
++            // thus preventing the stale reference issue.
 +            QMetaObject::invokeMethod(d->m_bgControlledJobProxy, "unregisterUrl",
-+                                      Qt::QueuedConnection, Q_ARG(const KDevelop::IndexedString, url));
++                                      Qt::QueuedConnection, Q_ARG(const QUrl, url.toUrl()));
 +        }
 +        if (d->m_controllerJobs.contains(url)) {
 +            d->m_controllerJobs.remove(url);
@@ -226,7 +243,7 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
      }
  }
  
-@@ -1013,3 +1136,132 @@ void BackgroundParser::updateProgressBar()
+@@ -1013,3 +1165,151 @@ void BackgroundParser::updateProgressBar()
  
      emit showProgress(this, 0, d->m_progressMax, d->m_progressDone);
  }
@@ -246,21 +263,25 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
 +    }
 +}
 +
-+void BGParserControllerProxy::registerUrl(const IndexedString &url)
++void BGParserControllerProxy::registerUrl(const QUrl &url)
 +{
 +    if (!m_urls.contains(url)) {
 +        m_urls.insert(url);
-+        ICore::self()->runController()->unregisterJob(this);
++        if (isRegistered) {
++            ICore::self()->runController()->unregisterJob(this);
++        }
 +        if (m_urls.count() == 1 ) {
-+            setObjectName(QStringLiteral("background parser job for") + m_urls.values().at(0).str());
++            setObjectName(QStringLiteral("background parser job for ") + m_urls.values().at(0).toLocalFile());
 +        } else {
 +            setObjectName(QStringLiteral("%1 background parser jobs").arg(m_urls.count()));
 +        }
-+        ICore::self()->runController()->registerJob(this);
++        if (isRegistered) {
++            ICore::self()->runController()->registerJob(this);
++        }
 +    }
 +}
 +
-+void BGParserControllerProxy::unregisterUrl(const IndexedString &url)
++void BGParserControllerProxy::unregisterUrl(const QUrl &url)
 +{
 +    if (m_urls.contains(url)) {
 +        m_urls.remove(url);
@@ -270,19 +291,31 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
 +        deleteLater();
 +        qCDebug(LANGUAGE) << Q_FUNC_INFO << "last document processed, done";
 +    } else {
-+        ICore::self()->runController()->unregisterJob(this);
++        if (isRegistered) {
++            ICore::self()->runController()->unregisterJob(this);
++        }
 +        if (m_urls.count() == 1 ) {
-+            setObjectName(QStringLiteral("background parser job for") + m_urls.values().at(0).str());
++            setObjectName(QStringLiteral("background parser job for ") + m_urls.values().at(0).toLocalFile());
 +        } else {
 +            setObjectName(QStringLiteral("%1 background parser jobs").arg(m_urls.count()));
 +        }
-+        ICore::self()->runController()->registerJob(this);
++        if (isRegistered) {
++            ICore::self()->runController()->registerJob(this);
++        }
 +    }
 +}
 +
-+bool BGParserControllerProxy::isUrlRegistered(const IndexedString &url)
++bool BGParserControllerProxy::isUrlRegistered(const QUrl &url)
 +{
 +    return m_urls.contains(url);
++}
++
++void BGParserControllerProxy::registerProxy()
++{
++    if (!isRegistered) {
++        ICore::self()->runController()->registerJob(this);
++        isRegistered = true;
++    }    
 +}
 +
 +// we don't run anything ourselves
@@ -307,7 +340,8 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
 +                needsResume = true;
 +            }
 +            QMutexLocker lock(&m_proxied->m_mutex);
-+            for (const auto url : m_urls) {
++            for (const auto qurl : m_urls) {
++                const auto url = KDevelop::IndexedString(qurl);
 +                auto decorator = m_proxied->m_parseJobs.value(url);
 +                ParseJob *parseJob = decorator ? dynamic_cast<ParseJob*>(decorator->job()) : nullptr;
 +                if (parseJob) {
@@ -353,8 +387,10 @@ index 957c8ebc151c9f8d45b5470dafa6f8c180a19ea4..c6fd97d3021db66395b908f422198c7a
 +{
 +    if (m_proxied) {
 +        ICore::self()->runController()->unregisterJob(this);
++        isRegistered = false;
 +        m_proxied->m_bgControlledJobProxy = nullptr;
 +        m_proxied = nullptr;
++        m_urls.clear();
 +    }
 +}
 +
