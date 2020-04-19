@@ -137,12 +137,14 @@ if {[variant_isset LTO] && ![info exists building_qt5]} {
 if {[string match *clang* ${configure.compiler}]} {
     if {${os.platform} ne "darwin" || [string match macports-clang* ${configure.compiler}]} {
         # only MacPorts provides llvm-ar and family on Mac
-        default configure.ar "[string map {"clang" "llvm-ar"} ${configure.cc}]"
-        default configure.nm "[string map {"clang" "llvm-nm"} ${configure.cc}]"
-#         default configure.ranlib "[string map {"clang" "llvm-ranlib"} ${configure.cc}]"
-        # ranlib is done by llvm-ar
-        default configure.ranlib "/bin/echo"
-        set LTO.custom_binaries 1
+        if {![variant_isset universal] || [info exists universal_archs_supported]} {
+            default configure.ar "[string map {"clang" "llvm-ar"} ${configure.cc}]"
+            default configure.nm "[string map {"clang" "llvm-nm"} ${configure.cc}]"
+#             default configure.ranlib "[string map {"clang" "llvm-ranlib"} ${configure.cc}]"
+            # ranlib is done by llvm-ar
+            default configure.ranlib "/bin/echo"
+            set LTO.custom_binaries 1
+        }
     }
 } elseif {${os.platform} eq "linux"} {
     if {${configure.compiler} eq "cc"} {

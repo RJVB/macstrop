@@ -389,12 +389,15 @@ pre-configure {
     # undo a counterproductive action from the debug PG:
     configure.args-delete -DCMAKE_BUILD_TYPE=debugFull
     # set matching CMAKE_AR and CMAKE_RANLIB when using a macports-clang compiler
-    # (and they're not set explicitly by the port)
+    # (and they're not set explicitly by the port). The feature is disabled when
+    # building +universal, except if that is done through the muniversal PortGroup
+    # (something that can be detected only is it's included before us).
     # NB NB NB!
     # FIXME!
     # These should be set to absolute, full paths. We ought to check for that.
     # NB NB NB!
     if {[info exists configure.ar] && [info exists configure.nm] && [info exists configure.ranlib]} {
+        # we do support the explicit ar/nm/ranlib selections regardless of universal building
         if {[option LTO.use_archive_helpers]} {
             if {[string first "DCMAKE_AR=" ${configure.args}] eq -1} {
                 configure.args-append \
@@ -409,31 +412,33 @@ pre-configure {
                                 -DCMAKE_RANLIB="${configure.ranlib}"
             }
         }
-    } elseif {[string match *clang++-mp* ${configure.cxx}]} {
-        if {[string first "DCMAKE_AR=" ${configure.args}] eq -1} {
-            configure.args-append \
-                                -DCMAKE_AR=[string map {"clang++" "llvm-ar"} ${configure.cxx}]
-        }
-        if {[string first "DCMAKE_NM=" ${configure.args}] eq -1} {
-            configure.args-append \
-                                -DCMAKE_NM=[string map {"clang++" "llvm-nm"} ${configure.cxx}]
-        }
-        if {[string first "DCMAKE_RANLIB=" ${configure.args}] eq -1} {
-            configure.args-append \
-                                -DCMAKE_RANLIB=[string map {"clang++" "llvm-ranlib"} ${configure.cxx}]
-        }
-    } elseif {[string match *clang-mp* ${configure.cc}]} {
-        if {[string first "DCMAKE_AR=" ${configure.args}] eq -1} {
-            configure.args-append \
-                                -DCMAKE_AR=[string map {"clang" "llvm-ar"} ${configure.cc}]
-        }
-        if {[string first "DCMAKE_NM=" ${configure.args}] eq -1} {
-            configure.args-append \
-                                -DCMAKE_NM=[string map {"clang" "llvm-nm"} ${configure.cc}]
-        }
-        if {[string first "DCMAKE_RANLIB=" ${configure.args}] eq -1} {
-            configure.args-append \
-                                -DCMAKE_RANLIB=[string map {"clang" "llvm-ranlib"} ${configure.cc}]
+    } elseif {![variant_isset universal] || [info exists universal_archs_supported]} {
+        if {[string match *clang++-mp* ${configure.cxx}]} {
+            if {[string first "DCMAKE_AR=" ${configure.args}] eq -1} {
+                configure.args-append \
+                                    -DCMAKE_AR=[string map {"clang++" "llvm-ar"} ${configure.cxx}]
+            }
+            if {[string first "DCMAKE_NM=" ${configure.args}] eq -1} {
+                configure.args-append \
+                                    -DCMAKE_NM=[string map {"clang++" "llvm-nm"} ${configure.cxx}]
+            }
+            if {[string first "DCMAKE_RANLIB=" ${configure.args}] eq -1} {
+                configure.args-append \
+                                    -DCMAKE_RANLIB=[string map {"clang++" "llvm-ranlib"} ${configure.cxx}]
+            }
+        } elseif {[string match *clang-mp* ${configure.cc}]} {
+            if {[string first "DCMAKE_AR=" ${configure.args}] eq -1} {
+                configure.args-append \
+                                    -DCMAKE_AR=[string map {"clang" "llvm-ar"} ${configure.cc}]
+            }
+            if {[string first "DCMAKE_NM=" ${configure.args}] eq -1} {
+                configure.args-append \
+                                    -DCMAKE_NM=[string map {"clang" "llvm-nm"} ${configure.cc}]
+            }
+            if {[string first "DCMAKE_RANLIB=" ${configure.args}] eq -1} {
+                configure.args-append \
+                                    -DCMAKE_RANLIB=[string map {"clang" "llvm-ranlib"} ${configure.cc}]
+            }
         }
     }
     if {[info exists qt_qmake_spec]} {
