@@ -1,0 +1,90 @@
+diff --git autotests/filemetadatadatedisplaytest.cpp autotests/filemetadatadatedisplaytest.cpp
+index dc035b0..74cb628 100644
+--- autotests/filemetadatadatedisplaytest.cpp
++++ autotests/filemetadatadatedisplaytest.cpp
+@@ -54,11 +54,11 @@ bool FileMetadataDateDisplayTest::setFileTime(const QString& filePath, const QDa
+     struct stat fileStat;
+     struct utimbuf newTimes;
+     const QByteArray file = QFile::encodeName(filePath);
+-    stat(file, &fileStat);
++    stat(file.constData(), &fileStat);
+ 
+     newTimes.actime = fileStat.st_atime;
+     newTimes.modtime = fileTime.toTime_t();
+-    ret = (utime(file, &newTimes) == 0);
++    ret = (utime(file.constData(), &newTimes) == 0);
+ #else
+     QScopedPointer<QFile> file{new QFile(filePath)};
+     file->open(QIODevice::ReadOnly);
+diff --git src/filemetadatautil.cpp src/filemetadatautil.cpp
+index 55aedc5..6a37684 100644
+--- src/filemetadatautil.cpp
++++ src/filemetadatautil.cpp
+@@ -23,6 +23,40 @@
+ 
+ #include <algorithm>
+ 
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++// Qt 5.10 QKeyValueIterator from qiterator.h
++template<typename Key, typename T, class Iterator>
++class QKeyValueIterator
++{
++public:
++    typedef typename Iterator::iterator_category iterator_category;
++    typedef typename Iterator::difference_type difference_type;
++    typedef std::pair<Key, T> value_type;
++    typedef const value_type *pointer;
++    typedef const value_type &reference;
++
++    QKeyValueIterator() = default;
++    Q_DECL_CONSTEXPR explicit QKeyValueIterator(Iterator o) Q_DECL_NOEXCEPT_EXPR(std::is_nothrow_move_constructible<Iterator>::value)
++        : i(std::move(o)) {}
++
++    std::pair<Key, T> operator*() const {
++        return std::pair<Key, T>(i.key(), i.value());
++    }
++
++    friend Q_DECL_CONSTEXPR bool operator==(QKeyValueIterator lhs, QKeyValueIterator rhs) Q_DECL_NOEXCEPT { return lhs.i == rhs.i; }
++    friend Q_DECL_CONSTEXPR bool operator!=(QKeyValueIterator lhs, QKeyValueIterator rhs) Q_DECL_NOEXCEPT { return lhs.i != rhs.i; }
++
++    inline QKeyValueIterator &operator++() { ++i; return *this; }
++    inline QKeyValueIterator operator++(int) { return QKeyValueIterator(i++);}
++    inline QKeyValueIterator &operator--() { --i; return *this; }
++    inline QKeyValueIterator operator--(int) { return QKeyValueIterator(i--); }
++    Iterator base() const { return i; }
++
++private:
++    Iterator i;
++};
++#endif
++
+ namespace Baloo
+ {
+ namespace Private
+@@ -64,12 +98,22 @@ QVariantMap toNamedVariantMap(const KFileMetaData::PropertyMap& propMap)
+ 
+     using entry = std::pair<const KFileMetaData::Property::Property&, const QVariant&>;
+ 
+-    auto begin = propMap.constKeyValueBegin();
+-
+-    while (begin != propMap.constKeyValueEnd()) {
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++    // extracted from the Qt 5.10 QMap class definition
++    using const_key_value_iterator = QKeyValueIterator<const KFileMetaData::Property::Property&, const QVariant&, KFileMetaData::PropertyMap::const_iterator>;
++    // based on QMap::constKeyValue*() from Qt 5.10
++    #define constKeyValueBegin(map) const_key_value_iterator(map.begin())
++    #define constKeyValueEnd(map)   const_key_value_iterator(map.end())
++#else
++    #define constKeyValueBegin(map) map.constKeyValueBegin()
++    #define constKeyValueEnd(map)   map.constKeyValueEnd()
++#endif
++    auto begin = constKeyValueBegin(propMap);
++
++    while (begin != constKeyValueEnd(propMap)) {
+         auto key = (*begin).first;
+         KFileMetaData::PropertyInfo property(key);
+-        auto rangeEnd = std::find_if(begin, propMap.constKeyValueEnd(),
++        auto rangeEnd = std::find_if(begin, constKeyValueEnd(propMap),
+             [key](const entry& e) { return e.first != key; });
+ 
+         auto distance = std::distance(begin, rangeEnd);
