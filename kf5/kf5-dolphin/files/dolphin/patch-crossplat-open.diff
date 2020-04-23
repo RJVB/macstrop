@@ -1,0 +1,121 @@
+diff --git src/dolphinmainwindow.cpp src/dolphinmainwindow.cpp
+index c9ed9c5cd5045b2d4f58bd8f7e171159d62f03da..31ebb03bcee696939adef666cf830eef08e009f7 100644
+--- src/dolphinmainwindow.cpp
++++ src/dolphinmainwindow.cpp
+@@ -820,7 +831,11 @@ void DolphinMainWindow::compareFiles()
+     QUrl urlA = items.at(0).url();
+     QUrl urlB = items.at(1).url();
+ 
++#ifdef Q_OS_MACOS
++    QString command(QStringLiteral("open -a kompare --args -c \""));
++#else
+     QString command(QStringLiteral("kompare -c \""));
++#endif
+     command.append(urlA.toDisplayString(QUrl::PreferLocalFile));
+     command.append("\" \"");
+     command.append(urlB.toDisplayString(QUrl::PreferLocalFile));
+diff --git src/dolphinpart.cpp src/dolphinpart.cpp
+index a4d7fdf78abcf1806099ff6901e5366c84bcc30a..d89759678c058fcd90bfe540d1424ea87b2b35ae 100644
+--- src/dolphinpart.cpp
++++ src/dolphinpart.cpp
+@@ -553,7 +553,12 @@ void DolphinPart::slotOpenTerminal()
+ 
+ void DolphinPart::slotFindFile()
+ {
++#ifdef Q_OS_MACOS
++    qWarning() << "KFinding" << url();
++    KRun::run(QStringLiteral("open -a kfind --args"), {url()}, widget());
++#else
+     KRun::run(QStringLiteral("kfind"), {url()}, widget());
++#endif
+ }
+ 
+ void DolphinPart::updateNewMenu()
+diff --git src/dolphintabwidget.cpp src/dolphintabwidget.cpp
+index 7928c510e2aaa4df15ab281eaf863966baa80422..cb975ddd94da31ff5cfef58be1385e3a70565ad3 100644
+--- src/dolphintabwidget.cpp
++++ src/dolphintabwidget.cpp
+@@ -303,7 +303,7 @@ void DolphinTabWidget::detachTab(int index)
+     }
+     args << QStringLiteral("--new-window");
+ 
+-    const QString command = QStringLiteral("dolphin %1").arg(KShell::joinArgs(args));
++    const QString command = QStringLiteral("%1 %2").arg(QCoreApplication::applicationFilePath()).arg(KShell::joinArgs(args));
+     KRun::runCommand(command, this);
+ 
+     closeTab(index);
+diff --git src/dolphinviewcontainer.cpp src/dolphinviewcontainer.cpp
+index 536ab0fa80b4af0614e9cb9296cc9d2cab8b0595..7853676da86b45c276768716a9c4bcae5a8aa809 100644
+--- src/dolphinviewcontainer.cpp
++++ src/dolphinviewcontainer.cpp
+@@ -50,6 +50,7 @@
+ #include <QTimer>
+ #include <QUrl>
+ #include <QVBoxLayout>
++#include <QDesktopServices>
+ 
+ DolphinViewContainer::DolphinViewContainer(const QUrl& url, QWidget* parent) :
+     QWidget(parent),
+@@ -687,12 +688,11 @@ void DolphinViewContainer::slotUrlNavigatorLocationChanged(const QUrl& url)
+             QTimer::singleShot(0, this, &DolphinViewContainer::requestFocus);
+         }
+     } else if (KProtocolManager::isSourceProtocol(url)) {
+-        QString app = QStringLiteral("konqueror");
++        QString app;
+         if (url.scheme().startsWith(QLatin1String("http"))) {
+-            showMessage(i18nc("@info:status", // krazy:exclude=qmethods
+-                              "Dolphin does not support web pages, the web browser has been launched"),
+-                        Information);
+-
++            // see if the user has a preferred browser configured in the global KDE settings. If so, use it,
++            // if not, don't make any assumptions over which browser to use because we're probably not
++            // running under a KDE desktop. Whatever other DE is used, let it decided what to do.
+             const KConfigGroup config(KSharedConfig::openConfig(QStringLiteral("kdeglobals")), "General");
+             const QString browser = config.readEntry("BrowserApplication");
+             if (!browser.isEmpty()) {
+@@ -701,16 +701,28 @@ void DolphinViewContainer::slotUrlNavigatorLocationChanged(const QUrl& url)
+                     // a literal command has been configured, remove the '!' prefix
+                     app = app.mid(1);
+                 }
++                showMessage(i18nc("@info:status", // krazy:exclude=qmethods
++                                  "Dolphin does not support web pages, the web browser has been launched"),
++                            Information);
+             }
+         } else {
+             showMessage(i18nc("@info:status",
+-                              "Protocol not supported by Dolphin, Konqueror has been launched"),
++                              "Protocol not supported by Dolphin, request handed off to the system"),
+                         Information);
+         }
+ 
+-        const QString secureUrl = KShell::quoteArg(url.toDisplayString(QUrl::PreferLocalFile));
+-        const QString command = app + ' ' + secureUrl;
+-        KRun::runCommand(command, app, app, this);
++        if (app.isEmpty()) {
++            // The desktop environment will know what to do.
++            if (!QDesktopServices::openUrl(url)) {
++                showMessage(i18nc("@info:status",
++                                  "failed to open \"%1\" via the desktop", url.toString()),
++                            Warning);
++            }
++        } else {
++            const QString secureUrl = KShell::quoteArg(url.toDisplayString(QUrl::PreferLocalFile));
++            const QString command = app + ' ' + secureUrl;
++            KRun::runCommand(command, app, app, this);
++        }
+     } else {
+         showMessage(i18nc("@info:status", "Invalid protocol"), Error);
+     }
+diff --git src/global.cpp src/global.cpp
+index 21660a8281a66311216c0a0e41cd314720027b36..81eea1a7878d4019e692883e7a89e8a31f25fbdf 100644
+--- src/global.cpp
++++ src/global.cpp
+@@ -52,7 +52,7 @@ QUrl Dolphin::homeUrl()
+ 
+ void Dolphin::openNewWindow(const QList<QUrl> &urls, QWidget *window, const OpenNewWindowFlags &flags)
+ {
+-    QString command = QStringLiteral("dolphin --new-window");
++    QString command = QStringLiteral("%1 --new-window").arg(QCoreApplication::applicationFilePath());
+ 
+     if (flags.testFlag(OpenNewWindowFlag::Select)) {
+         command.append(QLatin1String(" --select"));
