@@ -1,0 +1,390 @@
+commit 09e215be4648a96e2daa5a9e5b6adc34ab444f16
+Author: Nate Graham <nate@kde.org>
+Date:   Sat Jan 11 13:21:52 2020 -0700
+
+    "Use newly-upstreamed rename dialog from KIO""
+    
+    This reverts commit 41105103b063c2e538bf0071e54fd429a841238b.
+    
+    KIO's version was just bumped to 5.67, so this can land now without
+    breaking the CI.
+
+diff --git b/src/CMakeLists.txt a/src/CMakeLists.txt
+index e8d623d2f..e240f7106 100644
+--- b/src/CMakeLists.txt
++++ a/src/CMakeLists.txt
+@@ -99,6 +99,7 @@ set(dolphinprivate_LIB_SRCS
+     views/dolphinview.cpp
+     views/dolphinviewactionhandler.cpp
+     views/draganddrophelper.cpp
++    views/renamedialog.cpp
+     views/versioncontrol/updateitemstatesthread.cpp
+     views/versioncontrol/versioncontrolobserver.cpp
+     views/viewmodecontroller.cpp
+diff --git b/src/panels/folders/folderspanel.cpp a/src/panels/folders/folderspanel.cpp
+index 2e7e4dc28..01f338461 100644
+--- b/src/panels/folders/folderspanel.cpp
++++ a/src/panels/folders/folderspanel.cpp
+@@ -30,13 +30,13 @@
+ #include "kitemviews/kitemlistselectionmanager.h"
+ #include "treeviewcontextmenu.h"
+ #include "views/draganddrophelper.h"
++#include "views/renamedialog.h"
+ 
+ #include <KJobWidgets>
+ #include <KJobUiDelegate>
+ #include <KIO/CopyJob>
+ #include <KIO/DropJob>
+ #include <KIO/FileUndoManager>
+-#include <KIO/RenameFileDialog>
+ 
+ #include <QApplication>
+ #include <QBoxLayout>
+@@ -104,7 +104,7 @@ void FoldersPanel::rename(const KFileItem& item)
+         const int index = m_model->index(item);
+         m_controller->view()->editRole(index, "text");
+     } else {
+-        KIO::RenameFileDialog* dialog = new KIO::RenameFileDialog(KFileItemList({item}), this);
++        RenameDialog* dialog = new RenameDialog(this, KFileItemList() << item);
+         dialog->open();
+     }
+ }
+diff --git b/src/views/dolphinview.cpp a/src/views/dolphinview.cpp
+index cfece0fe6..3437db7a7 100644
+--- b/src/views/dolphinview.cpp
++++ a/src/views/dolphinview.cpp
+@@ -31,6 +31,7 @@
+ #include "kitemviews/kitemlistcontroller.h"
+ #include "kitemviews/kitemlistheader.h"
+ #include "kitemviews/kitemlistselectionmanager.h"
++#include "renamedialog.h"
+ #include "versioncontrol/versioncontrolobserver.h"
+ #include "viewproperties.h"
+ #include "views/tooltips/tooltipmanager.h"
+@@ -51,7 +52,6 @@
+ #include <KIO/Paste>
+ #include <KIO/PasteJob>
+ #include <KIO/PreviewJob>
+-#include <KIO/RenameFileDialog>
+ #include <KJobWidgets>
+ #include <KLocalizedString>
+ #include <KMessageBox>
+@@ -637,9 +637,8 @@ void DolphinView::renameSelectedItems()
+         connect(m_view, &DolphinItemListView::roleEditingFinished,
+                 this, &DolphinView::slotRoleEditingFinished);
+     } else {
+-        KIO::RenameFileDialog* dialog = new KIO::RenameFileDialog(items, this);
+-        connect(dialog, &KIO::RenameFileDialog::renamingFinished,
+-                this, &DolphinView::slotRenameDialogRenamingFinished);
++        RenameDialog* dialog = new RenameDialog(this, items);
++        connect(dialog, &RenameDialog::renamingFinished, this, &DolphinView::slotRenameDialogRenamingFinished);
+ 
+         dialog->open();
+     }
+diff --git b/src/views/renamedialog.cpp a/src/views/renamedialog.cpp
+new file mode 100644
+index 000000000..96068564d
+--- /dev/null
++++ a/src/views/renamedialog.cpp
+@@ -0,0 +1,225 @@
++/***************************************************************************
++ *   Copyright (C) 2006-2010 by Peter Penz (peter.penz@gmx.at)             *
++ *                                                                         *
++ *   This program is free software; you can redistribute it and/or modify  *
++ *   it under the terms of the GNU General Public License as published by  *
++ *   the Free Software Foundation; either version 2 of the License, or     *
++ *   (at your option) any later version.                                   *
++ *                                                                         *
++ *   This program is distributed in the hope that it will be useful,       *
++ *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
++ *   GNU General Public License for more details.                          *
++ *                                                                         *
++ *   You should have received a copy of the GNU General Public License     *
++ *   along with this program; if not, write to the                         *
++ *   Free Software Foundation, Inc.,                                       *
++ *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA          *
++ ***************************************************************************/
++
++#include "renamedialog.h"
++
++#include <KGuiItem>
++#include <KIO/BatchRenameJob>
++#include <KIO/CopyJob>
++#include <KIO/FileUndoManager>
++#include <KJobUiDelegate>
++#include <KJobWidgets>
++#include <KLocalizedString>
++
++#include <QDialogButtonBox>
++#include <QHBoxLayout>
++#include <QLabel>
++#include <QLineEdit>
++#include <QMimeDatabase>
++#include <QPushButton>
++#include <QSpinBox>
++
++RenameDialog::RenameDialog(QWidget *parent, const KFileItemList& items) :
++    QDialog(parent),
++    m_renameOneItem(false),
++    m_newName(),
++    m_lineEdit(nullptr),
++    m_items(items),
++    m_allExtensionsDifferent(true),
++    m_spinBox(nullptr)
++{
++    const QSize minSize = minimumSize();
++    setMinimumSize(QSize(320, minSize.height()));
++
++    const int itemCount = items.count();
++    Q_ASSERT(itemCount >= 1);
++    m_renameOneItem = (itemCount == 1);
++
++    setWindowTitle(m_renameOneItem ?
++               i18nc("@title:window", "Rename Item") :
++               i18nc("@title:window", "Rename Items"));
++    QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);
++    QVBoxLayout *mainLayout = new QVBoxLayout;
++    setLayout(mainLayout);
++    m_okButton = buttonBox->button(QDialogButtonBox::Ok);
++    m_okButton->setDefault(true);
++    m_okButton->setShortcut(Qt::CTRL + Qt::Key_Return);
++    connect(buttonBox, &QDialogButtonBox::accepted, this, &RenameDialog::slotAccepted);
++    connect(buttonBox, &QDialogButtonBox::rejected, this, &RenameDialog::reject);
++    connect(buttonBox, &QDialogButtonBox::rejected, this, &QObject::deleteLater);
++    m_okButton->setDefault(true);
++
++    KGuiItem::assign(m_okButton, KGuiItem(i18nc("@action:button", "&Rename"), QStringLiteral("dialog-ok-apply")));
++
++    QWidget* page = new QWidget(this);
++    mainLayout->addWidget(page);
++    mainLayout->addWidget(buttonBox);
++
++    QVBoxLayout* topLayout = new QVBoxLayout(page);
++
++    QLabel* editLabel = nullptr;
++    if (m_renameOneItem) {
++        m_newName = items.first().name();
++        editLabel = new QLabel(xi18nc("@label:textbox", "Rename the item <filename>%1</filename> to:", m_newName),
++                               page);
++        editLabel->setTextFormat(Qt::PlainText);
++    } else {
++        m_newName = i18nc("@info:status", "New name #");
++        editLabel = new QLabel(i18ncp("@label:textbox",
++                                      "Rename the %1 selected item to:",
++                                      "Rename the %1 selected items to:", itemCount),
++                               page);
++    }
++
++    m_lineEdit = new QLineEdit(page);
++    mainLayout->addWidget(m_lineEdit);
++    connect(m_lineEdit, &QLineEdit::textChanged, this, &RenameDialog::slotTextChanged);
++
++    int selectionLength = m_newName.length();
++    if (m_renameOneItem) {
++        const QString fileName = items.first().url().toDisplayString();
++        QMimeDatabase db;
++        const QString extension = db.suffixForFileName(fileName.toLower());
++
++        // If the current item is a directory, select the whole file name.
++        if ((extension.length() > 0) && !items.first().isDir()) {
++            // Don't select the extension
++            selectionLength -= extension.length() + 1;
++        }
++    } else {
++         // Don't select the # character
++        --selectionLength;
++    }
++
++    m_lineEdit->setText(m_newName);
++    m_lineEdit->setSelection(0, selectionLength);
++
++    topLayout->addWidget(editLabel);
++    topLayout->addWidget(m_lineEdit);
++
++    if (!m_renameOneItem) {
++        QSet<QString> extensions;
++        foreach (const KFileItem& item, m_items) {
++            QMimeDatabase db;
++            const QString extension = db.suffixForFileName(item.url().toDisplayString().toLower());
++
++            if (extensions.contains(extension)) {
++                m_allExtensionsDifferent = false;
++                break;
++            }
++
++            extensions.insert(extension);
++        }
++
++        QLabel* infoLabel = new QLabel(i18nc("@info", "# will be replaced by ascending numbers starting with:"), page);
++        mainLayout->addWidget(infoLabel);
++        m_spinBox = new QSpinBox(page);
++        m_spinBox->setMaximum(10000);
++        m_spinBox->setMinimum(0);
++        m_spinBox->setSingleStep(1);
++        m_spinBox->setValue(1);
++        m_spinBox->setDisplayIntegerBase(10);
++
++        QHBoxLayout* horizontalLayout = new QHBoxLayout(page);
++        horizontalLayout->setContentsMargins(0, 0, 0, 0);
++        horizontalLayout->addWidget(infoLabel);
++        horizontalLayout->addWidget(m_spinBox);
++
++        topLayout->addLayout(horizontalLayout);
++    }
++}
++
++RenameDialog::~RenameDialog()
++{
++}
++
++void RenameDialog::slotAccepted()
++{
++    QWidget* widget = parentWidget();
++    if (!widget) {
++        widget = this;
++    }
++
++    const QList<QUrl> srcList = m_items.urlList();
++    const QString newName = m_lineEdit->text();
++    KIO::FileUndoManager::CommandType cmdType;
++    KIO::Job *job = nullptr;
++    if (m_renameOneItem) {
++        Q_ASSERT(m_items.count() == 1);
++        cmdType = KIO::FileUndoManager::Rename;
++        const QUrl oldUrl = m_items.constFirst().url();
++        QUrl newUrl = oldUrl.adjusted(QUrl::RemoveFilename);
++        newUrl.setPath(newUrl.path() + KIO::encodeFileName(newName));
++        m_renamedItems << newUrl;
++        job = KIO::moveAs(oldUrl, newUrl, KIO::HideProgressInfo);
++    } else {
++        cmdType = KIO::FileUndoManager::BatchRename;
++        job = KIO::batchRename(srcList, newName, m_spinBox->value(), QLatin1Char('#'));
++        connect(qobject_cast<KIO::BatchRenameJob*>(job), &KIO::BatchRenameJob::fileRenamed, this, &RenameDialog::slotFileRenamed);
++    }
++
++    KJobWidgets::setWindow(job, widget);
++    const QUrl parentUrl = srcList.first().adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash);
++    KIO::FileUndoManager::self()->recordJob(cmdType, srcList, parentUrl, job);
++
++    connect(job, &KJob::result, this, &RenameDialog::slotResult);
++    connect(job, &KJob::result, this, &QObject::deleteLater);
++
++    job->uiDelegate()->setAutoErrorHandlingEnabled(true);
++
++    accept();
++}
++
++void RenameDialog::slotTextChanged(const QString& newName)
++{
++    bool enable = !newName.isEmpty() && (newName != QLatin1String("..")) && (newName != QLatin1Char('.'));
++    if (enable && !m_renameOneItem) {
++        const int count = newName.count(QLatin1Char('#'));
++        if (count == 0) {
++            // Renaming multiple files without '#' will only work if all extensions are different.
++            enable = m_allExtensionsDifferent;
++        } else {
++            // Assure that the new name contains exactly one # (or a connected sequence of #'s)
++            const int first = newName.indexOf(QLatin1Char('#'));
++            const int last = newName.lastIndexOf(QLatin1Char('#'));
++            enable = (last - first + 1 == count);
++        }
++    }
++    m_okButton->setEnabled(enable);
++}
++
++void RenameDialog::slotFileRenamed(const QUrl &oldUrl, const QUrl &newUrl)
++{
++    Q_UNUSED(oldUrl)
++    m_renamedItems << newUrl;
++}
++
++void RenameDialog::slotResult(KJob *job)
++{
++    if (!job->error()) {
++        emit renamingFinished(m_renamedItems);
++    }
++}
++
++void RenameDialog::showEvent(QShowEvent* event)
++{
++    m_lineEdit->setFocus();
++
++    QDialog::showEvent(event);
++}
+diff --git b/src/views/renamedialog.h a/src/views/renamedialog.h
+new file mode 100644
+index 000000000..08571cd9d
+--- /dev/null
++++ a/src/views/renamedialog.h
+@@ -0,0 +1,70 @@
++/***************************************************************************
++ *   Copyright (C) 2006-2010 by Peter Penz (peter.penz@gmx.at)             *
++ *                                                                         *
++ *   This program is free software; you can redistribute it and/or modify  *
++ *   it under the terms of the GNU General Public License as published by  *
++ *   the Free Software Foundation; either version 2 of the License, or     *
++ *   (at your option) any later version.                                   *
++ *                                                                         *
++ *   This program is distributed in the hope that it will be useful,       *
++ *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
++ *   GNU General Public License for more details.                          *
++ *                                                                         *
++ *   You should have received a copy of the GNU General Public License     *
++ *   along with this program; if not, write to the                         *
++ *   Free Software Foundation, Inc.,                                       *
++ *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA          *
++ ***************************************************************************/
++
++#ifndef RENAMEDIALOG_H
++#define RENAMEDIALOG_H
++
++#include "dolphin_export.h"
++
++#include <KFileItem>
++
++#include <QDialog>
++#include <QString>
++
++class QLineEdit;
++class QSpinBox;
++class QPushButton;
++class KJob;
++/**
++ * @brief Dialog for renaming a variable number of files.
++ *
++ * The dialog deletes itself when accepted or rejected.
++ */
++class DOLPHIN_EXPORT RenameDialog : public QDialog
++{
++    Q_OBJECT
++
++public:
++    explicit RenameDialog(QWidget* parent, const KFileItemList& items);
++    ~RenameDialog() override;
++
++signals:
++    void renamingFinished(const QList<QUrl>& urls);
++
++private slots:
++    void slotAccepted();
++    void slotTextChanged(const QString& newName);
++    void slotFileRenamed(const QUrl& oldUrl, const QUrl& newUrl);
++    void slotResult(KJob* job);
++
++protected:
++    void showEvent(QShowEvent* event) override;
++
++private:
++    bool m_renameOneItem;
++    QList<QUrl> m_renamedItems;
++    QString m_newName;
++    QLineEdit* m_lineEdit;
++    KFileItemList m_items;
++    bool m_allExtensionsDifferent;
++    QSpinBox* m_spinBox;
++    QPushButton* m_okButton;
++};
++
++#endif

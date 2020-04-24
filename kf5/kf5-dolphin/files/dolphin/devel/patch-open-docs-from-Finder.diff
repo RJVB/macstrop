@@ -1,0 +1,237 @@
+diff --git a/src/main.cpp b/src/main.cpp
+index 5932df5ce0b66426e99ecc5d2f622e1cc4bb70bb..6e7a75e0aa06670da3d400a7fe2cbafc556dde6d 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -44,6 +44,52 @@
+ #endif
+ #include <iostream>
+ 
++#ifdef Q_OS_MACOS
++class OpenFileEventHandler : public QObject
++{
++    Q_OBJECT
++public:
++    OpenFileEventHandler(QApplication *parent)
++        : QObject(parent)
++    {
++        parent->installEventFilter(this);
++    }
++
++    bool eventFilter(QObject *obj, QEvent *event) override
++    {
++        if (event->type() == QEvent::FileOpen) {
++            QFileOpenEvent *openEvent = static_cast<QFileOpenEvent*>(event);
++            qCWarning(DolphinDebug) << "File open event:" << openEvent->url();
++            urls.append(Dolphin::validateUris(QStringList(openEvent->file())));
++            if (mainWindow && !urls.isEmpty()) {
++                if (GeneralSettings::openExternallyCalledFolderInNewTab()) {
++                    const auto serviceName = QStringLiteral("org.kde.dolphin-%1").arg(QCoreApplication::applicationPid());
++                    if (!Dolphin::attachToExistingInstance(urls, false, false, serviceName)) {
++                        qCWarning(DolphinDebug) << "Failed to open" << urls;
++                    }
++                } else {
++                    Dolphin::openNewWindow(urls, mainWindow);
++                }
++                urls.clear();
++            }
++            return true;
++        }
++        return QObject::eventFilter(obj, event);
++    }
++
++    QList<QUrl> popUrls()
++    {
++        const auto ret = urls;
++        urls.clear();
++        return ret;
++    }
++
++    DolphinMainWindow* mainWindow = nullptr;
++    QList<QUrl> urls;
++};
++
++#endif
++
+ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
+ {
+ #ifndef Q_OS_WIN
+@@ -69,6 +115,10 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
+     app.setWindowIcon(QIcon::fromTheme(QStringLiteral("system-file-manager"), app.windowIcon()));
+ 
+     KCrash::initialize();
++#ifdef Q_OS_MACOS
++    // start processing Mac OS FileOpenEvents
++    const auto openEventHandler = new OpenFileEventHandler(&app);
++#endif
+ 
+     Kdelibs4ConfigMigrator migrate(QStringLiteral("dolphin"));
+     migrate.setConfigFiles(QStringList() << QStringLiteral("dolphinrc"));
+@@ -144,9 +194,24 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
+         KDBusService dolphinDBusService;
+         DBusInterface interface;
+         interface.setAsDaemon();
++#ifdef Q_OS_MACOS
++        // we probably shouldn't be accepting requests via Apple's LaunchServices
++        app.removeEventFilter(openEventHandler);
++#endif
+         return app.exec();
+     }
+ 
++#ifdef Q_OS_MACOS
++    // Get the file open events that have been queued; a priori those are only
++    // for the documents or folders with which the user launched us. Any
++    // such events coming in from now until we set mainWindow will get lost.
++    QCoreApplication::sendPostedEvents(&app, QEvent::FileOpen);
++    QCoreApplication::processEvents();
++    if (!openEventHandler->urls.isEmpty()) {
++        urls.append(openEventHandler->popUrls());
++    }
++#endif
++
+     if (!parser.isSet(QStringLiteral("new-window"))) {
+         if (Dolphin::attachToExistingInstance(urls, openFiles, splitView)) {
+             // Successfully attached to existing instance of Dolphin
+@@ -154,6 +219,17 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
+         }
+     }
+ 
++    // set up the D-Bus interface now, so we can activate normal file open event
++    // handling (on Mac) as soon as possible.
++    KDBusService dolphinDBusService;
++    DBusInterface interface;
++
++    DolphinMainWindow* mainWindow = new DolphinMainWindow();
++
++#ifdef Q_OS_MACOS
++    openEventHandler->mainWindow = mainWindow;
++#endif
++
+     if (urls.isEmpty()) {
+         // We need at least one URL to open Dolphin
+         urls.append(Dolphin::homeUrl());
+@@ -164,8 +240,6 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
+         urls.append(urls.last());
+     }
+ 
+-    DolphinMainWindow* mainWindow = new DolphinMainWindow();
+-
+     if (openFiles) {
+         mainWindow->openFiles(urls, splitView);
+     } else {
+@@ -183,8 +257,7 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
+         }
+     }
+ 
+-    KDBusService dolphinDBusService;
+-    DBusInterface interface;
+-
+     return app.exec(); // krazy:exclude=crash;
+ }
++
++#include "main.moc"
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index fc7b33cbd4a78bd4881e213341c5cea4ff92c724..415cb54fc5936c6041f2a8449b08c44b5c630119 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -304,6 +304,22 @@ ecm_add_app_icon(dolphin_SRCS ICONS ${ICONS_SRCS})
+ 
+ kf5_add_kdeinit_executable(dolphin ${dolphin_SRCS})
+ 
++if (APPLE)
++    # own plist template
++    set_target_properties (dolphin PROPERTIES MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/MacOSXBundleInfo.plist.in)
++    # the MacOSX bundle display name property (CFBundleDisplayName) is not currently supported by cmake,
++    # so has to be set for all targets in this cmake file
++    set(MACOSX_BUNDLE_DISPLAY_NAME Okular5)
++    set_target_properties(dolphin PROPERTIES MACOSX_BUNDLE_GUI_IDENTIFIER "org.kde.Dolphin")
++    set_target_properties(dolphin PROPERTIES MACOSX_BUNDLE_BUNDLE_NAME "Dolphin5")
++    set_target_properties(dolphin PROPERTIES MACOSX_BUNDLE_DISPLAY_NAME "Dolphin5")
++    set_target_properties(dolphin PROPERTIES MACOSX_BUNDLE_INFO_STRING "Dolphin, KDE's file manager focusing on usability")
++    set_target_properties(dolphin PROPERTIES MACOSX_BUNDLE_LONG_VERSION_STRING "Dolphin ${KDE_APPLICATIONS_VERSION}")
++    set_target_properties(dolphin PROPERTIES MACOSX_BUNDLE_SHORT_VERSION_STRING "${KDE_APPLICATIONS_VERSION_MAJOR}.${KDE_APPLICATIONS_VERSION_MINOR}")
++    set_target_properties(dolphin PROPERTIES MACOSX_BUNDLE_BUNDLE_VERSION "${KDE_APPLICATIONS_VERSION}")
++    set_target_properties(dolphin PROPERTIES MACOSX_BUNDLE_COPYRIGHT "2002-2020 The Dolphin Authors")
++endif (APPLE)
++
+ 
+ target_link_libraries(kdeinit_dolphin PUBLIC
+     dolphinprivate
+diff --git a/src/MacOSXBundleInfo.plist.in b/src/MacOSXBundleInfo.plist.in
+new file mode 100644
+index 0000000000000000000000000000000000000000..2f043cf2568a327fd9b382dee6374541e7c39452
+--- a/dev/null
++++ b/src/MacOSXBundleInfo.plist.in
+@@ -0,0 +1,73 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++        <key>NSPrincipalClass</key>
++        <string>NSApplication</string>
++        <key>NSHighResolutionCapable</key>
++        <string>True</string>
++        <key>CFBundleDevelopmentRegion</key>
++        <string>English</string>
++        <key>CFBundleExecutable</key>
++        <string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
++        <key>CFBundleGetInfoString</key>
++        <string>${MACOSX_BUNDLE_INFO_STRING}</string>
++        <key>CFBundleIconFile</key>
++        <string>${MACOSX_BUNDLE_ICON_FILE}</string>
++        <key>CFBundleIdentifier</key>
++        <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
++        <key>CFBundleInfoDictionaryVersion</key>
++        <string>6.0</string>
++        <key>CFBundleLongVersionString</key>
++        <string>${MACOSX_BUNDLE_LONG_VERSION_STRING}</string>
++        <key>CFBundleName</key>
++        <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
++        <key>CFBundlePackageType</key>
++        <string>APPL</string>
++        <key>CFBundleShortVersionString</key>
++        <string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
++        <key>CFBundleSignature</key>
++        <string>????</string>
++        <key>CFBundleVersion</key>
++        <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
++        <key>CSResourcesFileMapped</key>
++        <true/>
++        <key>LSRequiresCarbon</key>
++        <true/>
++        <key>NSHumanReadableCopyright</key>
++        <string>${MACOSX_BUNDLE_COPYRIGHT}</string>
++        <key>CFBundleDocumentTypes</key>
++        <array>
++            <dict>
++                <key>CFBundleTypeName</key>
++                <string>Folder</string>
++                <key>CFBundleTypeOSTypes</key>
++                <array>
++                    <string>fold</string>
++                </array>
++                <key>CFBundleTypeRole</key>
++                <string>Editor</string>
++            </dict>
++            <dict>
++                <key>CFBundleTypeName</key>
++                <string>Volume</string>
++                <key>CFBundleTypeOSTypes</key>
++                <array>
++                    <string>disk</string>
++                </array>
++                <key>CFBundleTypeRole</key>
++                <string>Editor</string>
++            </dict>
++            <dict>
++                <key>CFBundleTypeExtensions</key>
++                <array>
++                    <string>*</string>
++                </array>
++                <key>CFBundleTypeName</key>
++                <string>NSStringPboardType</string>
++                <key>CFBundleTypeRole</key>
++                <string>Viewer</string>
++            </dict>
++        </array>
++</dict>
++</plist>

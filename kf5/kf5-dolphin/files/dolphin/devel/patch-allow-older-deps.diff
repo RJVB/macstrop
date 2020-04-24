@@ -1,0 +1,247 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 3a30b69836ecea5199bc78e9ab62332ad807bf90..5a9e6799013ce9059fe9a796f6a5a2960abd4cb4 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -7,8 +7,8 @@ set (RELEASE_SERVICE_VERSION_MICRO "70")
+ set (RELEASE_SERVICE_VERSION "${RELEASE_SERVICE_VERSION_MAJOR}.${RELEASE_SERVICE_VERSION_MINOR}.${RELEASE_SERVICE_VERSION_MICRO}")
+ project(Dolphin VERSION ${RELEASE_SERVICE_VERSION})
+ 
+-set(QT_MIN_VERSION "5.11.0")
+-set(KF5_MIN_VERSION "5.70.0")
++set(QT_MIN_VERSION "5.9.8")
++set(KF5_MIN_VERSION "5.60.0")
+ 
+ # ECM setup
+ find_package(ECM ${KF5_MIN_VERSION} CONFIG REQUIRED)
+diff --git a/src/kitemviews/private/kbaloorolesprovider.cpp b/src/kitemviews/private/kbaloorolesprovider.cpp
+index f3671540dd89c4e6d49fbfdfe18404d978d44c4b..575284ac98f256a32ddd2e929fc994e762690ead 100644
+--- a/src/kitemviews/private/kbaloorolesprovider.cpp
++++ b/src/kitemviews/private/kbaloorolesprovider.cpp
+@@ -30,6 +30,40 @@
+ #include <QDebug>
+ #include <QTime>
+ 
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++// Qt 5.10 QKeyValueIterator from qiterator.h
++template<typename Key, typename T, class Iterator>
++class QKeyValueIterator
++{
++public:
++    typedef typename Iterator::iterator_category iterator_category;
++    typedef typename Iterator::difference_type difference_type;
++    typedef std::pair<Key, T> value_type;
++    typedef const value_type *pointer;
++    typedef const value_type &reference;
++
++    QKeyValueIterator() = default;
++    Q_DECL_CONSTEXPR explicit QKeyValueIterator(Iterator o) Q_DECL_NOEXCEPT_EXPR(std::is_nothrow_move_constructible<Iterator>::value)
++        : i(std::move(o)) {}
++
++    std::pair<Key, T> operator*() const {
++        return std::pair<Key, T>(i.key(), i.value());
++    }
++
++    friend Q_DECL_CONSTEXPR bool operator==(QKeyValueIterator lhs, QKeyValueIterator rhs) Q_DECL_NOEXCEPT { return lhs.i == rhs.i; }
++    friend Q_DECL_CONSTEXPR bool operator!=(QKeyValueIterator lhs, QKeyValueIterator rhs) Q_DECL_NOEXCEPT { return lhs.i != rhs.i; }
++
++    inline QKeyValueIterator &operator++() { ++i; return *this; }
++    inline QKeyValueIterator operator++(int) { return QKeyValueIterator(i++);}
++    inline QKeyValueIterator &operator--() { --i; return *this; }
++    inline QKeyValueIterator operator--(int) { return QKeyValueIterator(i--); }
++    Iterator base() const { return i; }
++
++private:
++    Iterator i;
++};
++#endif
++
+ struct KBalooRolesProviderSingleton
+ {
+     KBalooRolesProvider instance;
+@@ -59,14 +93,24 @@ QHash<QByteArray, QVariant> KBalooRolesProvider::roleValues(const Baloo::File& f
+     using entry = std::pair<const KFileMetaData::Property::Property&, const QVariant&>;
+ 
+     const auto& propMap = file.properties();
+-    auto rangeBegin = propMap.constKeyValueBegin();
+-
+-    while (rangeBegin != propMap.constKeyValueEnd()) {
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++    // extracted from the Qt 5.10 QMap class definition
++    using const_key_value_iterator = QKeyValueIterator<const KFileMetaData::Property::Property&, const QVariant&, KFileMetaData::PropertyMap::const_iterator>;
++    // based on QMap::constKeyValue*() from Qt 5.10
++    #define constKeyValueBegin(map) const_key_value_iterator(map.begin())
++    #define constKeyValueEnd(map)   const_key_value_iterator(map.end())
++#else
++    #define constKeyValueBegin(map) map.constKeyValueBegin()
++    #define constKeyValueEnd(map)   map.constKeyValueEnd()
++#endif
++    auto rangeBegin = constKeyValueBegin(propMap);
++
++    while (rangeBegin != constKeyValueEnd(propMap)) {
+         auto key = (*rangeBegin).first;
+         const KFileMetaData::PropertyInfo propertyInfo(key);
+         const QByteArray role = roleForProperty(propertyInfo.name());
+ 
+-        auto rangeEnd = std::find_if(rangeBegin, propMap.constKeyValueEnd(),
++        auto rangeEnd = std::find_if(rangeBegin, constKeyValueEnd(propMap),
+             [key](const entry& e) { return e.first != key; });
+ 
+         if (role.isEmpty() || !roles.contains(role)) {
+
+diff --git a/src/views/dolphinviewactionhandler.cpp b/src/views/dolphinviewactionhandler.cpp
+index e89e2e62c2b705e32223dca048334d6c22f7f224..948794c65eaf012f8bd2b583935b7e26414bd627 100644
+--- a/src/views/dolphinviewactionhandler.cpp
++++ b/src/views/dolphinviewactionhandler.cpp
+@@ -283,7 +283,11 @@ void DolphinViewActionHandler::createActions()
+         "<para>Hidden items only differ from other ones in that their "
+         "name starts with a \".\". In general there is no need for "
+         "users to access them which is why they are hidden.</para>"));
++#if KCONFIG_VERSION >= QT_VERSION_CHECK(5, 70, 0)
+     m_actionCollection->setDefaultShortcuts(showHiddenFiles, KStandardShortcut::showHideHiddenFiles());
++#else
++    m_actionCollection->setDefaultShortcuts(showHiddenFiles, {Qt::ALT + Qt::Key_Period, Qt::CTRL + Qt::Key_H, Qt::Key_F8});
++#endif
+     connect(showHiddenFiles, &KToggleAction::triggered, this, &DolphinViewActionHandler::toggleShowHiddenFiles);
+ 
+     QAction* adjustViewProps = m_actionCollection->addAction(QStringLiteral("view_properties"));
+
+diff --git a/src/panels/information/informationpanel.cpp b/src/panels/information/informationpanel.cpp
+index 4f0e4e5eb80ff51e784f559f3a69991b66dd055d..9c68657e2725269c95f49d8cdd022330483f03e4 100644
+--- a/src/panels/information/informationpanel.cpp
++++ b/src/panels/information/informationpanel.cpp
+@@ -248,7 +248,11 @@ void InformationPanel::showItemInfo()
+         if (item.isNull()) {
+             // No item is hovered and no selection has been done: provide
+             // an item for the currently shown directory.
++#if KIO_VERSION >= QT_VERSION_CHECK(5,69,0)
+             m_folderStatJob = KIO::statDetails(url(), KIO::StatJob::SourceSide, KIO::StatDefaultDetails | KIO::StatRecursiveSize, KIO::HideProgressInfo);
++#else
++            m_folderStatJob = KIO::stat(url(), KIO::HideProgressInfo);
++#endif
+             if (m_folderStatJob->uiDelegate()) {
+                 KJobWidgets::setWindow(m_folderStatJob, this);
+             }
+
+diff --git a/src/views/dolphinview.cpp b/src/views/dolphinview.cpp
+index a0dd0327b9ad461530953d6261b74a7c527b0f72..2bb32769504c3217b7245438aa0a2f7d64111952 100644
+--- a/src/views/dolphinview.cpp
++++ b/src/views/dolphinview.cpp
+@@ -733,7 +732,11 @@ void DolphinView::duplicateSelectedItems()
+         } else {
+             // Need to add a dot since QMimeDatabase::suffixForFileName() doesn't include it
+             extension = QLatin1String(".") + extension;
++#if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
+             const QString originalFilenameWithoutExtension = originalFileName.chopped(extension.size());
++#else
++            const QString originalFilenameWithoutExtension = originalFileName.left(originalFileName.size() - extension.size());
++#endif
+             // Preserve file's original filename extension in case the casing differs
+             // from what QMimeDatabase::suffixForFileName() returned
+             const QString originalExtension = originalFileName.right(extension.size());
+@@ -1493,17 +1496,18 @@ void DolphinView::calculateItemCount(int& fileCount,
+                                      KIO::filesize_t& totalFileSize) const
+ {
+     const int itemCount = m_model->count();
+-
++#if KIO_VERSION >= QT_VERSION_CHECK(5,70,0)
+     bool countFileSize = true;
+ 
+     // In case we have a precomputed value
+-    const auto job = KIO::statDetails(m_model->rootItem().url(), KIO::StatJob::SourceSide, KIO::StatRecursiveSize);
++    const auto job = KIO::stat(m_model->rootItem().url());
+     job->exec();
+     const auto entry =  job->statResult();
+     if (entry.contains(KIO::UDSEntry::UDS_RECURSIVE_SIZE)) {
+         totalFileSize = static_cast<KIO::filesize_t>(entry.numberValue(KIO::UDSEntry::UDS_RECURSIVE_SIZE));
+         countFileSize = false;
+     }
++#endif
+ 
+     for (int i = 0; i < itemCount; ++i) {
+         const KFileItem item = m_model->fileItem(i);
+@@ -1511,9 +1515,13 @@ void DolphinView::calculateItemCount(int& fileCount,
+             ++folderCount;
+         } else {
+             ++fileCount;
++#if KIO_VERSION >= QT_VERSION_CHECK(5,70,0)
+             if (countFileSize) {
+                 totalFileSize += item.size();
+             }
++#else
++            totalFileSize += item.size();
++#endif
+         }
+     }
+ }
+
+diff --git a/src/dolphinbookmarkhandler.cpp b/src/dolphinbookmarkhandler.cpp
+index 0d31b8984d56a76af46840027a8f70fb427f7593..b8d2bc9631ac43a93c9b283f9922b729225b0354 100644
+--- a/src/dolphinbookmarkhandler.cpp
++++ b/src/dolphinbookmarkhandler.cpp
+@@ -48,11 +48,15 @@ DolphinBookmarkHandler::DolphinBookmarkHandler(DolphinMainWindow *mainWindow,
+     }
+     m_bookmarkManager = KBookmarkManager::managerForFile(bookmarksFile, QStringLiteral("dolphin"));
+     m_bookmarkManager->setUpdate(true);
++#if KBOOKMARKS_VERSION >= QT_VERSION_CHECK(5, 69, 0)
+     m_bookmarkMenu.reset(new KBookmarkMenu(m_bookmarkManager, this, menu));
+ 
+     collection->addAction(QStringLiteral("add_bookmark"), m_bookmarkMenu->addBookmarkAction());
+     collection->addAction(QStringLiteral("edit_bookmarks"), m_bookmarkMenu->editBookmarksAction());
+     collection->addAction(QStringLiteral("add_bookmarks_list"), m_bookmarkMenu->bookmarkTabsAsFolderAction());
++#else
++    m_bookmarkMenu.reset(new KBookmarkMenu(m_bookmarkManager, this, menu, collection));
++#endif
+ }
+ 
+ DolphinBookmarkHandler::~DolphinBookmarkHandler()
+
+diff --git a/src/dolphinmainwindow.cpp b/src/dolphinmainwindow.cpp
+index 37f6bb8e461f43a6e686e23e74e105f8af5f9f9c..8b9758192dc68a6781a6c6746431049ce7624988 100644
+--- a/src/dolphinmainwindow.cpp
++++ b/src/dolphinmainwindow.cpp
+@@ -244,7 +260,11 @@ void DolphinMainWindow::openFiles(const QStringList& files, bool splitView)
+ void DolphinMainWindow::activateWindow()
+ {
+     window()->setAttribute(Qt::WA_NativeWindow, true);
++#if KWINDOWSYSTEM_VERSION >= QT_VERSION_CHECK(5, 62, 0)
+     KStartupInfo::setNewStartupId(window()->windowHandle(), KStartupInfo::startupId());
++#else
++    KStartupInfo::setNewStartupId(window(), KStartupInfo::startupId());
++#endif
+     KWindowSystem::activateWindow(window()->effectiveWinId());
+ }
+ 
+
+diff --git a/src/panels/places/placesitemmodel.cpp b/src/panels/places/placesitemmodel.cpp
+index a1223b5fd269df41d531e5a9de44c2a77a655741..709a7325b5465f44c8d3b1c9235b13539d2d2984 100644
+--- a/src/panels/places/placesitemmodel.cpp
++++ b/src/panels/places/placesitemmodel.cpp
+@@ -36,8 +36,10 @@
+ #include <KUrlMimeData>
+ #include <Solid/DeviceNotifier>
+ #include <Solid/OpticalDrive>
++#ifdef KCOREADDONS_VERSION >= QT_VERSION_CHECK(5, 63, 0)
+ #include <KCoreAddons/KProcessList>
+ #include <KCoreAddons/KListOpenFilesJob>
++#endif
+ 
+ #include <QAction>
+ #include <QIcon>
+@@ -463,6 +465,7 @@ void PlacesItemModel::updateItem(PlacesItem *item, const QModelIndex &index)
+ void PlacesItemModel::slotStorageTearDownDone(Solid::ErrorType error, const QVariant& errorData)
+ {
+     if (error && errorData.isValid()) {
++#ifdef KCOREADDONS_VERSION >= QT_VERSION_CHECK(5, 63, 0)
+         if (error == Solid::ErrorType::DeviceBusy) {
+             KListOpenFilesJob* listOpenFilesJob = new KListOpenFilesJob(m_deviceToTearDown->filePath());
+             connect(listOpenFilesJob, &KIO::Job::result, this, [this, listOpenFilesJob](KJob*) {
+@@ -486,6 +489,9 @@ void PlacesItemModel::slotStorageTearDownDone(Solid::ErrorType error, const QVar
+         } else {
+             emit errorMessage(errorData.toString());
+         }
++#else
++        emit errorMessage(errorData.toString());
++#endif
+     }
+     disconnect(m_deviceToTearDown, &Solid::StorageAccess::teardownDone,
+                this, &PlacesItemModel::slotStorageTearDownDone);
