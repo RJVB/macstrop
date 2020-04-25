@@ -446,7 +446,8 @@ pre-configure {
             && ([string first "-DCMAKE_MKPEC" ${configure.args}] == -1)
             && ([string first "-DCMAKE_MKPEC" ${configure.post_args}] == -1)} {
             configure.args-append \
-                                "-DCMAKE_MKSPEC=${qt_qmake_spec}"
+                                "-DCMAKE_MKSPEC=${qt_qmake_spec}" \
+                                "-DQMAKE_EXECUTABLE=${qt_qmake_cmd}"
         } else {
             ui_debug "CMAKE_MKSPEC already set"
         }
