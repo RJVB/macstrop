@@ -43,9 +43,12 @@ namespace eval kf5 {
 }
 
 if {${kf5::includecounter} == 0} {
-    PortGroup           cmake 1.1
-    set qt5.prefer_kde  1
+    if {![info exists kf5.no_qt5_prefer_kde]} {
+        # let's live dangerously:
+        set qt5.prefer_kde  1
+    }
     PortGroup           qt5 1.0
+    PortGroup           cmake 1.1
     PortGroup           active_variants 1.1
 
     pre-fetch {
