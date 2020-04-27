@@ -1,8 +1,8 @@
 diff --git a/src/main.cpp b/src/main.cpp
-index 5932df5ce0b66426e99ecc5d2f622e1cc4bb70bb..6e7a75e0aa06670da3d400a7fe2cbafc556dde6d 100644
+index 802e64d2579352b70a32752da732ffdb2d379fb4..0c39c6133d312b37c8dde8da77e8570b7d30f6eb 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -44,6 +44,52 @@
+@@ -45,6 +45,59 @@
  #endif
  #include <iostream>
  
@@ -21,18 +21,18 @@ index 5932df5ce0b66426e99ecc5d2f622e1cc4bb70bb..6e7a75e0aa06670da3d400a7fe2cbafc
 +    {
 +        if (event->type() == QEvent::FileOpen) {
 +            QFileOpenEvent *openEvent = static_cast<QFileOpenEvent*>(event);
-+            qCWarning(DolphinDebug) << "File open event:" << openEvent->url();
-+            urls.append(Dolphin::validateUris(QStringList(openEvent->file())));
-+            if (mainWindow && !urls.isEmpty()) {
++            qCDebug(DolphinDebug) << "File open event:" << openEvent->url();
++            m_urls.append(Dolphin::validateUris(QStringList(openEvent->file())));
++            if (m_mainWindow && !m_urls.isEmpty()) {
 +                if (GeneralSettings::openExternallyCalledFolderInNewTab()) {
 +                    const auto serviceName = QStringLiteral("org.kde.dolphin-%1").arg(QCoreApplication::applicationPid());
-+                    if (!Dolphin::attachToExistingInstance(urls, false, false, serviceName)) {
-+                        qCWarning(DolphinDebug) << "Failed to open" << urls;
++                    if (!Dolphin::attachToExistingInstance(m_urls, false, false, serviceName)) {
++                        qCWarning(DolphinDebug) << "Failed to open" << m_urls;
 +                    }
 +                } else {
-+                    Dolphin::openNewWindow(urls, mainWindow);
++                    Dolphin::openNewWindow(m_urls, m_mainWindow);
 +                }
-+                urls.clear();
++                m_urls.clear();
 +            }
 +            return true;
 +        }
@@ -41,13 +41,20 @@ index 5932df5ce0b66426e99ecc5d2f622e1cc4bb70bb..6e7a75e0aa06670da3d400a7fe2cbafc
 +
 +    QList<QUrl> popUrls()
 +    {
-+        const auto ret = urls;
-+        urls.clear();
++        const auto ret = m_urls;
++        m_urls.clear();
 +        return ret;
 +    }
 +
-+    DolphinMainWindow* mainWindow = nullptr;
-+    QList<QUrl> urls;
++
++    void setMainWindow(DolphinMainWindow *w)
++    {
++        m_mainWindow = w;
++    }
++
++private:
++    DolphinMainWindow* m_mainWindow = nullptr;
++    QList<QUrl> m_urls;
 +};
 +
 +#endif
@@ -55,7 +62,7 @@ index 5932df5ce0b66426e99ecc5d2f622e1cc4bb70bb..6e7a75e0aa06670da3d400a7fe2cbafc
  extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
  {
  #ifndef Q_OS_WIN
-@@ -69,6 +115,10 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
+@@ -70,6 +123,10 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
      app.setWindowIcon(QIcon::fromTheme(QStringLiteral("system-file-manager"), app.windowIcon()));
  
      KCrash::initialize();
@@ -66,7 +73,15 @@ index 5932df5ce0b66426e99ecc5d2f622e1cc4bb70bb..6e7a75e0aa06670da3d400a7fe2cbafc
  
      Kdelibs4ConfigMigrator migrate(QStringLiteral("dolphin"));
      migrate.setConfigFiles(QStringList() << QStringLiteral("dolphinrc"));
-@@ -144,9 +194,24 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
+@@ -140,17 +197,31 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
+     const bool openFiles = parser.isSet(QStringLiteral("select"));
+     const QStringList args = parser.positionalArguments();
+     QList<QUrl> urls = Dolphin::validateUris(args);
+-    // We later mutate urls, so we need to store if it was empty originally
+-    const bool startedWithURLs = !urls.isEmpty();
+-
+ 
+     if (parser.isSet(QStringLiteral("daemon"))) {
          KDBusService dolphinDBusService;
          DBusInterface interface;
          interface.setAsDaemon();
@@ -79,37 +94,36 @@ index 5932df5ce0b66426e99ecc5d2f622e1cc4bb70bb..6e7a75e0aa06670da3d400a7fe2cbafc
  
 +#ifdef Q_OS_MACOS
 +    // Get the file open events that have been queued; a priori those are only
-+    // for the documents or folders with which the user launched us. Any
-+    // such events coming in from now until we set mainWindow will get lost.
++    // for the documents or folders with which the user launched us. This has to
++    // be done in "jit" fashion so we don't drop any events. Any such events \
++    // coming in from now until we call setMainWindow will get lost.
++    // Since D11382 we also need to get the startup urls before setting startedWithURLs.
 +    QCoreApplication::sendPostedEvents(&app, QEvent::FileOpen);
 +    QCoreApplication::processEvents();
-+    if (!openEventHandler->urls.isEmpty()) {
-+        urls.append(openEventHandler->popUrls());
-+    }
++    urls.append(openEventHandler->popUrls());
 +#endif
++    // We later mutate urls, so we need to store if it was empty originally
++    const bool startedWithURLs = !urls.isEmpty();
 +
      if (!parser.isSet(QStringLiteral("new-window"))) {
          if (Dolphin::attachToExistingInstance(urls, openFiles, splitView)) {
              // Successfully attached to existing instance of Dolphin
-@@ -154,6 +219,17 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
+@@ -158,6 +229,14 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
          }
      }
  
-+    // set up the D-Bus interface now, so we can activate normal file open event
++    // Open the main window now, so we can activate normal file open event
 +    // handling (on Mac) as soon as possible.
-+    KDBusService dolphinDBusService;
-+    DBusInterface interface;
-+
 +    DolphinMainWindow* mainWindow = new DolphinMainWindow();
 +
 +#ifdef Q_OS_MACOS
-+    openEventHandler->mainWindow = mainWindow;
++    openEventHandler->setMainWindow(mainWindow);
 +#endif
 +
-     if (urls.isEmpty()) {
+     if (!startedWithURLs) {
          // We need at least one URL to open Dolphin
          urls.append(Dolphin::homeUrl());
-@@ -164,8 +240,6 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
+@@ -168,8 +247,6 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
          urls.append(urls.last());
      }
  
@@ -118,13 +132,8 @@ index 5932df5ce0b66426e99ecc5d2f622e1cc4bb70bb..6e7a75e0aa06670da3d400a7fe2cbafc
      if (openFiles) {
          mainWindow->openFiles(urls, splitView);
      } else {
-@@ -183,8 +257,7 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
-         }
-     }
+@@ -205,3 +282,5 @@ extern "C" Q_DECL_EXPORT int kdemain(int argc, char **argv)
  
--    KDBusService dolphinDBusService;
--    DBusInterface interface;
--
      return app.exec(); // krazy:exclude=crash;
  }
 +
