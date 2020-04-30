@@ -192,7 +192,11 @@ proc macports::normalise { filename } {
     return [string map ${prefmap} [file normalize $filename]]
 }
 
+set os.platform [string tolower $tcl_platform(os)]
+set checkdpkg ""
+
 proc port_provides { fileNames } {
+    global os.platform checkdpkg
     # In this case, portname is going to be used for the filename... since
     # that is the first argument we expect... perhaps there is a better way
     # to do this?
@@ -208,6 +212,7 @@ proc port_provides { fileNames } {
                 if { $port != 0 } {
                     dict set providers "${filename}" "${port}"
                 } else {
+                    set checkdpkg "${checkdpkg} ${file}"
                     dict set providers "${filename}" "not_by_MacPorts"
                 }
             } else {
@@ -376,6 +381,11 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                     }
                     if {[llength ${DUPS}]} {
                         puts [join ${DUPS}]
+                    }
+                    if {${checkdpkg} ne ""} {
+                        if {${os.platform} eq "linux"} {
+                            puts "check host packages with `dpkg -S ${checkdpkg}`"
+                        }
                     }
                 }
             }
