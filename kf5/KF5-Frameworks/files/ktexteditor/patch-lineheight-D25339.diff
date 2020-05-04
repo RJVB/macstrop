@@ -1,0 +1,128 @@
+diff --git src/render/katerenderer.cpp src/render/katerenderer.cpp
+index 2d9258eb..4e091b45 100644
+--- src/render/katerenderer.cpp
++++ src/render/katerenderer.cpp
+@@ -547,6 +547,25 @@ void KateRenderer::assignSelectionBrushesFromAttribute(QTextLayout::FormatRange
+     }
+ }
+ 
++static QVector<QTextLayout::FormatRange> decorationsForLineGap(const QVector<QTextLayout::FormatRange> &formats, const QVector<QTextLayout::FormatRange> &additionalFormats) {
++    // We want to make sure that we draw no text for gap, but keep all the
++    // existing background. Based on the logic in QTextLayout::draw, color
++    // without foreground will not draw text.
++    QVector<QTextLayout::FormatRange> gapFormats = formats + additionalFormats;
++    for (auto &format : gapFormats) {
++        format.format.clearForeground();
++    }
++    // Add a dummy selection at the end of formats. It will draw "transparent"
++    // text and background. so no text and background will should be drawn after
++    // hanlding it.
++    gapFormats.append(QTextLayout::FormatRange());
++    gapFormats.back().start = 0;
++    gapFormats.back().length = INT_MAX;
++    gapFormats.back().format.setForeground(Qt::transparent);
++    gapFormats.back().format.setBackground(Qt::transparent);
++    return gapFormats;
++}
++
+ void KateRenderer::paintTextLine(QPainter &paint, KateLineLayoutPtr range, int xStart, int xEnd, const KTextEditor::Cursor *cursor, PaintTextLineFlags flags)
+ {
+     Q_ASSERT(range->isValid());
+@@ -603,18 +622,56 @@ void KateRenderer::paintTextLine(QPainter &paint, KateLineLayoutPtr range, int x
+ 
+         QVector<QTextLayout::FormatRange> additionalFormats;
+         if (range->length() > 0) {
++            if (drawSelection) {
++                additionalFormats = decorationsForLine(range->textLine(), range->line(), true);
++            }
++
++            // Check if there's any format need to be fill into the gap.
++            auto formats = range->layout()->formats();
++            if (!formats.isEmpty() || !additionalFormats.isEmpty()) {
++                QVector<QTextLayout::FormatRange> gapFormats;
++                for (int i = 0; i < range->layout()->lineCount(); i++) {
++                    auto line = range->layout()->lineAt(i);
++                    // Right now, y should always be multiply of lineHeight.
++                    auto yOffset = qRound(line.y()) % lineHeight();
++                    if (yOffset == 0) {
++                        continue;
++                    }
++                    auto rect = line.rect();
++                    if (rect.height() <= 0) {
++                        continue;
++                    }
++                    auto textHeight = rect.height();
++                    // Only initialize gapFormats once, it will never be empty.
++                    if (gapFormats.isEmpty()) {
++                        gapFormats = decorationsForLineGap(formats, additionalFormats);
++                    }
++                    // The line looks like
++                    // --- y: lineHeight * (i-1)
++                    // gap
++                    // --- y: line.y() = lineHeight * (i-1) + yOffset
++                    // text
++                    // --- y: lineHeight * i
++                    // We want to repeatedly draw "transparent" text in the gap region.
++                    // First we set the clip region to only cover the gap.
++                    rect.moveTop(line.y() - yOffset);
++                    rect.setHeight(yOffset);
++                    auto yStart = -yOffset;
++                    // We use a loop here to fill the yOffset gap with multiple textHeight.
++                    // Under most case, this should be only 0 or 1 extra transparent text
++                    // need to be drawn.
++                    while (yStart < 0) {
++                        range->layout()->draw(&paint, QPoint(-xStart, yStart), gapFormats, rect);
++                        yStart += textHeight;
++                    }
++                }
++            }
+             // We may have changed the pen, be absolutely sure it gets set back to
+             // normal foreground color before drawing text for text that does not
+             // set the pen color
+             paint.setPen(attribute(KTextEditor::dsNormal)->foreground().color());
+             // Draw the text :)
+-            if (drawSelection) {
+-                additionalFormats = decorationsForLine(range->textLine(), range->line(), true);
+-                range->layout()->draw(&paint, QPoint(-xStart, 0), additionalFormats);
+-
+-            } else {
+-                range->layout()->draw(&paint, QPoint(-xStart, 0));
+-            }
++            range->layout()->draw(&paint, QPoint(-xStart, 0), additionalFormats);
+         }
+ 
+         QBrush backgroundBrush;
+@@ -1000,7 +1057,12 @@ void KateRenderer::updateFontHeight()
+      *
+      * qreal fontHeight = font.ascent() + font.descent();
+      */
+-    m_fontHeight = qMax(1, qCeil(config()->fontMetrics().ascent() + config()->fontMetrics().descent()));
++    const auto fontMetrics = config()->fontMetrics();
++    m_fontHeight = qMax(1, qCeil(fontMetrics.ascent() + fontMetrics.descent()));
++    // Try to use representitve character from English, Chinese, Japanese
++    // and Korean to calculate the line height.
++    // The characters being tested are "AHIygあ你말".
++    m_fontHeight = qMax(m_fontHeight, qCeil(fontMetrics.boundingRect(QString::fromUtf8("AHIyg\xe3\x81\x82\xe4\xbd\xa0\xeb\xa7\x90")).height()));
+ }
+ 
+ void KateRenderer::updateMarkerSize()
+@@ -1104,12 +1166,17 @@ void KateRenderer::layoutLine(KateLineLayoutPtr lineLayout, int maxwidth, bool c
+         if (maxwidth > 0)
+         {
+             line.setLineWidth(maxwidth);
++        } else {
++            line.setLineWidth(INT_MAX);
+         }
+ 
+         // we include the leading, this must match the ::updateFontHeight code!
+         line.setLeadingIncluded(true);
+-
+-        line.setPosition(QPoint(line.lineNumber() ? shiftX : firstLineOffset, height));
++        qreal lineOffset = 0;
++        if (line.rect().isValid() && line.height() < lineHeight()) {
++            lineOffset = lineHeight() - line.height();
++        }
++        line.setPosition(QPointF(line.lineNumber() ? shiftX : firstLineOffset, height + lineOffset));
+ 
+         if (needShiftX && line.width() > 0)
+         {
