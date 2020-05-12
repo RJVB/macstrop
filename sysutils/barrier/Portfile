@@ -4,6 +4,9 @@ PortGroup       github 1.0
 PortGroup       LTO 1.0
 PortGroup       qt5 1.0
 PortGroup       locale_select 1.0
+platform darwin {
+    PortGroup   code_sign 1.0
+}
 
 ### MacStrop Only ###
 # Enable HFS compression of the workdir if the compress_workdir PortGroup is installed
@@ -40,22 +43,59 @@ long_description Barrier is software that mimics the functionality of a KVM swit
                 your mouse to the edge of the screen, or by using a keypress to switch focus to a different system.
 
 patch.pre_args  -Np1
+if {${subport} eq "${name}"} {
+    # upgrade the app bundling logic to that used in barrier-devel@2.3.2.51
+    # see ` git show 9080ce451bfa302f1df70aabb4baf66900e02207...2d2e92989c3493e54096c4e68c3139911ef40ce9 dist/macos/bundle/ CMakeLists.txt`
+    patchfiles-append \
+                patch-backport-installer-changes.diff
+}
+patchfiles-append \
+                patch-macports-fixes.diff \
+                patch-mac-fixes.diff
 
 depends_build-append \
                 port:pkgconfig
 depends_lib-append \
-                port:avahi \
                 port:curl
 
 compiler.cxx_standard 2014
 
 configure.args-append \
-                -DBARRIER_BUILD_INSTALLER=OFF \
                 -DCMAKE_MACOSX_RPATH=ON \
 
-platform linux {
+platform darwin {
+    depends_lib-append \
+                path:lib/libssl.dylib:openssl
+    qt5.depends_component \
+                qttools
     configure.args-append \
-        cmake.install_rpath-prepend \
+                -DBARRIER_BUILD_INSTALLER=ON
+    build.env-append \
+                "DEPLOYQT=${qt_bins_dir}/macdeployqt"
+    destroot {
+        xinstall -m 755 -d ${destroot}${qt_apps_dir}
+        file copy -force ${build.dir}/bundle/Barrier.app ${destroot}${qt_apps_dir}/
+        # now prune and rebuild the app bundle according to MacPorts principles
+        file delete -force ${destroot}${qt_apps_dir}/Barrier.app/Contents/Frameworks \
+             ${destroot}${qt_apps_dir}/Barrier.app/Contents/Resources/qt.conf
+        foreach b [glob ${build.dir}/bin/*] {
+            xinstall -m 755 ${b} ${destroot}${qt_apps_dir}/Barrier.app/Contents/MacOS
+        }
+        if {[info proc qt5.add_app_wrapper] ne ""} {
+            qt5.add_app_wrapper barrier Barrier barrier
+        }
+    }
+    post-activate {
+        codesign ${qt_apps_dir}/Barrier.app -
+    }
+}
+platform linux {
+    depends_lib-append \
+                path:lib/libssl.so:openssl \
+                port:avahi
+    configure.args-append \
+                -DBARRIER_BUILD_INSTALLER=OFF
+    cmake.install_rpath-prepend \
                 ${prefix}/lib/${build_arch}-linux-gnu \
                 ${qt_libs_dir}
 }
