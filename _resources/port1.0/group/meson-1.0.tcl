@@ -46,6 +46,9 @@ depends_skip_archcheck-append \
 
 default configure.cmd       {${prefix}/bin/meson}
 default configure.post_args {[list [option source_dir] "."]}
+# from mcalhoun's commit to make this PG compatible with muniversal:
+## DO WE NEED THIS?! (or is using `source_dir` good enough?)
+# default configure.post_args {[meson::get_post_args]}
 configure.universal_args-delete \
                             --disable-dependency-tracking
 
@@ -58,6 +61,17 @@ default build.target        ""
 # remove DESTDIR= from arguments, but rather take it from environmental variable
 destroot.env-append         DESTDIR=${destroot}
 default destroot.post_args  ""
+
+namespace eval meson {
+    proc get_post_args {} {
+        global configure.dir build_dir muniversal.current_arch
+        if {[info exists muniversal.current_arch]} {
+            return "${configure.dir} ${build_dir}-${muniversal.current_arch}"
+        } else {
+            return "${configure.dir} ${build_dir}"
+        }
+    }
+}
 
 configure.args-append
 

@@ -7,7 +7,8 @@
 
 global available_qt_versions
 array set available_qt_versions {
-    qt5   {qt5-qtbase   5.12}
+    qt5   {qt5-qtbase   5.14}
+    qt513 {qt513-qtbase 5.13}
     qt511 {qt511-qtbase 5.11}
     qt59  {qt59-qtbase  5.9}
     qt58  {qt58-qtbase  5.8}
@@ -127,6 +128,7 @@ proc qt5.get_default_name {} {
         #
         # macOS Sierra (10.12)
         #
+        # Qt 5.14: Not Supported
         # Qt 5.13: Supported
         # Qt 5.12: Supported
         # Qt 5.11: Supported
@@ -135,12 +137,13 @@ proc qt5.get_default_name {} {
         # Qt 5.8:  Supported
         # Qt 5.7:  Not Supported but seems to work
         #
-        return qt5
+        return qt513
         #
     } elseif { ${os.major} == 17 } {
         #
         # macOS High Sierra (10.13)
         #
+        # Qt 5.14: Supported
         # Qt 5.13: Supported
         # Qt 5.12: Supported
         # Qt 5.11: Supported
@@ -152,6 +155,7 @@ proc qt5.get_default_name {} {
         #
         # macOS Mojave (10.14)
         #
+        # Qt 5.14: Supported
         # Qt 5.13: Supported
         # Qt 5.12: Supported
         #
@@ -161,6 +165,7 @@ proc qt5.get_default_name {} {
         #
         # macOS Catalina (10.15)
         #
+        # Qt 5.14: Supported
         # Qt 5.13: Not Supported but seems to work
         # Qt 5.12: Not Supported but seems to work
         #
@@ -215,12 +220,16 @@ if {[tbool just_want_qt5_version_info]} {
 
 # standard install directory
 global qt_dir
-###RJVB###
-if {${os.platform} eq "darwin"} {
-    set qt_dir           ${prefix}/libexec/qt5
+if {[info exists qt5.custom_qt_name]} {
+    set qt_dir          ${prefix}/libexec/${qt5.custom_qt_name}
 } else {
-    # let's use another prefix for now...
-    set qt_dir           ${prefix}/libexec/qt512
+    ###RJVB###
+    if {${os.platform} eq "darwin"} {
+        set qt_dir       ${prefix}/libexec/qt5
+    } else {
+        # let's use this prefix for now...
+        set qt_dir       ${prefix}/libexec/qt512
+    }
 }
 ###RJVB###
 
@@ -352,7 +361,7 @@ namespace eval qt5pg {
         }
         qtcanvas3d {
             5.5
-            6.0
+            5.13
             libexec/qt5/qml/QtCanvas3D/libqtcanvas3d.dylib
             ""
         }
@@ -458,6 +467,12 @@ namespace eval qt5pg {
             lib/pkgconfig/Qt5Declarative.pc
             ""
         }
+        qtquick3d {
+            5.14
+            6.0
+            lib/pkgconfig/Qt5Quick3D.pc
+            ""
+        }
         qtquickcontrols {
             5.1
             6.0
@@ -468,6 +483,12 @@ namespace eval qt5pg {
             5.6
             6.0
             lib/pkgconfig/Qt5QuickControls2.pc
+            ""
+        }
+        qtquicktimeline {
+            5.14
+            6.0
+            libexec/qt5/qml/QtQuick/Timeline/libqtquicktimelineplugin.dylib
             ""
         }
         qtremoteobjects {
