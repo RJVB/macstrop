@@ -39,7 +39,7 @@ namespace eval meson {
 }
 
 depends_build-append        port:meson \
-                            port:ninja
+                            bin:ninja:ninja
 depends_skip_archcheck-append \
                             meson \
                             ninja
