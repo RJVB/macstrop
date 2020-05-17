@@ -186,7 +186,21 @@ variant universal {
             set muniversal.current_arch ${arch}
 
             if {![file exists ${worksrcpath}-${arch}]} {
-                copy ${worksrcpath} ${worksrcpath}-${arch}
+                if {[file type ${worksrcpath}] eq "link" && ${build.dir} eq "${worksrcpath}"} {
+                    set target [file link ${worksrcpath}]
+                    if {![file exists ${target}]} {
+                        set fulltarget [file join [file dirname ${worksrcpath}] ${target}]
+                        if {![file exists ${fulltarget}]} {
+                            ui_error "${worksrcpath} is a link not pointing to an absolute directory or to a directory in the same parent directory"
+                            return -code error "unsupported worksrcpath link target"
+                        } else {
+                            set target ${fulltarget}
+                        }
+                    }
+                    copy ${target} ${worksrcpath}-${arch}
+                } else {
+                    copy ${worksrcpath} ${worksrcpath}-${arch}
+                }
             }
 
             set archf [muniversal_get_arch_flag ${arch}]
