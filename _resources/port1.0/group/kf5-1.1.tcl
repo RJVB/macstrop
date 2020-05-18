@@ -457,6 +457,31 @@ namespace eval kf5 {
     set cat ""
 }
 
+## options to control git depth fetching.
+options kf5.git.depth kf5.git.shallowsince
+default kf5.git.depth {}
+# 20200518:
+# by default we create working copies that are shallow before Jan 1st 2018
+# that should include any commit we're currently requesting through git.branch .
+default kf5.git.shallowsince 2018-01-01
+## set an appropriate git.url:
+proc kf5.git.url {project} {
+    global kf5.version kf5.git.depth kf5.git.shallowsince filespath
+    if {[file exists ${filespath}/${project}-git/.git]} {
+        git.url         ${filespath}/${project}-git
+    } else {
+#             git.url         git://anongit.kde.org/${project}
+        if {${kf5.git.depth} ne {} && ${kf5.git.depth} > 0} {
+            git.url     -n --depth ${kf5.git.depth} https://invent.kde.org/kde/${project}
+        } elseif {${kf5.git.shallowsince} ne {}} {
+            git.url     -n --shallow-since ${kf5.git.shallowsince} https://invent.kde.org/kde/${project}
+        } else {
+            git.url     -n https://invent.kde.org/kde/${project}
+        }
+    }
+    distname            ${project}-${kf5.version}.git
+}
+
 proc kf5.set_project {project} {
     upvar #0 kf5.project p
     upvar #0 kf5.folder f
@@ -467,6 +492,7 @@ proc kf5.set_project {project} {
     global kf5.virtualPath
     global kf5.category
     global kf5.version
+    global kf5.git.depth kf5.git.shallowsince
     global fetch.type
     global filespath
     global version
@@ -527,12 +553,7 @@ proc kf5.set_project {project} {
         homepage            http://projects.kde.org/projects/${kf5.virtualPath}/${project}
     }
     if {${fetch.type} eq "git"} {
-        if {[file exists ${filespath}/${project}-git/.git]} {
-            git.url         ${filespath}/${project}-git
-        } else {
-            git.url         git://anongit.kde.org/${project}
-        }
-        distname            ${project}-${kf5.version}.git
+        kf5.git.url         ${project}
     } else {
 #         See
 #         https://kde.org/info/releases-19.12.1.php

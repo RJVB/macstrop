@@ -1,8 +1,18 @@
+diff --git src/render/katerenderer.h src/render/katerenderer.h
+--- src/render/katerenderer.h
++++ src/render/katerenderer.h
+@@ -422,6 +422,7 @@
+     int m_tabWidth;
+     int m_indentWidth;
+     int m_fontHeight;
++    mutable int m_textHeight = -1;
+ 
+     // some internal flags
+     KateRenderer::caretStyles m_caretStyle;
 diff --git src/render/katerenderer.cpp src/render/katerenderer.cpp
-index 2d9258eb..4e091b45 100644
 --- src/render/katerenderer.cpp
 +++ src/render/katerenderer.cpp
-@@ -547,6 +547,25 @@ void KateRenderer::assignSelectionBrushesFromAttribute(QTextLayout::FormatRange
+@@ -536,6 +536,25 @@
      }
  }
  
@@ -28,7 +38,7 @@ index 2d9258eb..4e091b45 100644
  void KateRenderer::paintTextLine(QPainter &paint, KateLineLayoutPtr range, int xStart, int xEnd, const KTextEditor::Cursor *cursor, PaintTextLineFlags flags)
  {
      Q_ASSERT(range->isValid());
-@@ -603,18 +622,56 @@ void KateRenderer::paintTextLine(QPainter &paint, KateLineLayoutPtr range, int x
+@@ -589,18 +608,56 @@
  
          QVector<QTextLayout::FormatRange> additionalFormats;
          if (range->length() > 0) {
@@ -92,23 +102,35 @@ index 2d9258eb..4e091b45 100644
          }
  
          QBrush backgroundBrush;
-@@ -1000,7 +1057,12 @@ void KateRenderer::updateFontHeight()
-      *
-      * qreal fontHeight = font.ascent() + font.descent();
-      */
--    m_fontHeight = qMax(1, qCeil(config()->fontMetrics().ascent() + config()->fontMetrics().descent()));
-+    const auto fontMetrics = config()->fontMetrics();
-+    m_fontHeight = qMax(1, qCeil(fontMetrics.ascent() + fontMetrics.descent()));
-+    // Try to use representitve character from English, Chinese, Japanese
-+    // and Korean to calculate the line height.
-+    // The characters being tested are "AHIygあ你말".
-+    m_fontHeight = qMax(m_fontHeight, qCeil(fontMetrics.boundingRect(QString::fromUtf8("AHIyg\xe3\x81\x82\xe4\xbd\xa0\xeb\xa7\x90")).height()));
+@@ -893,7 +950,7 @@
+ 
+ uint KateRenderer::fontHeight() const
+ {
+-    return m_fontHeight;
++    return qMax(m_textHeight, m_fontHeight);
  }
  
- void KateRenderer::updateMarkerSize()
-@@ -1104,12 +1166,17 @@ void KateRenderer::layoutLine(KateLineLayoutPtr lineLayout, int maxwidth, bool c
-         if (maxwidth > 0)
-         {
+ uint KateRenderer::documentHeight() const
+@@ -964,6 +1021,8 @@
+      */
+     m_font = config()->baseFont();
+     m_fontMetrics = QFontMetricsF(m_font);
++    // Clear the text height based on font.
++    m_textHeight = -1;
+ 
+     /**
+      * ensure minimal height of one pixel to not fall in the div by 0 trap somewhere
+@@ -1073,6 +1132,7 @@
+ 
+     int height = 0;
+     int shiftX = 0;
++    int pendingTextHeight = -1;
+ 
+     bool needShiftX = (maxwidth != -1) && m_view && (m_view->config()->dynWordWrapAlignIndent() > 0);
+ 
+@@ -1084,12 +1144,20 @@
+ 
+         if (maxwidth > 0) {
              line.setLineWidth(maxwidth);
 +        } else {
 +            line.setLineWidth(INT_MAX);
@@ -119,10 +141,39 @@ index 2d9258eb..4e091b45 100644
 -
 -        line.setPosition(QPoint(line.lineNumber() ? shiftX : firstLineOffset, height));
 +        qreal lineOffset = 0;
-+        if (line.rect().isValid() && line.height() < lineHeight()) {
-+            lineOffset = lineHeight() - line.height();
++        if (line.rect().isValid()) {
++            if (line.height() < lineHeight()) {
++                lineOffset = lineHeight() - line.height();
++            }
++            pendingTextHeight = qMax(qCeil(line.height()), pendingTextHeight);
 +        }
 +        line.setPosition(QPointF(line.lineNumber() ? shiftX : firstLineOffset, height + lineOffset));
  
-         if (needShiftX && line.width() > 0)
-         {
+         if (needShiftX && line.width() > 0) {
+             needShiftX = false;
+@@ -1117,6 +1185,12 @@
+     l->endLayout();
+ 
+     lineLayout->setLayout(l);
++
++    if (cacheLayout && pendingTextHeight > lineHeight()) {
++        m_textHeight = pendingTextHeight;
++        // trigger view update, if any!
++        QMetaObject::invokeMethod(m_view, "updateRendererConfig", Qt::QueuedConnection);
++    }
+ }
+ 
+ // 1) QString::isRightToLeft() sux
+diff --git src/view/kateview.h src/view/kateview.h
+--- src/view/kateview.h
++++ src/view/kateview.h
+@@ -799,7 +799,7 @@
+ 
+     void updateDocumentConfig();
+ 
+-    void updateRendererConfig();
++    Q_INVOKABLE void updateRendererConfig();
+ 
+ private Q_SLOTS:
+     void updateFoldingConfig();
+
