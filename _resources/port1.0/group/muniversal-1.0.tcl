@@ -186,20 +186,39 @@ variant universal {
             set muniversal.current_arch ${arch}
 
             if {![file exists ${worksrcpath}-${arch}]} {
-                if {[file type ${worksrcpath}] eq "link" && ${build.dir} eq "${worksrcpath}"} {
-                    set target [file link ${worksrcpath}]
-                    if {![file exists ${target}]} {
-                        set fulltarget [file join [file dirname ${worksrcpath}] ${target}]
-                        if {![file exists ${fulltarget}]} {
-                            ui_error "${worksrcpath} is a link not pointing to an absolute directory or to a directory in the same parent directory"
-                            return -code error "unsupported worksrcpath link target"
-                        } else {
-                            set target ${fulltarget}
-                        }
+                switch [file type ${worksrcpath}] {
+                    directory {
+                        copy ${worksrcpath} ${worksrcpath}-${arch}
                     }
-                    copy ${target} ${worksrcpath}-${arch}
-                } else {
-                    copy ${worksrcpath} ${worksrcpath}-${arch}
+                    link {
+                        # We have to copy the actual directory tree instead of the verbatim symlink.
+                        set worksrcpath_work ${worksrcpath}
+                        set link_depth 0
+                        while {[file type ${worksrcpath_work}] eq "link"} {
+                            set target [file readlink ${worksrcpath_work}]
+
+                            # Canonicalize path.
+                            if {[string index ${target} 0] ne "/"} {
+                                set target [file dirname ${worksrcpath_work}]/${target}
+                            }
+
+                            if {![file exists ${target}]} {
+                                return -code error "worksrcpath symlink traversal encountered non-existent target path ${target} (dangling symlink)"
+                            }
+
+                            incr link_depth
+                            if {${link_depth} >= 50} {
+                                return -code error "worksrcpath symlink too deeply nested, giving up (loop?)"
+                            }
+
+                            set worksrcpath_work ${target}
+                        }
+
+                        copy ${worksrcpath_work} ${worksrcpath}-${arch}
+                    }
+                    default {
+                        return -code error "worksrcpath not a symlink or directory, this is unexpected"
+                    }
                 }
             }
 
