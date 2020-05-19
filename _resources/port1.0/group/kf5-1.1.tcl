@@ -458,28 +458,48 @@ namespace eval kf5 {
 }
 
 ## options to control git depth fetching.
-options kf5.git.depth kf5.git.shallowsince
+options kf5.git.depth kf5.git.shallowbefore
 default kf5.git.depth {}
 # 20200518:
 # by default we create working copies that are shallow before Jan 1st 2018
 # that should include any commit we're currently requesting through git.branch .
-default kf5.git.shallowsince 2018-01-01
-## set an appropriate git.url:
-proc kf5.git.url {project} {
-    global kf5.version kf5.git.depth kf5.git.shallowsince filespath
-    if {[file exists ${filespath}/${project}-git/.git]} {
-        git.url         ${filespath}/${project}-git
+default kf5.git.shallowbefore 2018-01-01
+## set an appropriate git.url
+## `kf5.git.setup project` : fetch from the KDE git server
+## `kf5.git.setup host project` : fetch from ${host}${project}; "host" must be fully qualified and end with a separator
+## `kf5.git.setup account project hash [prefix]` : passed through to `github.setup`
+## NB: the 3rd option ignores `depth` and `shallowbefore`, so should not be used with fetch.type==git!
+proc kf5.git.setup {first {second ""} args} {
+    global kf5.version kf5.git.depth kf5.git.shallowbefore filespath
+    if {[llength ${args}] > 0} {
+        # this implies `second` isn't empty either!
+        ui_debug        "Checking out through github PortGroup"
+        ui_debug        "## github.setup \"${first}\" \"${second}\" \"{*}${args}\""
+        github.setup    ${first} ${second} {*}${args}
     } else {
-#             git.url         git://anongit.kde.org/${project}
-        if {${kf5.git.depth} ne {} && ${kf5.git.depth} > 0} {
-            git.url     -n --depth ${kf5.git.depth} https://invent.kde.org/kde/${project}
-        } elseif {${kf5.git.shallowsince} ne {}} {
-            git.url     -n --shallow-since ${kf5.git.shallowsince} https://invent.kde.org/kde/${project}
+        if {${second} eq ""} {
+            set host https://invent.kde.org/kde/
+            set project ${first}
         } else {
-            git.url     -n https://invent.kde.org/kde/${project}
+            set host    ${first}
+            set project ${second}
+        }
+        if {[file exists ${filespath}/${project}-git/.git]} {
+            ui_debug    "Cloning from local working copy"
+            git.url     ${filespath}/${project}-git
+        } else {
+            ui_debug    "cloning \"${project}\" from host \"${host}\""
+            set uri ${host}${project}
+            if {${kf5.git.depth} ne {} && ${kf5.git.depth} > 0} {
+                git.url -n --depth ${kf5.git.depth} ${uri}
+            } elseif {${kf5.git.shallowbefore} ne {}} {
+                git.url -n --shallow-since ${kf5.git.shallowbefore} ${uri}
+            } else {
+                git.url -n ${uri}
+            }
+            distname    ${project}-${kf5.version}.git
         }
     }
-    distname            ${project}-${kf5.version}.git
 }
 
 proc kf5.set_project {project} {
@@ -492,7 +512,7 @@ proc kf5.set_project {project} {
     global kf5.virtualPath
     global kf5.category
     global kf5.version
-    global kf5.git.depth kf5.git.shallowsince
+    global kf5.git.depth kf5.git.shallowbefore
     global fetch.type
     global filespath
     global version
@@ -553,7 +573,7 @@ proc kf5.set_project {project} {
         homepage            http://projects.kde.org/projects/${kf5.virtualPath}/${project}
     }
     if {${fetch.type} eq "git"} {
-        kf5.git.url         ${project}
+        kf5.git.setup         ${project}
     } else {
 #         See
 #         https://kde.org/info/releases-19.12.1.php
