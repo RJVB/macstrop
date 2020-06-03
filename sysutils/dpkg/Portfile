@@ -1,0 +1,152 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
+PortSystem          1.0
+PortGroup           perl5 1.0
+PortGroup           locale_select 1.0
+PortGroup           LTO 1.0
+
+name                dpkg
+version             1.18.24
+revision            1
+platforms           darwin
+categories          sysutils archivers
+license             GPL-2+
+maintainers         {@xeron gmail.com:xeron.oskom} openmaintainer
+description         Debian package maintenance system
+long_description    ${name} is the basis of the ${description}.
+
+homepage            http://wiki.debian.org/Teams/Dpkg
+master_sites        debian:d/${name}/
+distname            ${name}_${version}
+worksrcdir          ${name}-${version}
+
+use_xz              yes
+# extract.asroot      yes
+
+checksums           rmd160  0fe5e443ed2f25ecc401c16855f2e920152b963e \
+                    sha256  d853081d3e06bfd46a227056e591f094e42e78fa8a5793b0093bad30b710d7b4
+
+perl5.branches      5.24
+
+depends_build-append \
+                    port:pkgconfig \
+                    port:flex \
+                    port:gnutar
+
+# Use MacPorts versions explicitly
+depends_lib-append  port:bzip2 \
+                    port:coreutils \
+                    port:gettext \
+                    port:gzip \
+                    port:gpatch \
+                    port:libiconv \
+                    port:ncurses \
+                    port:perl5 \
+                    port:xz \
+                    port:zlib
+
+depends_run-append  port:debianutils \
+                    port:gnutar
+
+post-extract {
+    file delete -force ${worksrcpath}/configure
+}
+
+configure.perl      ${perl5.bin}
+configure.pkg_config \
+                    ${prefix}/bin/pkg-config
+# `dpkg -i` will try to find the app on the path, so we cannot hardcode a full path here!
+configure.env-append \
+                    TAR=gnutar
+configure.args-append \
+                    --with-libintl-prefix=${prefix} \
+                    --with-libiconv-prefix=${prefix} \
+                    --with-admindir=${prefix}/var/db/${name} \
+                    --with-logdir=${prefix}/var/log \
+                    --mandir=${prefix}/share/man \
+                    --with-liblzma \
+                    --disable-silent-rules \
+                    --disable-link-optimization \
+                    --disable-start-stop-daemon
+
+compiler.blacklist-append cc gcc-3.3 gcc-4.0 apple-gcc-4.0
+
+build.type          gnu
+
+set vardpkg         ${destroot}${prefix}/var/db/${name}
+destroot.keepdirs-append \
+                    ${vardpkg} \
+                    ${vardpkg}/updates \
+                    ${vardpkg}/info \
+                    ${destroot}${prefix}/var/log \
+                    ${destroot}${prefix}/etc/${name}
+
+patchfiles-append   patch-scripts_Dpkg_Source_Archive.pm.diff
+
+use_autoreconf      yes
+autoreconf.args     -fvi --warnings=all
+pre-configure {
+    if {[file exists ${worksrcpath}/configure]} {
+        use_autoreconf no
+    }
+}
+
+pre-destroot {
+    file mkdir ${destroot}${prefix}/share/doc/${name}
+}
+
+post-destroot {
+    file mkdir ${vardpkg}
+    file mkdir ${vardpkg}/updates
+    file mkdir ${vardpkg}/info
+    system "touch ${vardpkg}/available ${vardpkg}/status"
+}
+
+# This variant sometimes hangs while building...
+variant docs description "Build documentation (warning: building documentation takes a long time)" {
+    depends_build-append    port:doxygen \
+                            path:bin/dot:graphviz \
+                            port:fontconfig \
+                            port:freefont-ttf
+
+    set docdir              ${prefix}/share/doc/${name}
+    configure.args-append   --docdir=${docdir} \
+                            --htmldir=${docdir}/html \
+                            --dvidir=${docdir}/dvi \
+                            --pdfdir=${docdir}/pdf \
+                            --psdir=${docdir}/ps
+
+    build.target-append     doc
+
+    pre-build {
+        elevateToRoot "doxygen"
+        system -W ${worksrcpath}/doc "${prefix}/bin/doxygen -u"
+    }
+
+    post-build {
+        system -W ${worksrcpath}/doc "${prefix}/bin/doxygen"
+        dropPrivileges
+        set destroot_docdir ${destroot}${prefix}/share/doc/${name}
+        xinstall -d ${destroot_docdir}
+        copy ${worksrcpath}/doc/doc ${destroot_docdir}
+        copy ${worksrcpath}/doc/html ${destroot_docdir}
+        foreach docfile {coding-style.txt triggers.txt README.feature-removal-schedule frontend.txt README.api} {
+            xinstall -m 644 ${worksrcpath}/doc/${docfile} ${destroot_docdir}
+        }
+    }
+}
+
+# Tests currently fail, this needs to be fixed eventually:
+test.run            yes
+test.target         check
+
+#pre-test {
+#    elevateToRoot "test"
+#}
+#post-test {
+#    dropPrivileges
+#}
+
+livecheck.type      regex
+livecheck.url       http://ftp.debian.org/debian/pool/main/d/${name}/
+livecheck.regex     "${name}_(\\d+\\.\\d+(\\.\\d+)*)"
