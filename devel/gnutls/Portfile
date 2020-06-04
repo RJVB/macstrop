@@ -14,8 +14,8 @@ PortGroup       LTO 1.0
 PortGroup       preserve_runtime_libraries 1.0
 
 name            gnutls
-version         3.6.7.1
-revision        0
+version         3.6.13
+revision        1
 set branch      [join [lrange [split ${version} .] 0 1] .]
 set major       [join [lrange [split ${version} .] 0 2] .]
 categories      devel security
@@ -35,9 +35,9 @@ long_description \
 master_sites    https://www.gnupg.org/ftp/gcrypt/gnutls/v${branch}/ \
                 http://mirrors.dotsrc.org/gcrypt/gnutls/v${branch}/
 
-checksums       rmd160  9a32e04aa76da39391ea42f16838bd8aee6c0220 \
-                sha256  881b26409ecd8ea4c514fd3fbdb6fae5fab422ca7b71116260e263940a4bbbad
-#                 size    8155512
+checksums       rmd160  fa5e9136c3a620436a65946f5e2a9f9b878b238b \
+                sha256  32041df447d9f4644570cf573c9f60358e865637d69b7e59d1159b7240b52f38
+#                 size    5958956
 
 use_xz          yes
 
@@ -69,6 +69,14 @@ depends_lib-append \
 
 patchfiles      patch-lib-system-certs.c.diff
 
+# see: https://trac.macports.org/ticket/60285
+platform darwin {
+    if {${os.major} == 19} {
+        patchfiles-append \
+                patch-configure.ac.diff
+    }
+}
+
 post-patch {
     # Remove comments which confuse at least Leopard's assembler.
     reinplace {/^#/d} {*}[glob ${worksrcpath}/lib/accelerated/x86/macosx/*.s]
@@ -76,9 +84,12 @@ post-patch {
 
 # use autoreconf to update glibtool to correctly handle -std
 platform darwin {
-    if {![file exists ${worksrcpath}/config.log]} {
-        use_autoreconf  yes
-        autoreconf.args -fvi
+    pre-configure {
+        ui_msg ${build.dir}
+#         if {![file exists ${build.dir}/config.log]} {
+#             use_autoreconf  yes
+#             autoreconf.args -fvi
+#         }
     }
 }
 
@@ -87,25 +98,24 @@ configure.args  --disable-guile \
                 --disable-libdane \
                 --disable-doc \
                 --enable-local-libopts \
+                --enable-ssl3-support \
                 --enable-openssl-compatibility \
                 --with-p11-kit \
                 --with-system-priority-file="${prefix}/etc/gnutls/default-priorities" \
                 --with-default-trust-store-pkcs11=pkcs11: \
                 ac_cv_prog_AWK=/usr/bin/awk
 
-variant dane description {Build libdane using unbound libraries} {}
+variant dane description {Build libdane using unbound libraries} {
+    depends_lib-append      port:unbound
+    configure.args-append   --with-unbound-root-key-file="${prefix}/var/run/unbound/root.key"
+    configure.args-delete   --disable-libdane
+}
 
 # as of r120660 (#43881) unbound installs its root key file at ${prefix}/var/run/unbound/root.key
 # the following may be superfluous
 
-if {[variant_isset dane]} {
-    depends_lib-append      port:unbound
-    configure.args-delete   --with-unbound-root-key-file="${prefix}/etc/unbound/root.key"
-    configure.args-append   --with-unbound-root-key-file="${prefix}/var/run/unbound/root.key"
-    configure.args-delete   --disable-libdane
-
-    if {![file exists ${prefix}/var/run/unbound/root.key]} {
-        notes "
+if {[variant_isset dane]} { if {![file exists ${prefix}/var/run/unbound/root.key]} {
+    notes "
 ***
 *** WARNING:
 ***
@@ -115,18 +125,25 @@ if {[variant_isset dane]} {
 *** to generate or update it.
 ***
 "
-    }
-} else {
+} } else {
     # take root from the host unbound on Linux
     platform darwin {
         # note the different location compared to +dane!
         configure.args-append --with-unbound-root-key-file="${prefix}/etc/unbound/root.key"
+    notes "
+*** The DNSSEC root key file is needed for the verification of DNSSEC responses.
+*** Use the command: sudo unbound-anchor -a \"${prefix}/etc/unbound/root.key\"
+*** to generate or update it.
+***
+"
     }
 }
 
 variant doc description {Build documentation} {
-    depends_build-append    port:gtk-doc
     configure.args-delete   --disable-doc
+
+    depends_build-append \
+                port:gtk-doc
 
     post-destroot {
         move ${destroot}${prefix}/share/man/man1/certtool.1 ${destroot}${prefix}/share/man/man1/gnutls-certtool.1
@@ -154,6 +171,7 @@ if {[variant_isset universal]} {
     configure.args-append \
         --host=${build_arch}-apple-${os.platform}${os.major} \
         --build=${build_arch}-apple-${os.platform}${os.major}
+#         default_variants    +doc
 }
 
 test.run        yes
@@ -171,7 +189,12 @@ platform darwin 8 {
 if { ${build_arch} eq "i386" || ${build_arch} eq "x86_64" } {
     compiler.blacklist-append *gcc-4.0
     compiler.blacklist-append *gcc-4.2
-    compiler.blacklist-append {clang < 400}
+    # Undefined symbols for architecture x86_64:
+    # "___get_cpuid_count", referenced from:
+    #     _register_x86_crypto in libaccelerated.a(x86-common.o)
+    # ld: symbol(s) not found for architecture x86_64
+    compiler.blacklist-append {clang < 1000} {macports-clang-3.[0-9]} {macports-clang-[4-6].0}
+    compiler.fallback-append  macports-clang-8.0 macports-clang-7.0 
 }
 
 # needs a TLS supporting compiler on older systems
