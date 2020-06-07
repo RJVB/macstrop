@@ -33,21 +33,24 @@
 # Usage:
 # PortGroup     devport 1.0
 
-namespace eval dev {
-    # it shouldn't be necessary to record variants in the archive name
-    set archname ${name}@${version}-dev.tar.bz2
-    # this could go into the software images directory
-    set archdir ${prefix}/var/devcontent
-}
-
-options devport_content devport_description devport_long_description
+options mainport_name devport_name devport_content devport_description devport_long_description
+default mainport_name               {${name}}
+default devport_name                {${mainport_name}-dev}
 default devport_content             ""
-default devport_description         {"Development headers and libraries for ${name}"}
+default devport_description         {"Development headers and libraries for ${mainport_name}"}
 default devport_long_description    {"${long_description}\nThis installs the development headers and libraries."}
+
+# namespace eval dev {
+    # it shouldn't be necessary to record variants in the archive name
+    options dev::archname dev::archdir
+    default dev::archname    {${mainport_name}@${version}-dev.tar.bz2}
+    # this could go into the software images directory
+    default dev::archdir     {${prefix}/var/devcontent}
+# }
 
 # create the online devport content archive
 proc create_devport_content_archive {} {
-    global destroot prefix
+    global destroot prefix mainport_name devport_name dev::archdir dev::archname
     set rawargs [option devport_content]
     set args ""
     # convert the arguments to local-relative:
@@ -65,13 +68,13 @@ proc create_devport_content_archive {} {
             file delete -force ${destroot}/${a}
         }
     }
-}
 
+}
 # registers content that standard devports will contain
 proc register_devport_standard_content {} {
-    global subport destroot prefix name
-    if {${subport} eq "${name}"} {
-        ui_msg "--->  Transferring developer content to ${name}-dev"
+    global subport destroot prefix mainport_name devport_name
+    if {${subport} eq "${mainport_name}"} {
+        ui_msg "--->  Transferring developer content to ${devport_name}"
         ui_debug "Finding and registering standard content for the devport"
         foreach h [glob -nocomplain ${destroot}${prefix}/include/*] {
             ui_debug "\theader: ${h}"
@@ -105,8 +108,8 @@ proc register_devport_standard_content {} {
 }
 
 proc append_to_devport_standard_content {args} {
-    global subport destroot prefix name
-    if {${subport} eq "${name}"} {
+    global subport destroot prefix mainport_name devport_name
+    if {${subport} eq "${mainport_name}"} {
         foreach pattern ${args} {
             ui_debug "Finding and registering additional content for the devport: \"${pattern}\""
             foreach h [glob ${destroot}${pattern}] {
@@ -123,6 +126,7 @@ proc append_to_devport_standard_content {args} {
 # without having to reinstall/re-activate the main port.
 # Warnings but no errors are raised if this fails.
 proc restore_devport_tarball {baseport} {
+    global dev::archdir dev::archname
     if {[file exists ${dev::archdir}/${dev::archname}]
         && [file size ${dev::archdir}/${dev::archname}] > 0} {
         return
@@ -155,7 +159,7 @@ proc restore_devport_tarball {baseport} {
 }
 
 proc unpack_devport_content {} {
-    global destroot prefix name subport
+    global destroot prefix mainport_name devport_name subport dev::archdir dev::archname
     if {[file exists ${dev::archdir}/${dev::archname}]
         && [file size ${dev::archdir}/${dev::archname}] > 0} {
         ui_debug "Unpacking \"${dev::archdir}/${dev::archname}\" for ${subport}"
@@ -164,15 +168,15 @@ proc unpack_devport_content {} {
         }
     } else {
         ui_error "The port's content archive doesn't exists or is empty (${dev::archdir}/${dev::archname})!"
-        return -code error "Missing or invalid content archive; try re-activating or reinstalling port:${name}"
+        return -code error "Missing or invalid content archive; try re-activating or reinstalling port:${mainport_name}"
     }
 }
 
 proc create_devport {dependency} {
-    global name devport_description devport_long_description baseport
+    global mainport_name devport_name devport_description devport_long_description baseport dev::archdir dev::archname
     # just so we're clear that what port we're talking about (the main port):
-    set baseport ${name}
-    subport ${name}-dev {
+    set baseport ${mainport_name}
+    subport ${devport_name} {
         description     [join ${devport_description}]
         long_description [join ${devport_long_description}]
         depends_fetch
@@ -206,11 +210,15 @@ proc create_devport {dependency} {
 }
 
 proc is_devport {} {
-    global subport name
-    return [eval {${subport} eq "${name}-dev"}]
+    global subport mainport_name
+    return [eval {${subport} eq "${devport_name}"}]
 }
 
 proc is_mainport {} {
-    global subport name
-    return [expr {${subport} eq "${name}"}]
+    global subport mainport_name
+    return [expr {${subport} eq "${mainport_name}"}]
+}
+
+if {[is_mainport] && [file exists ${destroot}${dev::archdir}/${dev::archname}]} {
+    notes-append "Don't forget to upgrade port:${devport_name} after upgrading port:${mainport_name}"
 }
