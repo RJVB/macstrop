@@ -70,8 +70,8 @@ if [ "${DATASET}" != "" -a ${OK} = 1 ];then
         trap "CleanUp" 1
         trap "CleanUp" 2
         trap "CleanUp" 15
-        if [ "${COMPRESSION}" != "" ] ;then
-            ${ECHO} zfs set compression=${COMPRESSION} ${DSET}
+        if [ "${COMP}" != "" ] ;then
+            ${ECHO} zfs set compression=${COMP} ${DSET}
         fi
         if [ ${NOCHECKSUM} != 0 ] ;then
             ${ECHO} zfs set checksum=off ${DSET}
