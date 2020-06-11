@@ -468,7 +468,9 @@ default kf5.git.shallowbefore 2018-01-01
 ## `kf5.git.setup project` : fetch from the KDE git server
 ## `kf5.git.setup host project` : fetch from ${host}${project}; "host" must be fully qualified and end with a separator
 ## `kf5.git.setup account project hash [prefix]` : passed through to `github.setup`
-## NB: the 3rd option ignores `depth` and `shallowbefore`, so should not be used with fetch.type==git!
+## NB: the 3rd option ignores `depth` and `shallowbefore`, so should not be used with fetch.type==git if you want
+## those settings to be respected.
+## NB2: the other forms set fetch.type=git .
 proc kf5.git.setup {first {second ""} args} {
     global kf5.version kf5.git.depth kf5.git.shallowbefore filespath
     if {[llength ${args}] > 0} {
@@ -477,6 +479,7 @@ proc kf5.git.setup {first {second ""} args} {
         ui_debug        "## github.setup \"${first}\" \"${second}\" \"{*}${args}\""
         github.setup    ${first} ${second} {*}${args}
     } else {
+        fetch.type      git
         if {${second} eq ""} {
             set host https://invent.kde.org/kde/
             set project ${first}
