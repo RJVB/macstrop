@@ -73,12 +73,13 @@ if {${kf5::includecounter} == 0} {
 }
 
 if {${os.platform} eq "darwin" && ${os.major} <= 13} {
-    depends_fetch-append \
-                    bin:wget:wget
+#     depends_fetch-append \
+#                     bin:wget:wget
     # avoid certificate issues on kde.org
-    fetch {
-        system "wget ${master_sites}/${distname}${extract.suffix} --no-check-certificate --progress=bar:force -O ${distpath}/${distname}${extract.suffix}"
-    }
+    fetch.ignore_sslcert    yes
+#     fetch {
+#         system "wget ${master_sites}/${distname}${extract.suffix} --no-check-certificate --progress=bar:force -O ${distpath}/${distname}${extract.suffix}"
+#     }
 }
 
 ########################################################################
@@ -472,7 +473,7 @@ default kf5.git.shallowbefore 2018-01-01
 ## those settings to be respected.
 ## NB2: the other forms set fetch.type=git .
 proc kf5.git.setup {first {second ""} args} {
-    global kf5.version kf5.git.depth kf5.git.shallowbefore filespath
+    global kf5.version kf5.git.depth kf5.git.shallowbefore filespath fetch.type
     if {[llength ${args}] > 0} {
         # this implies `second` isn't empty either!
         ui_debug        "Checking out through github PortGroup"
