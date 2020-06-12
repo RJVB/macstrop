@@ -32,6 +32,9 @@
 # Usage:
 # PortGroup     LTO 1.0
 
+if {[variant_exists LTO]} {
+    return
+}
 
 variant LTO description {build with link-time optimisation} {}
 options LTO_supports_i386
