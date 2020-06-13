@@ -215,6 +215,7 @@ if {[info exists qt5.custom_qt_name]} {
 }
 
 if {[tbool just_want_qt5_version_info]} {
+    ui_debug "just_want_qt5_version_info is true, returning"
     return
 }
 
@@ -654,7 +655,7 @@ if {![variant_isset qt5stock_kde] && ([file exists ${prefix}/include/qt5/QtCore/
     # (checking if "plugins" is a directory is probably redundant)
     # We're already in the correct PortGroup
     set qt5PGname "qt5"
-} elseif {[info exists qt5.prefer_kde] || [variant_isset qt5kde]} {
+} elseif {([info exists qt5.prefer_kde] || [variant_isset qt5kde]) && ![variant_isset qt5stock_kde]} {
     # The calling port has indicated a preference and no Qt5 port is installed already
     # transfer control to qt5-kde-1.0.tcl
     ui_debug "port:qt5-kde has been requested explicitly"
