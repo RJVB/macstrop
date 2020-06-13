@@ -1,8 +1,8 @@
 diff --git a/doc/port.1 b/doc/port.1
-index 8cccf2df..16533e03 100644
+index e724a7ef29634d64b2b950145093db82be4e3ab1..020735ce29b4cc8d29834c8933a5ca8efcebe046 100644
 --- a/doc/port.1
 +++ b/doc/port.1
-@@ -1281,6 +1281,24 @@ Creates an Internet\-enabled disk image containing a macOS metapackage of
+@@ -1297,6 +1297,24 @@ Creates an Internet\-enabled disk image containing a macOS metapackage of
  \fIportname\fR
  and its dependencies\&.
  .RE
@@ -22,16 +22,16 @@ index 8cccf2df..16533e03 100644
 +dpkg
 +.RS 4
 +Creates a DEB binary package of
-+\fIportname\fR\&.
++\fIportname\fR\&. Takes an optional "hackers' delight" option \fI--no-deps\fR to omit recording any dependencies in the package.
 +.RE
  .SH "EXAMPLES"
  .sp
  The following demonstrates invoking port with the extract action on portdir \(lqtextproc/figlet\(rq and extract\&.suffix set to \(lq\&.tgz\(rq:
 diff --git a/doc/port.1.txt b/doc/port.1.txt
-index e9429f20..49189631 100644
+index e94f2b1e4d07808d3378f8e12dd47171b9dc90ed..c9b80bcc5f32cb24e587376bbc56457623465b93 100644
 --- a/doc/port.1.txt
 +++ b/doc/port.1.txt
-@@ -663,6 +663,15 @@ mdmg::
+@@ -670,6 +670,17 @@ mdmg::
      Creates an Internet-enabled disk image containing a macOS metapackage of
      'portname' and its dependencies.
  
@@ -42,7 +42,9 @@ index e9429f20..49189631 100644
 +    Creates a SRPM source package of 'portname', similar to a xar ``portpkg''.
 +
 +dpkg::
-+    Creates a DEB binary package of 'portname'.
++    Creates a DEB binary package of 'portname'. Takes an optional "hackers'
++    delight" option \fI--no-deps\fR to omit recording any dependencies in the
++    package.
 +
  
  EXAMPLES
@@ -163,10 +165,10 @@ index 36d5dc7e..9616d4c5 100644
  package require portunarchive 1.0
 diff --git a/src/package1.0/portdpkg.tcl b/src/package1.0/portdpkg.tcl
 new file mode 100644
-index 00000000..4417588c
+index 0000000000000000000000000000000000000000..226f762bfe8935c7f97f33fc6a4a10ecde6effff
 --- /dev/null
 +++ b/src/package1.0/portdpkg.tcl
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,229 @@
 +# et:ts=4
 +# portdpkg.tcl
 +# $Id$
@@ -223,23 +225,33 @@ index 00000000..4417588c
 +
 +proc portdpkg::main {args} {
 +	global UI_PREFIX destpath os.arch os.platform supported_archs configure.build_arch
++	global portvariants user_options
 +
 +	ui_msg "$UI_PREFIX [format [msgcat::mc "Creating dpkg for %s-%s"] [option subport] [option version]]"
 +
-+	# get deplist
-+	set deps [make_dependency_list [option subport]]
-+	set deps [lsort -unique $deps]
-+	foreach dep $deps {
-+		set name [lindex [split $dep /] 0]
-+		set vers [lindex [split $dep /] 1]
-+		# don't re-package ourself
-+		if {$name != [option subport]} {
-+			lappend dependencies "${name} (>= ${vers})"
-+		}
++	switch ${os.platform} {
++	    linux { set project "LinuxPorts" }
++	    default { set project "MacPorts" }
 +	}
 +
-+	if {[info exists dependencies]} {
-+		ui_debug $dependencies
++	if {![info exists user_options(ports_dpkg_no-deps)]} {
++        	# get deplist
++        	set deps [make_dependency_list [option subport]]
++        	set deps [lsort -unique $deps]
++        	foreach dep $deps {
++        		set name [lindex [split $dep /] 0]
++        		set vers [lindex [split $dep /] 1]
++        		# don't re-package ourself
++        		if {$name != [option subport]} {
++        			lappend dependencies "${project}.${name} (>= ${vers})"
++        		}
++        	}
++        
++        	if {[info exists dependencies]} {
++        		ui_debug $dependencies
++        	}
++	} else {
++	    ui_warn "The package will be generated without dependency information!"
 +	}
 +
 +	set controlpath [file join ${destpath} DEBIAN]
@@ -274,6 +286,11 @@ index 00000000..4417588c
 +	if {[option revision] != 0} {
 +		append pkg_version "-[option revision]"
 +	}
++	# append the port variants string to the revision bit of the Debian version string
++	# there is no more appropriate place and this appears to be acceptable (and useful).
++	if {[option portvariants] ne ""} {
++		append pkg_version "[string map {"_" "~"} [option portvariants]]"
++	}
 +
 +	# Set dpkg category to first (main) category
 +	set pkg_category [lindex [option categories] 0]
@@ -287,9 +304,9 @@ index 00000000..4417588c
 +		set pkg_long_description " [option subport]\n"
 +	}
 +
-+	if {[exists homepage]} {
++     if {[option portvariants] ne ""} {
 +		append pkg_long_description " .\n"
-+		append pkg_long_description " [option homepage]\n"
++		append pkg_long_description " This package contains the [option portvariants] variant of port:[option subport]\n"
 +	}
 +
 +	# Discern correct architecture
@@ -302,7 +319,7 @@ index 00000000..4417588c
 +	# GNU/Hurd operating system.
 +	switch -regex ${configure.build_arch} {
 +		i[3-9]86 { set pkg_arch "i386" }
-+		x86_64 { set pkg_arch "amd64" }
++		x86_64 { set pkg_arch "x86_64" }
 +		default { set pkg_arch ${os.arch} }
 +	}
 +
@@ -319,7 +336,7 @@ index 00000000..4417588c
 +		set pkg_arch "all"
 +	}
 +
-+	puts $controlfd "Package: [option subport]"
++	puts $controlfd "Package: ${project}.[option subport]"
 +	puts $controlfd "Architecture: ${pkg_arch}"
 +	puts $controlfd "Version: ${pkg_version}"
 +	puts $controlfd "Section: ${pkg_category}"
@@ -328,10 +345,15 @@ index 00000000..4417588c
 +		puts $controlfd "Depends: ${pkg_depends}"
 +	}
 +	puts $controlfd "Installed-Size: ${pkg_installed-size}"
++	puts $controlfd "Provides: [option subport]"
++	puts $controlfd "Replaces: [option subport]"
 +
 +	puts $controlfd "Description: [option description]"
 +	# pkg_long_description is pre-formatted. Do not add a newline
 +	puts -nonewline $controlfd "$pkg_long_description"
++	if {[exists homepage]} {
++		puts $controlfd "Homepage: [option homepage]"
++	}
 +	close $controlfd
 +
 +	# Build debian package in package.destpath
@@ -357,9 +379,11 @@ index 00000000..4417588c
 +			# xxx: only examines the portfile component of the depspec
 +			set depends {}
 +			if {[info exists portinfo(depends_run)]} {
++				ui_debug "${name} depends_run=$portinfo(depends_run)"
 +				eval "lappend depends $portinfo(depends_run)"
 +			}
 +			if {[info exists portinfo(depends_lib)]} {
++				ui_debug "${name} depends_lib=$portinfo(depends_lib)"
 +				eval "lappend depends $portinfo(depends_lib)"
 +			}
 +
@@ -368,6 +392,7 @@ index 00000000..4417588c
 +				eval "lappend result [make_dependency_list $dep]"
 +			}
 +		}
++				ui_debug "${name} : $portinfo(name) / $portinfo(version)"
 +				lappend result $portinfo(name)/$portinfo(version)
 +				unset portinfo
 +	}
@@ -942,6 +967,14 @@ index b513e40d..88fc6831 100644
      \
      quit        [list action_exit           [ACTION_ARGS_NONE]] \
      exit        [list action_exit           [ACTION_ARGS_NONE]] \
+@@ -4459,6 +4537,7 @@ array set cmd_opts_array {
+     reclaim     {enable-reminders disable-reminders}
+     fetch       {no-mirrors}
+     bump        {patch}
++    dpkg        {no-deps}
+ }
+ 
+ ##
 diff --git a/src/port1.0/portsandbox.tcl b/src/port1.0/portsandbox.tcl
 index e03d0e22..8f43c12e 100644
 --- a/src/port1.0/portsandbox.tcl
