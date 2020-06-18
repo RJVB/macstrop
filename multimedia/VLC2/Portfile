@@ -27,7 +27,8 @@ subport lib${name} {
     long_description    libVLC is the core engine and the interface to the multimedia \
                         framework on which VLC media player is based.  It allows developers \
                         to create a wide range of multimedia applications using the VLC features.
-    conflicts           ${name} VLC
+#     conflicts           ${name} VLC
+    conflicts           ${name}
     # support libVLC2 up to 10.12
     if {${os.major} > 15} {
         replaced_by     libVLC
@@ -52,7 +53,8 @@ if {${subport} eq ${name}} {
         # rather than trying to keep the patchfiles list empty.
         patch           {}
     }
-    conflicts           lib${name} libVLC
+#     conflicts           lib${name} libVLC
+    conflicts           lib${name}
 }
 
 # VLC-2.1 and later are x86_64-only: https://trac.videolan.org/vlc/ticket/8161
@@ -63,7 +65,7 @@ supported_archs         x86_64
 ###################  ports VLC and libVLC  ###################
 ##
 if {(${subport} eq ${name}) || (${subport} eq "lib${name}")} {
-    version             2.2.8 ; revision 4
+    version             2.2.8 ; revision 5
     license             GPL-2+
 
     platforms           darwin
@@ -165,6 +167,16 @@ if {(${subport} eq ${name}) || (${subport} eq "lib${name}")} {
     depends_run-append  port:libaacs \
                         port:libbdplus
 
+    # make libVLC2 and libVLC(3) co-installable.
+    set vlcprefix       ${prefix}/libexec/vlc2
+    configure.pre_args-replace \
+                    --prefix=${prefix} \
+                    --prefix=${vlcprefix}
+    configure.args-append \
+                    --bindir=${prefix}/bin
+    langselect_dirs_dir-append \
+                    ${destroot}${vlcprefix}/share/locale
+
     pre-fetch {
         if {${os.platform} eq "darwin" && ${os.major} < 10} {
             ui_error "${name} ${version} requires Mac OS X 10.6 or greater."
@@ -262,7 +274,9 @@ if {(${subport} eq ${name}) || (${subport} eq "lib${name}")} {
     depends_build-append port:libtool port:autoconf port:automake
 
     configure.env-append \
-                        CXXCPP="${configure.cxx} -E"
+                        "CXXCPP=${configure.cxx} -E" \
+                        "MATROSKA_CFLAGS=${prefix}/include/ebml" \
+                        "MATROSKA_LIBS=-lmatroska -lebml"
     if {[tbool use_ffmpeg_VLC]} {
         # splice in ffmpeg-VLC's pkgconfig path, hoping that PKG_CONFIG_PATH hasn't been set by anyone else
         configure.env-append \
@@ -516,13 +530,13 @@ if {(${subport} eq ${name}) || (${subport} eq "lib${name}")} {
         }
 
         post-destroot {
-            file delete {*}[glob ${destroot}${prefix}/lib/vlc/plugins/*/*.la]
+            file delete {*}[glob ${destroot}${vlcprefix}/lib/vlc/plugins/*/*.la]
 
             if {[variant_isset qt4] || [variant_isset qt5] || [variant_isset quartz]} {
                 if {${subport} ne "lib${name}"} {
                     copy ${worksrcpath}/VLC.app ${destroot}${applications_dir}/VLC.app
 
-                    # These are already in ${prefix}, so we don't need to bundle them as well
+                    # These are already in ${vlcprefix}, so we don't need to bundle them as well
                     delete ${destroot}${applications_dir}/VLC.app/Contents/Frameworks
                     delete ${destroot}${applications_dir}/VLC.app/Contents/lib
 
@@ -535,37 +549,45 @@ if {(${subport} eq ${name}) || (${subport} eq "lib${name}")} {
 
                     # http://trac.macports.org/ticket/35131
                     xinstall -m 755 -d ${destroot}${applications_dir}/VLC.app/Contents/MacOS/lib
-                    foreach l [glob -nocomplain ${destroot}${prefix}/lib/*] {
-                        ln -s ${prefix}/lib/[file tail ${l}] ${destroot}${applications_dir}/VLC.app/Contents/MacOS/lib
+                    foreach l [glob -nocomplain ${destroot}${vlcprefix}/lib/*] {
+                        ln -s ${vlcprefix}/lib/[file tail ${l}] ${destroot}${applications_dir}/VLC.app/Contents/MacOS/lib
                     }
-                    ln -s ${prefix}/lib/vlc/plugins ${destroot}${applications_dir}/VLC.app/Contents/MacOS/plugins
-                    ln -s ${prefix}/lib/vlc/lua ${destroot}${applications_dir}/VLC.app/Contents/MacOS/share/lua
-                    foreach d [glob -nocomplain ${destroot}${prefix}/share/locale/*] {
+                    ln -s ${vlcprefix}/lib/vlc/plugins ${destroot}${applications_dir}/VLC.app/Contents/MacOS/plugins
+                    ln -s ${vlcprefix}/lib/vlc/lua ${destroot}${applications_dir}/VLC.app/Contents/MacOS/share/lua
+                    foreach d [glob -nocomplain ${destroot}${vlcprefix}/share/locale/*] {
                         set locale [file tail ${d}]
                         set ldir ${destroot}${applications_dir}/VLC.app/Contents/MacOS/share/locale/${locale}/LC_MESSAGES
                         xinstall -m 755 -d ${ldir}
                         foreach m [glob -nocomplain ${d}/LC_MESSAGES/*] {
-                            ln -s ${prefix}/share/locale/${locale}/LC_MESSAGES/[file tail ${m}] ${ldir}/
+                            ln -s ${vlcprefix}/share/locale/${locale}/LC_MESSAGES/[file tail ${m}] ${ldir}/
                         }
                     }
 
                     # the vlc executable needs to be started with a full path to the app bundle executable
                     # or else the Mac OS X interface will hang beyond even a ^C or ^\ :
-                    move ${destroot}${prefix}/bin/vlc ${destroot}${prefix}/bin/vlc.exe
+                    file delete ${destroot}${prefix}/bin/vlc
                     system "echo \"#!/bin/sh\nexec \\\"${applications_dir}/VLC.app/Contents/MacOS/VLC\\\" \\\"\\\$\@\\\"\" > ${destroot}${prefix}/bin/vlc"
                     system "chmod 755 ${destroot}${prefix}/bin/vlc"
+                    # give all executables a suffix (--program-suffix would do that too but isn't supported in the
+                    # Mac-specific autoconf install code).
+                    foreach a [glob -nocomplain ${destroot}${prefix}/bin/*] {
+                        file rename ${a} "${a}2"
+                    }
                 } else {
                     delete ${destroot}${prefix}/bin
-                    delete ${destroot}${prefix}/share/applications
-                    delete ${destroot}${prefix}/share/man
+                    delete ${destroot}${vlcprefix}/share/applications
+                    delete ${destroot}${vlcprefix}/share/man
                 }
             }
+            reinplace "s|prefix=${prefix}|prefix=${vlcprefix}|g" \
+                ${destroot}${vlcprefix}/lib/pkgconfig/libvlc.pc \
+                ${destroot}${vlcprefix}/lib/pkgconfig/vlc-plugin.pc
         }
         post-activate {
 #             if {[variant_isset qt4] || [variant_isset qt5]} {
 #                 notes-append "The Qt interface modules for VLC are currently dysfunctional. If you encounter bugs with them, please file them with VLC and not MacPorts."
 #             }
-            system "${prefix}/lib/vlc/vlc-cache-gen -f ${prefix}/lib/vlc"
+            system "${vlcprefix}/lib/vlc/vlc-cache-gen -f ${vlcprefix}/lib/vlc"
         }
     }
     notes-append "MIDI support requires installing one or more SoundFont files,\
