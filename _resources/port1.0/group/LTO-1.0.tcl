@@ -65,6 +65,7 @@ if {[variant_isset LTO] && ![info exists building_qt5]} {
     # some projects have their own configure option for LTO (often --enable-lto);
     # use this if the port tells us to
     if {[info exists LTO.configure_option]} {
+        ui_debug "LTO: setting custom configure option(s) \"${LTO.configure_option}\""
         configure.args-append           ${LTO.configure_option}
     } else {
         if {${configure.compiler} eq "cc" && ${os.platform} eq "linux"} {
@@ -85,6 +86,7 @@ if {[variant_isset LTO] && ![info exists building_qt5]} {
         } else {
             set lto_flags               "-ftracer -flto -fuse-linker-plugin -ffat-lto-objects"
         }
+        ui_debug "LTO: setting LTO compiler and linker option(s) \"${lto_flags}\""
         if {![variant_isset universal] || [tbool LTO_supports_i386]} {
             configure.cflags-append         ${lto_flags}
             configure.cxxflags-append       ${lto_flags}
