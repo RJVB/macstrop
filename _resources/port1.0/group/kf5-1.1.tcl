@@ -584,6 +584,8 @@ proc kf5.set_project {project} {
 #         for new/different download locations for Applications 19.12.1 (and future) releases.
         master_sites        https://download.kde.org/${dbranch}/${f}
     }
+    # live dangerously ... for live-checking
+    livecheck.ignore_sslcert yes
 }
 
 if {[info exists kf5.project]} {
