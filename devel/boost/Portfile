@@ -5,12 +5,16 @@ PortGroup       mpi 1.0
 PortGroup       active_variants 1.1
 PortGroup       LTO 1.0
 PortGroup       preserve_runtime_libraries 1.0
+platform darwin {
+    PortGroup   compress_workdir 1.0
+}
 
 name            boost
 
-version         1.71.0
+version         1.71.0 ; # see remarks about revisions just below!
 # Revision is set below in the `if {$subport eq $name} { ... }` statement
 # The boost-numpy subport has its own revision number
+# Revision is also set for (!but only for version 1.71.0!) with +preserve_runtime_libraries!
 checksums       rmd160 a46b886ca26993610c84615fca4340ad3f955f81 \
                 sha256 d73a8da01e8bf8c7eda40b4c84915071a8c8a0df4a6734537ddde4a8580524ee
 #                 size   100124647
@@ -23,15 +27,23 @@ maintainers     {michaelld @michaelld} openmaintainer
 description     Collection of portable C++ source libraries
 
 long_description \
-    Boost provides free portable peer-reviewed C++ \
-    libraries. The emphasis is on portable libraries \
-    which work well with the C++ Standard Library.
+                Boost provides free portable peer-reviewed C++ \
+                libraries. The emphasis is on portable libraries \
+                which work well with the C++ Standard Library.
 
 homepage        http://www.boost.org
 master_sites    https://dl.bintray.com/boostorg/release/${version}/source/
 set distver     [join [split ${version} .] _]
 distname        ${name}_${distver}
 use_bzip2       yes
+
+platform darwin {
+    if {[variant_exists preserve_runtime_libraries] && [variant_isset preserve_runtime_libraries]} {
+        revision 1
+        depends_build-append \
+                port:cctools
+    }
+}
 
 depends_lib     port:bzip2 \
                 port:expat \
@@ -191,6 +203,7 @@ build.cmd       ${worksrcpath}/b2
 build.target
 build.args      -d2 \
                 --layout=tagged \
+                --build-dir=${workpath}/build \
                 --debug-configuration \
                 -sBZIP2_INCLUDE=${prefix}/include \
                 -sBZIP2_LIBPATH=${prefix}/lib \
@@ -205,7 +218,7 @@ build.args      -d2 \
                 runtime-link=shared \
                 -j${build.jobs} \
                 --no-cmake-config
-platform darwin {
+if {${os.platform} eq "darwin"} {
     build.args-append \
                 --user-config=user-config.jam
 }
@@ -236,7 +249,32 @@ post-destroot {
             }
         }
     }
-    preserve_libraries ${prefix}/lib "libboost*.*.dylib libboost*.so.*"
+    if {${os.platform} eq "darwin"} {
+        if {[variant_exists preserve_runtime_libraries] && [variant_isset preserve_runtime_libraries]} {
+            ui_debug "## Creating Darwin/POSIX versioned versions of libboost*.dylib as libboost*.${version}.dylib with symlinked link interface dylibs"
+            foreach f [glob -nocomplain ${destroot}${prefix}/lib/libboost*.dylib] {
+                set l [file tail ${f}]
+                set n [file rootname ${l}]
+                set nn ${n}.${version}.dylib
+                ui_debug "### ${n} -> ${nn}"
+                file rename ${f} "${destroot}${prefix}/lib/${nn}"
+                system -W "${destroot}${prefix}/lib" \
+                    "install_name_tool -id \"${prefix}/lib/${nn}\" \"${nn}\""
+                ln -s "${nn}" ${f}
+            }
+            # transition support: check if any unversioned libraries are installed
+            # that cannot be preserved normally. These are the dylibs that are
+            # installed in prefix/lib, exists in destroot/prefix/lib but not in
+            # the preservation directory. They are not added to the ToC.
+            preserve_runtime_libraries_allow_unlinked yes
+            preserve_libraries ${prefix}/lib "libboost*.dylib"
+            # it's probably wise to make the preserved libraries interdependent among
+            # each other and not on the versions in prefix/lib!
+            update_preserved_libraries
+        }
+    } else {
+        preserve_libraries ${prefix}/lib "libboost*.so.*"
+    }
 }
 
 variant no_docs description {don't install documentation} {}
@@ -314,7 +352,7 @@ variant no_single description {Disable building single-threaded libraries} {
 }
 
 subport boost-numpy {
-    revision 1
+    revision [expr ${revision} + 1]
     description Boost.Numpy library
     long_description {*}${description}
     depends_lib port:boost
@@ -338,7 +376,7 @@ subport boost-numpy {
 
 if {$subport eq $name} {
 
-    revision 2
+    revision [expr ${revision} + 2]
 
     patchfiles-append patch-disable-numpy-extension.diff
 
@@ -358,6 +396,9 @@ if {$subport eq $name} {
     }
 
     post-destroot {
+#         platform darwin {
+#             file rename ${destroot}${prefix}/include/boost-1_71/boost ${destroot}${prefix}/include/boost
+#         }
         delete file {*}[glob ${destroot}${prefix}/include/boost/python/numpy*]
     }
 
