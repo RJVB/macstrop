@@ -42,7 +42,18 @@
 #
 # This will create a copy of the pre-existing libraries not installed
 # by the current ${subport} to be stored in ${prefix}/${srcdir}/previous/${subport}
-# with a symlink in ${prefix}/${srcdir} .
+# with a symlink in ${prefix}/${srcdir} . Effort is made to preserve
+# existing previous versions so it should be safe to update a port multiple times
+# without need to rebuild (all) dependents. Some projects do not use versioned
+# libraries (boost on Mac, for instance). Non-rebuilt dependents thus see the
+# new library without an automatic possibility to let them use a previous version.
+# For such ports, `preserve_runtime_libraries_allow_unlinked` can be set; this
+# copies all of the existing libraries matching the provided pattern (e.g. libboost*.dylib)
+# into the repository. Dependents will need to be modified manually with `install_name_tool
+# -change` to load the old version. Note that this can only be done for a single version ...
+# but the MacStrop boost port has been patched so it now creates versioned libraries ...
+# when the +preserve_runtime_libraries variant is used.
+#
 # Using a special repository makes it immediately clear which port a
 # legacy runtime belongs to; the symlink makes it easy to test whether
 # the copy is still used.
@@ -56,6 +67,8 @@
 
 
 set preserve_runtime_library_dir "previous/${subport}"
+options preserve_runtime_libraries_allow_unlinked
+default preserve_runtime_libraries_allow_unlinked {no}
 
 proc preserve_libraries {srcdir patternlist} {
     global prefix subport destroot preserve_runtime_library_dir
@@ -78,22 +91,31 @@ proc preserve_libraries {srcdir patternlist} {
                     set tocStartSize [file size ${tocFName}]
                 }
             }
+            set extra_preserved {}
             foreach pattern ${patternlist} {
                 # first handle the preserved backups that already exist
                 set existing_backups [glob -nocomplain ${srcdir}/${prevdir}/${pattern}]
                 foreach l ${existing_backups} {
                     set lib [file tail ${l}]
                     set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
-                    if {![file exists ${prevlib}] && ![file exists ${destroot}${l}]} {
+                    if {![file exists ${prevlib}] &&
+                            ([option preserve_runtime_libraries_allow_unlinked] || ![file exists ${destroot}${l}])} {
                         ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
                         set perms [file attributes ${l} -permissions]
                         copy ${l} ${prevlib}
-                        if {[file type ${prevlib}] ne "link"} {
-                            file attributes ${prevlib} -permissions ${perms}
-                        }
-                        ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
-                        if {${fd} != -1} {
-                            puts ${fd} "## ln -s [file join ${prevdir} [file tail ${l}]] ${srcdir}/${lib}"
+                        if {![file exists ${destroot}${l}]} {
+                            if {[file type ${prevlib}] ne "link"} {
+                                file attributes ${prevlib} -permissions ${perms}
+                            }
+                            ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
+                            if {${fd} != -1} {
+                                puts ${fd} "## ln -s [file join ${prevdir} [file tail ${l}]] ${srcdir}/${lib}"
+                            }
+                        } else {
+                            lappend extra_preserved ${l}
+                            if {${fd} != -1} {
+                                puts ${fd} "## ${prefix}/lib/${prevdir}/${l}"
+                            }
                         }
                     }
                 }
@@ -120,18 +142,25 @@ proc preserve_libraries {srcdir patternlist} {
                     if {${fport} eq "${subport}" || ${fport} eq "0"} {
                         set lib [file tail ${l}]
                         set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
-                        if {![file exists ${prevlib}] && ![file exists ${destroot}${l}]} {
+                        if {![file exists ${prevlib}] &&
+                                ([option preserve_runtime_libraries_allow_unlinked] || ![file exists ${destroot}${l}])} {
                             ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
                             if {${fd} != -1 && [file type ${l}] ne "link"} {
                                 puts ${fd} "${l}"
-                                puts ${fd} "# ln -s [file join ${prevdir} [file tail ${l}]] ${srcdir}/${lib}"
+                                if {![file exists ${destroot}${l}]} {
+                                    puts ${fd} "# ln -s [file join ${prevdir} [file tail ${l}]] ${srcdir}/${lib}"
+                                }
                             }
                             set perms [file attributes ${l} -permissions]
                             copy ${l} ${prevlib}
-                            if {[file type ${prevlib}] ne "link"} {
-                                file attributes ${prevlib} -permissions ${perms}
+                            if {![file exists ${destroot}${l}]} {
+                                if {[file type ${prevlib}] ne "link"} {
+                                    file attributes ${prevlib} -permissions ${perms}
+                                }
+                                ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
+                            } else {
+                                lappend extra_preserved ${l}
                             }
-                            ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
                         }
                     } else {
                         ui_info "not preserving runtime library ${l} that belongs to port:${fport}"
@@ -148,6 +177,16 @@ proc preserve_libraries {srcdir patternlist} {
                 if {[file size ${tocFName}] <= ${tocStartSize}} {
                     file delete ${tocFName}
                 }
+            }
+            if {${extra_preserved} ne {}} {
+                ui_msg "Ports currently depending on the following boost libraries from the previous installed version \
+                    can be made to work with those previous libraries manually, pointing them to ${prefix}/lib/${preserve_runtime_library_dir} \
+                    with `install_name_tool -change`:\n\
+                    ${extra_preserved}"
+                notes-append "Ports currently depending on the following boost libraries from the previous installed version \
+                    can be made to work with those previous libraries manually, pointing them to ${prefix}/lib/${preserve_runtime_library_dir} \
+                    with `install_name_tool -change`:\n\
+                    ${extra_preserved}"
             }
         } else {
             ui_warn "Source for previous runtime libraries (${srcdir}) should be a directory"
