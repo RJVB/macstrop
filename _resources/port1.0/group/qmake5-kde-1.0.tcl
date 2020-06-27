@@ -122,7 +122,7 @@ pre-configure {
     }
 
     if {[variant_exists LTO] && [variant_isset LTO]
-        && [lsearch ${configure.args} "ltcg"] < 0
+        && [lsearch [option configure.args] "ltcg"] < 0
         && (![info exists configure.post_args] || [lsearch ${configure.post_args} "ltcg"] < 0)} {
             configure.args-append -config ltcg
     }
@@ -214,6 +214,9 @@ pre-configure {
     if {${qt5.unset_cxxflags} ne {}} {
         puts ${qt5::cache} "QMAKE_CXXFLAGS-=${qt5.unset_cxxflags}"
     }
+    # remove any existing -O flags
+    puts ${qt5::cache} "QMAKE_CFLAGS~=s/-O.+//g"
+    puts ${qt5::cache} "QMAKE_CXXFLAGS~=s/-O.+//g"
     puts ${qt5::cache} "QMAKE_CFLAGS+=${configure.cppflags} ${configure.cflags}"
     puts ${qt5::cache} "QMAKE_CXXFLAGS+=${configure.cppflags} ${configure.cxxflags}"
 
@@ -283,9 +286,12 @@ pre-configure {
 # this is correct only if configure.optflags actually contains a -Os option!
 #         puts ${qt5::cache} "CONFIG+=optimize_size"
         puts ${qt5::cache} "QMAKE_CFLAGS_OPTIMIZE_SIZE=${configure.optflags}"
-    } else {
-        puts ${qt5::cache} "QMAKE_CXXFLAGS_RELEASE~=s/-O.+/${configure.optflags}/g"
+        puts ${qt5::cache} "QMAKE_CFLAGS_RELEASE_WITH_DEBUGINFO~=s/-O.+//g"
+        puts ${qt5::cache} "QMAKE_CFLAGS_OPTIMIZE="
+        puts ${qt5::cache} "QMAKE_CXXFLAGS_OPTIMIZE="
     }
+    puts ${qt5::cache} "QMAKE_CFLAGS_RELEASE="
+    puts ${qt5::cache} "QMAKE_CXXFLAGS_RELEASE="
 
     foreach flag ${qt5.cxxflags} {
         puts ${qt5::cache} "QMAKE_CXXFLAGS+=${flag}"
@@ -306,6 +312,7 @@ pre-configure {
 
 proc qmake5.save_configure_cmd {{save_log_too ""}} {
     namespace upvar ::qt5 configure_cmd_saved statevar
+    global configure.cmd configure.pre_args configure.post_args
     if {[tbool statevar]} {
         ui_debug "qmake5.save_configure_cmd already called"
         return;
