@@ -39,6 +39,8 @@ variant langselect description "prune translations from ${prefix}/share/locale, 
                                 specified in ${prefix}/etc/macports/locales.tcl" {}
 
 # optional directory (list) holding Qt translations (.qm) (fully specified)
+# the _dir and _basename options can both be lists of identical length for projects
+# that install translation files for multiple executables in as many individual dirs.
 options langselect_qm_dir langselect_qm_basename
 default langselect_qm_dir       {}
 default langselect_qm_basename  {}
@@ -79,12 +81,17 @@ if {[variant_isset langselect]} {
                     }
                 }
             }
-            if {[file exists [join ${langselect_qm_dir}]]} {
-                set lsqmdir [join ${langselect_qm_dir}]
-                foreach l [glob -nocomplain ${lsqmdir}/*.qm] {
+            set qmidx 0
+            foreach ld ${langselect_qm_dir} {
+                ui_debug "locale checking ${ld}"
+                foreach l [glob -nocomplain ${ld}/*.qm] {
                     set lang [file rootname [file tail ${l}]]
                     if {${langselect_qm_basename} ne {}} {
-                        set lang [string map [list "${langselect_qm_basename}" ""] ${lang}]
+                        if {[llength ${langselect_qm_dir}] eq [llength ${langselect_qm_basename}]} {
+                            set lang [string map [list "[lindex ${langselect_qm_basename} ${qmidx}]" ""] ${lang}]
+                        } else {
+                            set lang [string map [list "${langselect_qm_basename}" ""] ${lang}]
+                        }
                     }
                     if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
                         ui_info "rm ${l}"
@@ -93,6 +100,7 @@ if {[variant_isset langselect]} {
                         ui_debug "won't delete ${l} (${lang})"
                     }
                 }
+                set qmidx [expr ${qmidx} + 1]
             }
             if {[file exists [join ${langselect_html_dir}]]} {
                 set lhtmldir [join ${langselect_html_dir}]
