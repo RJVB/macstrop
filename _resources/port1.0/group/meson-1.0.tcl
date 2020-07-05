@@ -62,6 +62,15 @@ default build.target        ""
 destroot.env-append         DESTDIR=${destroot}
 default destroot.post_args  ""
 
+# meson checks LDFLAGS during install to respect rpaths set via that variable
+# for safety, add LDFLAGS to both build and destroot environments
+pre-build {
+    build.env-append        "LDFLAGS=${configure.ldflags}"
+}
+pre-destroot {
+    destroot.env-append     "LDFLAGS=${configure.ldflags}"
+}
+
 namespace eval meson {
     proc get_post_args {} {
         global configure.dir build_dir muniversal.current_arch
