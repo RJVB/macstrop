@@ -191,3 +191,21 @@ if {[info exists LTO.custom_binaries]} {
     }
 }
 
+variant cputuned conflicts cpucompat description {Build using -march=native for optimal tuning to your CPU} {}
+variant cpucompat conflicts cputuned description {Build using some commonly supported SIMD settings for optimal cross-CPU tuning} {}
+
+pre-configure {
+    if {[variant_isset cputuned]} {
+        set optflags "-march=native"
+    }
+    if {[variant_isset cpucompat]} {
+        set optflags "-march=core2 -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul"
+    }
+    if {[variant_isset cputuned] || [variant_isset cpucompat]} {
+        configure.cflags-append     {*}${optflags}
+        configure.cxxflags-append   {*}${optflags}
+        configure.objcflags-append  {*}${optflags}
+        configure.objcxxflags-append  {*}${optflags}
+        configure.ldflags-append    {*}${optflags}
+    }
+}
