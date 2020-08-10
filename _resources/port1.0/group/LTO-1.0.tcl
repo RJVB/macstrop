@@ -199,7 +199,7 @@ pre-configure {
         set optflags "-march=native"
     }
     if {[variant_isset cpucompat]} {
-        set optflags "-march=core2 -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul"
+        set optflags "-march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul"
     }
     if {[variant_isset cputuned] || [variant_isset cpucompat]} {
         configure.cflags-append     {*}${optflags}
