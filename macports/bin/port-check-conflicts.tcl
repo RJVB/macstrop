@@ -357,7 +357,7 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                 }
                 if {[llength ${InstalledDupsList}]} {
                     if {![macports::ui_isset ports_quiet]} {
-                        ui_msg "[llength ${InstalledDupsList}] files already exist, checking if any do not already belong to ${portName}"
+                        ui_msg "[llength ${InstalledDupsList}] files already exist, checking if any do not already belong to another port than ${portName}"
                     }
                     set ProviderDict [port_provides ${InstalledDupsList}]
                     set DUPS {}
