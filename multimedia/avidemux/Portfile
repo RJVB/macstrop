@@ -1,0 +1,242 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
+PortSystem                  1.0
+PortGroup                   cmake 1.1
+# PortGroup                   app 1.0
+PortGroup                   qt5 1.0
+PortGroup                   locale_select 1.0
+
+name                        avidemux
+version                     2.7.6
+categories                  multimedia
+platforms                   macosx linux
+license                     GPL-2
+maintainers                 nomaintainer
+homepage                    http://avidemux.sourceforge.net/
+
+description                 Avidemux is a free video editor.
+long_description            Avidemux is a free video editor designed for simple cutting, \
+                            filtering and encoding tasks. It supports many file types, \
+                            including AVI, DVD compatible MPEG files, MP4 and ASF, using \
+                            a variety of codecs. Tasks can be automated using projects, \
+                            job queue and powerful scripting capabilities.
+
+master_sites                sourceforge:project/avidemux/avidemux/${version}
+distname                    ${name}_${version}
+
+checksums                   rmd160  68f4037e10d0a10a7a1b3e2dea95e48506641908 \
+                            sha256  9a88741f3535443d4bde35d4207ca2ff96d3b136db2e7232cb50dd6b4eb293cf
+#                             size    24372770
+
+patchfiles-append           patch-no-lib64.diff \
+                            patch-vdpau-maybe-hevc.diff \
+                            patch-limit-debug-output.diff
+
+depends_lib-append          port:sqlite3 \
+                            port:faac \
+                            port:faad2 \
+                            port:fribidi \
+                            port:gettext \
+                            port:lame \
+                            port:freetype \
+                            port:twolame \
+                            port:libvorbis \
+                            port:libvpx \
+                            port:x264
+# NOT in MacPorts!
+depends_lib-append          port:libass
+
+if {${os.major} eq "darwin"} {
+    depends_build-append    port:yasm \
+                            port:bash \
+                            port:gmake
+    depends_lib-append      port:fontconfig \
+                            port:XviD
+} else {
+    cmake.install_rpath-append ${qt_libs_dir}
+    configure.ldflags-append \
+                            -Wl,-rpath-link,${destroot}${prefix}/lib
+}
+
+default_variants            +x265
+
+# no automatic configure step, everything is done inside build
+use_configure               no
+# # only build with one job (otherwise it fails in avidemux_core)
+# use_parallel_build          no
+
+configure.cxxflags-append   -D__ASSERT_MACROS_DEFINE_VERSIONS_WITHOUT_UNDERSCORES=1
+
+configure.args-append       -DCMAKE_C_COMPILER=${configure.cc} \
+                            -DCMAKE_C_FLAGS="${configure.cflags}" \
+                            -DCMAKE_CXX_COMPILER=${configure.cxx} \
+                            -DCMAKE_CXX_FLAGS="${configure.cxxflags}" \
+                            -DFAKEROOT=${destroot} \
+                            -DAVIDEMUX_SOURCE_DIR=${worksrcpath} \
+                            -G \"Unix Makefiles\"
+
+# some default settings
+configure.args-append       -DSDL=OFF \
+                            -DGTK=OFF -DQT4=OFF -DQT5=ON -DENABLE_QT5=ON
+                            
+# enable some options, enable others in variants
+configure.args-append       -DFONTCONFIG=ON -DFREETYPE2=NF \
+                            -DFRIDIBI=ON \
+                            -DGETTEXT=ON \
+                            -DALSA=OFF \
+                            -DARTS=OFF \
+                            -DESD=OFF \
+                            -DJACK=OFF \
+                            -DOSS=OFF \
+                            -DAFTEN=OFF \
+                            -DDCAENC=OFF -DLIBDCA=OFF \
+                            -DFAAC=ON -DFAAD=ON \
+                            -DLAME=ON \
+                            -DLIBVORBIS=ON -DVORBIS=ON \
+                            -DOPENCORE_AMRNB=OFF -DOPENCORE_AMRWB=OFF \
+                            -DTWOLAME=ON \
+                            -DVPXDEC=ON \
+                            -DX264=ON \
+                            -DX265=OFF \
+                            -DXVID=ON \
+                            -DUSE_EXTERNAL_LIBMAD=true \
+                            -DUSE_EXTERNAL_LIBASS=true
+                            
+if {${os.platform} eq "darwin"} {
+    configure.args-append   -DPULSEAUDIOSIMPLE=OFF \
+                            -DCREATE_BUNDLE=true
+}
+
+# NOT in MacPOrts!
+configure.args-append       -DUSE_EXTERNAL_LIBASS=true
+
+build {
+    # mimic bootStrap.bash Process() behaviour, but per component
+    # subsequent components expect at least the core component to
+    # be installed (in $prefix) or at least "destrooted", so the only
+    # way to build this port as a single monolithic port is to handle
+    # the 3 phases at once. For each component.
+    proc Process {work src module build extra} {
+        global configure.cppflags configure.cflags configure.cxxflags
+        global configure.objcflags configure.ldflags
+
+        # make build dir
+        file mkdir ${work}/build/${build}
+
+        # configure this component if necessary
+        if {![file exists ${work}/build/${build}/done.configure]} {
+            # configure
+            ui_msg "--->    Configuring component \"${build}\""
+            configure.post_args     ${extra} ${src}/${module}
+            configure.dir           ${work}/build/${build}
+            configure.env-append    "CPPFLAGS=${configure.cppflags}" \
+                                    "CFLAGS=${configure.cflags}" \
+                                    "CXXFLAGS=${configure.cxxflags}" \
+                                    "OBJCFLAGS=${configure.objcflags}" \
+                                    "LDFLAGS=${configure.ldflags}"
+            command_exec configure
+            system "touch ${work}/build/${build}/done.configure"
+        }
+
+        # build this component if necessary
+        if {![file exists ${work}/build/${build}/done.build]} {
+            # build
+            ui_msg "--->    Building component \"${build}\""
+            build.dir               ${work}/build/${build}
+            command_exec build
+            system "touch ${work}/build/${build}/done.build"
+        }
+
+        # destroot this component if necessary
+        if {![file exists ${work}/build/${build}/done.destroot]} {
+            # install to destroot
+            ui_msg "--->    Destroot component \"${build}\""
+            destroot.dir            ${work}/build/${build}
+            command_exec destroot
+            system "touch ${work}/build/${build}/done.destroot"
+        }
+    }
+
+    # build avidemux core
+    Process ${workpath} ${worksrcpath} avidemux_core core ""
+    platform linux {
+        configure.env-append \
+            "LD_LIBRARY_PATH=${destroot}${prefix}/lib"
+        build.env-append \
+            "LD_LIBRARY_PATH=${destroot}${prefix}/lib" \
+            "O_PARAL=-j${build.jobs}"
+        destroot.env-append \
+            "LD_LIBRARY_PATH=${destroot}${prefix}/lib"
+    }
+    # build avidemux Qt UI
+    Process ${workpath} ${worksrcpath} avidemux/qt4 qt5 ""
+    # build avidemux cli UI
+    Process ${workpath} ${worksrcpath} avidemux/cli cli ""
+    # build common plugins
+    Process ${workpath} ${worksrcpath} avidemux_plugins pluginsCommon \
+        "-DPLUGIN_UI=COMMON -DCMAKE_CXX_COMPILER=${configure.cxx}"
+    # build Qt plugins
+    Process ${workpath} ${worksrcpath} avidemux_plugins pluginsQt5 \
+        "-DPLUGIN_UI=QT4 -DCMAKE_CXX_COMPILER=${configure.cxx}"
+    # build cli plugins
+    Process ${workpath} ${worksrcpath} avidemux_plugins pluginsCli \
+        "-DPLUGIN_UI=CLI -DCMAKE_CXX_COMPILER=${configure.cxx}"
+    # build settings plugins
+    Process ${workpath} ${worksrcpath} avidemux_plugins pluginsSettings \
+        "-DPLUGIN_UI=SETTINGS -DCMAKE_CXX_COMPILER=${configure.cxx}"
+}
+
+destroot {}
+
+langselect_qm_dir   ${destroot}${prefix}/share/avidemux6/qt5/i18n \
+                    ${destroot}${prefix}/share/avidemux6/qt5/i18n
+langselect_qm_basename \
+                    qtbase_ \
+                    avidemux_
+
+# Some libraries are built with incorrect permissions. See https://trac.macports.org/ticket/55823. 
+post-destroot {
+    platform darwin {
+        file attributes ${destroot}${prefix}/lib/libADM6avcodec.57.dylib -permissions 0755
+        file attributes ${destroot}${prefix}/lib/libADM6avformat.57.dylib -permissions 0755
+        file attributes ${destroot}${prefix}/lib/libADM6avutil.55.dylib -permissions 0755
+        file attributes ${destroot}${prefix}/lib/libADM6postproc.54.dylib -permissions 0755
+        file attributes ${destroot}${prefix}/lib/libADM6swscale.4.dylib -permissions 0755
+    }
+}
+
+variant dts description {Support for DTS (libdca) audio codec} {
+    depends_lib-append  port:libdca
+    configure.args-replace  -DDCAENC=OFF -DDCAENC=ON
+    configure.args-replace  -DLIBDCA=OFF -DLIBDCA=ON
+}
+variant a52 description {Support for A/52 (AC-3, Dolby Digital) audio codec} {
+    depends_lib-append  port:aften
+    configure.args-replace  -DAFTEN=OFF -DAFTEN=ON
+    configure.args-append   -DUSE_EXTERNAL_LIBA52=true
+}
+variant esound description {Support for ESD audio device} {
+    depends_lib-append  port:esound
+    configure.args-replace  -DESD=OFF -DESD=ON
+}
+variant jack description {Support for Jack audio device} {
+    depends_lib-append  port:jack
+    configure.args-replace  -DJACK=OFF -DJACK=ON
+}
+variant x265 description {Support for x265 video codec} {
+    depends_lib-append  port:x265
+    configure.args-replace  -DX265=OFF -DX265=ON
+}
+
+## RJVB
+post-activate {
+    ui_msg "--->    ${subport} activated."
+}
+
+# # .app stuff
+# app.name        Avidemux
+# app.executable  avidemux
+# app.icon        avidemux_icon.png
+
+livecheck.url   http://www.fosshub.com/Avidemux.html
+livecheck.regex "${name}_(\\d+(?:\\.\\d+)*)${extract.suffix}"
