@@ -54,6 +54,20 @@ default langselect_dirs_dir     {}
 options langselect_lproj_dir
 default langselect_lproj_dir     {}
 
+namespace eval langselect {
+
+    proc check_against_basenames {fname} {
+        global langselect_qm_basename
+        foreach bn ${langselect_qm_basename} {
+            if {[string match ${bn}* ${fname}]} {
+                return 1
+            }
+        }
+        return 0
+    }
+
+}
+
 if {[variant_isset langselect]} {
     post-destroot {
         if {[file exists ${prefix}/etc/macports/locales.tcl] &&
@@ -93,8 +107,9 @@ if {[variant_isset langselect]} {
                             set lang [string map [list "${langselect_qm_basename}" ""] ${lang}]
                         }
                     }
-                    if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
-                        ui_info "rm ${l}"
+                    if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"
+                        && ![langselect::check_against_basenames ${lang}]} {
+                        ui_info "rm ${l} (${lang})"
                         file delete -force ${l}
                     } else {
                         ui_debug "won't delete ${l} (${lang})"
