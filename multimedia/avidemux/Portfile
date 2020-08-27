@@ -31,7 +31,8 @@ checksums                   rmd160  68f4037e10d0a10a7a1b3e2dea95e48506641908 \
 patchfiles-append           patch-no-lib64.diff \
                             patch-vdpau-maybe-hevc.diff \
                             patch-limit-debug-output.diff \
-                            patch-ffmpeg-build-ccache.diff
+                            patch-ffmpeg-build-ccache.diff \
+                            patch-mac-force-freetype.diff
 
 depends_lib-append          port:sqlite3 \
                             port:faac \
@@ -81,7 +82,7 @@ configure.args-append       -DSDL=OFF \
                             -DGTK=OFF -DQT4=OFF -DQT5=ON -DENABLE_QT5=ON
                             
 # enable some options, enable others in variants
-configure.args-append       -DFONTCONFIG=ON -DFREETYPE2=NF \
+configure.args-append       -DFONTCONFIG=ON -DFREETYPE2=ON \
                             -DFRIDIBI=ON \
                             -DGETTEXT=ON \
                             -DALSA=OFF \
@@ -110,6 +111,7 @@ if {${os.platform} eq "darwin"} {
 
 # NOT in MacPOrts!
 configure.args-append       -DUSE_EXTERNAL_LIBASS=true
+cmake.save_configure_cmd
 
 build {
     # mimic bootStrap.bash Process() behaviour, but per component
@@ -117,7 +119,7 @@ build {
     # be installed (in $prefix) or at least "destrooted", so the only
     # way to build this port as a single monolithic port is to handle
     # the 3 phases at once. For each component.
-    proc Process {work src module build extra} {
+    proc Process {work src module build extra {dodestroot yes}} {
         global configure.cppflags configure.cflags configure.cxxflags
         global configure.objcflags configure.ldflags
 
@@ -149,7 +151,7 @@ build {
         }
 
         # destroot this component if necessary
-        if {![file exists ${work}/build/${build}/done.destroot]} {
+        if {${dodestroot} && ![file exists ${work}/build/${build}/done.destroot]} {
             # install to destroot
             ui_msg "--->    Destroot component \"${build}\""
             destroot.dir            ${work}/build/${build}
@@ -185,6 +187,9 @@ build {
     # build settings plugins
     Process ${workpath} ${worksrcpath} avidemux_plugins pluginsSettings \
         "-DPLUGIN_UI=SETTINGS -DCMAKE_CXX_COMPILER=${configure.cxx}"
+    # build mkvscan
+    Process ${workpath} ${worksrcpath} addons/mkvscan mkvscan \
+        "-DPLUGIN_UI=SETTINGS -DCMAKE_CXX_COMPILER=${configure.cxx}" no
 }
 
 destroot {}
@@ -197,12 +202,21 @@ langselect_qm_basename \
 
 # Some libraries are built with incorrect permissions. See https://trac.macports.org/ticket/55823. 
 post-destroot {
+    xinstall -m 755 ${build.dir}/mkvscan/mkv ${destroot}${prefix}/bin/avidemux_mkv
     platform darwin {
-        file attributes ${destroot}${prefix}/lib/libADM6avcodec.57.dylib -permissions 0755
-        file attributes ${destroot}${prefix}/lib/libADM6avformat.57.dylib -permissions 0755
-        file attributes ${destroot}${prefix}/lib/libADM6avutil.55.dylib -permissions 0755
-        file attributes ${destroot}${prefix}/lib/libADM6postproc.54.dylib -permissions 0755
-        file attributes ${destroot}${prefix}/lib/libADM6swscale.4.dylib -permissions 0755
+        xinstall -m 755 -d ${destroot}${qt_apps_dir}
+        file rename ${destroot}${workpath}/build/Avidemux2.7.app ${destroot}${qt_apps_dir}/
+        file rename ${destroot}${qt_apps_dir}/Avidemux2.7.app/Contents/MacOS/Avidemux2.7 \
+            ${destroot}${prefix}/bin/Avidemux2.7
+        xinstall -m 755 ${filespath}/Avidemux.sh \
+            ${destroot}${qt_apps_dir}/Avidemux2.7.app/Contents/MacOS/Avidemux2.7
+        reinplace "s|@BUNDLEEXEC@|${prefix}/bin/Avidemux2.7|g" \
+            ${destroot}${qt_apps_dir}/Avidemux2.7.app/Contents/MacOS/Avidemux2.7
+        xinstall -m 755 -d ${destroot}${qt_apps_dir}/Avidemux2.7.app/Contents/Resources
+        xinstall -m 555 ${worksrcpath}/cmake/osx/avidemux.icns ${destroot}${qt_apps_dir}/Avidemux2.7.app/Contents/Resources
+        # install a wrapper using the name the app has on Linux ... but without the '3' suffix
+        # as the other command line tools also do not use the suffix here.
+        qt5.add_app_wrapper avidemux_qt5 Avidemux2.7
     }
 }
 
