@@ -1,0 +1,228 @@
+diff --git plugins/cmake/cmakecommitchangesjob.cpp plugins/cmake/cmakecommitchangesjob.cpp
+index 4e287de846..c305c63b5a 100644
+--- plugins/cmake/cmakecommitchangesjob.cpp
++++ plugins/cmake/cmakecommitchangesjob.cpp
+@@ -160,7 +160,7 @@ Path::List CMakeCommitChangesJob::addProjectData(const CMakeProjectData& data)
+     QString dir = m_path.toLocalFile();
+     if(data.vm.value("CMAKE_INCLUDE_CURRENT_DIR")==QStringList("ON")) {
+         m_directories += dir;
+-        m_directories += CMakeParserUtils::binaryPath(dir, m_project->path().toLocalFile(), CMake::currentBuildDir(m_project).toLocalFile(QUrl::RemoveTrailingSlash));
++        m_directories += CMakeParserUtils::binaryPath(dir, m_project->path().toLocalFile(), CMake::currentCanonicalBuildDir(m_project).toLocalFile(QUrl::RemoveTrailingSlash));
+     }
+     m_directories += resolvePaths(m_path, data.properties[DirectoryProperty][dir]["INCLUDE_DIRECTORIES"]);
+     m_directories.removeAll(QString());
+diff --git plugins/cmake/cmakeimportjsonjob.cpp plugins/cmake/cmakeimportjsonjob.cpp
+index 8964ee653f..7029f2d8e3 100644
+--- plugins/cmake/cmakeimportjsonjob.cpp
++++ plugins/cmake/cmakeimportjsonjob.cpp
+@@ -95,8 +95,11 @@ CMakeFilesCompilationData importCommands(const Path& commandsFile)
+         ret.includes = kTransform<Path::List>(result.paths, convert);
+         ret.frameworkDirectories = kTransform<Path::List>(result.frameworkDirectories, convert);
+         ret.defines = result.defines;
+-        const Path path(rt->pathInHost(Path(entry[KEY_FILE].toString())));
+-        qCDebug(CMAKE) << "entering..." << path << entry[KEY_FILE];
++        const auto entryFile = entry[KEY_FILE].toString();
++        const auto entryInfo = QFileInfo(entryFile);
++        const auto entryPath = Path(entryInfo.exists() ? entryInfo.canonicalFilePath() : entryFile);
++        const Path path(rt->pathInHost(entryPath));
++        qCDebug(CMAKE) << "entering..." << path << entryFile;
+         data.files[path] = ret;
+     }
+ 
+@@ -152,7 +155,7 @@ void CMakeImportJsonJob::start()
+         return;
+     }
+ 
+-    const Path currentBuildDir = CMake::currentBuildDir(m_project);
++    const Path currentBuildDir = CMake::currentCanonicalBuildDir(m_project);
+     Q_ASSERT (!currentBuildDir.isEmpty());
+ 
+     const Path targetsFilePath = CMake::targetDirectoriesFile(m_project);
+diff --git plugins/cmake/cmakemanager.cpp plugins/cmake/cmakemanager.cpp
+index 9836dc6d8d..8bea268057 100644
+--- plugins/cmake/cmakemanager.cpp
++++ plugins/cmake/cmakemanager.cpp
+@@ -116,7 +116,7 @@ bool CMakeManager::hasBuildInfo(ProjectBaseItem* item) const
+ 
+ Path CMakeManager::buildDirectory(KDevelop::ProjectBaseItem *item) const
+ {
+-    return Path(CMake::currentBuildDir(item->project()));
++    return Path(CMake::currentCanonicalBuildDir(item->project()));
+ }
+ 
+ KDevelop::ProjectFolderItem* CMakeManager::import( KDevelop::IProject *project )
+diff --git plugins/cmake/cmakemodelitems.cpp plugins/cmake/cmakemodelitems.cpp
+index ec376920b2..5aafccfbe5 100644
+--- plugins/cmake/cmakemodelitems.cpp
++++ plugins/cmake/cmakemodelitems.cpp
+@@ -32,7 +32,7 @@ QUrl CMakeTargetItem::builtUrl() const
+     if (!m_builtUrl.isEmpty())
+         return m_builtUrl.toUrl();
+ 
+-    const KDevelop::Path buildDir = CMake::currentBuildDir(project());
++    const KDevelop::Path buildDir = CMake::currentCanonicalBuildDir(project());
+     if (buildDir.isEmpty())
+         return QUrl();
+ 
+diff --git plugins/cmake/cmakeserverimportjob.cpp plugins/cmake/cmakeserverimportjob.cpp
+index b5aa373d5f..84138bf4dd 100644
+--- plugins/cmake/cmakeserverimportjob.cpp
++++ plugins/cmake/cmakeserverimportjob.cpp
+@@ -135,7 +135,7 @@ void CMakeServerImportJob::doStart()
+ {
+     connect(m_server.data(), &CMakeServer::response, this, &CMakeServerImportJob::processResponse);
+ 
+-    m_server->handshake(m_project->path(), CMake::currentBuildDir(m_project));
++    m_server->handshake(m_project->path(), CMake::currentCanonicalBuildDir(m_project));
+ }
+ 
+ void CMakeServerImportJob::processResponse(const QJsonObject& response)
+diff --git plugins/cmake/cmakeutils.cpp plugins/cmake/cmakeutils.cpp
+index c2eaa254e0..eb093297df 100644
+--- plugins/cmake/cmakeutils.cpp
++++ plugins/cmake/cmakeutils.cpp
+@@ -164,7 +164,7 @@ namespace CMake
+ 
+ KDevelop::Path::List resolveSystemDirs(KDevelop::IProject* project, const QStringList& dirs)
+ {
+-    const KDevelop::Path buildDir(CMake::currentBuildDir(project));
++    const KDevelop::Path buildDir(CMake::currentCanonicalBuildDir(project));
+     const KDevelop::Path installDir(CMake::currentInstallDir(project));
+ 
+     KDevelop::Path::List newList;
+@@ -199,7 +199,7 @@ bool checkForNeedingConfigure( KDevelop::IProject* project )
+ {
+     auto currentRuntime = ICore::self()->runtimeController()->currentRuntime();
+     const QString currentRuntimeName = currentRuntime->name();
+-    const KDevelop::Path builddir = currentBuildDir(project);
++    const KDevelop::Path builddir = currentCanonicalBuildDir(project);
+     const bool isValid = (buildDirRuntime(project, -1) == currentRuntimeName || buildDirRuntime(project, -1).isEmpty()) && builddir.isValid();
+ 
+     if( !isValid )
+@@ -237,7 +237,7 @@ bool checkForNeedingConfigure( KDevelop::IProject* project )
+ 
+         CMakeBuildDirChooser bd;
+         bd.setProject( project );
+-        const auto builddirs = CMake::allBuildDirs(project);
++        const auto builddirs = CMake::allCanonicalBuildDirs(project);
+         bd.setAlreadyUsed( builddirs );
+         bd.setShowAvailableBuildDirs(!builddirs.isEmpty());
+         bd.setCMakeExecutable(currentCMakeExecutable(project));
+@@ -307,6 +307,17 @@ KDevelop::Path currentBuildDir( KDevelop::IProject* project, int builddir )
+     return KDevelop::Path(readBuildDirParameter( project, Config::Specific::buildDirPathKey, QString(), builddir ));
+ }
+ 
++KDevelop::Path currentCanonicalBuildDir( KDevelop::IProject* project, int builddir )
++{
++    const QString buildDir(readBuildDirParameter( project, Config::Specific::buildDirPathKey, QString(), builddir ));
++    const auto info = QFileInfo(buildDir);
++    if (info.exists()) {
++        return KDevelop::Path(info.canonicalFilePath());
++    } else {
++        return KDevelop::Path(buildDir);
++    }
++}
++
+ KDevelop::Path commandsFile(KDevelop::IProject* project)
+ {
+     auto currentBuildDir = CMake::currentBuildDir(project);
+@@ -665,6 +676,22 @@ QStringList allBuildDirs(KDevelop::IProject* project)
+     return result;
+ }
+ 
++QStringList allCanonicalBuildDirs(KDevelop::IProject* project)
++{
++    QStringList result;
++    int bdCount = buildDirCount(project);
++    for (int i = 0; i < bdCount; ++i) {
++        QString buildDir = buildDirGroup( project, i ).readEntry( Config::Specific::buildDirPathKey );
++        const auto info = QFileInfo(buildDir);
++        if (info.exists()) {
++            result += info.canonicalFilePath();
++        } else {
++            result += buildDir;
++        }
++    }
++    return result;
++}
++
+ QString executeProcess(const QString& execName, const QStringList& args)
+ {
+     Q_ASSERT(!execName.isEmpty());
+diff --git plugins/cmake/cmakeutils.h plugins/cmake/cmakeutils.h
+index aef5497b78..9942b5fce7 100644
+--- plugins/cmake/cmakeutils.h
++++ plugins/cmake/cmakeutils.h
+@@ -88,6 +88,12 @@ namespace CMake
+      */
+     KDEVCMAKECOMMON_EXPORT KDevelop::Path currentBuildDir( KDevelop::IProject* project, int builddir = -1 );
+ 
++    /**
++     * @returns the current canonical builddir for the given project or an empty url if none
++     * has been set by the user. See QFileInfo::canonicalFilePath()
++     */
++    KDEVCMAKECOMMON_EXPORT KDevelop::Path currentCanonicalBuildDir( KDevelop::IProject* project, int builddir = -1 );
++
+     /**
+      * @returns the path to the 'compile_commands.json' file in the current builddir for the given project
+      * or an empty url if none has been set by the user.
+@@ -196,6 +202,11 @@ namespace CMake
+      */
+     KDEVCMAKECOMMON_EXPORT QStringList allBuildDirs(KDevelop::IProject* project);
+ 
++    /**
++     * Retrieves the canonical form of the configured build directories for @p project.
++     */
++    KDEVCMAKECOMMON_EXPORT QStringList allCanonicalBuildDirs(KDevelop::IProject* project);
++
+     /**
+      * Attempts to migrate the CMake configuration to per-builddir format.
+      * Silently returns if the migration has already been performed.
+diff --git plugins/cmake/settings/cmakepreferences.cpp plugins/cmake/settings/cmakepreferences.cpp
+index 7822505544..a9056ae731 100644
+--- plugins/cmake/settings/cmakepreferences.cpp
++++ plugins/cmake/settings/cmakepreferences.cpp
+@@ -331,7 +331,7 @@ void CMakePreferences::removeBuildDir()
+     if(curr < 0)
+         return;
+ 
+-    Path removedPath = CMake::currentBuildDir( m_project );
++    Path removedPath = CMake::currentCanonicalBuildDir( m_project );
+     QString removed = removedPath.toLocalFile();
+     if(QDir(removed).exists())
+     {
+diff --git plugins/cmakebuilder/cmakebuilder.cpp plugins/cmakebuilder/cmakebuilder.cpp
+index 7adf803e66..11a3b7df43 100644
+--- plugins/cmakebuilder/cmakebuilder.cpp
++++ plugins/cmakebuilder/cmakebuilder.cpp
+@@ -233,7 +233,7 @@ KJob* CMakeBuilder::prune( KDevelop::IProject* project )
+ 
+ KDevelop::IProjectBuilder* CMakeBuilder::builderForProject(KDevelop::IProject* p) const
+ {
+-    QString builddir = CMake::currentBuildDir( p ).toLocalFile();
++    QString builddir = CMake::currentCanonicalBuildDir( p ).toLocalFile();
+     QMap<QString, IProjectBuilder*>::const_iterator it = m_builders.constBegin(), itEnd = m_builders.constEnd();
+     for(; it!=itEnd; ++it) {
+         if (QFile::exists(builddir+QLatin1Char('/')+it.key()))
+diff --git plugins/cmakebuilder/cmakejob.cpp plugins/cmakebuilder/cmakejob.cpp
+index f42db1150f..f17ba25cb0 100644
+--- plugins/cmakebuilder/cmakejob.cpp
++++ plugins/cmakebuilder/cmakejob.cpp
+@@ -85,7 +85,7 @@ void CMakeJob::start()
+ 
+ QUrl CMakeJob::workingDirectory() const
+ {
+-    KDevelop::Path path = CMake::currentBuildDir( m_project );
++    KDevelop::Path path = CMake::currentCanonicalBuildDir( m_project );
+     qCDebug(KDEV_CMAKEBUILDER) << "builddir: " << path;
+     Q_ASSERT(path.isValid()); //We cannot get the project folder as a build directory!
+     return path.toUrl();
+@@ -115,7 +115,7 @@ QStringList CMakeJob::commandLine() const
+ 
+     auto rt = ICore::self()->runtimeController()->currentRuntime();
+     //if we are creating a new build directory, we'll want to specify the generator
+-    QDir builddir(rt->pathInRuntime(CMake::currentBuildDir( m_project )).toLocalFile());
++    QDir builddir(rt->pathInRuntime(CMake::currentCanonicalBuildDir( m_project )).toLocalFile());
+     if(!builddir.exists() || !builddir.exists(QStringLiteral("CMakeCache.txt"))) {
+         CMakeBuilderSettings::self()->load();
+         args << QStringLiteral("-G") << CMake::defaultGenerator();

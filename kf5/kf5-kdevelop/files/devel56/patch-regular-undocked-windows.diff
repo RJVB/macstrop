@@ -1,0 +1,474 @@
+diff --git kdevplatform/sublime/idealcontroller.cpp kdevplatform/sublime/idealcontroller.cpp
+index 84791f266a..a7cd892c56 100644
+--- kdevplatform/sublime/idealcontroller.cpp
++++ kdevplatform/sublime/idealcontroller.cpp
+@@ -330,15 +330,22 @@ QAction* IdealController::actionForArea(Qt::DockWidgetArea area) const
+ 
+ void IdealController::removeView(View* view, bool nondestructive)
+ {
+-    Q_ASSERT(m_view_to_action.contains(view));
+-    QAction* action = m_view_to_action.value(view);
++    QAction* action = nullptr;
++    if (m_view_to_action.contains(view)) {
++        action = m_view_to_action.value(view);
++    }
++    if (!action) {
++        qCritical() << Q_FUNC_INFO << "View" << view << "has no known hide/shown action";
++        return;
++    }
+ 
+     QWidget *viewParent = view->widget()->parentWidget();
+     auto *dock = qobject_cast<IdealDockWidget *>(viewParent);
+     if (!dock) { // tool views with a toolbar live in a QMainWindow which lives in a Dock
+-        Q_ASSERT(qobject_cast<QMainWindow*>(viewParent));
+-        viewParent = viewParent->parentWidget();
+-        dock = qobject_cast<IdealDockWidget*>(viewParent);
++        if (qobject_cast<QMainWindow*>(viewParent)) {
++            viewParent = viewParent->parentWidget();
++            dock = qobject_cast<IdealDockWidget*>(viewParent);
++        }
+     }
+     Q_ASSERT(dock);
+ 
+@@ -348,16 +355,18 @@ void IdealController::removeView(View* view, bool nondestructive)
+        method asserts immediately.  */
+     action->setChecked(false);
+ 
+-    if (IdealButtonBarWidget* bar = barForDockArea(dock->dockWidgetArea()))
+-        bar->removeAction(action);
++    if (dock) {
++        if (IdealButtonBarWidget* bar = barForDockArea(dock->dockWidgetArea()))
++            bar->removeAction(action);
+ 
+-    m_view_to_action.remove(view);
+-    m_dockwidget_to_action.remove(dock);
++        m_dockwidget_to_action.remove(dock);
+ 
+-    if (nondestructive)
+-        view->widget()->setParent(nullptr);
++        if (nondestructive)
++            view->widget()->setParent(nullptr);
+ 
+-    delete dock;
++        delete dock;
++    }
++    m_view_to_action.remove(view);
+ }
+ 
+ void IdealController::moveView(View *view, Qt::DockWidgetArea area)
+diff --git kdevplatform/sublime/idealcontroller.h kdevplatform/sublime/idealcontroller.h
+index 086c37413a..999ab724bd 100644
+--- kdevplatform/sublime/idealcontroller.h
++++ kdevplatform/sublime/idealcontroller.h
+@@ -28,6 +28,7 @@
+ #include <QPointer>
+ 
+ #include "sublimedefs.h"
++#include "sublimeexport.h"
+ 
+ class KActionMenu;
+ 
+@@ -40,7 +41,7 @@ class IdealButtonBarWidget;
+ class IdealDockWidget;
+ class View;
+ 
+-class IdealController: public QObject
++class KDEVPLATFORMSUBLIME_EXPORT IdealController: public QObject
+ {
+     Q_OBJECT
+ public:
+diff --git kdevplatform/sublime/idealdockwidget.cpp kdevplatform/sublime/idealdockwidget.cpp
+index 9477b288a2a4070f563301853810eae25184c44b..8d58d2d08509499153a7b433a2873c7cfa7d71c5 100644
+--- kdevplatform/sublime/idealdockwidget.cpp
++++ kdevplatform/sublime/idealdockwidget.cpp
+@@ -37,6 +37,9 @@
+ #include <QToolBar>
+ #include <QVBoxLayout>
+ 
++#include "debug.h"
++#include <QCoreApplication>
++
+ using namespace Sublime;
+ 
+ IdealDockWidget::IdealDockWidget(IdealController *controller, Sublime::MainWindow *parent)
+@@ -44,7 +47,9 @@ IdealDockWidget::IdealDockWidget(IdealController *controller, Sublime::MainWindo
+       m_area(nullptr),
+       m_view(nullptr),
+       m_docking_area(Qt::NoDockWidgetArea),
+-      m_controller(controller)
++      m_controller(controller),
++      m_floatingWidget(nullptr),
++      m_floatsAsStandalone(false)
+ {
+     setAutoFillBackground(true);
+     setContextMenuPolicy(Qt::CustomContextMenu);
+@@ -60,7 +65,14 @@ IdealDockWidget::IdealDockWidget(IdealController *controller, Sublime::MainWindo
+ 
+     setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+     // do not allow to move docks to the top dock area (no buttonbar there in our current UI)
+-    setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea | Qt::BottomDockWidgetArea);
++    // add an explicit cast, for certain Clang versions?
++    setAllowedAreas(Qt::DockWidgetAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea | Qt::BottomDockWidgetArea));
++
++    connect(this, &QDockWidget::topLevelChanged, this, [this] (bool floating) {
++            if (floating && isVisible() && floatsAsStandalone()) {
++                QMetaObject::invokeMethod(this, "makeStandaloneWindow", Qt::QueuedConnection);
++            }
++        } );
+ }
+ 
+ IdealDockWidget::~IdealDockWidget()
+@@ -85,9 +97,78 @@ Qt::DockWidgetArea IdealDockWidget::dockWidgetArea() const
+ void IdealDockWidget::setDockWidgetArea(Qt::DockWidgetArea dockingArea)
+ { m_docking_area = dockingArea; }
+ 
++void IdealDockWidget::setFloating(bool floating)
++{
++    if (!m_floatsAsStandalone) {
++        QDockWidget::setFloating(floating);
++    } else {
++        if (floating) {
++            makeStandaloneWindow();
++        } else {
++            reDockWidget(false);
++        }
++    }
++}
++
++void IdealDockWidget::setFloatsAsStandalone(bool standalone)
++{
++    m_floatsAsStandalone = standalone;
++}
++
++bool IdealDockWidget::floatsAsStandalone()
++{
++    return m_floatsAsStandalone;
++}
++
+ void IdealDockWidget::slotRemove()
+ {
+-    m_area->removeToolView(m_view);
++    if (m_floatingWidget) {
++        setWidget(m_floatingWidget);
++        m_floatingWidget = nullptr;
++    }
++    if (m_area) {
++        m_area->removeToolView(m_view);
++    }
++}
++
++void IdealDockWidget::makeStandaloneWindow()
++{
++    if (!m_floatingWidget) {
++        if (!isFloating()) {
++            QDockWidget::setFloating(true);
++            m_area->raiseToolView(m_view);
++        }
++        if (auto w = widget()) {
++            // turn into top-level window
++            qCDebug(SUBLIME) << "reparenting" << this << "widget" << w << "away from" << w->parent();
++            m_floatingWidget = w;
++            w->setParent(nullptr);
++            w->setWindowFlags(Qt::Window);
++            w->show();
++            connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &IdealDockWidget::aboutToShutdown );
++            close();
++        }
++    }
++}
++
++void IdealDockWidget::reDockWidget(bool signalClose)
++{
++    if (m_floatingWidget) {
++        setWidget(m_floatingWidget);
++        m_floatingWidget = nullptr;
++    }
++    QDockWidget::setFloating(false);
++    if (signalClose) {
++        emit closeRequested();
++    }
++}
++
++void IdealDockWidget::aboutToShutdown()
++{
++    qCDebug(SUBLIME) << "Re-docking" << this << "before exit";
++    if (m_floatingWidget) {
++        reDockWidget(true);
++    }
+ }
+ 
+ void IdealDockWidget::contextMenuRequested(const QPoint &point)
+@@ -125,13 +206,21 @@ void IdealDockWidget::contextMenuRequested(const QPoint &point)
+     auto* left = new QAction(i18nc("@option:radio tool view position", "Left"), g);
+     auto* bottom = new QAction(i18nc("@option:radio tool view position", "Bottom"), g);
+     auto* right = new QAction(i18nc("@option:radio tool view position", "Right"), g);
+-    auto* detach = new QAction(i18nc("@option:radio tool view position", "Detached"), g);
++    QAction *detach = nullptr;
++    if (!floatsAsStandalone()) {
++        detach = new QAction(i18nc("@option:radio tool view position", "Detached as floating window"), g);
++    }
++    auto* standalone = new QAction(i18nc("@option:radio tool view position", "Detached as standalone window"), g);
+ 
+-    for (auto action : {left, bottom, right, detach}) {
+-        positionMenu->addAction(action);
+-        action->setCheckable(true);
++    for (auto action : {left, bottom, right, detach, standalone}) {
++        if (action) {
++            positionMenu->addAction(action);
++            action->setCheckable(true);
++        }
+     }
+-    if (isFloating()) {
++    if (m_floatingWidget) {
++        standalone->setChecked(true);
++    } else if (isFloating() && detach) {
+         detach->setChecked(true);
+     } else if (m_docking_area == Qt::BottomDockWidgetArea)
+         bottom->setChecked(true);
+@@ -184,13 +273,19 @@ void IdealDockWidget::contextMenuRequested(const QPoint &point)
+ 
+             return;
+         } else if ( triggered == detach ) {
+-            setFloating(true);
+-            m_area->raiseToolView(m_view);
++            if (!m_floatingWidget && !isFloating()) {
++                setFloating(true);
++                m_area->raiseToolView(m_view);
++            }
++            return;
++        } else if ( triggered == standalone ) {
++            // this will invalidate m_area
++            makeStandaloneWindow();
+             return;
+         }
+ 
+         if (isFloating()) {
+-            setFloating(false);
++            reDockWidget(false);
+         }
+ 
+         Sublime::Position pos;
+@@ -203,11 +298,13 @@ void IdealDockWidget::contextMenuRequested(const QPoint &point)
+         else
+             return;
+ 
+-        Area *area = m_area;
+-        View *view = m_view;
+-        /* This call will delete *this, so we no longer
+-           can access member variables. */
+-        m_area->moveToolView(m_view, pos);
+-        area->raiseToolView(view);
++        if (m_area) {
++            Area *area = m_area;
++            View *view = m_view;
++            /* This call will delete *this, so we no longer
++               can access member variables. */
++            m_area->moveToolView(m_view, pos);
++            area->raiseToolView(view);
++        }
+     }
+ }
+diff --git kdevplatform/sublime/idealdockwidget.h kdevplatform/sublime/idealdockwidget.h
+index 52cdec65a2..c0540ea625 100644
+--- kdevplatform/sublime/idealdockwidget.h
++++ kdevplatform/sublime/idealdockwidget.h
+@@ -25,9 +25,10 @@
+ 
+ #include <QDockWidget>
+ #include "idealcontroller.h"
++#include "sublimeexport.h"
+ 
+ namespace Sublime {
+-class IdealDockWidget : public QDockWidget
++class KDEVPLATFORMSUBLIME_EXPORT IdealDockWidget : public QDockWidget
+ {
+     Q_OBJECT
+ 
+@@ -44,6 +45,22 @@ public:
+     Qt::DockWidgetArea dockWidgetArea() const;
+     void setDockWidgetArea(Qt::DockWidgetArea dockingArea);
+ 
++    /**
++     * @brief overloads QDockWidget::setFloating to provide support
++     * for floating windows that behave like regular standalone windows.
++     */
++    void setFloating(bool floating);
++    /**
++     * @brief controls whether dock widgets are detached (floated)
++     * as regular @p standalone windows or as tool windows (Qt::Tool)
++     */
++    void setFloatsAsStandalone(bool standalone);
++    /**
++     * @brief returns true if floating (detached) windows behave as standalone
++     * (regular) windows instead of Qt's standard tool windows
++     */
++    bool floatsAsStandalone();
++
+ public Q_SLOTS:
+     /// The IdealToolButton also connects to this slot to show the same context menu.
+     void contextMenuRequested(const QPoint &point);
+@@ -53,12 +70,22 @@ Q_SIGNALS:
+ 
+ private Q_SLOTS:
+     void slotRemove();
++    /**
++     * @brief re-attaches views that have been set to float as standalone windows
++     * when the application is about to shutdown.
++     */
++    void aboutToShutdown();
+ 
+ private:
++    Q_INVOKABLE void makeStandaloneWindow();
++    void reDockWidget(bool signalClose);
++
+     Area *m_area;
+     View *m_view;
+     Qt::DockWidgetArea m_docking_area;
+     IdealController* const m_controller;
++    QWidget *m_floatingWidget;
++    bool m_floatsAsStandalone;
+ };
+ 
+ }
+diff --git kdevplatform/sublime/tests/test_viewactivation.cpp kdevplatform/sublime/tests/test_viewactivation.cpp
+index 8d1edaa582..29270b02d3 100644
+--- kdevplatform/sublime/tests/test_viewactivation.cpp
++++ kdevplatform/sublime/tests/test_viewactivation.cpp
+@@ -23,8 +23,9 @@
+ 
+ #include <QListView>
+ #include <QTextEdit>
+-#include <QDockWidget>
+ #include <QFocusEvent>
++#include <QDockWidget>
++#include <QTextBrowser>
+ 
+ #include <sublime/view.h>
+ #include <sublime/area.h>
+@@ -32,6 +33,8 @@
+ #include <sublime/mainwindow.h>
+ #include <sublime/container.h>
+ #include <sublime/tooldocument.h>
++#include <sublime/idealcontroller.h>
++#include <sublime/idealdockwidget.h>
+ 
+ using namespace Sublime;
+ 
+@@ -62,6 +65,7 @@ void TestViewActivation::init()
+     doc2 = new ToolDocument(QStringLiteral("doc2"), controller, new SpecialWidgetFactory<QListView>(QStringLiteral("doc2")));
+     doc3 = new ToolDocument(QStringLiteral("doc3"), controller, new SimpleToolWidgetFactory<QListView>(QStringLiteral("doc3")));
+     doc4 = new ToolDocument(QStringLiteral("doc4"), controller, new SimpleToolWidgetFactory<QListView>(QStringLiteral("doc4")));
++    doc5 = new ToolDocument(QStringLiteral("doc5"), controller, new SimpleToolWidgetFactory<QTextBrowser>(QStringLiteral("doc5")));
+ 
+     tool1 = new ToolDocument(QStringLiteral("tool1"), controller, new SimpleToolWidgetFactory<QListView>(QStringLiteral("tool1")));
+     tool2 = new ToolDocument(QStringLiteral("tool2"), controller, new SimpleToolWidgetFactory<QTextEdit>(QStringLiteral("tool2")));
+@@ -81,6 +85,8 @@ void TestViewActivation::init()
+     area->addView(view231, view221, Qt::Horizontal);
+     view241 = doc4->createView();
+     area->addView(view241, view212, Qt::Vertical);
++    view251 = doc5->createView();
++    area->addView(view251, view212, Qt::Vertical);
+     viewT11 = tool1->createView();
+     area->addToolView(viewT11, Sublime::Bottom);
+     viewT21 = tool2->createView();
+@@ -179,6 +185,50 @@ void TestViewActivation::viewActivation()
+     QCOMPARE(mw->activeToolView(), viewT31);
+ }
+ 
++void TestViewActivation::idealDockWidgets()
++{
++    MainWindow* mw = new MainWindow(controller);
++    IdealController* ic = new IdealController(mw);
++    controller->addDefaultArea(area); // Q_ASSERT without this.
++    controller->addMainWindow(mw);
++
++    controller->showArea(area, mw);
++    //we should have an active view immediatelly after the area is shown
++    QCOMPARE(mw->activeView(), view211);
++
++    //add some widgets that are not in layout
++    QTextEdit *breaker = new QTextEdit(mw);
++    breaker->setObjectName(QStringLiteral("breaker"));
++    QTextEdit *toolBreaker = new QTextEdit(mw);
++    toolBreaker->setObjectName(QStringLiteral("toolBreaker"));
++
++    ic->addView(Qt::LeftDockWidgetArea, view251);
++    ic->showLeftDock(true);
++    IdealDockWidget *dock = ic->allDockWidgets().at(0);
++    dock->setWidget(toolBreaker);
++    mw->addDockWidget(Qt::LeftDockWidgetArea, dock);
++//     dock->setFloatsAsStandalone(true);
++    dock->setFloating(true);
++
++    //now post events to the widgets and see if mainwindow has the right active views
++    //activate view
++    qApp->sendEvent(view212->widget(), new QFocusEvent(QEvent::FocusIn));
++    QString failMsg = QStringLiteral("\nWas expecting %1 to be active but got %2").
++                      arg(view212->objectName(), mw->activeView()->objectName());
++    QVERIFY2(mw->activeView() == view212, failMsg.toLatin1().data());
++
++    //activate toolview and check that both view and toolview are active
++    qApp->sendEvent(viewT31->widget(), new QFocusEvent(QEvent::FocusIn));
++    QCOMPARE(mw->activeView(), view212);
++    QCOMPARE(mw->activeToolView(), viewT31);
++
++    //focus a dock not in the area
++    qApp->sendEvent(toolBreaker, new QFocusEvent(QEvent::FocusIn));
++    QCOMPARE(mw->activeView(), view212);
++    QCOMPARE(mw->activeToolView(), viewT31);
++
++}
++
+ void TestViewActivation::activationInMultipleMainWindows()
+ {
+     MainWindow mw(controller);
+diff --git kdevplatform/sublime/tests/test_viewactivation.h kdevplatform/sublime/tests/test_viewactivation.h
+index f2e744d725..8ac685d95a 100644
+--- kdevplatform/sublime/tests/test_viewactivation.h
++++ kdevplatform/sublime/tests/test_viewactivation.h
+@@ -36,6 +36,7 @@ private Q_SLOTS:
+     void cleanup();
+ 
+     void viewActivation();
++    void idealDockWidgets();
+     void activationInMultipleMainWindows();
+     void activationAfterViewRemoval();
+     void activationAfterRemovalSimplestCase();
+@@ -50,6 +51,7 @@ private:
+     Sublime::Document *doc2;
+     Sublime::Document *doc3;
+     Sublime::Document *doc4;
++    Sublime::Document *doc5;
+     Sublime::Document *tool1;
+     Sublime::Document *tool2;
+     Sublime::Document *tool3;
+@@ -59,6 +61,7 @@ private:
+     Sublime::View *view221;
+     Sublime::View *view231;
+     Sublime::View *view241;
++    Sublime::View *view251;
+     Sublime::View *viewT11;
+     Sublime::View *viewT21;
+     Sublime::View *viewT31;
+diff --git kdevplatform/sublime/view.cpp kdevplatform/sublime/view.cpp
+index 4bd42a72ab..f765b946bf 100644
+--- kdevplatform/sublime/view.cpp
++++ kdevplatform/sublime/view.cpp
+@@ -127,7 +127,7 @@ QList<QAction*> View::toolBarActions() const
+     Q_D(const View);
+ 
+     auto* tooldoc = qobject_cast<ToolDocument*>(document());
+-    if( tooldoc )
++    if( tooldoc && d->widget )
+     {
+         return tooldoc->factory()->toolBarActions( d->widget );
+     }
+@@ -139,7 +139,7 @@ QList< QAction* > View::contextMenuActions() const
+     Q_D(const View);
+ 
+     auto* tooldoc = qobject_cast<ToolDocument*>(document());
+-    if( tooldoc )
++    if( tooldoc && d->widget )
+     {
+         return tooldoc->factory()->contextMenuActions( d->widget );
+     }

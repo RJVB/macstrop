@@ -1,0 +1,154 @@
+diff --git CMakeLists.txt CMakeLists.txt
+index 8ae9f1f528..888fc87452 100644
+--- CMakeLists.txt
++++ CMakeLists.txt
+@@ -8,10 +8,21 @@ set(KDEVELOP_SOVERSION 56)
+ # plugin version as used e.g. in plugin installation path
+ set(KDEV_PLUGIN_VERSION 34)
+ 
++option(KDEVELOP_BUILD_IDE "Build the IDE" ON)
++option(KDEVELOP_BUILD_CLANG_PARSER "Build the Clang-based C/C++ parser (formerly kdev-clang)" ON)
++
+ # we need some parts of the ECM CMake helpers
+ find_package (ECM 5.50.0 REQUIRED NO_MODULE)
+ set(CMAKE_MODULE_PATH ${KDevelop_SOURCE_DIR}/cmake/modules ${ECM_MODULE_PATH})
+ 
++if (NOT KDEVELOP_BUILD_IDE)
++    if (NOT KDEVELOP_BUILD_CLANG_PARSER)
++        message(FATAL_ERROR "KDEVELOP_BUILD_IDE and KDEVELOP_BUILD_CLANG_PARSER cannot both be OFF!")
++    else()
++        message(WARNING "Invoke make in ${CMAKE_CURRENT_BINARY_DIR}/plugins/clang in order to build only kdev-clang!")
++    endif()
++endif()
++
+ include(KDEInstallDirs)
+ include(KDECMakeSettings)
+ include(KDECompilerSettings NO_POLICY_SCOPE) # needs to be first, as set policies influence following macros
+@@ -152,7 +163,15 @@ endif()
+ configure_file(config-kdevelop.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/config-kdevelop.h)
+ include_directories(${KDevelop_BINARY_DIR}) # for config-kdevelop.h
+ 
+-add_subdirectory(kdevplatform)
++if (KDEVELOP_BUILD_IDE)
++    add_subdirectory(kdevplatform)
++else()
++    message(STATUS "Checking for installed KDevPlatform v${KDevelop_VERSION_MAJOR}.${KDevelop_VERSION_MINOR}")
++    find_package(KDevPlatform ${KDevelop_VERSION_MAJOR}.${KDevelop_VERSION_MINOR} CONFIG)
++    set_package_properties(KDevPlatform PROPERTIES
++        TYPE REQUIRED
++    )
++endif()
+ add_subdirectory(plugins)
+ 
+ add_subdirectory(pics)
+diff --git plugins/CMakeLists.txt plugins/CMakeLists.txt
+index 8bea62a97e..d7a0383099 100644
+--- plugins/CMakeLists.txt
++++ plugins/CMakeLists.txt
+@@ -1,3 +1,4 @@
++if (KDEVELOP_BUILD_IDE)
+ # BEGIN: Analyzers
+ add_subdirectory(compileanalyzercommon)
+ add_subdirectory(clangtidy)
+@@ -30,34 +31,38 @@ ecm_optional_add_subdirectory(manpage)
+ add_subdirectory(astyle)
+ add_subdirectory(customscript)
+ # END: Formatters
++endif(KDEVELOP_BUILD_IDE)
+ 
+ # BEGIN: Languages
+ ecm_optional_add_subdirectory(custom-definesandincludes)
+ 
+ ecm_optional_add_subdirectory(qmljs)
+ 
+-find_package(Clang 6.0)
+-set(clangSearchHint "")
+-if (NOT CLANG_FOUND)
+-    set(clangSearchHint "Please install a package providing libclang. Either pass -DLLVM_ROOT=/path/to/llvm-prefix or install the 'llvm-config' command-line utility for auto-detection.")
+-endif()
+-set_package_properties(Clang PROPERTIES
+-    DESCRIPTION "Clang libraries from the LLVM project. ${clangSearchHint}"
+-    PURPOSE "Used for KDevelop's C++/C support plugin."
+-    TYPE REQUIRED
+-)
+-
+-if (CLANG_FOUND)
+-    if (NOT CLANG_CLANG_LIB)
+-        message(FATAL_ERROR "Could not find the Clang C library: libclang")
++if(KDEVELOP_BUILD_CLANG_PARSER)
++    find_package(Clang 6.0)
++    set(clangSearchHint "")
++    if (NOT CLANG_FOUND)
++        set(clangSearchHint "Please install a package providing libclang. Either pass -DLLVM_ROOT=/path/to/llvm-prefix or install the 'llvm-config' command-line utility for auto-detection.")
+     endif()
++    set_package_properties(Clang PROPERTIES
++        DESCRIPTION "Clang libraries from the LLVM project. ${clangSearchHint}"
++        PURPOSE "Used for KDevelop's C++/C support plugin."
++        TYPE REQUIRED
++    )
++
++    if (CLANG_FOUND)
++        if (NOT CLANG_CLANG_LIB)
++            message(FATAL_ERROR "Could not find the Clang C library: libclang")
++        endif()
++
++        add_library(Clang::clang UNKNOWN IMPORTED)
++        set_property(TARGET Clang::clang PROPERTY IMPORTED_LOCATION ${CLANG_CLANG_LIB})
++        ecm_optional_add_subdirectory(clang)
++    endif()
++    # END: Languages
++endif(KDEVELOP_BUILD_CLANG_PARSER)
+ 
+-    add_library(Clang::clang UNKNOWN IMPORTED)
+-    set_property(TARGET Clang::clang PROPERTY IMPORTED_LOCATION ${CLANG_CLANG_LIB})
+-    ecm_optional_add_subdirectory(clang)
+-endif()
+-# END: Languages
+-
++if (KDEVELOP_BUILD_IDE)
+ # BEGIN: Project builders
+ add_subdirectory(makebuilder)
+ add_subdirectory(ninjabuilder)
+@@ -153,3 +158,4 @@ if (OktetaKastenControllers_FOUND AND KastenControllers_FOUND)
+     add_subdirectory(okteta)
+ endif()
+ # END: Others
++endif(KDEVELOP_BUILD_IDE)
+diff --git plugins/clang/CMakeLists.txt plugins/clang/CMakeLists.txt
+index 43b5ae339f..d3d6398716 100644
+--- plugins/clang/CMakeLists.txt
++++ plugins/clang/CMakeLists.txt
+@@ -17,6 +17,13 @@ if(BUILD_TESTING)
+     add_subdirectory(tests)
+ endif()
+ 
++if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT KDEVELOP_BUILD_IDE)
++    # this is to allow building with clang (on Linux) ?!
++    set(CMAKE_C_VISIBILITY_PRESET default)
++    set(CMAKE_CXX_VISIBILITY_PRESET default)
++    set(CMAKE_VISIBILITY_INLINES_HIDDEN 0)
++endif()
++
+ set(kdevclangprivate_SRCS
+     clangsettings/clangsettingsmanager.cpp
+     clangsettings/sessionsettings/sessionsettings.cpp
+diff --git plugins/clang/tests/CMakeLists.txt plugins/clang/tests/CMakeLists.txt
+index 5953cfed1a..e798874b11 100644
+--- plugins/clang/tests/CMakeLists.txt
++++ plugins/clang/tests/CMakeLists.txt
+@@ -4,6 +4,15 @@ remove_definitions(
+     -DQT_NO_CAST_FROM_BYTEARRAY
+ )
+ 
++if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
++    # LTO and Clang don't mix well with creating static libraries on Linux
++    string(REGEX REPLACE "-flto[^ ]*" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
++    string(REGEX REPLACE "-flto[^ ]*" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
++    string(REGEX REPLACE "-flto[^ ]*" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
++    string(REGEX REPLACE "-flto[^ ]*" "" CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS}")
++    string(REGEX REPLACE "-flto[^ ]*" "" CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
++endif()
++
+ add_executable(clang-parser
+     clang-parser.cpp
+ )
