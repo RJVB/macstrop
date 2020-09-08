@@ -967,7 +967,8 @@ proc qt5.register_qch_files {qchfiles} {
 # store the collection file in the Qt docs dir, not the "assorted misc. collection dir (share/doc/qch)"
 set qt5::qch_collection_file "${qt_docs_dir}/MP-qthelp-collection.qhc"
 
-post-activate {
+proc qt5.rebuild_mp_qthelp_collection {} {
+    global prefix subport qt_bins_dir qt_docs_dir env
     # we'll register entries from share/doc/qch
     set qchdir ${prefix}/share/doc/qch
     set qhcdir [file dirname ${qt5::qch_collection_file}]
@@ -1006,6 +1007,7 @@ post-activate {
             if {[file exists "${qhcdir}/${qhcfile}"]} {
                 file delete -force "${qhcdir}/${qhcfile}"
             }
+            set qhc_cache_dir "QtProject/Assistant-MP"
             if {![catch {set fp [open "${qhcdir}/${qhcpfile}" "w"]} err]} {
                 # create a collection file corresponding to Qt's own documentation
                 ui_msg "--->  (Re)Generating Qt help collection file in ${qhcdir}"
@@ -1013,7 +1015,7 @@ post-activate {
                 puts ${fp} "<QHelpCollectionProject version=\"1.0\">"
                 puts ${fp} "  <assistant>"
                 puts ${fp} "    <title>MacPorts Qt Help Files Collection</title>"
-                puts ${fp} "    <cacheDirectory>QtProject/Assistant-MP</cacheDirectory>"
+                puts ${fp} "    <cacheDirectory>${qhc_cache_dir}</cacheDirectory>"
                 puts ${fp} "    <enableFullTextSearchFallback>true</enableFullTextSearchFallback>"
                 puts ${fp} "  </assistant>"
                 puts ${fp} "  <docFiles>"
@@ -1030,7 +1032,7 @@ post-activate {
                 file attributes ${qhcdir}/${qhcfile} -permissions ugo+rw
                 file delete -force ${qhcdir}/${qhcpfile}
             } else {
-                ui_debug "cannot create ${qhcdir}/${qhcpfile}: ${err}"
+                ui_warn "cannot create ${qhcdir}/${qhcpfile}: ${err}"
             }
             if {[file exists "${qhcdir}/${qhcfile}"]} {
                 # (re)register all candidates
@@ -1040,10 +1042,19 @@ post-activate {
                 # be sure the file mdate is updated"
                 system "touch \"${qhcdir}/${qhcfile}\""
             }
+            set tempfile "$env(HOME)/.local/share/${qhc_cache_dir}/${qhcfile}"
+            if {[file exists ${tempfile}]} {
+                ui_debug "Removing temp file ${tempfile}"
+                file delete ${tempfile}
+            }
         }
     } else {
         ui_debug "qchdir=\"${qchdir}\" and/or qhcdir=\"${qhcdir}\" don't exist as directories, ignoring Qt help collection"
     }
+}
+
+post-activate {
+    qt5.rebuild_mp_qthelp_collection
 }
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
