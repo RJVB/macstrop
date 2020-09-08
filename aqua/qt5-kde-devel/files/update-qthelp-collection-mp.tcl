@@ -7,16 +7,13 @@ package require Pextlib 1.0
 array unset portinfo
 set portname "qt5-kde-devel"
 
+# support a few relevant arguments, taken from the port driver command:
 set argc [llength $::argv]
 for {set i 0} {${i} < ${argc}} {incr i} {
     set arg "[lindex $::argv ${i}]"
-    # process short arg(s)
     set opts [string range $arg 1 end]
     foreach c [split $opts {}] {
         switch -- $c {
-            e {
-                set ui_options(ports_env) yes
-            }
             v {
                 set ui_options(ports_verbose) yes
             }
@@ -32,19 +29,16 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                 # quiet implies no warning for outdated portindex
                 set ui_options(ports_no_old_index_warning) 1
             }
-            p {
-                # ignore errors while processing within a command
-                set ui_options(ports_processall) yes
-            }
         }
     }
 }
 
+# initialise an interpreter, using one of the qt5-kde ports which will
+# set up the required context exactly as it should be.
 if {[catch {mportinit ui_options global_options global_variations} result]} {
     puts \$::errorInfo
         fatal "Failed to initialise MacPorts, \$result"
 }
-
 if {[catch {set mport [mportlookup $portname]} result]} {
     ui_debug $::errorInfo
     ui_error "lookup of portname $portname failed: $result"
@@ -59,8 +53,10 @@ set porturl $portinfo(porturl)
 set portname $portinfo(name)
 set mport [mportopen ${porturl}]
 
+# get the actual interpreter
 set mpinterp [ditem_key ${mport} workername]
 
+# call the procedure that does the actual work, defined in the qt5-kde PG
 ${mpinterp} eval {
     # naughty! :) Set subport to indicate to a port that always regenerates
     # the help collection on activation.
