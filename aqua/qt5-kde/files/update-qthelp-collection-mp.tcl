@@ -5,7 +5,7 @@ package require macports
 package require Pextlib 1.0
 
 array unset portinfo
-set portname "qt5-kde-devel"
+set portname "qt5-kde"
 
 # support a few relevant arguments, taken from the port driver command:
 set argc [llength $::argv]
