@@ -972,6 +972,7 @@ proc qt5.rebuild_mp_qthelp_collection {} {
     # we'll register entries from share/doc/qch
     set qchdir ${prefix}/share/doc/qch
     set qhcdir [file dirname ${qt5::qch_collection_file}]
+    set ret 1
     if {[file exists ${qchdir}] && [file isdirectory ${qchdir}] && [file exists ${qhcdir}] && [file isdirectory ${qhcdir}]} {
         set qhcpfile MP-qthelp-collection.qhcp
         set qhcfile [file tail ${qt5::qch_collection_file}]
@@ -1041,6 +1042,7 @@ proc qt5.rebuild_mp_qthelp_collection {} {
                 }
                 # be sure the file mdate is updated"
                 system "touch \"${qhcdir}/${qhcfile}\""
+                set ret 0
             }
             set tempfile "$env(HOME)/.local/share/${qhc_cache_dir}/${qhcfile}"
             if {[file exists ${tempfile}]} {
@@ -1051,6 +1053,7 @@ proc qt5.rebuild_mp_qthelp_collection {} {
     } else {
         ui_debug "qchdir=\"${qchdir}\" and/or qhcdir=\"${qhcdir}\" don't exist as directories, ignoring Qt help collection"
     }
+    return ${ret}
 }
 
 post-activate {

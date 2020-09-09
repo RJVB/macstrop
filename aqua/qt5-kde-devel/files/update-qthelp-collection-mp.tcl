@@ -57,11 +57,13 @@ set mport [mportopen ${porturl}]
 set mpinterp [ditem_key ${mport} workername]
 
 # call the procedure that does the actual work, defined in the qt5-kde PG
-${mpinterp} eval {
+set ret [${mpinterp} eval {
     # naughty! :) Set subport to indicate to a port that always regenerates
     # the help collection on activation.
     set subport "qt5-assistant"
-    qt5.rebuild_mp_qthelp_collection
-}
+    return [qt5.rebuild_mp_qthelp_collection]
+}]
 
 mportclose ${mport}
+
+exit ${ret}
