@@ -103,13 +103,13 @@ proc preserve_libraries {srcdir patternlist} {
                         ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
                         set perms [file attributes ${l} -permissions]
                         copy ${l} ${prevlib}
-                        if {![file exists ${destroot}${l}]} {
+                        if {![file exists ${destroot}${srcdir}/${lib}]} {
                             if {[file type ${prevlib}] ne "link"} {
                                 file attributes ${prevlib} -permissions ${perms}
                             }
-                            ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
+                            ln -s [file join ${prevdir} ${lib}] ${destroot}${srcdir}/${lib}
                             if {${fd} != -1} {
-                                puts ${fd} "## ln -s [file join ${prevdir} [file tail ${l}]] ${srcdir}/${lib}"
+                                puts ${fd} "## ln -s [file join ${prevdir} ${lib}] ${srcdir}/${lib}"
                             }
                         } else {
                             lappend extra_preserved ${l}
@@ -148,16 +148,16 @@ proc preserve_libraries {srcdir patternlist} {
                             if {${fd} != -1 && [file type ${l}] ne "link"} {
                                 puts ${fd} "${l}"
                                 if {![file exists ${destroot}${l}]} {
-                                    puts ${fd} "# ln -s [file join ${prevdir} [file tail ${l}]] ${srcdir}/${lib}"
+                                    puts ${fd} "# ln -s [file join ${prevdir} ${lib}] ${srcdir}/${lib}"
                                 }
                             }
                             set perms [file attributes ${l} -permissions]
                             copy ${l} ${prevlib}
-                            if {![file exists ${destroot}${l}]} {
+                            if {![file exists ${destroot}${srcdir}/${lib}]} {
                                 if {[file type ${prevlib}] ne "link"} {
                                     file attributes ${prevlib} -permissions ${perms}
                                 }
-                                ln -s [file join ${prevdir} [file tail ${l}]] ${destroot}${srcdir}/${lib}
+                                ln -s [file join ${prevdir} ${lib}] ${destroot}${srcdir}/${lib}
                             } else {
                                 lappend extra_preserved ${l}
                             }
@@ -179,11 +179,11 @@ proc preserve_libraries {srcdir patternlist} {
                 }
             }
             if {${extra_preserved} ne {}} {
-                ui_msg "Ports currently depending on the following boost libraries from the previous installed version \
+                ui_msg "Ports currently depending on the following libraries from the previous installed version of port:${subport} \
                     can be made to work with those previous libraries manually, pointing them to ${prefix}/lib/${preserve_runtime_library_dir} \
                     with `install_name_tool -change`:\n\
                     ${extra_preserved}"
-                notes-append "Ports currently depending on the following boost libraries from the previous installed version \
+                notes-append "Ports currently depending on the following libraries from the previous installed version of port:${subport} \
                     can be made to work with those previous libraries manually, pointing them to ${prefix}/lib/${preserve_runtime_library_dir} \
                     with `install_name_tool -change`:\n\
                     ${extra_preserved}"
