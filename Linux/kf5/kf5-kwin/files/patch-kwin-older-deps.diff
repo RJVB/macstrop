@@ -1,0 +1,334 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 90ee768e9f8696fbe8b0fdd2aab0732d119feb27..4e163238b01c8ed2ab31c36454aaccc6032fddee 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -4,7 +4,7 @@ project(KWIN)
+ set(PROJECT_VERSION "5.15.5")
+ set(PROJECT_VERSION_MAJOR 5)
+ 
+-set(QT_MIN_VERSION "5.11.0")
++set(QT_MIN_VERSION "5.9.8")
+ set(KF5_MIN_VERSION "5.54.0")
+ 
+ set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules ${CMAKE_MODULE_PATH} )
+diff --git a/dbusinterface.cpp b/dbusinterface.cpp
+index c5688d62dae8a8b7ea09d7937ef570c2bb350b32..b7dae99d4e8a056182fabefa16b4eb5afd499da6 100644
+--- a/dbusinterface.cpp
++++ b/dbusinterface.cpp
+@@ -239,7 +239,11 @@ QVariantMap DBusInterface::queryWindowInfo()
+ 
+ QVariantMap DBusInterface::getWindowInfo(const QString &uuid)
+ {
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++    const auto id = QUuid(uuid);
++#else
+     const auto id = QUuid::fromString(uuid);
++#endif
+     const auto client = workspace()->findAbstractClient([&id] (const AbstractClient *c) { return c->internalId() == id; });
+     if (client) {
+         return clientToVariantMap(client);
+diff --git a/kcmkwin/kwincompositing/model.cpp b/kcmkwin/kwincompositing/model.cpp
+index e4685188c1186b9183cbb09d2f2043f68767b547..a018a068c4c3fe5dbd1dde86676c7fa14e83885b 100644
+--- a/kcmkwin/kwincompositing/model.cpp
++++ b/kcmkwin/kwincompositing/model.cpp
+@@ -164,16 +164,23 @@ void EffectView::init(ViewType type)
+     QString mainFile = QStandardPaths::locate(QStandardPaths::GenericDataLocation, path, QStandardPaths::LocateFile);
+     setResizeMode(QQuickWidget::SizeRootObjectToView);
+     setSource(QUrl(mainFile));
+-    rootObject()->setProperty("color",
++    if (rootObject()) {
++        rootObject()->setProperty("color",
+                               KColorScheme(QPalette::Active, KColorScheme::Window, KSharedConfigPtr(0)).background(KColorScheme::NormalBackground).color());
+-    connect(rootObject(), SIGNAL(changed()), this, SIGNAL(changed()));
+-    setMinimumSize(initialSize());
+-    connect(rootObject(), SIGNAL(implicitWidthChanged()), this, SLOT(slotImplicitSizeChanged()));
+-    connect(rootObject(), SIGNAL(implicitHeightChanged()), this, SLOT(slotImplicitSizeChanged()));
++        connect(rootObject(), SIGNAL(changed()), this, SIGNAL(changed()));
++        setMinimumSize(initialSize());
++        connect(rootObject(), SIGNAL(implicitWidthChanged()), this, SLOT(slotImplicitSizeChanged()));
++        connect(rootObject(), SIGNAL(implicitHeightChanged()), this, SLOT(slotImplicitSizeChanged()));
++    } else {
++        setMinimumSize(initialSize());
++    }
+ }
+ 
+ void EffectView::save()
+ {
++    if (!rootObject()) {
++        return;
++    }
+     if (auto *model = rootObject()->findChild<EffectFilterModel*>(QStringLiteral("filterModel"))) {
+         model->syncConfig();
+     }
+@@ -184,6 +191,9 @@ void EffectView::save()
+ 
+ void EffectView::load()
+ {
++    if (!rootObject()) {
++        return;
++    }
+     if (auto *model = rootObject()->findChild<EffectFilterModel*>(QStringLiteral("filterModel"))) {
+         model->load();
+     }
+@@ -194,6 +204,9 @@ void EffectView::load()
+ 
+ void EffectView::defaults()
+ {
++    if (!rootObject()) {
++        return;
++    }
+     if (auto *model = rootObject()->findChild<EffectFilterModel*>(QStringLiteral("filterModel"))) {
+         model->defaults();
+     }
+@@ -204,6 +217,9 @@ void EffectView::defaults()
+ 
+ void EffectView::slotImplicitSizeChanged()
+ {
++    if (!rootObject()) {
++        return;
++    }
+     setMinimumSize(QSize(rootObject()->property("implicitWidth").toInt(),
+                          rootObject()->property("implicitHeight").toInt()));
+ }
+diff --git a/kcmkwin/kwincompositing/qml/EffectView.qml b/kcmkwin/kwincompositing/qml/EffectView.qml
+index 69384b0ff053ec645a229b458e7014fd47f389a1..ee38ca4309525627e32741d221ddeac2b7c9cfe3 100644
+--- a/kcmkwin/kwincompositing/qml/EffectView.qml
++++ b/kcmkwin/kwincompositing/qml/EffectView.qml
+@@ -19,14 +19,34 @@
+ **************************************************************************/
+ 
+ import QtQuick 2.1
+-import QtQuick.Controls 2.4
++import QtQuick.Controls 1.0
++import QtQuick.Controls 2.0 as QQC2
+ import QtQuick.Layouts 1.0
+ import org.kde.kwin.kwincompositing 1.0
+ 
+ Rectangle {
+     signal changed
+-    implicitHeight: 500
+-    implicitWidth: 400
++    implicitWidth: col.implicitWidth
++    implicitHeight: col.implicitHeight
++
++    Component {
++        id: sectionHeading
++        Rectangle {
++            width: parent.width
++            implicitHeight: sectionText.implicitHeight + 2 * col.spacing
++            color: searchModel.backgroundNormalColor
++
++            QQC2.Label {
++                id: sectionText
++                x: col.spacing
++                y: col.spacing
++                text: section
++                font.weight: Font.Bold
++                color: searchModel.sectionColor
++                anchors.horizontalCenter: parent.horizontalCenter
++            }
++        }
++    }
+ 
+     EffectConfig {
+         id: effectConfig
+@@ -39,17 +59,17 @@ Rectangle {
+         id: col
+         anchors.fill: parent
+ 
+-        Label {
++        QQC2.Label {
+             id: hint
+-            Layout.fillWidth: true
+-            Layout.alignment: Qt.AlignLeft
+-
+             text: i18n("Hint: To find out or configure how to activate an effect, look at the effect's settings.")
+-            elide: Text.ElideRight
++            anchors {
++                top: parent.top
++                left: parent.left
++            }
+         }
+ 
+         RowLayout {
+-            TextField {
++            QQC2.TextField {
+                 // TODO: needs clear button, missing in Qt
+                 id: searchField
+                 placeholderText: i18n("Search...")
+@@ -58,43 +78,45 @@ Rectangle {
+             }
+ 
+             Button {
+-                id: configureButton
+-                icon.name: "configure"
+-                ToolTip.visible: hovered
+-                ToolTip.text: i18n("Configure filter")
+-                onClicked: menu.opened ?  menu.close() : menu.open()
+-            }
+-            Menu {
+-                id: menu
+-                y: configureButton.height
+-                x: parent.width - width
+-                MenuItem {
+-                    text: i18n("Exclude Desktop Effects not supported by the Compositor")
+-                    checkable: true
+-                    checked: searchModel.filterOutUnsupported
+-                    onToggled: {
+-                        searchModel.filterOutUnsupported = !searchModel.filterOutUnsupported;
++                iconName: "configure"
++                tooltip: i18n("Configure filter")
++                menu: Menu {
++                    MenuItem {
++                        text: i18n("Exclude Desktop Effects not supported by the Compositor")
++                        checkable: true
++                        checked: searchModel.filterOutUnsupported
++                        onTriggered: {
++                            searchModel.filterOutUnsupported = !searchModel.filterOutUnsupported;
++                        }
+                     }
+-                }
+-                MenuItem {
+-                    text: i18n("Exclude internal Desktop Effects")
+-                    checkable: true
+-                    checked: searchModel.filterOutInternal
+-                    onToggled: {
+-                        searchModel.filterOutInternal = !searchModel.filterOutInternal
++                    MenuItem {
++                        text: i18n("Exclude internal Desktop Effects")
++                        checkable: true
++                        checked: searchModel.filterOutInternal
++                        onTriggered: {
++                            searchModel.filterOutInternal = !searchModel.filterOutInternal
++                        }
+                     }
+                 }
+             }
+         }
+ 
++        EffectFilterModel {
++            id: searchModel
++            objectName: "filterModel"
++            filter: searchField.text
++        }
++
+         ScrollView {
++            id: scroll
++            frameVisible: true
++            highlightOnFocus: true
+             Layout.fillWidth: true
+             Layout.fillHeight: true
+-            clip: true
+-
+-            // Draw a frame around the scrollview
+-            Component.onCompleted: background.visible = true;
+-
++            Rectangle {
++                color: effectView.backgroundNormalColor
++                anchors.fill: parent
++            }
+             ListView {
+                 function exclusiveGroupForCategory(category) {
+                     for (var i = 0; i < effectView.exclusiveGroups.length; ++i) {
+@@ -117,11 +139,7 @@ Rectangle {
+                 property color backgroundNormalColor: searchModel.backgroundNormalColor
+                 property color backgroundAlternateColor: searchModel.backgroundAlternateColor
+                 anchors.fill: parent
+-                model: EffectFilterModel {
+-                    id: searchModel
+-                    objectName: "filterModel"
+-                    filter: searchField.text
+-                }
++                model: searchModel
+                 delegate: Effect{
+                     id: effectDelegate
+                     Connections {
+@@ -137,22 +155,7 @@ Rectangle {
+                 }
+ 
+                 section.property: "CategoryRole"
+-                section.delegate: Rectangle {
+-                    width: parent.width
+-                    implicitHeight: sectionText.implicitHeight + 2 * col.spacing
+-                    color: searchModel.backgroundNormalColor
+-
+-                    Label {
+-                        id: sectionText
+-                        anchors.fill: parent
+-                        horizontalAlignment: Text.AlignHCenter
+-                        verticalAlignment: Text.AlignVCenter
+-
+-                        text: section
+-                        font.weight: Font.Bold
+-                        color: searchModel.sectionColor
+-                    }
+-                }
++                section.delegate: sectionHeading
+                 spacing: col.spacing
+                 focus: true
+             }
+@@ -167,7 +170,7 @@ Rectangle {
+             Button {
+                 id: ghnsButton
+                 text: i18n("Get New Desktop Effects...")
+-                icon.name: "get-hot-new-stuff"
++                iconName: "get-hot-new-stuff"
+                 onClicked: effectConfig.openGHNS()
+             }
+         }
+@@ -176,4 +179,4 @@ Rectangle {
+         target: searchModel
+         onDataChanged: changed()
+     }
+-}//End Rectangle
++}//End item
+diff --git a/kcmkwin/kwindesktop/desktopsmodel.cpp b/kcmkwin/kwindesktop/desktopsmodel.cpp
+index e3ad60c67e2cce4df5928d45a5908a2984aa7b44..e26693fe3639b56cdcb024ee8088753df6abcbe6 100644
+--- a/kcmkwin/kwindesktop/desktopsmodel.cpp
++++ b/kcmkwin/kwindesktop/desktopsmodel.cpp
+@@ -195,7 +195,12 @@ void DesktopsModel::createDesktop(const QString &name)
+ 
+     beginInsertRows(QModelIndex(), m_desktops.count(), m_desktops.count());
+ 
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++    // I don't think the presence of braces makes a lot of difference here
++    const QString &dummyId = QUuid::createUuid().toString();
++#else
+     const QString &dummyId = QUuid::createUuid().toString(QUuid::WithoutBraces);
++#endif
+ 
+     m_desktops.append(dummyId);
+     m_names[dummyId] = name;
+diff --git a/kcmkwin/kwinrules/main.cpp b/kcmkwin/kwinrules/main.cpp
+index c0010118354e7470a2880f3e5c707c95a51f9f36..83246f09330ed79c36a2f6bc63a30f9553c00acc 100644
+--- a/kcmkwin/kwinrules/main.cpp
++++ b/kcmkwin/kwinrules/main.cpp
+@@ -249,7 +249,11 @@ KWIN_EXPORT int kdemain(int argc, char* argv[])
+         parser.addOption(QCommandLineOption("whole-app", i18n("Whether the settings should affect all windows of the application.")));
+         parser.process(app);
+ 
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++        uuid = QUuid(parser.value("uuid"));
++#else
+         uuid = QUuid::fromString(parser.value("uuid"));
++#endif
+         whole_app = parser.isSet("whole-app");
+     }
+ 
+diff --git a/virtualdesktops.cpp b/virtualdesktops.cpp
+index 0dfb66a2826f9eba690371ee38fc6f087c28f6b9..d13d266c6a66bc232ebb896519c1c1adda0bef38 100644
+--- a/virtualdesktops.cpp
++++ b/virtualdesktops.cpp
+@@ -40,7 +40,12 @@ static bool s_loadingDesktopSettings = false;
+ 
+ static QByteArray generateDesktopId()
+ {
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++    // I don't think the presence of braces makes a lot of difference here
++    return QUuid::createUuid().toString().toUtf8();
++#else
+     return QUuid::createUuid().toString(QUuid::WithoutBraces).toUtf8();
++#endif
+ }
+ 
+ VirtualDesktop::VirtualDesktop(QObject *parent)
