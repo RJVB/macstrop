@@ -132,6 +132,7 @@ if {![info exists kf5.version]} {
     # When upgrading, don't forget that port:kf5-breeze-icons and port:kf5-oxygen-icons5
     # are part of the frameworks universe and should be kept in sync.
 }
+set kf5.frameworks_attic 5.69.0
 
 # KF5 Applications version
 if {![ info exists kf5.release ]} {
@@ -139,6 +140,7 @@ if {![ info exists kf5.release ]} {
     set kf5.latest_release \
                         17.12.1
 }
+set kf5.release_attic   19.11.90
 
 # KF5 Plasma version
 if {![ info exists kf5.plasma ]} {
@@ -146,6 +148,7 @@ if {![ info exists kf5.plasma ]} {
     set kf5.latest_plasma \
                         5.11.1
 }
+set kf5.plasma_attic    5.16.5
 
 platforms               darwin linux
 categories              kf5 kde devel
@@ -520,6 +523,7 @@ proc kf5.set_project {project} {
     global fetch.type
     global filespath
     global version
+    global kf5.frameworks_attic kf5.release_attic kf5.plasma_attic
     set p ${project}
     set dbranch "stable"
     # get rid of the currently registered category:
@@ -535,7 +539,7 @@ proc kf5.set_project {project} {
                 return -code error "incomplete port definition"
             } else {
                 if {${kf5.virtualPath} eq "plasma"} {
-                    if {[vercmp ${kf5.plasma} 5.8.7] < 0} {
+                    if {[vercmp ${kf5.plasma} ${kf5.plasma_attic}] < 0} {
                         set dbranch "Attic"
                     }
                     set f   "${kf5.virtualPath}/${kf5.plasma}"
@@ -545,7 +549,7 @@ proc kf5.set_project {project} {
                     }
                     set kf5::cat "Plasma5"
                 } else {
-                    if {[vercmp ${kf5.release} 17.04.0] < 0} {
+                    if {[vercmp ${kf5.release} ${kf5.release_attic}] < 0} {
                         set dbranch "Attic"
                     }
                     set f   "${kf5.virtualPath}/${kf5.release}/src"
@@ -565,8 +569,8 @@ proc kf5.set_project {project} {
         if {![info exists version]} {
             version         ${kf5.version}
         }
-        if {[vercmp ${kf5.version} 5.36.0] < 0} {
-            set dbranch "Attic"
+        if {[vercmp ${kf5.version} ${kf5.frameworks_attic}] < 0} {
+            set dbranch     "Attic"
         }
     }
     categories-append       ${kf5::cat}
