@@ -1,0 +1,178 @@
+Description: Use pointer to implementation of ServerConfig
+ This is needed to avoid transitive dependency on third party library for JSON.
+Bug: https://github.com/grishka/libtgvoip/pull/69
+Author: Nicholas Guriev <guriev-ns@ya.ru>
+Last-Update: Thu, 24 Jan 2019 00:40:10 +0300
+
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -26,7 +26,7 @@ os/posix/NetworkSocketPosix.cpp \
+ video/VideoSource.cpp \
+ video/VideoRenderer.cpp \
+ video/ScreamCongestionController.cpp \
+-json11.cpp
++json11.hpp json11.cpp
+ 
+ TGVOIP_HDRS = \
+ VoIPController.h \
+@@ -53,7 +53,6 @@ os/posix/NetworkSocketPosix.h \
+ video/VideoSource.h \
+ video/VideoRenderer.h \
+ video/ScreamCongestionController.h \
+-json11.hpp \
+ utils.h
+ 
+ if TARGET_OS_OSX
+--- a/VoIPServerConfig.cpp
++++ b/VoIPServerConfig.cpp
+@@ -9,52 +9,61 @@
+ #include "logging.h"
+ #include <sstream>
+ #include <locale>
++#include <utility>
++#include "threading.h"
++#include "json11.hpp"
+ 
+ using namespace tgvoip;
+ 
+-ServerConfig* ServerConfig::sharedInstance=NULL;
+-
+-ServerConfig::ServerConfig(){
++namespace tgvoip {
++class ServerConfigImpl {
++public:
++	int32_t GetInt(std::string name, int32_t fallback);
++	double GetDouble(std::string name, double fallback);
++	std::string GetString(std::string name, std::string fallback);
++	bool GetBoolean(std::string name, bool fallback);
++	void Update(std::string jsonString);
++
++private:
++	bool ContainsKey(std::string key);
++	json11::Json config;
++	Mutex mutex;
++};
+ }
+ 
+-ServerConfig::~ServerConfig(){
+-}
+-
+-ServerConfig *ServerConfig::GetSharedInstance(){
+-	if(!sharedInstance)
+-		sharedInstance=new ServerConfig();
+-	return sharedInstance;
++namespace{
++ServerConfig* sharedInstance=NULL;
+ }
+ 
+-bool ServerConfig::GetBoolean(std::string name, bool fallback){
++bool ServerConfigImpl::GetBoolean(std::string name, bool fallback){
+ 	MutexGuard sync(mutex);
+ 	if(ContainsKey(name) && config[name].is_bool())
+ 		return config[name].bool_value();
+ 	return fallback;
+ }
+ 
+-double ServerConfig::GetDouble(std::string name, double fallback){
++double ServerConfigImpl::GetDouble(std::string name, double fallback){
+ 	MutexGuard sync(mutex);
+ 	if(ContainsKey(name) && config[name].is_number())
+ 		return config[name].number_value();
+ 	return fallback;
+ }
+ 
+-int32_t ServerConfig::GetInt(std::string name, int32_t fallback){
++int32_t ServerConfigImpl::GetInt(std::string name, int32_t fallback){
+ 	MutexGuard sync(mutex);
+ 	if(ContainsKey(name) && config[name].is_number())
+ 		return config[name].int_value();
+ 	return fallback;
+ }
+ 
+-std::string ServerConfig::GetString(std::string name, std::string fallback){
++std::string ServerConfigImpl::GetString(std::string name, std::string fallback){
+ 	MutexGuard sync(mutex);
+ 	if(ContainsKey(name) && config[name].is_string())
+ 		return config[name].string_value();
+ 	return fallback;
+ }
+ 
+-void ServerConfig::Update(std::string jsonString){
++void ServerConfigImpl::Update(std::string jsonString){
+ 	MutexGuard sync(mutex);
+ 	LOGD("=== Updating voip config ===");
+ 	LOGD("%s", jsonString.c_str());
+@@ -64,7 +73,39 @@ void ServerConfig::Update(std::string js
+ 		LOGE("Error parsing server config: %s", jsonError.c_str());
+ }
+ 
+-
+-bool ServerConfig::ContainsKey(std::string key){
++bool ServerConfigImpl::ContainsKey(std::string key){
+ 	return config.object_items().find(key)!=config.object_items().end();
+ }
++
++
++ServerConfig::ServerConfig() : p_impl(std::make_shared<ServerConfigImpl>()){
++}
++
++ServerConfig::~ServerConfig(){
++}
++
++ServerConfig* ServerConfig::GetSharedInstance(){
++	if(!sharedInstance)
++		sharedInstance=new ServerConfig();
++	return sharedInstance;
++}
++
++int32_t ServerConfig::GetInt(std::string name, int32_t fallback){
++	return p_impl->GetInt(std::move(name), fallback);
++}
++
++double ServerConfig::GetDouble(std::string name, double fallback){
++	return p_impl->GetDouble(std::move(name), fallback);
++}
++
++std::string ServerConfig::GetString(std::string name, std::string fallback){
++	return p_impl->GetString(std::move(name), fallback);
++}
++
++bool ServerConfig::GetBoolean(std::string name, bool fallback){
++	return p_impl->GetBoolean(std::move(name), fallback);
++}
++
++void ServerConfig::Update(std::string jsonString){
++	p_impl->Update(std::move(jsonString));
++}
+--- a/VoIPServerConfig.h
++++ b/VoIPServerConfig.h
+@@ -7,14 +7,14 @@
+ #ifndef TGVOIP_VOIPSERVERCONFIG_H
+ #define TGVOIP_VOIPSERVERCONFIG_H
+ 
+-#include <map>
++#include <memory>
+ #include <string>
+ #include <stdint.h>
+-#include "threading.h"
+-#include "json11.hpp"
+ 
+ namespace tgvoip{
+ 
++class ServerConfigImpl;
++
+ class ServerConfig{
+ public:
+ 	ServerConfig();
+@@ -27,10 +27,7 @@ public:
+ 	void Update(std::string jsonString);
+ 
+ private:
+-	static ServerConfig* sharedInstance;
+-	bool ContainsKey(std::string key);
+-    json11::Json config;
+-	Mutex mutex;
++	std::shared_ptr<ServerConfigImpl> p_impl;
+ };
+ }
+ 
