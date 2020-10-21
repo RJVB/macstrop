@@ -2,10 +2,18 @@
 
 PortSystem          1.0
 PortGroup           github 1.0
-PortGroup           cmake 1.1
-PortGroup           LTO 1.0
+PortGroup           clang_dependency 1.0
+if {[file exists ${prefix}/bin/cmake]} {
+    PortGroup       cmake 1.1
+    PortGroup       LTO 1.0
+}
 
-github.setup        facebook zstd 1.4.2 v
+github.setup        facebook zstd 1.4.5 v
+
+checksums           rmd160  13093409daadf3cc3a46fa1c6944b81b95637955 \
+                    sha256  98e91c7c6bf162bf90e4e70fdbc41a8188b9fa8de5ad840c401198014406ce9e
+#                     size    1973695
+
 categories          archivers devel
 platforms           darwin
 license             {BSD GPL-2}
@@ -19,28 +27,52 @@ long_description    Zstd, short for Zstandard, is a fast lossless compression \
 
 github.tarball_from releases
 
-checksums           rmd160  5a922f5f5d3dd230504364596918be9ee8d8c531 \
-                    sha256  12730983b521f9a604c6789140fcb94fadf9a3ca99199765e33c56eb65b643c9
-#                     size    1896786
-
-depends_lib         port:lz4 \
+depends_lib-append  port:lz4 \
                     port:xz \
                     port:zlib
 
+# libzstd.dylib links to libSystem.B.dylib only. Dependencies like lz4 are
+# linked by CLI tools in ${prefix}/bin only.
+license_noconflict  lz4 xz zlib
+
 patchfiles          patch-zstd-tiger-no-backtrace.diff
 
-# post-patch {
-#     reinplace -W ${worksrcpath} "s/-Wvla //g" lib/Makefile programs/Makefile tests/Makefile tests/fuzz/Makefile
-# }
-# 
-variant universal {}
-
-cmake.source_dir    ${worksrcpath}/build/cmake
-configure.args-append \
+if {[info exists cmake.build_type]} {
+    cmake.source_dir \
+                    ${worksrcpath}/build/cmake
+    configure.args-append \
                     -DZSTD_LEGACY_SUPPORT=ON \
                     -DZSTD_MULTITHREAD_SUPPORT=ON \
                     -DZSTD_LZ4_SUPPORT=ON \
                     -DZSTD_LZMA_SUPPORT=ON \
                     -DZSTD_ZLIB_SUPPORT=ON \
                     -DZSTD_BUILD_CONTRIB=ON
+} else {
+    post-patch {
+        reinplace -W ${worksrcpath} "s/-Wvla //g" lib/Makefile programs/Makefile tests/Makefile tests/fuzz/Makefile
+    }
 
+    use_configure   no
+
+    variant universal {}
+
+    # https://github.com/facebook/zstd/issues/2169
+    # https://trac.macports.org/ticket/60542
+    use_parallel_build  no
+
+    build.target    allmost
+    build.post_args V=1
+
+    build.env-append \
+                    CC=${configure.cc} \
+                    "CFLAGS=${configure.cflags} [get_canonical_archflags cc]" \
+                    CXX=${configure.cxx} \
+                    "CXXFLAGS=${configure.cxxflags} [get_canonical_archflags cxx]" \
+                    "LDFLAGS=${configure.ldflags} [get_canonical_archflags ld]" \
+                    PREFIX=${prefix}
+
+    test.run        yes
+    test.env-append {*}${build.env}
+
+    destroot.env-append {*}${build.env}
+}
