@@ -486,7 +486,7 @@ proc qt5.active_version {} {
     return 0.0.0
 }
 
-proc qt5.active_branch {} {
+proc qt5.active_branch {{install_branch 5}} {
     global prefix
     namespace upvar ::qt5 active_branch ab
     if {[info exists ab]} {
@@ -494,7 +494,7 @@ proc qt5.active_branch {} {
     }
     set ab [join [lrange [split [qt5.active_version] .] 0 1] .]
     if {${ab} == 0.0} {
-        set ab 5
+        set ab ${install_branch}
     }
     return ${ab}
 }
