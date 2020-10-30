@@ -38,8 +38,7 @@ if {${os.platform} eq "darwin" && ${os.major} <= 13} {
     }
 }
 
-depends_build   port:python37 \
-                port:perl5 \
+depends_build   port:perl5 \
                 port:p5-parse-yapp
 
 depends_lib     port:gnutls \
@@ -69,6 +68,38 @@ platform darwin {
 #   libtracker-sparql-0.16-dev python-extras python-fixtures python-ldb-dev
 #   python-mimeparse python-talloc-dev python-testtools
 
+set pyversions  {3.6 3.7 3.8 3.9}
+set PYTHON      {}
+
+# declare variants
+foreach p ${pyversions} {
+    set pv [join [split ${p} .] ""]
+    set confs ""
+    foreach q ${pyversions} {
+        if {${q} ne ${p}} {
+            set confs "python[join [split ${q} .] ""] ${confs}"
+        }
+    }
+    variant python${pv} conflicts ${confs} description {Build using and for Python ${p}} {}
+    if {[variant_isset python${pv}]} {
+        set pyset ${p}
+    }
+}
+if {![info exists pyset]} {
+    # pv contains the last element of ${pyversions} so we can use that to set a default:
+    default_variants +python${pv}
+}
+
+# now check what variant is set and define it:
+foreach p ${pyversions} {
+    set pv [join [split ${p} .] ""]
+    if {[variant_isset python${pv}]} {
+        # python is a build dependency but also a runtime dependency
+        depends_lib-append \
+                port:python${pv}
+        set PYTHON ${prefix}/bin/python${p}
+    }
+}
 
 patch.pre_args  -Np1
 platform darwin {
@@ -92,14 +123,15 @@ platform darwin {
 }
 
 # inspired from Ubuntu's packaging (debian/rules):
-configure.cmd   ${prefix}/bin/python3.7 ./buildtools/bin/waf configure
+configure.cmd   ${PYTHON} ./buildtools/bin/waf configure
 configure.env-append\
-                "YAPP=${prefix}/bin/yapp-${perl5.default_branch}"
-build.cmd       ${prefix}/bin/python3.7 ./buildtools/bin/waf -v
+                "YAPP=${prefix}/bin/yapp-${perl5.default_branch}" \
+                "PYTHON=${PYTHON}"
+build.cmd       ${PYTHON} ./buildtools/bin/waf -v
 build.pre_args
 build.env-append \
                 DESTDIR=${destroot}
-destroot.cmd    ${prefix}/bin/python3.7 ./buildtools/bin/waf -v
+destroot.cmd    ${PYTHON} ./buildtools/bin/waf -v
 destroot.env-append \
                 DESTDIR=${destroot}
 destroot.destdir
@@ -161,6 +193,8 @@ platform linux {
     configure.args-replace \
                 --without-acl-support \
                 --with-acl-support
+    #configure.args-append \
+                #--disable-python
     depends_lib-append \
                 port:attr \
                 port:acl
@@ -204,7 +238,13 @@ post-destroot {
         # get the current required rpath from one of the library's dependencies (known to be complete)
         set rpath [exec patchelf --print-rpath ${destroot}${prefix}/lib/${samba}/libsamba-debug-samba4.so]
         # set the rpath
-        system "patchelf --set-rpath \"${rpath}\" ${destroot}${prefix}/lib/${samba}/libdnsserver-common-samba4.so"
+        foreach l {libcmdline-credentials-samba4.so libcmocka-samba4.so libmessages-util-samba4.so \
+                libpopt-samba3-samba4.so libreplace-samba4.so libsamba-modules-samba4.so libsmbpasswdparser-samba4.so \
+                libsocket-blocking-samba4.so libutil-reg-samba4.so libutil-setid-samba4.so libdnsserver-common-samba4.so \
+                ../libsmbldap.so
+        } {
+            system "patchelf --set-rpath \"${rpath}\" ${destroot}${prefix}/lib/${samba}/${l}"
+        }
     }
 
     # install all manpages
@@ -220,6 +260,10 @@ post-destroot {
     file copy ${filespath}/smb.conf.sample.ubuntu ${destroot}${prefix}/etc/${samba}/smb.conf.sample
     reinplace "s|@PREFIX@|${prefix}|g" ${destroot}${prefix}/etc/${samba}/smb.conf.sample
     reinplace "s|@SAMBA@|${samba}|g" ${destroot}${prefix}/etc/${samba}/smb.conf.sample
+
+    # prevent a conflict with the system mdfind Spotlight utility!
+    file rename ${destroot}${prefix}/bin/mdfind ${destroot}${prefix}/bin/smbmdfind
+    file rename ${destroot}${prefix}/share/man/man1/mdfind.1 ${destroot}${prefix}/share/man/man1/smbmdfind.1
 
     # create required runtime directories with the appropriate permissions
     mkpdir var/lib/${samba}/private 755
