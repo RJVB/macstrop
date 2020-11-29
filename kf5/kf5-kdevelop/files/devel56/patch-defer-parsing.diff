@@ -1,0 +1,112 @@
+diff --git kdevplatform/shell/projectcontroller.cpp kdevplatform/shell/projectcontroller.cpp
+index a4734f921ef07fc60c979776291c13ac8e5ed06c..0f05e89fd0a1a88a2615dc1f41717c25d66a0419 100644
+--- kdevplatform/shell/projectcontroller.cpp
++++ kdevplatform/shell/projectcontroller.cpp
+@@ -36,6 +36,7 @@ Boston, MA 02110-1301, USA.
+ #include <QTemporaryFile>
+ #include <QVBoxLayout>
+ #include <QTimer>
++#include <QElapsedTimer>
+ 
+ #include <KActionCollection>
+ #include <KConfigGroup>
+@@ -63,6 +64,7 @@ Boston, MA 02110-1301, USA.
+ #include <project/projectchangesmodel.h>
+ #include <project/projectmodel.h>
+ #include <project/projectbuildsetmodel.h>
++#include <project/abstractfilemanagerplugin.h>
+ #include <projectconfigpage.h>
+ #include <language/backgroundparser/parseprojectjob.h>
+ #include <interfaces/iruncontroller.h>
+@@ -109,6 +111,9 @@ public:
+     bool m_cleaningUp; //Temporary flag enabled while destroying the project-controller
+     ProjectChangesModel* m_changesModel = nullptr;
+     QHash<IProject*, KJob*> m_parseJobs; // parse jobs that add files from the project to the background parser.
++    QList<IProject*> m_finaliseProjectImports; // project dir watchers and/or parse jobs waiting to be started
++    QHash<IProject*, QElapsedTimer*> m_timers; // TEMPORARY: project load timers
++    static QElapsedTimer m_timer; // TEMPORARY: session-wide project load timer
+ 
+     ProjectControllerPrivate(Core* core, ProjectController* p)
+         : m_core(core)
+@@ -328,6 +333,11 @@ public:
+             return;
+         }
+ 
++        if (!m_timer.isValid()) {
++            m_timer.start();
++            qCWarning(SHELL) << "Starting project import timer";
++        }
++
+         const auto projects = m_projects;
+         for (IProject* project : projects) {
+             if ( url == project->projectFile().toUrl() )
+@@ -346,6 +356,11 @@ public:
+         m_core->pluginControllerInternal()->loadProjectPlugins();
+ 
+         auto* project = new Project();
++        // TEMPORARY: initialise project load timer
++        if (qEnvironmentVariableIsSet("KDEV_PROJECT_DONT_DEFER_PARSING")) {
++            m_timers[project] = new QElapsedTimer;
++            m_timers[project]->start();
++        }
+         QObject::connect(project, &Project::aboutToOpen,
+                          q, &ProjectController::projectAboutToBeOpened);
+         if ( !project->open( Path(url) ) )
+@@ -363,6 +378,8 @@ public:
+     }
+ };
+ 
++QElapsedTimer ProjectControllerPrivate::m_timer;
++
+ IProjectDialogProvider::IProjectDialogProvider()
+ {}
+ 
+@@ -1005,7 +1022,39 @@ void ProjectController::projectImportingFinished( IProject* project )
+     d->m_currentlyOpening.removeAll(project->projectFile().toUrl());
+     emit projectOpened( project );
+ 
+-    reparseProject(project);
++    // don't call reparseProject immediately, defer until all currently opening
++    // projects have been imported. Parsing is done in the background but
++    // importing can block the UI so should be as fast as possible.
++    // TEMPORARY: deferFinalise
++    bool deferFinalise = !qEnvironmentVariableIsSet("KDEV_PROJECT_DONT_DEFER_PARSING");
++    if (d->m_currentlyOpening.isEmpty()) {
++        if (deferFinalise) {
++            qCInfo(SHELL) << "All projects imported in" << ProjectControllerPrivate::m_timer.restart() / 1000.0 << "seconds";
++            reparseProject(project);
++            foreach (const auto p, d->m_finaliseProjectImports) {
++                reparseProject(p);
++            }
++            qCInfo(SHELL) << "\tstarting parse jobs took an additional"
++                << ProjectControllerPrivate::m_timer.elapsed() / 1000.0 << "seconds";
++        }
++        d->m_finaliseProjectImports.clear();
++        ProjectControllerPrivate::m_timer.invalidate();
++    } else {
++        if (deferFinalise) {
++            d->m_finaliseProjectImports.append(project);
++        }
++    }
++    if (!deferFinalise) {
++        QElapsedTimer *timer = d->m_timers[project];
++        qCInfo(SHELL) << "Project" << project->name() << "imported in"
++            << timer->restart() / 1000.0 << "seconds";
++        reparseProject(project);
++        qCInfo(SHELL) << "\t" << project->name()
++            << ": starting parse jobs took an additional"
++            << timer->elapsed() / 1000.0 << "seconds";
++        delete timer;
++        d->m_timers[project] = 0;
++    }
+ }
+ 
+ // helper method for closeProject()
+@@ -1070,6 +1137,7 @@ void ProjectController::takeProject(IProject* proj)
+     if (auto* job = d->m_parseJobs.value(proj)) {
+         job->kill(); // Removes job from m_parseJobs.
+     }
++    d->m_finaliseProjectImports.removeAll(proj);
+     emit projectClosing(proj);
+     //Core::self()->saveSettings();     // The project file is being closed.
+                                         // Now we can save settings for all of the Core
