@@ -1,0 +1,131 @@
+diff --git kdevplatform/language/duchain/duchainregister.cpp kdevplatform/language/duchain/duchainregister.cpp
+index 864f82be157ac8ce194208ee1284a1aafd14f720..1a91625ecdcb29ecc4e69c9eadbf48c50c54504d 100644
+--- kdevplatform/language/duchain/duchainregister.cpp
++++ kdevplatform/language/duchain/duchainregister.cpp
+@@ -32,7 +32,7 @@ DUChainItemSystem::~DUChainItemSystem()
+ 
+ DUChainBase* DUChainItemSystem::create(DUChainBaseData* data) const
+ {
+-    if (uint(m_factories.size()) <= data->classId || m_factories[data->classId] == nullptr)
++    if (!data || uint(m_factories.size()) <= data->classId || m_factories[data->classId] == nullptr)
+         return nullptr;
+     return m_factories[data->classId]->create(data);
+ }
+@@ -48,14 +48,14 @@ DUChainBaseData* DUChainItemSystem::cloneData(const DUChainBaseData& data) const
+ 
+ void DUChainItemSystem::callDestructor(DUChainBaseData* data) const
+ {
+-    if (uint(m_factories.size()) <= data->classId || m_factories[data->classId] == nullptr)
++    if (!data || uint(m_factories.size()) <= data->classId || m_factories[data->classId] == nullptr)
+         return;
+     m_factories[data->classId]->callDestructor(data);
+ }
+ 
+ void DUChainItemSystem::freeDynamicData(KDevelop::DUChainBaseData* data) const
+ {
+-    if (uint(m_factories.size()) <= data->classId || m_factories[data->classId] == nullptr)
++    if (!data || uint(m_factories.size()) <= data->classId || m_factories[data->classId] == nullptr)
+         return;
+     m_factories[data->classId]->freeDynamicData(data);
+ }
+diff --git kdevplatform/sublime/idealcontroller.cpp kdevplatform/sublime/idealcontroller.cpp
+index 39a2fe489f02ba5e3d3843c8b214e5c790166277..986f127d2a8c2098310542a74bde02e6a4367c87 100644
+--- kdevplatform/sublime/idealcontroller.cpp
++++ kdevplatform/sublime/idealcontroller.cpp
+@@ -39,6 +39,8 @@
+ #include "idealdockwidget.h"
+ #include "idealbuttonbarwidget.h"
+ 
++#include <QDebug>
++
+ using namespace Sublime;
+ 
+ IdealController::IdealController(Sublime::MainWindow* mainWindow):
+@@ -153,7 +155,14 @@ void IdealController::dockLocationChanged(Qt::DockWidgetArea area)
+ 
+     auto *dock = qobject_cast<IdealDockWidget*>(sender());
+     View *view = dock->view();
+-    QAction* action = m_view_to_action.value(view);
++    QAction* action = nullptr;
++    if (m_view_to_action.contains(view)) {
++        action = m_view_to_action.value(view);
++    }
++    if (!action) {
++        qCritical() << Q_FUNC_INFO << "View" << view << "has no known hide/shown action";
++        return;
++    }
+ 
+     if (dock->dockWidgetArea() == area) {
+         // this event can happen even when dock changes its location within the same area
+@@ -243,8 +252,15 @@ void IdealController::raiseView(View* view, RaiseMode mode)
+     ///       for tool views of the same type.
+     mode = HideOtherViews;
+ 
+-    QAction* action = m_view_to_action.value(view);
++    QAction* action = nullptr;
++    if (m_view_to_action.contains(view)) {
++        action = m_view_to_action.value(view);
++    }
+     Q_ASSERT(action);
++    if (!action) {
++        qCritical() << Q_FUNC_INFO << "View" << view << "has no known hide/shown action";
++        return;
++    }
+ 
+     QWidget *focusWidget = m_mainWindow->focusWidget();
+ 
+@@ -300,7 +316,7 @@ QWidget* IdealController::statusBarLocation() const
+ 
+ QAction* IdealController::actionForView(View* view) const
+ {
+-    return m_view_to_action.value(view);
++    return m_view_to_action.contains(view) ? m_view_to_action.value(view) : nullptr;
+ }
+ 
+ void IdealController::setShowDockStatus(Qt::DockWidgetArea area, bool checked)
+diff --git plugins/clang/duchain/builder.cpp plugins/clang/duchain/builder.cpp
+index eeb0d9239a51fe2e8317117bd4ec2e6bfca8de2d..399e686b5ab8295680c927728444ac0fcbc37497 100644
+--- plugins/clang/duchain/builder.cpp
++++ plugins/clang/duchain/builder.cpp
+@@ -481,7 +481,7 @@ struct Visitor
+             auto it = m_parentContext->previousChildContexts.begin();
+             while (it != m_parentContext->previousChildContexts.end()) {
+                 auto ctx = *it;
+-                if (ctx->type() == Type && ctx->indexedLocalScopeIdentifier() == indexedScopeId) {
++                if (ctx && ctx->type() == Type && ctx->indexedLocalScopeIdentifier() == indexedScopeId) {
+                     ctx->setRange(range);
+                     m_parentContext->resortChildContexts = true;
+                     m_parentContext->previousChildContexts.erase(it);
+diff --git plugins/clang/tests/test_assistants.cpp plugins/clang/tests/test_assistants.cpp
+index c7e9c56c56f446a83c0fcdc6136cb71ade6f6523..971354837281e49356be66ee305f9cd85544cc89 100644
+--- plugins/clang/tests/test_assistants.cpp
++++ plugins/clang/tests/test_assistants.cpp
+@@ -71,6 +71,13 @@ void TestAssistants::initTestCase()
+         "kdevelop.plugins.clang.debug=true\n"
+     ));
+     QVERIFY(qputenv("KDEV_CLANG_DISPLAY_DIAGS", "1"));
++    // Set TMPDIR to the canonical version of QDir::tempPath(); this equals
++    // setting TMPDIR to the canonical representation of itself on systems
++    // where this variable is set (on Mac it is likely to be set to a path
++    // containing a symlink).
++    // Doing this prevents DocumentController problems when QTemporaryDir
++    // returns a path containing a symlink.
++    qputenv("TMPDIR", QFileInfo(QDir::tempPath()).canonicalFilePath().toUtf8().constData());
+     AutoTestShell::init({QStringLiteral("kdevclangsupport"), QStringLiteral("kdevproblemreporter")});
+     TestCore::initialize();
+     DUChain::self()->disablePersistentStorage();
+@@ -201,7 +208,13 @@ private:
+     {
+         Core::self()->documentController()->openDocument(url);
+         DUChain::self()->waitForUpdate(IndexedString(url), KDevelop::TopDUContext::AllDeclarationsAndContexts);
+-        return Core::self()->documentController()->documentForUrl(url)->textDocument();
++        const auto doc = Core::self()->documentController()->documentForUrl(url);
++        if (doc) {
++            return doc->textDocument();
++        } else {
++            qCritical() << "DocumentController:documentForUrl() returns NULL for" << url;
++            return nullptr;
++        }
+     }
+ 
+     IncludeBehavior m_includeBehavior;
