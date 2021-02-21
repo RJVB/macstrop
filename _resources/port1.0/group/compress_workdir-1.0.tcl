@@ -85,6 +85,9 @@ platform darwin {
         post-build {
             if {[file exists ${prefix}/bin/afsctool] && [file exists ${compress.build_dir}]} {
                 ui_msg "--->  Compressing the build directory ..."
+                if {${compress.build_dir} ne "${worksrcpath}"} {
+                    set compress.build_dir "${worksrcpath} ${compress.build_dir}"
+                }
                 if {![catch {hfscompress ${compress.build_dir}} result context]} {
                     if {[tbool configure.ccache]} {
                         ui_msg "--->  Compressing the ccache directory ..."
