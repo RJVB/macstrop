@@ -38,8 +38,13 @@ if {${subport} eq "${name}-manual"} {
     return          0
 }
 
+# TODO: add a variant that pulls in the wxWidgets code from github:audacity, builds and embeds it
+variant wxsystem description {Depend on wxWidgets from MacPorts} {}
+
 # PortGroups for the main ports
-PortGroup           wxWidgets 1.0
+if {[variant_isset wxsystem]} {
+    PortGroup       wxWidgets 1.0
+}
 PortGroup           active_variants 1.1
 PortGroup           cmake 1.1
 #>> RJVB
@@ -81,15 +86,16 @@ if {${subport} eq "${name}"} {
                     sha256  032273e2408ad51f97c6846ac8d8fe9e4a3fbc6e4c620e630ea4c1d0124d9a94
 #                     size    61254313
     set PPREFIX     ./
-    variant wx30 conflicts wx32 description {build against wxWidgets-3.0} {}
+#     if {[variant_isset wxsystem]} {
+        variant wx30 conflicts wx32 requires wxsystem description {build against wxWidgets-3.0} {}
+#     }
 } else {
     conflicts       "${name}"
-    # git describe --tags : Audacity-2.4.2-774-g12f399984
-    # NB: check c67842f525095f100aa662ff59be421545d8bfc4!
-    github.setup    audacity audacity 12f399984a1dfe51c8c05c2fa8ec646216e4626f
-    version         2.4.2.774
+    # git describe --tags : Audacity-2.4.2-788-g39e5659aa
+    github.setup    audacity audacity 39e5659aa10b6a0e080867cc4426ecd3da1ae3a9
+    version         2.4.2.788
     # this port is intended to facilitate development efforts shared with "upstreams"
-    # so using git instead of a tarball fetch type is more appropriate.
+    # so using git instead of a tarball fetch type is more appropriate for the current maintainer
     fetch.type      git
     distname        audacity-git
     set PPREFIX     devel/
@@ -97,7 +103,7 @@ if {${subport} eq "${name}"} {
     livecheck.type  none
 }
 
-variant wx32 conflicts wx30 description {build against wxWidgets-3.2} {}
+variant wx32 conflicts wx30 requires wxsystem description {build against wxWidgets-3.2} {}
 
 compiler.cxx_standard 2014
 build.post_args-append -k
@@ -125,18 +131,42 @@ use_parallel_build  yes
 
 homepage            http://www.audacityteam.org/
 
-if {[variant_exists wx32] && [variant_isset wx32]} {
-    wxWidgets.use   wxWidgets-3.2
-} elseif {[variant_exists wx30] && [variant_isset wx30]} {
-    wxWidgets.use   wxWidgets-3.0
+if {[variant_isset wxsystem]} {
+    if {[variant_exists wx32] && [variant_isset wx32]} {
+        wxWidgets.use   wxWidgets-3.2
+    } elseif {[variant_exists wx30] && [variant_isset wx30]} {
+        wxWidgets.use   wxWidgets-3.0
+    } else {
+        # we want to use the temporary wxWidgets-3.1 "Audacity-special" port!
+        wxWidgets.use   wxWidgets-3.1
+    }
+
+    require_active_variants ${wxWidgets.port} "" stdlib
+
+    depends_lib-append  port:${wxWidgets.port}
 } else {
-    # we want to use the temporary wxWidgets-3.1 "Audacity-special" port!
-    wxWidgets.use   wxWidgets-3.1
+    set wxCommit    07e7d83
+    post-fetch {
+        if {![file exists ${distpath}/wxWidgets-${wxCommit}.tar.gz]} {
+            ui_info "--->  Fetching wxWidgets-${wxCommit}.tar.gz"
+            system "wget --no-check-certificate \"https://github.com/audacity/wxWidgets/tarball/${wxCommit}/wxWidgets-${wxCommit}.tar.gz\" \
+                --progress=bar:force -O ${distpath}/wxWidgets-${wxCommit}.tar.gz"
+        }
+    }
+    post-extract {
+        ui_info "--->  Extracting wxWidgets-${wxCommit}.tar.gz"
+        system -W ${worksrcpath}/lib-src "tar -xf ${distpath}/wxWidgets-${wxCommit}.tar.gz"
+        ln -s audacity-wxWidgets-${wxCommit} ${worksrcpath}/lib-src/wxWidgets
+    }
+    # add the wxWidgets dependencies
+    depends_lib-append \
+                    port:jpeg \
+                    port:tiff \
+                    port:libpng \
+                    port:zlib \
+                    port:libiconv \
+                    port:expat
 }
-
-require_active_variants ${wxWidgets.port} "" stdlib
-
-depends_lib-append  port:${wxWidgets.port}
 
 depends_build-append \
                     port:pkgconfig \
@@ -150,7 +180,6 @@ depends_lib-append  port:freetype \
                     port:soundtouch \
                     port:soxr \
                     port:twolame \
-                    port:expat \
                     path:lib/libavcodec.dylib:ffmpeg \
                     port:flac \
                     port:lame \
@@ -187,10 +216,20 @@ platform darwin {
     patchfiles-append \
                     patch-implement-progdial=beep.diff \
                     patch-wxw-303.diff
+    if {[variant_isset wxsystem]} {
+        # make certain we're not embedding any wxWidgets libraries
+        add_patchfile_ifexists \
+                    ${PPREFIX}patch-no-embedded-wxW.diff
+    } else {
+        # make certain we're embedding our wxWidgets libraries
+        add_patchfile_ifexists \
+                    ${PPREFIX}patch-embed-wxW.diff
+    }
 }
 add_patchfile_ifexists \
-                    ${PPREFIX}patch-enable-compact-menu.diff
-if {${wxWidgets.use} ne "wxWidgets-3.2"} {
+                    ${PPREFIX}patch-enable-compact-menu.diff \
+                    ${PPREFIX}patch-temp-fixes.diff
+if {[variant_isset wxsystem] && ${wxWidgets.use} ne "wxWidgets-3.2"} {
     add_patchfile_ifexists \
                     ${PPREFIX}patch-wxw-31x.diff
 }
@@ -229,11 +268,9 @@ configure.cxxflags-append \
 
 set _OPT "audacity_"
 configure.args-append \
-                    -DwxWidgets_CONFIG_EXECUTABLE=${wxWidgets.wxconfig} \
                     -D${_OPT}lib_preference=system \
                     -D${_OPT}use_audio_units=on \
                     -D${_OPT}use_pa_jack=off \
-                    -D${_OPT}use_wxwidgets=system \
                     -D${_OPT}use_ffmpeg=linked \
                     -D${_OPT}use_lame=system \
                     -D${_OPT}use_flac=system \
@@ -250,8 +287,36 @@ configure.args-append \
 # using port:sqlite3 leads to unstable behaviour?!
 configure.args-append \
                     -D${_OPT}use_sqlite=local
-configure.env-append \
+if {[variant_isset wxsystem]} {
+    configure.args-append \
+                    -DwxWidgets_CONFIG_EXECUTABLE=${wxWidgets.wxconfig} \
+                    -D${_OPT}use_wxwidgets=system
+    configure.env-append \
                     WX_CONFIG=${wxWidgets.wxconfig}
+} else {
+    configure.args-append \
+                    -D${_OPT}use_wxwidgets=local
+    # use the MacPorts options for building wxWidgets, in particular
+    # about using dependencies from MacPorts:
+    configure.args-append \
+                    -DwxUSE_LIBICONV=sys \
+                    -DwxUSE_LIBJPEG=sys \
+                    -DwxUSE_LIBTIFF=sys \
+                    -DwxUSE_LIBPNG=sys \
+                    -DwxUSE_ZLIB=sys \
+                    -DwxUSE_OPENGL=ON \
+                    -DwxUSE_LIBSDL=OFF \
+                    -DwxUSE_AUI=ON \
+                    -DwxUSE_DISPLAY=ON \
+                    -DwxUSE_XRC=ON \
+                    -DwxUSE_GRAPHICS_CONTEXT=ON \
+                    -DwxBUILD_STRIPPED_RELEASE_DEFAULT=OFF
+    configure.env-append \
+                    WXWIN=${worksrcpath}/lib-src/wxWidgets
+    build.env-append \
+                    WXWIN=${worksrcpath}/lib-src/wxWidgets
+}
+
 platform darwin {
     # Since version 2.2.0 we need to use the embedded (modified) Portaudio version.
     configure.args-append \
@@ -339,16 +404,20 @@ platform darwin {
             file delete -force ${destroot}/Resources
         } else {
             file rename ${destroot}${prefix}/Audacity.app ${destroot}${aud_app_path}
-            # I haven't yet figured out how to disable the copying of wx libraries into the bundle
-            # but they can be pruned because CopyLibs.cmake is not invoked.
-            file delete -force ${destroot}${aud_app_path}/Contents/Frameworks
+            if {[variant_isset wxsystem]} {
+                # I haven't yet figured out how to disable the copying of wx libraries into the bundle
+                # but they can be pruned because CopyLibs.cmake is not invoked.
+                file delete -force ${destroot}${aud_app_path}/Contents/Frameworks
+            }
             xinstall -m 755 -d ${destroot}${prefix}/share/audacity
             ln -s ${aud_app_path}/Contents/plug-ins ${destroot}${prefix}/share/audacity/
         }
-        foreach l [glob -nocomplain ${wxWidgets.prefix}/share/locale/*] {
-            set lang [file tail ${l}]
-            xinstall -m 755 -d ${destroot}${aud_app_path}/Contents/Resources/${lang}.lproj
-            ln -s ${l}/LC_MESSAGES/wxstd.mo ${destroot}${aud_app_path}/Contents/Resources/${lang}.lproj/
+        if {[variant_isset wxsystem]} {
+            foreach l [glob -nocomplain ${wxWidgets.prefix}/share/locale/*] {
+                set lang [file tail ${l}]
+                xinstall -m 755 -d ${destroot}${aud_app_path}/Contents/Resources/${lang}.lproj
+                ln -s ${l}/LC_MESSAGES/wxstd.mo ${destroot}${aud_app_path}/Contents/Resources/${lang}.lproj/
+            }
         }
         # allow the application to find certain things where it expects them on OS X (= inside the app bundle)
         foreach r [glob -nocomplain ${destroot}${prefix}/share/audacity/*] {
