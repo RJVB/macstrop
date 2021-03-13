@@ -83,6 +83,9 @@ namespace eval meson {
 }
 
 configure.args-append
+platform linux {
+    configure.args-append   --libdir=${prefix}/lib
+}
 
 pre-configure {
     if {[file exists ${build.dir}/meson-private]} {
