@@ -1,0 +1,527 @@
+From 17f1e592a0164d08d76dbfda494f18b76526b402 Mon Sep 17 00:00:00 2001
+From: Felix Ernst <fe.a.ernst@gmail.com>
+Date: Fri, 26 Feb 2021 12:39:43 +0100
+Subject: [PATCH] Make ToolTips expandable
+
+This commit adds a small hint to tooltips which can be expanded.
+Pressing Shift will show the expanded help in a widget that isn't
+hidden when the mouse moves. This is necessary so we can have
+clickable links there which will allow us to refer users to the
+manual, community wiki etc. which makes these resources more readily
+available and helps us avoid duplicating their work. It also allows
+us to keep the tooltips a reasonable length.
+
+If a widget provides an expanded tooltip but no normal tooltip, not
+even a hint is shown when hovering the widget. This way no hovering
+text will appear unless it was explicitly set by a developer. At
+the same time this lets us keep Whats This available for all areas.
+
+An exception to this are QMenus. The hint to show the expanded
+tooltip is shown for them even if no tooltip has been explicitly
+set. If a tooltip has been explicitly set, that information is also
+shown because this implies that the iconText() which is
+automatically set to be the toolTip() is not sufficient.
+
+This commit also adds the shortcut to tooltips of `QToolButton`s.
+
+Having tooltips be expandable lets us minimise the risk of tooltips
+covering currently used areas of an application by accident.
+
+Related discussion: https://phabricator.kde.org/T9986
+===
+ LICENSES/BSD-2-Clause.txt |   9 ++
+ src/CMakeLists.txt        |   2 +
+ src/kmainwindow.cpp       |   8 ++
+ src/ktooltiphelper.cpp    | 206 ++++++++++++++++++++++++++++++++++++++
+ src/ktooltiphelper.h      | 112 +++++++++++++++++++++
+ src/ktooltiphelper_p.h    |  78 +++++++++++++++
+ 6 files changed, 415 insertions(+)
+ create mode 100644 LICENSES/BSD-2-Clause.txt
+ create mode 100644 src/ktooltiphelper.cpp
+ create mode 100644 src/ktooltiphelper.h
+ create mode 100644 src/ktooltiphelper_p.h
+
+diff --git LICENSES/BSD-2-Clause.txt LICENSES/BSD-2-Clause.txt
+new file mode 100644
+index 00000000..b0e20f53
+--- /dev/null
++++ LICENSES/BSD-2-Clause.txt
+@@ -0,0 +1,9 @@
++Copyright (c) <year> <owner> All rights reserved.
++
++Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
++
++1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
++
++2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
++
++THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+diff --git src/CMakeLists.txt src/CMakeLists.txt
+index ed576350..5730dae7 100644
+--- src/CMakeLists.txt
++++ src/CMakeLists.txt
+@@ -48,6 +48,7 @@ set(kxmlgui_SRCS
+   ktoolbar.cpp
+   ktoolbarhandler.cpp
+   ktoolbarhelper.cpp
++  ktooltiphelper.cpp
+   kxmlguibuilder.cpp
+   kxmlguiclient.cpp
+   kxmlguifactory.cpp
+@@ -137,6 +138,7 @@ ecm_generate_headers(KXmlGui_HEADERS
+   KShortcutWidget
+   KToggleToolBarAction
+   KToolBar
++  KToolTipHelper
+   KXMLGUIBuilder
+   KXMLGUIClient
+   KXMLGUIFactory
+diff --git src/kmainwindow.cpp src/kmainwindow.cpp
+index fac00c7e2c4649e4793731e59f8e9cfd3426d068..c95935a101127ab247447498de72667659e19992 100644
+--- src/kmainwindow.cpp
++++ src/kmainwindow.cpp
+@@ -31,6 +31,7 @@
+ #include "kmainwindowiface_p.h"
+ #endif
+ #include "ktoolbarhandler_p.h"
++#include "ktooltiphelper.h"
+ #include "khelpmenu.h"
+ #include "ktoolbar.h"
+ 
+@@ -263,6 +264,13 @@ void KMainWindowPrivate::init(KMainWindow *_q)
+     letDirtySettings = true;
+ 
+     sizeApplied = false;
++
++    // The next code line completely decides wether KToolTipHelper is an opt-in or opt-out feature.
++    // For applications to opt out they would need to bump their minimum version to whenever
++    // KToolTipHelper was first introduced. There is probably a standard procedure to handle
++    // situations like these. I really think the expanded tooltip feature should be enabled by
++    // default at some point in time.
++    qApp->installEventFilter(KToolTipHelper::instance());
+ }
+ 
+ static bool endsWithHashNumber(const QString &s)
+diff --git src/ktooltiphelper.cpp src/ktooltiphelper.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..06fda2696e5a6c5d61bb4972d628d936810ab6eb
+--- /dev/null
++++ src/ktooltiphelper.cpp
+@@ -0,0 +1,212 @@
++/*
++    This file is part of the KDE project
++    SPDX-FileCopyrightText: 2021 Felix Ernst <fe.a.ernst@gmail.com>
++
++    SPDX-License-Identifier: LGPL-2.1-or-later OR BSD-2-Clause
++*/
++
++#include "ktooltiphelper.h"
++#include "ktooltiphelper_p.h"
++
++#include <KColorScheme>
++#include <KLocalizedString>
++
++#include <QAction>
++#include <QApplication>
++#include <QDesktopServices>
++#include <QHelpEvent>
++#include <QMenu>
++#include <QtGlobal>
++#include <QToolButton>
++#include <QToolTip>
++#include <QWhatsThis>
++#include <QWhatsThisClickedEvent>
++
++KToolTipHelper *KToolTipHelper::instance()
++{
++    return KToolTipHelperPrivate::instance();
++}
++
++KToolTipHelper *KToolTipHelperPrivate::instance()
++{
++    if (!s_instance) {
++        s_instance = new KToolTipHelper(qApp);
++    }
++    return s_instance;
++}
++
++KToolTipHelper::KToolTipHelper(QObject* parent)
++    : QObject{parent},
++      d_ptr{new KToolTipHelperPrivate(this)}
++{
++}
++
++KToolTipHelperPrivate::KToolTipHelperPrivate(KToolTipHelper *q)
++    : q_ptr{q}
++{
++}
++
++KToolTipHelper::~KToolTipHelper()
++{
++    delete d_ptr;
++}
++
++KToolTipHelperPrivate::~KToolTipHelperPrivate() = default;
++
++bool KToolTipHelper::eventFilter(QObject *watched, QEvent *event)
++{
++    Q_D(KToolTipHelper);
++    return d->eventFilter(watched, event);
++}
++
++bool KToolTipHelperPrivate::eventFilter(QObject *watched, QEvent *event)
++{
++    Q_UNUSED(watched);
++    switch (event->type()) {
++        case QEvent::KeyPress: {
++            return handleKeyPressEvent(event);
++        }
++        case QEvent::ToolTip: {
++            return handleToolTipEvent(event);
++        }
++        case QEvent::WhatsThisClicked: {
++            return handleWhatsThisClickedEvent(event);
++        }
++        default: {
++            return false;
++        }
++    }
++}
++
++bool KToolTipHelperPrivate::handleKeyPressEvent(QEvent *event)
++{
++    if (!QToolTip::isVisible()
++        || static_cast<QKeyEvent *>(event)->key() != Qt::Key_Shift
++        || !m_widget
++    ) {
++        return false;
++    }
++    QToolTip::hideText();
++    const auto globalPos = m_globalPos.get();
++    if (!globalPos) {
++        return false;
++    }
++
++    qDebug("toolTip: %s, whatsThis: %s", qPrintable(m_widget->toolTip()), qPrintable(m_widget->whatsThis()));
++    if (QMenu *menu = qobject_cast<QMenu *>(m_widget)) {
++        if (menu->activeAction() != nullptr) {
++            QWhatsThis::showText(*globalPos, menu->activeAction()->whatsThis(), m_widget);
++        }
++    } else {
++        QWhatsThis::showText(*globalPos, m_widget->whatsThis(), m_widget);
++    }
++    return true;
++}
++
++
++bool KToolTipHelperPrivate::handleToolTipEvent(QEvent *event)
++{
++    QHelpEvent *helpEvent = static_cast<QHelpEvent *>(event);
++    m_widget = m_application->widgetAt(helpEvent->globalPos());
++    if (!m_widget) {
++        return false;
++    }
++    qDebug("toolTip: %s, whatsThis: %s", qPrintable(m_widget->toolTip()), qPrintable(m_widget->whatsThis()));
++    if (m_ignoredWidgets.count(m_widget) > 0) {
++        m_widget = nullptr;
++        return false;
++    }
++    if (QToolButton *toolButton = qobject_cast<QToolButton *>(m_widget)) {
++        if (auto action = toolButton->defaultAction()) {
++            if (!action->shortcut().isEmpty()) {
++                toolButton->setToolTip(action->toolTip() + QStringLiteral(" (") + action->shortcut().toString(QKeySequence::NativeText) + QStringLiteral(")"));
++            }
++        }
++    }
++    QMenu *menu = nullptr;
++    if (m_widget->toolTip().isEmpty() || m_widget->whatsThis().isEmpty()) {
++        menu = qobject_cast<QMenu *>(m_widget);
++        if (menu) {
++            QAction *action = menu->activeAction();
++            if (action) {
++                // All actions have their text as a tooltip by default.
++                // We only want to display the tooltip if it isn't identical
++                // to the already visible text in the menu.
++                if (hasExplicitToolTip(action)) {
++                    if (action->whatsThis().isEmpty()) {
++                        QToolTip::showText(helpEvent->globalPos(), action->toolTip());
++                    } else {
++                        showExpandableToolTip(helpEvent->globalPos(), action->toolTip());
++                    }
++                    return true;
++                } else if (!action->whatsThis().isEmpty()) {
++                    showExpandableToolTip(helpEvent->globalPos());
++                    return true;
++                }
++                QToolTip::hideText();
++                return false;
++            } else {
++                QToolTip::hideText();
++            }
++        }
++        return false;
++    }
++    showExpandableToolTip(helpEvent->globalPos(), m_widget->toolTip());
++    return true;
++}
++
++bool KToolTipHelperPrivate::handleWhatsThisClickedEvent(QEvent *event)
++{
++    event->accept();
++    const QWhatsThisClickedEvent *whatsThisClickedEvent = static_cast<QWhatsThisClickedEvent *>(event);
++    QDesktopServices::openUrl(QUrl(whatsThisClickedEvent->href()));
++    return true;
++}
++
++void KToolTipHelperPrivate::showExpandableToolTip(const QPoint &globalPos, const QString &toolTip)
++{
++    m_globalPos.reset(new QPoint(globalPos));
++    //qDebug("Sending tooltip");
++    KColorScheme colorScheme = KColorScheme(QPalette::Normal, KColorScheme::Tooltip);
++    const QColor hintTextColor = colorScheme.foreground(KColorScheme::InactiveText).color();
++    if (!toolTip.isEmpty()) {
++        QToolTip::showText(*m_globalPos.get(), toolTip + xi18nc("@info:tooltip",
++                "<nl/><small><font color=\"%1\">Press <shortcut>Shift</shortcut> "
++                "for help.</font></small>", hintTextColor.name()));
++    } else {
++        QToolTip::showText(*m_globalPos.get(), xi18nc("@info:tooltip",
++                "<small><font color=\"%1\">Press <shortcut>Shift</shortcut> "
++                "for help.</font></small>", hintTextColor.name()));
++    }
++}
++
++KToolTipHelper *KToolTipHelperPrivate::s_instance = nullptr;
++
++bool hasExplicitToolTip(const QAction *action)
++{
++    Q_CHECK_PTR(action);
++    const QString iconText = action->iconText();
++    const QString toolTip = action->toolTip();
++    int i = -1, j = -1;
++    do {
++        i++; j++;
++        // Both of these QStrings are considered equal if their only differences are '&' and '.' chars.
++        // Now move both of their indices to the first char that is neither '&' nor '.'.
++        while (i < iconText.size()
++            && (iconText.at(i) == QLatin1Char('&') || iconText.at(i) == QLatin1Char('.'))) {
++            i++;
++        }
++        while (j < toolTip.size()
++            && (toolTip.at(j) == QLatin1Char('&') || toolTip.at(j) == QLatin1Char('.'))) {
++            j++;
++        }
++
++        if (i >= iconText.size()) {
++            return j < toolTip.size();
++        }
++        if (j >= toolTip.size()) {
++            return i < iconText.size();
++        }
++    } while (iconText.at(i) == toolTip.at(j));
++    return true; // We have found a difference.
++}
+diff --git src/ktooltiphelper.h src/ktooltiphelper.h
+new file mode 100644
+index 00000000..cdb9548d
+--- /dev/null
++++ src/ktooltiphelper.h
+@@ -0,0 +1,112 @@
++/*
++    This file is part of the KDE project
++    SPDX-FileCopyrightText: 2021 Felix Ernst <fe.a.ernst@gmail.com>
++
++    SPDX-License-Identifier: LGPL-2.1-or-later OR BSD-2-Clause
++*/
++
++#ifndef KTOOLTIPHELPER_H
++#define KTOOLTIPHELPER_H
++
++#include <kxmlgui_export.h>
++
++#include <QObject>
++
++#include <memory>
++
++class KToolTipHelperPrivate;
++
++/**
++ * @class KToolTipHelper ktooltiphelper.h KToolTipHelper
++ *
++ * @short An event filter used to enhance tooltips
++ *
++ * Example:
++ * Without this class, a tooltip of a QToolButton of a "New" action will read something like
++ * "New File". Using this class, the tooltip can be enhanced to read something like
++ * "New File (Ctrl+N)" and in the next line smaller "Press Shift for help.".
++ * Pressing Shift will open the "What's This" context help for that button. If a hyperlink in
++ * that help is clicked, the corresponding event will also be filtered by this class and open
++ * the linked location.
++ *
++ * The extra text added to tooltips is only shown when available and where it makes sense. If a
++ * widget has no associated shortcut and an empty QWidget::whatsThis(), this class won't tamper
++ * with the requested tooltip at all.
++ *
++ * This class also activates tooltips in QMenus but only when it makes sense like when the tooltip
++ * isn't equal to the already displayed text.
++ *
++ * If you want the "Press Shift for help." line to be displayed for a widget that has whatsThis()
++ * but no toolTip() take a look at KToolTipHelper::whatsThisHintOnly().
++ *
++ * By default, the enhanced tooltips are activated in the constructor of the KMainWindow through
++ * the following line.
++ * \code
++ * qApp->installEventFilter(KToolTipHelper::instance());
++ * \endcode
++ * Therefore, to de-activate them for your application, you can call
++ * \code
++ * qApp->removeEventFilter(KToolTipHelper::instance());
++ * \endcode
++ * any time later in the application execution.
++ *
++ * If you want KToolTipHelper to not tamper with certain QEvents, e.g. you want to handle some
++ * tooltips differentely or you want to change what happens when a QWhatsThisClickedEvents is
++ * emitted, first remove KToolTipHelper as an event filter just like in the last line of code
++ * above. Then create your own custom EventFilter that handles those QEvents differentely and
++ * for all cases that you don't want to handle differentely call
++ * \code
++ * return KToolTipHelper::instance->eventFilter(watched, event);
++ * \endcode
++ * KMainWindow will have this EventFilter installed by default from framework version @TODO onward
++ * so if you want to opt out of that, remove the EventFilter in the constructor of your MainWindow
++ * class inheriting from KMainWindow.
++ *
++ * If you want to use the enhanced tooltips everywhere except for some exceptions, take a look at
++ * the ignore(QWidget *) and unignore(QWidget *) methods.
++ *
++ * If you want to handle QWhatsThisClickedEvents yourself, install a custom EventFilter on qApp
++ * that does this before this class has a chance.
++ *
++ * @see QToolTip
++ */
++class KXMLGUI_EXPORT KToolTipHelper : public QObject
++{
++    Q_OBJECT
++    Q_DECLARE_PRIVATE(KToolTipHelper)
++    Q_DISABLE_COPY(KToolTipHelper)
++
++public:
++    static KToolTipHelper *instance();
++
++    /**
++     * @todo write docs
++     *
++     * @param watched TODO
++     * @param event TODO
++     * @return TODO
++     */
++    virtual bool eventFilter(QObject* watched, QEvent* event) override;
++
++    /**
++     * Use this to have a widget show "Press Shift for help." as its tooltip.
++     * \code
++     * widget->setToolTip(KToolTipHelper::instance()->whatsThisHintOnly());
++     * \endcode
++     *
++     * @return a QString that is interpreted by this class to show the expected tooltip.
++     */
++    const QString whatsThisHintOnly() const;
++
++private:
++    explicit KToolTipHelper(QObject *parent);
++
++    virtual ~KToolTipHelper();
++
++private:
++    KToolTipHelperPrivate *const d_ptr = nullptr;
++
++    friend class KToolTipHelperPrivate;
++};
++
++#endif // KTOOLTIPHELPER_H
+diff --git src/ktooltiphelper_p.h src/ktooltiphelper_p.h
+new file mode 100644
+index 00000000..35e97781
+--- /dev/null
++++ src/ktooltiphelper_p.h
+@@ -0,0 +1,78 @@
++/*
++    This file is part of the KDE project
++    SPDX-FileCopyrightText: 2021 Felix Ernst <fe.a.ernst@gmail.com>
++
++    SPDX-License-Identifier: LGPL-2.1-or-later OR BSD-2-Clause
++*/
++
++#ifndef KTOOLTIPHELPER_P_H
++#define KTOOLTIPHELPER_P_H
++
++#include <qobject.h>
++
++#include <QPointer>
++
++#include <memory>
++#include <unordered_set>
++
++class KToolTipHelper;
++
++class QAction;
++class QApplication;
++
++/**
++ * The private class of KToolTipHelper used for the PIMPL idiom.
++ */
++class KToolTipHelperPrivate : public QObject
++{
++    Q_OBJECT
++    Q_DECLARE_PUBLIC(KToolTipHelper)
++
++public:
++    /**
++     * Singleton implementation of KToolTipHelper but
++     * NOT of this class (KToolTipHelperPrivate).
++     */
++    static KToolTipHelper *instance();
++
++    /**
++     * TODO
++     */
++    explicit KToolTipHelperPrivate(KToolTipHelper *q);
++
++    virtual ~KToolTipHelperPrivate();
++
++    /** @see KToolTipHelper::eventFilter() */
++    virtual bool eventFilter(QObject* watched, QEvent* event) override;
++
++    /** @see KToolTipHelper::whatsThisHintOnly() */
++    const QString whatsThisHintOnly() const;
++
++    bool handleToolTipEvent(QEvent *event);
++    bool handleKeyPressEvent(QEvent *event);
++    bool handleWhatsThisClickedEvent(QEvent *event);
++
++    void showExpandableToolTip(const QPoint &globalPos, const QString &toolTip = QStringLiteral());
++
++public:
++    KToolTipHelper *const q_ptr;
++
++private:
++    QApplication *m_application;
++    std::unique_ptr<QPoint> m_globalPos;
++    std::unordered_set<QWidget *> m_ignoredWidgets;
++    QPointer<QWidget> m_widget;
++
++    static KToolTipHelper *s_instance;
++};
++
++/**
++ * All actions have their iconText() as their toolTip() by default.
++ * This method checks if setToolTip() was called for the action explicitly to set a different/more
++ * useful tooltip.
++ * @return true if the toolTip() isn't just an automatically generated version of iconText().
++ *         false otherwise.
++ */
++bool hasExplicitToolTip(const QAction *action);
++
++#endif // KTOOLTIPHELPER_P_H
+-- 
+GitLab
+
