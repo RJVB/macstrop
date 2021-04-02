@@ -3,17 +3,19 @@
 PortSystem          1.0
 PortGroup           compiler_blacklist_versions 1.0
 PortGroup           muniversal 1.0
+PortGroup           LTO 1.0
+PortGroup           compress_workdir 1.0
 # PortGroup           meson 1.0
 
 platform darwin {
-    if {${os.major} < 13} {
-        PortGroup   cxx11 1.1
-    }
+    # May need clock_gettime()
+    PortGroup       legacysupport 1.0
+    legacysupport.newest_darwin_requires_legacy 15
 }
 
 name                mesa
 epoch               1
-version             18.3.3
+version             19.0.8 ; revision 1
 categories          x11 graphics
 maintainers         {jeremyhu @jeremyhu} openmaintainer
 license             MIT
@@ -22,20 +24,21 @@ description         Mesa 3D Graphics Library
 long_description    Mesa is an open-source implementation of the OpenGL specification, a system for rendering interactive 3D graphics.
 
 homepage            https://www.mesa3d.org
+master_sites        https://archive.mesa3d.org
 platforms           macosx darwin
 use_xz              yes
-master_sites        https://mesa.freedesktop.org/archive
 
-checksums           rmd160  3db679c94bb3c168f6607f16ae4ae288b2b4f767 \
-                    sha256  2ab6886a6966c532ccbcc3b240925e681464b658244f0cbed752615af3936299
-#                     size    11874468
+checksums           rmd160  c658d9e93d19bf2de694001c8c9886b8bb89ee2e \
+                    sha256  d017eb53a810c32dabeedf6ca2238ae1e897ce9090e470e9ce1d6c9e3f1b0862
+#                     size    11967592
 
 depends_build       port:pkgconfig \
                     port:flex \
                     port:bison \
                     port:gindent
 
-depends_lib         port:xorg-xorgproto \
+depends_lib         port:expat \
+                    port:xorg-xorgproto \
                     port:xorg-libxcb \
                     port:xorg-libX11 \
                     port:xorg-libXext \
@@ -46,12 +49,8 @@ depends_lib         port:xorg-xorgproto \
                     port:xorg-libXxf86vm
 
 patch.pre_args      -p1
-
-if {[string match *gcc* ${configure.compiler}]} {
-    # Older gcc fail to do -Werror=missing-prototypes correctly
-    # https://trac.macports.org/ticket/46827
-    patchfiles-append no-missing-prototypes-error.patch
-}
+patchfiles          0001-applegl-Provide-requirements-of-_SET_DrawBuffers.patch \
+                    0002-Hack-to-address-build-failure-when-using-newer-macOS.patch
 
 patchfiles-append   patch-meson.diff \
                     patch-autoconf-c11.diff
@@ -68,11 +67,11 @@ if {[string match *meson* ${configure.cmd}]} {
                     -Dshared-llvm=false \
                     -Dgallium-drivers=
 } else {
-    if {![file exists ${worksrcpath}/configure]} {
-        use_autoreconf  yes
+    post-patch {
+        system -W ${worksrcpath} "autoreconf -fvi"
     }
-    autoreconf.args -fvi
-    configure.args  --disable-dependency-tracking \
+    configure.args  --enable-autotools \
+                    --disable-dependency-tracking \
                     --disable-silent-rules \
                     --with-platforms=x11 \
                     --disable-dri3 \
@@ -83,16 +82,20 @@ if {[string match *meson* ${configure.cmd}]} {
                     --with-gallium-drivers=
 }
 
+# mesa builds with -std=c99 but uses timespec_get() which was added in c11, so this works around that bug
+configure.env-append \
+                    export ac_cv_func_timespec_get=no
+
 configure.env-append \
                     INDENT=${prefix}/bin/gindent \
                     STRIP=echo
 
-if {[string match macports-clang* ${configure.compiler}]} {
-    configure.env-append \
-                    AR="[string map {"clang" "llvm-ar"} ${configure.cc}]" \
-                    NM="[string map {"clang" "llvm-nm"} ${configure.cc}]" \
-                    RANLIB="[string map {"clang" "llvm-ranlib"} ${configure.cc}]"
-}
+# if {[string match macports-clang* ${configure.compiler}]} {
+#     configure.env-append \
+#                     AR="[string map {"clang" "llvm-ar"} ${configure.cc}]" \
+#                     NM="[string map {"clang" "llvm-nm"} ${configure.cc}]" \
+#                     RANLIB="[string map {"clang" "llvm-ranlib"} ${configure.cc}]"
+# }
 
 # This project is affected by a bug in Apple's gcc driver driver that I fixed in the apple-gcc42 port.
 # Use that or clang.
@@ -104,10 +107,28 @@ compiler.blacklist gcc-3.3 gcc-4.0 gcc-4.2 llvm-gcc-4.2 {clang < 800}
 
 platform darwin {
     if {${os.major} < 11} {
+
+        # versions > 17 do not presently compile on systems prior to 10.7
+        version             17.1.6 ;    revision 2
+        checksums           rmd160  43a9b758462316ad344ccdccf72d6d0ce295620e \
+                            sha256  0686deadde1f126b20aa67e47e8c50502043eee4ecdf60d5009ffda3cebfee50
+#                             size    9868932
+
+        # this option does nothing in mesa 17.x and generates warnings
+        configure.args-delete --enable-autotools
+
+        # overwrite previous patchfiles, and then add as needed below
+        patchfiles \
+            mesa17-0001-glxcmds-Fix-a-typo-in-the-__APPLE__-codepath.patch \
+            mesa17-0002-glext.h-Add-missing-include-of-stddef.h-for-ptrdiff_.patch \
+            mesa17-0003-applegl-Provide-requirements-of-_SET_DrawBuffers.patch \
+            mesa17-0004-mesa-Deal-with-size-differences-between-GLuint-and-G.patch
+
         # https://bugs.freedesktop.org/show_bug.cgi?id=89088
         configure.env-append INDENT=cat
 
-        patchfiles-append static-strndup.patch
+        # not needed if legacysupport is used
+        # patchfiles-append static-strndup.patch
     }
 
     if {${os.major} < 10} {
@@ -151,6 +172,12 @@ platform darwin {
     }
 }
 
+if {[string match *gcc* ${configure.compiler}]} {
+    # Older gcc fail to do -Werror=missing-prototypes correctly
+    # https://trac.macports.org/ticket/46827
+    patchfiles-append no-missing-prototypes-error.patch
+}
+
 configure.cppflags-delete -I${prefix}/include
 configure.cxxflags-append -std=c++11
 
@@ -174,6 +201,8 @@ variant egl description {enable EGL support} {
         configure.args-replace \
                             -Dgallium-drivers= \
                             -Dgallium-drivers=swrast
+        configure.args-append \
+                            -Ddri2=true
     } else {
         configure.args-replace \
                             --disable-egl \
@@ -181,14 +210,16 @@ variant egl description {enable EGL support} {
         configure.args-replace \
                             --with-gallium-drivers= \
                             --with-gallium-drivers=swrast
+        configure.args-append \
+                            --enable-dri2
     }
     patchfiles-append       patch-support-egl_dri2.diff
-    post-patch {
-        reinplace "s|@PREFIX@|${prefix}|g" ${worksrcpath}/src/egl/drivers/dri2/egl_dri2.c
-    }
+#     post-patch {
+#         reinplace "s|@PREFIX@|${prefix}|g" ${worksrcpath}/src/egl/drivers/dri2/egl_dri2.c
+#     }
 }
 
-    set lldversions {3.8 3.9 4.0 5.0 6.0}
+    set lldversions {3.8 3.9 4.0 5.0 6.0 8.0 9.0}
     set llvariant ""
     foreach ldv ${lldversions} {
         set llv [join [lrange [split ${ldv} .] 0 1] ""]
@@ -266,13 +297,9 @@ if {[string match *meson* ${configure.cmd}]} {
 }
 
 livecheck.type  regex
-livecheck.url   http://www.mesa3d.org/
+livecheck.url   ${homepage}
 livecheck.regex {relnotes/([0-9.]+)\.html}
 
-# optional support for HFS-compression of the source and build dirs
-if {[info exists qt5::currentportgroupdir] && [file exists ${qt5::currentportgroupdir}/compress_workdir-1.0.tcl]} {
-    PortGroup       compress_workdir 1.0
-}
 
 if {[string match *meson* ${configure.cmd}]} {
     meson.save_configure_cmd "log too"
