@@ -45,9 +45,14 @@ namespace eval compress_workdir {
     variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
 }
 
+proc compress_workdir::build_dirs {} {
+    global build.dir
+    return [glob -type d ${build.dir}*]
+}
+
 options compress.build_dir \
         compress.in_applications_dir
-default compress.build_dir {${build.dir}}
+default compress.build_dir {[compress_workdir::build_dirs]}
 default compress.in_applications_dir {}
 
 platform darwin {
@@ -83,7 +88,7 @@ platform darwin {
         }
 
         post-build {
-            if {[file exists ${prefix}/bin/afsctool] && [file exists ${compress.build_dir}]} {
+            if {[file exists ${prefix}/bin/afsctool]} {
                 ui_msg "--->  Compressing the build directory ..."
                 if {${compress.build_dir} ne "${worksrcpath}"} {
                     set compress.build_dir "${worksrcpath} ${compress.build_dir}"
@@ -94,6 +99,13 @@ platform darwin {
                         catch {hfscompress ${ccache_dir}}
                     }
                 }
+            }
+        }
+        post-destroot {
+            set destroots [glob -type d ${destroot}-*]
+            if {[file exists ${prefix}/bin/afsctool] && ${destroots} ne {}} {
+                ui_msg "--->  Compressing auxiliary destroot dirs ..."
+                catch {hfscompress ${destroots}}
             }
         }
         post-activate {
