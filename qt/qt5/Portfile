@@ -172,7 +172,7 @@ array set modules {
         {"Qt Core" "Qt GUI" "Qt Network" "Qt SQL" "Qt Test" "Qt Widgets" "Qt Concurrent" "Qt D-Bus" "Qt OpenGL" "Qt Platform Headers" "Qt Print Support" "Qt XML"}
         ""
         "variant overrides: "
-        "revision 0"
+        "revision 1"
         "License: "
     }
     qtcanvas3d {
@@ -1122,6 +1122,14 @@ foreach {module module_info} [array get modules] {
                     } else {
                         puts ${fd} "${configure.cmd} ${configure.pre_args} ${configure.args}"
                     }
+                    if {[file exists "${configure.dir}/.qmake.cache"]} {
+                        puts ${fd} "## ${configure.dir}/.qmake.cache:"
+                        close ${fd}
+                        system "cat \"${configure.dir}/.qmake.cache\" >> \"${workpath}/.macports.${subport}.configure.cmd\""
+                    } else {
+                        close ${fd}
+                    }
+                    unset fd
                 } else {
                     if {[info exists fd]} {
                         unset fd
@@ -1187,6 +1195,7 @@ foreach {module module_info} [array get modules] {
             #-libexecdir    ARCHDATADIR/libexec
             #-hostbindir    HOSTPREFIX/bin
             #-hostlibdir    HOSTPREFIX/lib
+            configure.args-append -v
             configure.args-append                      \
                 -prefix         ${qt_dir}              \
                 -bindir         ${qt_bins_dir}         \
@@ -1308,6 +1317,8 @@ foreach {module module_info} [array get modules] {
                 # taken from the system:
                 depends_lib-delete \
                     port:fontconfig
+                depends_lib-append \
+                    port:mesa
                 configure.args-delete \
                     -no-egl -no-libudev \
                     -sdk macosx \
@@ -1321,13 +1332,21 @@ foreach {module module_info} [array get modules] {
                     -fontconfig
                 configure.args-append \
                     -xcb -xcb-xlib -system-xcb -qpa xcb \
-                    -rpath -R ${prefix}/lib -R ${prefix}/${build_arch}-linux-gnu -R ${qt_libs_dir}   \
+                    -L ${prefix}/lib -L ${prefix}/lib/${build_arch}-linux-gnu \
+                    -rpath -R ${prefix}/lib -R ${prefix}/lib/${build_arch}-linux-gnu -R ${qt_libs_dir}   \
                     -no-reduce-relocations \
-                    -no-directfb \
+                    -no-directfb -no-vulkan \
                     -optimized-qmake -no-strip -no-separate-debug-info --reduce-exports \
                     ICU_PREFIX=${prefix}
                 if {[tbool configure.ccache]} {
                     configure.args-append   -ccache
+                }
+                variant vulkan description {build vulkan support} {}
+                if {[variant_isset vulkan]} {
+                    configure.args-replace \
+                        -no-vulkan -vulkan
+                    depends_lib-append \
+                        port:vulkan-loader
                 }
             }
             pre-configure {
@@ -1337,13 +1356,29 @@ foreach {module module_info} [array get modules] {
                         -openssl-linked \
                         -openssl-runtime
                 }
+                # use a simple way to get our compiler + options in:
+                xinstall -m 755 -d ${build.dir}/qtbase
+                set qmake.cache [open "${build.dir}/.qmake.cache" w 0644]
+                puts ${qmake.cache} "QMAKE_CC=${configure.cc}"
+                puts ${qmake.cache} "QMAKE_CXX=${configure.cxx}"
+                puts ${qmake.cache} "QMAKE_LINK_C=${configure.cc}"
+                puts ${qmake.cache} "QMAKE_LINK_C_SHLIB=${configure.cc}"
+                puts ${qmake.cache} "QMAKE_LINK=${configure.cxx}"
+                puts ${qmake.cache} "QMAKE_LINK_SHLIB=${configure.cxx}"
+                puts ${qmake.cache} "QMAKE_CFLAGS+=[join ${cached.cflags}]"
+                puts ${qmake.cache} "QMAKE_CXXFLAGS+=[join ${cached.cxxflags}]"
+                puts ${qmake.cache} "QMAKE_LFLAGS+=[join ${cached.ldflags}]"
+                close ${qmake.cache}
             }
             ###RJVB###
 
-            # Qt builds part of the system using environment provided my MacPorts.
+            # Qt builds part of the system using environment provided by MacPorts.
             # It builds the rest using its own internal environment.
             # For consistency, clear MacPorts environment.
             #configure.cxx_stdlib
+            set cached.cflags ${configure.cflags}
+            set cached.cxxflags ${configure.cxxflags}
+            set cached.ldflags ${configure.ldflags}
             proc portconfigure::should_add_stdlib {} {return false}
             configure.sdkroot
             configure.cc_archflags
