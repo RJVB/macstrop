@@ -102,7 +102,7 @@ platform darwin {
             }
         }
         post-destroot {
-            set destroots [glob -type d ${destroot}-*]
+            set destroots [glob -nocomplain -type d ${destroot}-*]
             if {[file exists ${prefix}/bin/afsctool] && ${destroots} ne {}} {
                 ui_msg "--->  Compressing auxiliary destroot dirs ..."
                 catch {hfscompress ${destroots}}
