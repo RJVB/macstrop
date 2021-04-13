@@ -27,15 +27,6 @@ namespace eval meson {
         return "[option build_dir]"
     }
 
-# not needed since we're invoking meson in the build_dir
-#     proc get_post_args {} {
-#         global configure.dir build_dir muniversal.current_arch
-#         if {[info exists muniversal.current_arch]} {
-#             return "${configure.dir} ${build_dir}-${muniversal.current_arch}"
-#         } else {
-#             return "${configure.dir} ${build_dir}"
-#         }
-#     }
 }
 
 depends_build-append        port:meson \
@@ -75,7 +66,7 @@ namespace eval meson {
     proc get_post_args {} {
         global configure.dir build_dir muniversal.current_arch
         if {[info exists muniversal.current_arch]} {
-            return "${configure.dir} ${build_dir}-${muniversal.current_arch}"
+            return "${configure.dir} ${build_dir}-${muniversal.current_arch} --cross-file=${muniversal.current_arch}-darwin"
         } else {
             return "${configure.dir} ${build_dir}"
         }
@@ -88,10 +79,24 @@ platform linux {
 }
 
 pre-configure {
-    if {[file exists ${build.dir}/meson-private]} {
+    if {[file exists ${build.dir}/meson-private/cmd_line.txt]} {
+        # only request a reconfigure after a successful previous
+        # configure run; only then will the cmd_line.txt file be present.
         configure.pre_args-append \
                             --reconfigure
     }
+    # set a reasonable value for the requested optimisation level:
+    if {[string match *-Ofast* "${configure.cflags} ${configure.cxxflags} ${configure.optflags}"]
+        || [string match *-O3* "${configure.cflags} ${configure.cxxflags} ${configure.optflags}"]} {
+        configure.pre_args-append -Doptimization=3
+    } elseif {[string match *-O2* "${configure.cflags} ${configure.cxxflags} ${configure.optflags}"]} {
+        configure.pre_args-append -Doptimization=2
+    } elseif {[string match *-O2* "${configure.cflags} ${configure.cxxflags} ${configure.optflags}"]} {
+        configure.pre_args-append -Doptimization=s
+    }
+    # override the optimisation setting by setting the build type to custom. Not using the override
+    # approach means meson will second-guess the buildtype regardless of what we asked for (there's
+    # no guarantee it won't ever if we do use the override trick).
     configure.pre_args-append \
                             --buildtype=${meson.build_type}
 }
