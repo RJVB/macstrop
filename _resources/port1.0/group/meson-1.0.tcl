@@ -27,15 +27,6 @@ namespace eval meson {
         return "[option build_dir]"
     }
 
-# not needed since we're invoking meson in the build_dir
-#     proc get_post_args {} {
-#         global configure.dir build_dir muniversal.current_arch
-#         if {[info exists muniversal.current_arch]} {
-#             return "${configure.dir} ${build_dir}-${muniversal.current_arch}"
-#         } else {
-#             return "${configure.dir} ${build_dir}"
-#         }
-#     }
 }
 
 depends_build-append        port:meson \
@@ -75,7 +66,7 @@ namespace eval meson {
     proc get_post_args {} {
         global configure.dir build_dir muniversal.current_arch
         if {[info exists muniversal.current_arch]} {
-            return "${configure.dir} ${build_dir}-${muniversal.current_arch}"
+            return "${configure.dir} ${build_dir}-${muniversal.current_arch} --cross-file=${muniversal.current_arch}-darwin"
         } else {
             return "${configure.dir} ${build_dir}"
         }
@@ -88,7 +79,9 @@ platform linux {
 }
 
 pre-configure {
-    if {[file exists ${build.dir}/meson-private]} {
+    if {[file exists ${build.dir}/meson-private/cmd_line.txt]} {
+        # only request a reconfigure after a successful previous
+        # configure run; only then will the cmd_line.txt file be present.
         configure.pre_args-append \
                             --reconfigure
     }
