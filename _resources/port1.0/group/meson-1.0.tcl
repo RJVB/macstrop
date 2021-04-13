@@ -85,6 +85,18 @@ pre-configure {
         configure.pre_args-append \
                             --reconfigure
     }
+    # set a reasonable value for the requested optimisation level:
+    if {[string match *-Ofast* "${configure.cflags} ${configure.cxxflags} ${configure.optflags}"]
+        || [string match *-O3* "${configure.cflags} ${configure.cxxflags} ${configure.optflags}"]} {
+        configure.pre_args-append -Doptimization=3
+    } elseif {[string match *-O2* "${configure.cflags} ${configure.cxxflags} ${configure.optflags}"]} {
+        configure.pre_args-append -Doptimization=2
+    } elseif {[string match *-O2* "${configure.cflags} ${configure.cxxflags} ${configure.optflags}"]} {
+        configure.pre_args-append -Doptimization=s
+    }
+    # override the optimisation setting by setting the build type to custom. Not using the override
+    # approach means meson will second-guess the buildtype regardless of what we asked for (there's
+    # no guarantee it won't ever if we do use the override trick).
     configure.pre_args-append \
                             --buildtype=${meson.build_type}
 }
