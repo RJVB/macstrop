@@ -1,14 +1,14 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 #
-# This portgroup provides support older OS releases by:
+# This portgroup provides support for older Mac OS releases by:
 #    * providing a library for various missing library functions
-#    * ameliorate the mixing of libstdc++ libraries
+#    * ameliorating the mixing of libstdc++ libraries
 
 # Usage:
 #
 #   PortGroup legacysupport 1.1
 #
-#   legacysupport.newest_darwin_requires_legacy: newest macOS release that requires legacy support
+#   legacysupport.newest_darwin_requires_legacy: newest Darwin version that requires legacy support
 #
 #   legacysupport.header_search: preprocessor flag used to locate header directory
 #
@@ -50,7 +50,7 @@ proc legacysupport::get_library_name {} {
     if {[option legacysupport.use_static]} {
         return ${prefix}/lib/libMacportsLegacySupport.a
     } else {
-        return ${prefix}/lib/libMacportsLegacySupport.dylib
+        return -lMacportsLegacySupport
     }
 }
 
