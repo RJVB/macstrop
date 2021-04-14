@@ -1,20 +1,21 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 
 PortSystem          1.0
-PortGroup           muniversal 1.0
+
+# cmake does not build universal on BigSur Intel
+if { ${os.platform} eq "darwin" && ${os.major} >= 20 && ${build_arch} eq "x86_64"} {
+	universal_variant no
+} else {
+	PortGroup           muniversal 1.0
+}
+
 PortGroup           xcodeversion 1.0
+PortGroup           gitlab 1.0
+PortGroup           legacysupport 1.1
+
 PortGroup           LTO 1.0
 # Cmake is a dependency of clang
 PortGroup           clang_dependency 1.0
-
-# use legacy support if OSX <= 10.11 && Xcode < 8.
-# Xcode 8 provides "clock_gettime" while Xcode 7 doesn't.
-# legacysupport is used for 10.11 just for this specific feature.
-if {${os.platform} eq "darwin" && \
-    ${os.major} <= 15 && \
-    [vercmp ${xcodeversion} 8.0] < 0} {
-    PortGroup legacysupport 1.0
-}
 
 name                cmake
 
@@ -30,432 +31,390 @@ set base_long_description \
     used in conjunction with the native build environment."
 homepage            https://cmake.org
 platforms           darwin freebsd
+gitlab.instance     https://gitlab.kitware.com
 
-# require C++11
-compiler.cxx_standard 2011
-
-platform darwin {
-    if {!((${os.platform} eq "darwin" && ${os.major} < 10) || ${build_arch} eq "ppc" || ${build_arch} eq "ppc64")} {
-        if {${os.major} < 13} {
-            depends_lib-append port:libcxx
-        }
-        configure.cxx_stdlib libc++
-    }
+subport cmake-devel {
+    PortGroup       obsolete 1.0
+    replaced_by     cmake
+    version         20200323-8638c49f
+    revision        2
+    depends_build
+    depends_lib
 }
-
-dist_subdir         cmake
-
-subport cmake-devel {}
-
-set branch          3.16
 
 if {${subport} eq ${name}} {
 
-    # release
-
-    version   ${branch}.1
-    checksums rmd160 d2379d643af4d45306c85315f85e3a89b25e7f9a \
-              sha256 a275b3168fa8626eca4465da7bb159ff07c8c6cb0fb7179be59e12cbdfa725fd
-#               size   9106878
-    revision  0
-
-    master_sites    ${homepage}/files/v${branch}/
-    conflicts       cmake-devel
+    gitlab.setup    cmake cmake 3.19.7 v
+    checksums       rmd160  606b46e4b223d8e3d6ba4cd94447f4be41bd5e21 \
+                    sha256  1c93241c4b8d8ee3558e68e302e921033ba12c21c9291b3d9abda5203f3cca79
+#                     size    7142688
+    revision        0
 
     # The compressed help document (.qch) is built with the "sans dots" version in the name;
     # rename it to something that includes only the branch plus a non-numeric token that
     # might be bumped if ever a 3.x release introduces major changes. This should address
     # the issue that QCH readers like Qt's Assistant drop the document at every CMake upgrade.
-    set qch_version 3161
-    set qch_suffix  316a
+    set qch_version 3197
+    set qch_suffix  319a
+
+    gitlab.livecheck.regex {([0-9.]+)}
+    compiler.cxx_standard 2011
+
+    platform darwin {
+        if {!((${os.major} < 9) || ${build_arch} eq "ppc" ||
+              ${build_arch} eq "ppc64")} {
+            depends_lib-append port:libcxx
+            configure.cxx_stdlib libc++
+        }
+    }
+
+    # OSX <= 10.11 does not provide "clock_gettime"
+    legacysupport.newest_darwin_requires_legacy 15
+
+    # see https://trac.macports.org/ticket/59832
+    # see https://trac.macports.org/ticket/60885
+    legacysupport.redirect_bins cmake ccmake cpack ctest
+
     long_description ${base_long_description} \
         The ${subport} release port is updated roughly every few months.
 
     # release-only patches
     patchfiles-append \
-        patch-Modules-noArchCheck.release.diff \
-        patch-CMakeFindFrameworks.cmake.release.diff \
-        patch-Source_Modules_FindLibUV.cmake.release.diff \
-        patch-fix_cxx14_17_checks.release.diff \
-        patch-fix-system-prefix-path.release.diff \
-        patch-fix-feature-test.release.diff
+        patch-Modules-noArchCheck.diff \
+        patch-CMakeFindFrameworks.cmake.diff \
+        patch-Source_Modules_FindLibUV.cmake.diff \
+        patch-fix_cxx14_17_checks.diff \
+        patch-fix-system-prefix-path.diff \
+        patch-cmake-leopard-tiger.diff \
+        patch-fix-clock_gettime-test.diff \
+        patch-qt5gui.diff
+    ## RJVB
     patchfiles-append \
-        patch-Modules-FindQt4.cmake.release.diff \
-        patch-Modules-IgnorePolicy25.diff
-
-    livecheck.type  regex
-    livecheck.regex ${name}-(\[0-9.\]+)${extract.suffix}
-    livecheck.url   https://cmake.org/files/LatestRelease/
-
-} else {
-
-    # devel
-
-    set commit 25b7456f0e2301484ab74679886d006cf403b4b1
-    version   20191210-[string range ${commit} 0 7]
-    checksums rmd160 623beb152f87d25bcccbcdeefd6073ac092becf7 \
-              sha256 b6f94e2d679e2bf6dd4e555154d6dbb17024f936c638a2cbc619ed22d7b47d4d \
-              size   7122225
-    revision  0
-
-    use_bzip2       yes
-    master_sites    https://gitlab.kitware.com/cmake/cmake/repository/archive${extract.suffix}?ref=${commit}&
-    distname        ${name}-${commit}
-    worksrcdir      ${name}-${commit}-${commit}
-
-    conflicts       cmake
-    long_description ${base_long_description} \
-        The ${subport} port is updated roughly every week.
-
-    # devel-only patches
+        patch-Modules-IgnorePolicy25.diff \
+        patch-appbundle-plist-props.diff
+    # RJVB: use the pre-existing cmake when we're upgrading instead of installing from scratch
     patchfiles-append \
-        patch-Modules-noArchCheck.devel.diff \
-        patch-CMakeFindFrameworks.cmake.devel.diff \
-        patch-Source_Modules_FindLibUV.cmake.devel.diff \
-        patch-fix_cxx14_17_checks.devel.diff \
-        patch-fix-system-prefix-path.devel.diff \
-        patch-cmake-libuv.tiger.diff
-
-    livecheck.type  regex
-    livecheck.regex data-clipboard-text=\"(\[0-9a-g\]+)\"
-    livecheck.version ${commit}
-    livecheck.url   https://gitlab.kitware.com/cmake/cmake/tree/master
-
-}
-patchfiles-append   patch-appbundle-plist-props.diff
-# use the pre-existing cmake when we're upgrading instead of installing from scratch
-patchfiles-append   patch-bootstrap.diff
-platform darwin {
-    if {${os.major} <= 15} {
-        patchfiles-append patch-build-pre-1012.diff
+        patch-bootstrap.diff
+    if {${os.platform} eq "darwin" && ${os.major} <= 15} {
+        ## RJVB - why is this one not required anymore? pre 10.12 still doesn't have std::shared_mutex ...
+#         patchfiles-append patch-build-pre-1012.diff
     }
-}
 
-depends_lib-append  port:curl \
-                    port:expat \
-                    port:zlib \
-                    port:bzip2 \
-                    port:libarchive \
-                    port:ncurses
+    depends_lib-append \
+        port:curl \
+        port:expat \
+        port:zlib \
+        port:bzip2 \
+        port:libarchive \
+        port:ncurses \
+        path:lib/pkgconfig/libuv.pc:libuv
+    # configure is just a shell script that passes directly to bootstrap
+    configure.cmd ./bootstrap
 
-# allow use of libuv or libuv-devel;
-# system libuv is the default as of 20160830 (g320f5)
-depends_lib-append  path:lib/pkgconfig/libuv.pc:libuv
+    # bootstrap takes cmake-style args for the build of the cmake to
+    # be installed.  the args are passed as usual for cmake, after
+    # "--", so we pass them as post_args
+    configure.post_args --
 
-# configure is just a shell script that passes directly to bootstrap
-# configure.cmd       ./bootstrap
-
-# bootstrap takes cmake-style args for the build of the cmake to be installed.
-# the args are passed as usual for cmake, after "--", so we pass them as post_args
-configure.post_args --
-
-configure.env-append \
-                    CMAKE_PREFIX_PATH=${prefix} \
-                    CMAKE_INCLUDE_PATH=${prefix}/include/ncurses \
-                    CMAKE_LIBRARY_PATH=${prefix}/lib
-
-# Check if the default compiler has yet to be installed. Used to prevent
-# circular deps involving variants. Has to be tested here before our
-# blacklisting and whitelisting is applied.
-if {${os.platform} eq "darwin" && ${os.major} <= 10 && ${cxx_stdlib} eq "libc++" && ![file exists ${configure.cxx}]} {
-    set cmake_bootstrapping yes
-}
-
-# On Lion, Clang 3.3 produces bad stream reading code when using libc++.
-# See https://trac.macports.org/ticket/44129
-# Clang 3.4 works. But Clang 3.7 doesn't work.
-if {${os.platform} eq "darwin" && ${os.major} == 11 && ${configure.cxx_stdlib} eq "libc++"} {
-    compiler.whitelist macports-clang-3.4
-}
-
-# clang 3.4 can't build certain parts of the cmake self-testing infrastructure
-# https://trac.macports.org/ticket/59782
-if {${configure.compiler} eq "macports-clang-3.4"} {
-    configure.post_args-append -DBUILD_TESTING=OFF
-}
-
-# We're keeping this; I can't remember if it was ever in the mainstream port.
-# Clang 3.8 and later require cmake; avoid circular dependency.
-# Such dependencies would occur only when installing both ourselves and the concerned
-# compiler from source and from scratch. We could check if we're installing from source
-# by using a pre-fetch block; checking for installing from scratch (= upgrading) is trivial:
-if {![file exists ${prefix}/bin/cmake]} {
-    foreach cv {3.8 3.9 4.0 5.0 6.0} {
-        ui_debug "blacklisting macports-clang-${cv} because it might need us for installation"
-        compiler.blacklist-append macports-clang-${cv}
-    }
-}
-
-
-platform darwin {
     configure.env-append \
-                    CMAKE_OSX_DEPLOYMENT_TARGET=${macosx_deployment_target}
+        CMAKE_PREFIX_PATH=${prefix} \
+        CMAKE_INCLUDE_PATH=${prefix}/include/ncurses \
+        CMAKE_LIBRARY_PATH=${prefix}/lib
 
-    if {${configure.sdkroot} != ""} {
-        configure.env-append CMAKE_OSX_SYSROOT=${configure.sdkroot}
-    } else {
-        configure.env-append CMAKE_OSX_SYSROOT=/
+    # Check if the default compiler has yet to be installed. Used to
+    # prevent circular deps involving variants. Has to be tested here
+    # before our blacklisting and whitelisting is applied.
+    if {${os.platform} eq "darwin" && ${os.major} <= 10 &&
+        ${cxx_stdlib} eq "libc++" && ![file exists ${configure.cxx}]} {
+        set cmake_bootstrapping yes
     }
 
-    if {${os.arch} eq "i386" && ${os.major} <= 9} {
-        # The old system headers do some bit shifting on Intel about which
-        # newer compilers throw errors:
-        # SecKeychain.h:102:46: error: shift expression '(1853123693 << 8)' overflows [-fpermissive]
-        configure.cflags-append -fpermissive
-        configure.cxxflags-append -fpermissive
+    # On Lion, Clang 3.3 produces bad stream reading code when using
+    # libc++.  See https://trac.macports.org/ticket/44129 . Clang 3.4
+    # works. But Clang 3.7 doesn't work.
+    if {${os.platform} eq "darwin" && ${os.major} == 11 &&
+        ${configure.cxx_stdlib} eq "libc++"} {
+        compiler.whitelist macports-clang-3.4
     }
-}
-if {${os.platform} ne "darwin"} {
-    patchfiles-append \
-                    patch-rpath-on-linux.diff
-    if {[string match *clang* ${configure.cxx}]} {
-        variant libcxx description {highly experimental option to build against libc++. \
-                Requires using clang and an independently provided libc++ installation.} {
-            configure.cxx_stdlib libc++
-            depends_lib-append port:libcxx
+
+    # clang 3.4 can't build certain parts of the
+    # cmake self-testing infrastructure
+    # https://trac.macports.org/ticket/59782
+    if {${configure.compiler} eq "macports-clang-3.4"} {
+        configure.post_args-append -DBUILD_TESTING=OFF
+    }
+
+    # We're keeping this; I can't remember if it was ever in the mainstream port.
+    # Clang 3.8 and later require cmake; avoid circular dependency.
+    # Such dependencies would occur only when installing both ourselves and the concerned
+    # compiler from source and from scratch. We could check if we're installing from source
+    # by using a pre-fetch block; checking for installing from scratch (= upgrading) is trivial:
+    if {![file exists ${prefix}/bin/cmake]} {
+        foreach cv {3.8 3.9 4.0 5.0 6.0} {
+            ui_debug "blacklisting macports-clang-${cv} because it might need us for installation"
+            compiler.blacklist-append macports-clang-${cv}
         }
     }
-    if {[string match *g*-mp-7* ${configure.cxx}]} {
-        variant libcxx description {highly experimental option to build against libc++. \
-                Requires using port:gcc7+libcxx and an independently provided libc++ installation.} {}
-        if {[variant_isset libcxx]} {
-            configure.cxx_stdlib libc++
-            configure.ldflags-append -stdlib=libc++
-            depends_lib-append port:libcxx
+
+    if {${os.platform} ne "darwin"} {
+        patchfiles-append \
+            patch-rpath-on-linux.diff
+        if {[string match *clang* ${configure.cxx}]} {
+            variant libcxx description {highly experimental option to build against libc++. \
+                    Requires using clang and an independently provided libc++ installation.} {
+                configure.cxx_stdlib libc++
+                depends_lib-append port:libcxx
+            }
+        }
+        if {[string match *g*-mp-7* ${configure.cxx}]} {
+            variant libcxx description {highly experimental option to build against libc++. \
+                    Requires using port:gcc7+libcxx and an independently provided libc++ installation.} {}
+            if {[variant_isset libcxx]} {
+                configure.cxx_stdlib libc++
+                configure.ldflags-append -stdlib=libc++
+                depends_lib-append port:libcxx
+            }
         }
     }
-}
 
-# do an out-of-source build
-configure.dir       ${workpath}/build
-build.dir           ${workpath}/build
-configure.cmd       ../${worksrcdir}/bootstrap
+    platform darwin {
+        configure.env-append \
+            CMAKE_OSX_DEPLOYMENT_TARGET=${macosx_deployment_target}
 
-# jsoncpp 1.0+ requires CMake for building; circular dependencies are
-# not possible in MacPorts. In addition, jsoncpp uses C++, so it would
-# not be possible for CMake, which uses libc++ on 10.6-10.8, to link
-# with a MacPorts copy of jsoncpp, which would usually use libstdc++
-# on those systems. Fortunately CMake comes bundled with its own
-# internal copy of jsoncpp, so we use that.
+        if {${configure.sdkroot} != ""} {
+            configure.env-append CMAKE_OSX_SYSROOT=${configure.sdkroot}
+        } else {
+            configure.env-append CMAKE_OSX_SYSROOT=/
+        }
 
-configure.args-append --docdir=share/doc/cmake \
-                    --parallel=${build.jobs} --verbose \
-                    --init=${worksrcpath}/macports.cmake \
-                    --system-libs \
-                    --no-system-jsoncpp \
-                    --no-system-librhash
+        if {${os.arch} eq "i386" && ${os.major} <= 9} {
+            # The old system headers do some bit shifting on Intel about which
+            # newer compilers throw errors:
+            # SecKeychain.h:102:46: error: shift expression '(1853123693 << 8)' overflows [-fpermissive]
+            configure.cflags-append -fpermissive
+            configure.cxxflags-append -fpermissive
+        }
 
-if {[tbool configure.ccache]} {
+        if {${os.major} >= 11 && ${os.major} <= 12} {
+            # some functions in xlocale.h are hidden without this define
+            # https://trac.macports.org/ticket/60885
+            configure.cxxflags-append -D_DARWIN_C_SOURCE
+        }
+    }
+
+    # do an out-of-source build
+    configure.dir   ${workpath}/build
+    build.dir       ${workpath}/build
+    configure.cmd   ../${worksrcdir}/bootstrap
+
+    # jsoncpp 1.0+ requires CMake for building; circular dependencies
+    # are not possible in MacPorts. In addition, jsoncpp uses C++, so
+    # it would not be possible for CMake, which uses libc++ on
+    # 10.6-10.8, to link with a MacPorts copy of jsoncpp, which would
+    # usually use libstdc++ on those systems. Fortunately CMake comes
+    # bundled with its own internal copy of jsoncpp, so we use that.
+
     configure.args-append \
-                    --enable-ccache
-}
+        --docdir=share/doc/cmake \
+        --parallel=${build.jobs} --verbose \
+        --init=${worksrcpath}/macports.cmake \
+        --system-libs \
+        --no-system-jsoncpp \
+        --no-system-librhash
 
-# run the configure/bootstrap in parallel
-configure.args-append \
-                    --parallel=${build.jobs}
-
-configure.universal_args
-
-# CMake's configure script doesn't recognize `--host`.
-array set merger_host {i386 {} x86_64 {} ppc {} ppc64 {}}
-
-platform darwin 8 {
-    configure.ldflags-append -Wl,-framework -Wl,ApplicationServices
-}
-
-# Leopard's Rosetta has some difficulties configuring the ppc slice
-platform darwin 9 {
-    global universal_archs_supported
-    if {${build_arch} eq "i386" || ${build_arch} eq "x86_64"} {
-        supported_archs i386 x86_64
-    } elseif {${build_arch} eq "ppc" || ${build_arch} eq "ppc64"} {
-        supported_archs ppc ppc64
-    }
-    set universal_archs_supported ${supported_archs}
-}
-
-build.post_args VERBOSE=ON
-
-post-patch {
-    # copy cmake init file, ready to be patched below
-    file delete -force ${worksrcpath}/macports.cmake 
-    copy ${filespath}/macports.cmake ${worksrcpath}
-
-    # patch PREFIX
-    reinplace "s|__PREFIX__|${prefix}|g" \
-        ${worksrcpath}/macports.cmake \
-        ${worksrcpath}/Modules/CMakeFindFrameworks.cmake \
-        ${worksrcpath}/Modules/Platform/Darwin.cmake
-}
-
-post-destroot {
-    xinstall -d -m 0755 ${destroot}${prefix}/share/emacs/site-lisp
-    xinstall -m 0644 ${worksrcpath}/Auxiliary/cmake-mode.el \
-        ${destroot}${prefix}/share/emacs/site-lisp
-    foreach type {syntax indent} {
-        xinstall -d -m 0755 ${destroot}${prefix}/share/vim/vimfiles/${type}
-        xinstall -m 0644 -W ${worksrcpath}/Auxiliary/vim/${type} cmake.vim \
-            ${destroot}${prefix}/share/vim/vimfiles/${type}
-    }
-    if ([variant_isset gui]) {
-        set app CMake
-        xinstall -d ${destroot}${applications_dir}/${app}.app/Contents/MacOS \
-            ${destroot}${applications_dir}/${app}.app/Contents/Resources
-        xinstall -m 644 ${filespath}/Info.plist.in ${destroot}${applications_dir}/${app}.app/Contents/Info.plist
-        reinplace "s|@VERSION@|${version}|g" ${destroot}${applications_dir}/${app}.app/Contents/Info.plist
-        reinplace "s|@PREFIX@|${prefix}|g" ${destroot}${applications_dir}/${app}.app/Contents/Info.plist
-        ln -s ${prefix}/bin/cmake-gui ${destroot}${applications_dir}/${app}.app/Contents/MacOS/cmake-gui
-        xinstall -m 644 ${worksrcpath}/Source/QtDialog/CMakeSetup.icns ${destroot}${applications_dir}/${app}.app/Contents/Resources/CMakeSetup.icns
-        if {[file exists ${destroot}${prefix}/share/doc/cmake/CMake.qch]} {
-            file rename ${destroot}${prefix}/share/doc/cmake/CMake.qch \
-                ${destroot}${prefix}/share/doc/cmake/CMake-${qch_suffix}.qch
-            file delete -force ${destroot}${prefix}/share/doc/cmake/html
-            xinstall -m 755 -d  ${destroot}${prefix}/share/doc/qch
-            ln -s ../cmake/CMake-${qch_suffix}.qch ${destroot}${prefix}/share/doc/qch
-        }
-    }
-}
-
-# All the variants create circular dependencies on 10.6 with libc++,
-# due to the default compiler needing cmake to build.
-if {[info exists cmake_bootstrapping]} {
-    set some_variant_disabled 0
-    foreach vname {gui qt4 qt5 docs python35 python36 python37 python38} {
-        if {[variant_isset $vname]} {
-            unset ::variations($vname)
-            set some_variant_disabled 1
-        }
-    }
-    if {$some_variant_disabled} {
-        notes-append "Installing $name with variants would create\
-            circular dependencies, so all variants have been\
-            deselected. You can install again with your desired\
-            variants after the default compiler has been installed."
-    }
-}
-
-variant gui description {Build Qt-based cmake-gui} {
-    configure.args-append --qt-gui
-}
-
-variant qt4 conflicts qt5 requires gui description {Build Qt GUI using Qt4} {
-    PortGroup qt4 1.0
-    if {${subport} eq ${name}} {
-        patchfiles-append patch-qt4gui.release.diff
-    } else {
-        patchfiles-append patch-qt4gui.devel.diff
-    }
-    configure.args-append --qt-qmake=${qt_qmake_cmd}
-}
-
-variant qt5 conflicts qt4 requires gui description {Build Qt GUI using Qt5} {
-    PortGroup qt5 1.0
-    if {${subport} eq ${name}} {
-        patchfiles-append patch-qt5gui.release.diff
-    } else {
-        patchfiles-append patch-qt5gui.devel.diff
-    }
-    configure.args-append --qt-qmake=${qt_qmake_cmd}
-}
-
-if {[variant_isset gui]} {
-    if {![variant_isset qt4] && ![variant_isset qt5]} {
-        default_variants +qt4
+    if {[tbool configure.ccache]} {
+        configure.args-append \
+            --enable-ccache
     }
 
-    if {![variant_isset qt4] && ![variant_isset qt5]} {
-        ui_error "\n\nYou must select either the +qt4 or +qt5 variant when using variant +gui.\n"
-        return -code error "Invalid variant selection"
-    }
-} else {
-    configure.args-append --no-qt-gui
-}
-
-variant docs description {Build documentation: Qt help file and manpages} {
-    patchfiles-append patch-use-classic-theme.diff
+    # run the configure/bootstrap in parallel
     configure.args-append \
-        --mandir=share/man \
-        --sphinx-man \
-        --sphinx-qthelp \
-        --sphinx-build=${prefix}/bin/sphinx-build-${PYTHON_VERSION_WITH_DOT}
+        --parallel=${build.jobs}
 
-    depends_build-append \
-        port:py${PYTHON_VERSION_NO_DOT}-sphinx
+    configure.universal_args
 
-    # these are required for Py3X, but not Py27
-    if {${PYTHON_VERSION_NO_DOT} ne "27"} {
-        depends_build-append \
-            port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-applehelp \
-            port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-devhelp \
-            port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-htmlhelp \
-            port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-jsmath \
-            port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-qthelp \
-            port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-serializinghtml \
-            port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-websupport
+    # CMake's configure script doesn't recognize `--host`.
+    array set merger_host {i386 {} x86_64 {} ppc {} ppc64 {}}
+
+    platform darwin 8 {
+        configure.ldflags-append -Wl,-framework -Wl,ApplicationServices
     }
 
-}
-
-variant python27 conflicts python34 python35 python36 requires docs \
-    description {Build documentation using Sphinx from Python 2.7} {}
-
-variant python34 conflicts python27 python35 python36 python37 python38 requires docs \
-    description {Build documentation using Sphinx from Python 3.4} {}
-
-variant python35 conflicts python27 python34 python36 python37 python38 requires docs \
-    description {Build documentation using Sphinx from Python 3.5} {}
-
-variant python36 conflicts python27 python34 python35 python37 python38 requires docs \
-    description {Build documentation using Sphinx from Python 3.6} {}
-
-variant python37 conflicts python27 python34 python35 python36 python38 requires docs \
-    description {Build documentation using Sphinx from Python 3.7} {}
-
-variant python38 conflicts python27 python34 python35 python36 python37 requires docs \
-    description {Build documentation using Sphinx from Python 3.8} {}
-
-if {[variant_isset docs]} {
-
-    # default Python is 2.7
-    if {![variant_isset python27] &&
-        ![variant_isset python34] &&
-        ![variant_isset python35] &&
-        ![variant_isset python36] &&
-        ![variant_isset python37] &&
-        ![variant_isset python38]} {
-        default_variants +python27
+    # Leopard's Rosetta has some difficulties configuring the ppc slice
+    platform darwin 9 {
+        global universal_archs_supported
+        if {${build_arch} eq "i386" || ${build_arch} eq "x86_64"} {
+            supported_archs i386 x86_64
+        } elseif {${build_arch} eq "ppc" || ${build_arch} eq "ppc64"} {
+            supported_archs ppc ppc64
+        }
+        set universal_archs_supported ${supported_archs}
     }
 
-    # make sure -python27 is not specified alone
-    if {![variant_isset python27] &&
-        ![variant_isset python34] &&
-        ![variant_isset python35] &&
-        ![variant_isset python36] &&
-        ![variant_isset python37] &&
-        ![variant_isset python38]} {
-        ui_error "\n\nYou must select either the +python27, +python34, +python35, +python36, or +python37 variant when using variant +docs.\n"
-        return -code error "Invalid variant selection"
-    }
-
-    # determine Python-related variables
-    if {[variant_isset python27]} {
-        set PYTHON_VERSION_WITH_DOT "2.7"
-    } elseif {[variant_isset python34]} {
-        set PYTHON_VERSION_WITH_DOT "3.4"
-    } elseif {[variant_isset python35]} {
-        set PYTHON_VERSION_WITH_DOT "3.5"
-    } elseif {[variant_isset python36]} {
-        set PYTHON_VERSION_WITH_DOT "3.6"
-    } elseif {[variant_isset python37]} {
-        set PYTHON_VERSION_WITH_DOT "3.7"
-    } else {
-        set PYTHON_VERSION_WITH_DOT "3.8"
-    }
-    set PYTHON_VERSION_NO_DOT [join [split ${PYTHON_VERSION_WITH_DOT} "."] ""]
+    build.post_args VERBOSE=ON
 
     post-patch {
-        # patch Python Version
-        reinplace "s|__PYTHON_VERSION_WITH_DOT__|${PYTHON_VERSION_WITH_DOT}|g" ${worksrcpath}/macports.cmake
+        # copy cmake init file, ready to be patched below
+        file delete -force ${worksrcpath}/macports.cmake 
+        copy ${filespath}/macports.cmake ${worksrcpath}
+
+        # patch PREFIX
+        reinplace "s|__PREFIX__|${prefix}|g" \
+            ${worksrcpath}/macports.cmake \
+            ${worksrcpath}/Modules/Platform/Darwin.cmake
+
+        # patch FRAMEWORKS
+        reinplace "s|__FRAMEWORKS_DIR__|${frameworks_dir}|g" \
+            ${worksrcpath}/Modules/CMakeFindFrameworks.cmake
+
+        # patch APPLICATIONS_DIR
+        reinplace "s|__APPLICATIONS_DIR__|${applications_dir}|g" \
+            ${worksrcpath}/macports.cmake
+    }
+
+    post-destroot {
+        xinstall -d -m 0755 ${destroot}${prefix}/share/emacs/site-lisp
+        xinstall -m 0644 ${worksrcpath}/Auxiliary/cmake-mode.el \
+            ${destroot}${prefix}/share/emacs/site-lisp
+        foreach type {syntax indent} {
+            xinstall -d -m 0755 ${destroot}${prefix}/share/vim/vimfiles/${type}
+            xinstall -m 0644 -W ${worksrcpath}/Auxiliary/vim/${type} cmake.vim \
+                ${destroot}${prefix}/share/vim/vimfiles/${type}
+        }
+        if ([variant_isset qt5]) {
+            if {[file exists ${destroot}${prefix}/share/doc/cmake/CMake.qch]} {
+                file rename ${destroot}${prefix}/share/doc/cmake/CMake.qch \
+                    ${destroot}${prefix}/share/doc/cmake/CMake-${qch_suffix}.qch
+                file delete -force ${destroot}${prefix}/share/doc/cmake/html
+                xinstall -m 755 -d  ${destroot}${prefix}/share/doc/qch
+                ln -s ../cmake/CMake-${qch_suffix}.qch ${destroot}${prefix}/share/doc/qch
+            }
+        }
+    }
+
+    # All the variants create circular dependencies on 10.6 with libc++,
+    # due to the default compiler needing cmake to build.
+    if {[info exists cmake_bootstrapping]} {
+        set some_variant_disabled 0
+        foreach vname {qt5 docs python35 python36 python37 python38 python39} {
+            if {[variant_isset $vname]} {
+                unset ::variations($vname)
+                set some_variant_disabled 1
+            }
+        }
+        if {$some_variant_disabled} {
+            notes-append "Installing $name with variants would create\
+                circular dependencies, so all variants have been\
+                deselected. You can install again with your desired\
+                variants after the default compiler has been installed."
+        }
+    }
+
+    variant qt5 description {Build Qt GUI using Qt5} {
+        PortGroup qt5 1.0
+#         ## RJVB: this patchfile had mods to build the documentation as a qch file?!
+#         patchfiles-append patch-qt5gui.diff
+        configure.args-append --qt-gui --qt-qmake=${qt_qmake_cmd}
+    }
+
+    if {![variant_isset qt5]} {
+        configure.args-append --no-qt-gui
+    }
+
+    # Supported pythons
+    set python_versions {27 35 36 37 38 39}
+
+    # declare all +python* variants, with conflicts
+    foreach pyver ${python_versions} {
+        # Conflicting python versions
+        set other_python_versions {}
+        foreach other_pyver ${python_versions} {
+            if {${other_pyver} ne ${pyver}} {
+                if {${other_pyver} ni ${other_python_versions}} {
+                    lappend other_python_versions python${other_pyver}
+                }
+            }
+        }
+
+        set python_branch "[string range ${pyver} 0 end-1].[string index ${pyver} end]"
+
+        variant python${pyver} conflicts {*}${other_python_versions} requires docs description "Build documentation using ${python_branch} sphinx" {}
+    }
+
+    # +docs requires one +python* variant
+    if {[variant_isset docs]} {
+
+        # make sure one of the +python* variants is set
+        set python_isset false
+        foreach pyver ${python_versions} {
+            if {!${python_isset}} {
+                set python_isset  [variant_isset python${pyver}]
+            }
+        }
+        # set default +python* variant if none were already selected
+        if {!${python_isset}} {
+            default_variants +python39
+        }
+
+        set python_isset false
+        foreach pyver ${python_versions} {
+            if {!${python_isset}} {
+                set python_isset [variant_isset python${pyver}]
+                set PYTHON_VERSION_NO_DOT ${pyver}
+                set python_branch "[string range ${pyver} 0 end-1].[string index ${pyver} end]"
+            }
+# "base" already has a variant conflict mechanism
+#              elseif {[variant_isset python${pyver}]} {
+#                 ui_error "\n\nDetected multiple +python* variants: +python${PYTHON_VERSION_NO_DOT} and +python${pyver}.\nCannot have multiple +python* variants set.\n"
+#                 return -code error "Invalid variant selection"
+#             }
+        }
+
+        if {!${python_isset}} {
+            ui_error "\n\nYou must select either the +python35, +python36, +python37, +python38 or +python39 variant when using variant +docs.\n"
+            return -code error "Invalid variant selection"
+        }
+
+        set PYTHON_VERSION_WITH_DOT ${python_branch}
+    }
+
+    if {[variant_isset qt5]} {
+        variant docs requires qt5 description {Build documentation: Qt help file and manpages} {}
+    } else {
+        variant docs description {Build documentation: HTML and manpages} {}
+    }
+    if {[variant_isset docs]} {
+        ## RJVB
+        patchfiles-append patch-use-classic-theme.diff
+        configure.args-append \
+            --mandir=share/man \
+            --sphinx-man \
+            --sphinx-build=${prefix}/bin/sphinx-build-${PYTHON_VERSION_WITH_DOT}
+        if {[variant_isset qt5]} {
+            configure.args-append \
+                --sphinx-qthelp
+        } else {
+            configure.args-append \
+                --sphinx-html
+        }
+
+        depends_build-append \
+            port:py${PYTHON_VERSION_NO_DOT}-sphinx
+
+        # these are required for Py3X, but not Py27
+        if {${PYTHON_VERSION_NO_DOT} ne "27"} {
+            depends_build-append \
+                port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-applehelp \
+                port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-devhelp \
+                port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-htmlhelp \
+                port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-jsmath \
+                port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-qthelp \
+                port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-serializinghtml \
+                port:py${PYTHON_VERSION_NO_DOT}-sphinxcontrib-websupport
+        }
+        post-patch {
+            reinplace "s|__PYTHON_VERSION_WITH_DOT__|${PYTHON_VERSION_WITH_DOT}|g" ${worksrcpath}/macports.cmake
+        }
     }
 }
 
