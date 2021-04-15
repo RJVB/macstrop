@@ -58,7 +58,8 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10
         || ([catch {registry_active "qt5-kde"}] == 0 || [catch {registry_active "qt5-kde-devel"}] == 0) } {
     set qt5PGname "qt5-kde"
 } elseif {[file exists ${prefix}/libexec/qt5/plugins/platforms/libqcocoa.dylib]
-        && [file type ${prefix}/libexec/qt5/plugins] eq "directory"} {
+        && [file type ${prefix}/libexec/qt5/plugins] eq "directory"
+        && ![variant_isset qt5kde]} {
     # qt5-qtbase is installed: Qt5 has been installed through a standard port:qt5 port
     # (checking if "plugins" is a directory is probably redundant)
     # We're already in the correct PortGroup

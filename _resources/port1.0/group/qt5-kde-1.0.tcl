@@ -95,10 +95,10 @@ if {[file exists ${prefix}/include/qt5/QtCore/QtCore] || ${os.major} == 10
     PortGroup           qt5 1.0
     if {[variant_isset qt5kde] || ([info exists qt5.prefer_kde] && [info exists building_qt5])} {
         if {[variant_isset qt5kde]} {
-            ui_error "You cannot install ports with the +qt5kde variant when port:qt5 or one of its subports installed!"
+            ui_error "You cannot install ports with the +qt5kde variant when port:qt5 or one of its subports active!"
         } else {
             # user tries to install say qt5-kde-qtwebkit against qt5-qtbase etc.
-            ui_error "You cannot install a Qt5-KDE port with port:qt5 or one of its subports installed!"
+            ui_error "You cannot install a Qt5-KDE port with port:qt5 or one of its subports active!"
         }
         # print the error but only raise it when attempting to fetch or configure the port.
         pre-fetch {
