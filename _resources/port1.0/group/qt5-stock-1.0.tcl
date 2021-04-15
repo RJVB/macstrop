@@ -6,8 +6,9 @@
 # PortGroup     qt5-stock 1.0
 
 global available_qt_versions
+#     qt514 {qt5-qtbase   5.14}
 array set available_qt_versions {
-    qt5   {qt5-qtbase   5.14}
+    qt5   {qt5-qtbase   5.15}
     qt513 {qt513-qtbase 5.13}
     qt511 {qt511-qtbase 5.11}
     qt59  {qt59-qtbase  5.9}
@@ -687,10 +688,10 @@ switch -exact ${qt5PGname} {
         # default situation: we're already in the correct PortGroup, unless:
         if {[variant_isset qt5kde] || ([info exists qt5.prefer_kde] && [info exists building_qt5])} {
             if {[variant_isset qt5kde]} {
-                ui_error "You cannot install ports with the +qt5kde variant when port:qt5 or one of its subports installed!"
+                ui_error "You cannot install ports with the +qt5kde variant when port:qt5 or one of its subports active!"
             } else {
                 # user tries to install say qt5-kde-qtwebkit against qt5-qtbase etc.
-                ui_error "You cannot install a Qt5-KDE port with port:qt5 or one of its subports installed!"
+                ui_error "You cannot install a Qt5-KDE port with port:qt5 or one of its subports active!"
             }
             # print the error but only raise it when attempting to fetch or configure the port.
             pre-fetch {
@@ -853,6 +854,7 @@ options qt5.min_version
 default qt5.min_version 5.0
 
 # use PKGCONFIG for Qt discovery in configure scripts
+depends_build-delete    port:pkgconfig
 depends_build-append    port:pkgconfig
 
 # standard qmake spec
@@ -864,17 +866,16 @@ global qt_qmake_spec_32
 global qt_qmake_spec_64
 compiler.blacklist-append *gcc*
 
-if {[vercmp ${qt5.version} 5.10]>=0} {
+if {[vercmp ${qt5.version} 5.15]>=0} {
+    # only qt5 5.15.x has so far been built as arm64 on MacPorts
+    default supported_archs "x86_64 arm64"
+} elseif {[vercmp ${qt5.version} 5.10]>=0} {
     # see https://bugreports.qt.io/browse/QTBUG-58401
     default supported_archs x86_64
 } else {
     # no PPC support in Qt 5
     #     see http://lists.qt-project.org/pipermail/interest/2012-December/005038.html
-    if {[vercmp [macports_version] 2.5.3] <= 0} {
-        default supported_archs {"i386 x86_64"}
-    } else {
-        default supported_archs "i386 x86_64"
-    }
+    default supported_archs "i386 x86_64"
 }
 
 ###RJVB###
@@ -894,28 +895,13 @@ if {[vercmp ${qt5.version} 5.9]>=0} {
     #     and https://bugreports.qt.io/browse/QTBUG-24952
     # override universal_setup found in portutil.tcl so it uses muniversal PortGroup
     # see https://trac.macports.org/ticket/51643
-    proc universal_setup {args} {
-        if {[variant_exists universal]} {
-            ui_debug "universal variant already exists, so not adding the default one"
-        } elseif {[exists universal_variant] && ![option universal_variant]} {
-            ui_debug "universal_variant is false, so not adding the default universal variant"
-        } elseif {[exists use_xmkmf] && [option use_xmkmf]} {
-            ui_debug "using xmkmf, so not adding the default universal variant"
-        } elseif {![exists os.universal_supported] || ![option os.universal_supported]} {
-            ui_debug "OS doesn't support universal builds, so not adding the default universal variant"
-        } elseif {[llength [option supported_archs]] == 1} {
-            ui_debug "only one arch supported, so not adding the default universal variant"
-        } else {
-            ui_debug "adding universal variant via PortGroup muniversal"
-            uplevel "PortGroup muniversal 1.0"
-            uplevel "default universal_archs_supported {\"i386 x86_64\"}"
-        }
-    }
+    PortGroup muniversal 1.0
+    default universal_archs_supported {i386 x86_64}
 
     # standard destroot environment
     pre-destroot {
         global merger_destroot_env
-        if { ![option universal_variant] || ![variant_isset universal] } {
+        if {![variant_exists universal]  || ![variant_isset universal]} {
             destroot.env-append \
                 INSTALL_ROOT=${destroot}
         } else {
@@ -970,7 +956,7 @@ default qt_qmake_spec {[qt5pg::get_default_spec]}
 namespace eval qt5pg {
     proc get_default_spec {} {
         global configure.build_arch qt_qmake_spec_32 qt_qmake_spec_64
-        if { ![option universal_variant] || ![variant_isset universal] } {
+        if {![variant_exists universal]  || ![variant_isset universal]} {
             if { ${configure.build_arch} eq "i386" } {
                 return ${qt_qmake_spec_32}
             } else {
