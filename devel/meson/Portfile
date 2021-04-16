@@ -4,36 +4,38 @@ PortSystem          1.0
 PortGroup           python 1.0
 PortGroup           github 1.0
 
-github.setup        mesonbuild meson 0.54.2 ; revision 1
+github.setup        mesonbuild meson 0.57.1 ; revision 1
+
 github.tarball_from releases
 license             Apache-2
 categories          devel python
-maintainers         {soap.za.net:git @SoapZA} openmaintainer
+maintainers         {soap.za.net:git @SoapZA} {kencu @kencu} openmaintainer
 platforms           darwin
 supported_archs     noarch
 installs_libs       no
-homepage            https://mesonbuild.com/
+homepage            https://mesonbuild.com
 
-description         Meson - a high productivity build system
-long_description    Meson  is  a  build system designed to optimize programmer productivity. \
+description         Meson - A high productivity build system
+long_description    Meson is a build system designed to optimise programmer productivity. \
                     It aims to do this by providing simple, out-of-the-box support for modern \
                     software development tools and practices, such as unit tests, coverage reports, \
-                    Valgrind,  CCache  and  the like. It is both extremely fast, and, even more importantly, \
+                    Valgrind, CCache and the like. It is both extremely fast, and, even more importantly, \
                     as user friendly as possible.
 
-checksums           rmd160  925f77346b04d85ca34d3cf37fc2d1125b223408 \
-                    sha256  a7716eeae8f8dff002e4147642589ab6496ff839e4376a5aed761f83c1fa0455
-#                     size    1691270
+checksums           rmd160  741aff38cfab30963efc044f47216fe688514760 \
+                    sha256  72e1c782ba9bda204f4a1ed57f98d027d7b6eb9414c723eebbd6ec7f1955c8a6
+#                     size    1849222
 
 # as of version 0.45.0,requires python 3.5 or better
 
-set python_versions     {35 36 37 38}
-python.default_version  35
+# python39 has an issue on 10.5 and less and py39-setuptools cannot be installed
+if {${os.platform} eq "darwin" && ${os.major} <= 9} {
+    set python_versions {35 36 37 38}
+} else {
+    set python_versions {35 36 37 38 39}
+}
+python.default_version  38
 python.link_binaries    no
-
-patchfiles-append       patch-clike.diff
-# https://github.com/Homebrew/linuxbrew-core/pull/16054
-patchfiles-append       patch-install_rpath.diff
 
 set variant_set         no
 foreach v ${python_versions} {
@@ -54,14 +56,59 @@ if {![tbool variant_set]} {
     default_variants    +python${python.default_version}
 }
 
+# https://github.com/Homebrew/linuxbrew-core/pull/16054
+patchfiles-append       patch-install_rpath.diff
+
+depends_build-append \
+                    port:py${python.version}-setuptools
+
+depends_run-append \
+                    port:py${python.version}-setuptools \
+                    path:bin/ninja:ninja
+
 # requires a newer install_name_tool on older systems
 if {${os.platform} eq "darwin" && ${os.major} <= 9} {
     depends_run-append \
-                        port:cctools
-
+                    port:cctools
 }
 
-depends_run-append      bin:ninja:ninja
+if {${os.platform} eq "darwin" && ${os.major} <= 10} {
+    patchfiles-append \
+                    remove-Wl,-no_weak_imports.patch
+}
+
+# https://github.com/mesonbuild/meson/issues/6187
+patchfiles-append   patch-meson-32bit-apple.diff
+
+# disable warning not accepted by older clang versions
+# this manifests currently on systems up to 10.9
+# https://github.com/mesonbuild/meson/issues/8307
+if {${os.platform} eq "darwin" && ${os.major} <= 13} {
+    patchfiles-append   patch-meson-clang-unknown-optimization-error.diff
+}
+
+platform darwin 8 {
+
+    # this meson is modified for systems without @rpath support
+    # and is therefore fragile. Keep pegged, and update occasionally
+
+    github.setup        mesonbuild meson 0.55.3 ; revision 1
+    checksums           rmd160  b1e7f12184a7a61ae8bfa7ed210af8020d531009 \
+                        sha256  6bed2a25a128bbabe97cf40f63165ebe800e4fcb46db8ab7ef5c2b5789f092a5
+#                         size    1740465
+
+    # https://github.com/mesonbuild/meson/pull/7871
+    patchfiles-append   patch-meson-powermacintosh.diff
+
+    patchfiles-append patch-meson55-tiger-no-rpath-fix.diff
+}
+
+# add a search path for crossfiles in our prefix
+patchfiles-append   patch-meson-search-prefix-for-cross-files.diff
+post-patch {
+    reinplace "s|@@PREFIX@@|${prefix}|g" ${worksrcpath}/data/shell-completions/bash/meson \
+                                         ${worksrcpath}/mesonbuild/coredata.py
+}
 
 post-destroot {
     set python_prefix ${frameworks_dir}/Python.framework/Versions/${python.branch}
@@ -69,13 +116,43 @@ post-destroot {
         ln -s  ${python_prefix}/bin/${bname} ${destroot}${prefix}/bin/${bname}
         ln -s  ${python_prefix}/share/man/man1/${bname}.1 ${destroot}${prefix}/share/man/man1
     }
+
+    # install our MacPorts cross files
+    xinstall -m 755 -d ${destroot}${prefix}/share/meson/
+    copy ${filespath}/cross ${destroot}${prefix}/share/meson/
+
+    fs-traverse f ${destroot}${prefix}/share/meson/cross/ {
+        if {![file isdirectory ${f}]} {
+            reinplace "s|@@PREFIX@@|${prefix}|g" ${f}
+        }
+    }
+
+    # install shell completion files
+    set bash_completion_dir ${prefix}/share/bash-completion/completions
+    xinstall -d ${destroot}${bash_completion_dir}
+    xinstall -m 644 ${worksrcpath}/data/shell-completions/bash/meson ${destroot}${bash_completion_dir}
+
+    set zsh_completion_dir ${prefix}/share/zsh/site-functions
+    xinstall -d ${destroot}${zsh_completion_dir}
+    xinstall -m 644 ${worksrcpath}/data/shell-completions/zsh/_meson ${destroot}${zsh_completion_dir}
+
+    # install editor syntax files
+    set vim_dir ${prefix}/share/vim/vimfiles
+    foreach d {ftdetect ftplugin syntax indent} {
+        xinstall -d ${destroot}${vim_dir}/${d}
+        xinstall -m 644 ${worksrcpath}/data/syntax-highlighting/vim/${d}/meson.vim ${destroot}${vim_dir}/${d}
+    }
+
+    set emacs_lispdir ${prefix}/share/emacs/site-lisp
+    xinstall -d ${destroot}${emacs_lispdir}
+    xinstall -m 644 ${worksrcpath}/data/syntax-highlighting/emacs/meson.el ${destroot}${emacs_lispdir}
 }
 
 # the following block avoids requiring users to 'sudo port select python3 python37'
-# doing a file test for ${prefix}/bin/python3 and requiring this 
+# doing a file test for ${prefix}/bin/python3 and requiring this
 # to be honest would have been much simpler, but not the "MacPorts way"
 pre-test {
-    reinplace "s|/usr/bin/env python3|/usr/bin/env python${python.branch}|" \
+    reinplace "s|/usr/bin/env python3$|${python.bin}|" \
         ${worksrcpath}/run_tests.py \
         ${worksrcpath}/run_cross_test.py \
         ${worksrcpath}/run_meson_command_tests.py \
@@ -85,26 +162,20 @@ pre-test {
     set testpath "${worksrcpath}/test\\ cases"
     fs-traverse f ${testpath} {
         if { [string match *.py ${f}] } {
-            reinplace "s|/usr/bin/env python3|/usr/bin/env python${python.branch}|" ${f}
+            reinplace "s|/usr/bin/env python3$|${python.bin}|" ${f}
         }
     }
 }
 
 test.run            yes
-if {[vercmp [macports_version] 2.5.99] >= 0} {
 test.env            CXX=${configure.cxx} \
                     "CXXFLAGS=${configure.cxxflags} [get_canonical_archflags cxx]" \
                     CC=${configure.cc} \
                     "CFLAGS=${configure.cflags} [get_canonical_archflags cc]" \
                     "LDFLAGS=${configure.ldflags} [get_canonical_archflags ld]" \
                     PREFIX=${prefix}
-} else {
-test.env            CXX="${configure.cxx}" \
-                    CXXFLAGS="${configure.cxxflags} [get_canonical_archflags cxx]" \
-                    CC="${configure.cc}" \
-                    CFLAGS="${configure.cflags} [get_canonical_archflags cc]" \
-                    LDFLAGS="${configure.ldflags}  [get_canonical_archflags ld]" \
-                    PREFIX=${prefix}
-}
 test.cmd            ./run_tests.py
 test.target
+
+# restrict livecheck to release versions only, no pre-releases
+github.livecheck.regex  {(\d+(?:\.\d+)*)}
