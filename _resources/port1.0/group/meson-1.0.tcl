@@ -52,6 +52,7 @@ default build.target        ""
 # remove DESTDIR= from arguments, but rather take it from environmental variable
 destroot.env-append         DESTDIR=${destroot}
 default destroot.post_args  ""
+destroot.pre_args-prepend   -v
 
 # meson checks LDFLAGS during install to respect rpaths set via that variable
 # for safety, add LDFLAGS to both build and destroot environments
