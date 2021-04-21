@@ -5,7 +5,7 @@ PortGroup           compiler_blacklist_versions 1.0
 PortGroup           muniversal 1.0
 PortGroup           LTO 1.0
 PortGroup           compress_workdir 1.0
-# PortGroup           meson 1.0
+PortGroup           meson 1.0
 
 platform darwin {
     # May need clock_gettime()
@@ -15,7 +15,7 @@ platform darwin {
 
 name                mesa
 epoch               1
-version             19.0.8 ; revision 1
+version             19.0.8 ; revision 2
 categories          x11 graphics
 maintainers         {jeremyhu @jeremyhu} openmaintainer
 license             MIT
@@ -67,6 +67,10 @@ if {[string match *meson* ${configure.cmd}]} {
                     -Dshared-llvm=false \
                     -Dgallium-drivers=
 } else {
+#     depends_build-append \
+#                     port:slibtool
+#     depends_skip_archcheck-append \
+#                     slibtool
     post-patch {
         system -W ${worksrcpath} "autoreconf -fvi"
     }
@@ -192,31 +196,30 @@ if {![variant_isset python27]} {
     default_variants-append +python27
 }
 
-variant egl description {enable EGL support} {}
-if {[variant_isset egl]} {
-    depends_lib-append      port:xorg-libxshmfence
-    if {[string match *meson* ${configure.cmd}]} {
-        configure.args-replace \
-                           -Degl=false \
-                           -Degl=true
-        configure.args-replace \
+platform darwin {
+    variant egl description {enable EGL support} {}
+    if {[variant_isset egl]} {
+        depends_lib-append  port:xorg-libxshmfence
+        if {[string match *meson* ${configure.cmd}]} {
+            configure.args-replace \
+                            -Degl=false \
+                            -Degl=true
+            configure.args-replace \
                             -Dgallium-drivers= \
                             -Dgallium-drivers=swrast
-    } else {
-        configure.args-replace \
+        } else {
+            configure.args-replace \
                             --disable-egl \
                             --enable-egl
-        configure.args-replace \
+            configure.args-replace \
                             --with-gallium-drivers= \
                             --with-gallium-drivers=swrast
+        }
+        patchfiles-append   patch-support-egl_dri2.diff
     }
-    patchfiles-append       patch-support-egl_dri2.diff
-#     post-patch {
-#         reinplace "s|@PREFIX@|${prefix}|g" ${worksrcpath}/src/egl/drivers/dri2/egl_dri2.c
-#     }
-}
 
     variant llvm64bit description {The +llvm variants are effective for the 64bit components of universal builds only} {}
+}
 
     set lldversions {3.8 3.9 4.0 5.0 6.0 8.0 9.0}
     set llvariant ""
@@ -253,20 +256,25 @@ if {[variant_isset egl]} {
                     port:llvm-${ldv} port:clang-${ldv}
                 depends_run-append \
                     port:llvm-${ldv} port:clang-${ldv}
-                depends_skip_archcheck \
+                depends_skip_archcheck-append \
                     llvm-${ldv} clang-${ldv}
             }
             if {[string match *meson* ${configure.cmd}]} {
                 if {[variant_isset llvm64bit]} {
-                    ui_warn "+llvm64bit is to be implemented and currently ignored"
+                    lappend merger_configure_args(x86_64) \
+                        -Dllvm=true
+                    lappend merger_configure_env(x86_64) \
+                        PATH=${prefix}/libexec/llvm-${ldv}/bin:$env(PATH)
+                    lappend merger_configure_args(arm64) \
+                        -Dllvm=true
+                    lappend merger_configure_env(arm64) \
+                        PATH=${prefix}/libexec/llvm-${ldv}/bin:$env(PATH)
+                } else {
+                    configure.args-append \
+                        -Dllvm=true
+                    configure.env-append \
+                        PATH=${prefix}/libexec/llvm-${ldv}/bin:$env(PATH)
                 }
-                configure.args-append \
-                    -Dllvm=true
-                configure.env-append \
-                    PATH=${prefix}/libexec/llvm-${ldv}/bin:$env(PATH)
-#                 configure.args-replace \
-#                     -Dgallium-drivers= \
-#                     -Dgallium-drivers=swrast
             } else {
                 if {[variant_isset llvm64bit]} {
                     lappend merger_configure_args(x86_64) \
@@ -280,9 +288,6 @@ if {[variant_isset egl]} {
                         --enable-llvm \
                         --with-llvm-prefix=${prefix}/libexec/llvm-${ldv}
                 }
-#                 configure.args-replace \
-#                     --with-gallium-drivers= \
-#                     --with-gallium-drivers=swrast
             }
         }
     }
@@ -307,17 +312,51 @@ default_variants-append +osmesa
 #}
 #default_variants-append +openvg
 
+# the destroot env. should also contain these 2 (at least for building through meson):
+destroot.env-append "AR=${configure.ar}"
+destroot.env-append "NM=${configure.nm}"
+
 if {[string match *meson* ${configure.cmd}]} {
     post-destroot {
-        # fix some an rpath issue
-        system -W ${destroot}${prefix} "install_name_tool -id ${prefix}/lib/dri/swrast_dri.so lib/dri/swrast_dri.so"
-        system -W ${destroot}${prefix} "install_name_tool -change @rpath/libglapi.0.dylib ${prefix}/lib/libglapi.0.dylib lib/dri/swrast_dri.so"
+        # align the lib versioning with the autoconf build (the changes making this possible are in patch-meson.diff)
+        # not required if you accept to require a revbump in all dependents
+        file rename ${destroot}${prefix}/lib/libGL.4.dylib ${destroot}${prefix}/lib/libGL.1.dylib
+        file delete -force  ${destroot}${prefix}/lib/libGL.dylib
+        ln -s libGL.1.dylib  ${destroot}${prefix}/lib/libGL.dylib
+        if {[variant_isset egl]} {
+            file rename ${destroot}${prefix}/lib/libEGL.2.dylib ${destroot}${prefix}/lib/libEGL.1.dylib
+            file delete -force  ${destroot}${prefix}/lib/libEGL.dylib
+            ln -s libEGL.1.dylib  ${destroot}${prefix}/lib/libEGL.dylib
+        }
+
+        # fix some rpath & ID issues
+        set libFixees {lib/dri/swrast_dri.so lib/libGL.1.dylib}
+        if {[variant_isset egl]} {
+            lappend libFixees lib/libEGL.1.dylib lib/libGLESv1_CM.1.dylib lib/libGLESv2.2.dylib
+        }
+        if {[variant_isset osmesa]} {
+            lappend libFixees lib/libOSMesa.8.dylib
+        }
+        foreach L ${libFixees} {
+            system -W ${destroot}${prefix} "install_name_tool -change @rpath/libglapi.0.dylib ${prefix}/lib/libglapi.0.dylib ${L}"
+        }
+        # also fix the ID of lib/libglapi.dylib
+        lappend libFixees lib/libglapi.0.dylib
+        foreach L ${libFixees} {
+            system -W ${destroot}${prefix} "install_name_tool -id ${prefix}/${L} ${L}"
+        }
     }
 }
 
 if {[string match *meson* ${configure.cmd}]} {
     build.post_args     -k 0
 } else {
+#     pre-build {
+#         build.env-append "MAKEFLAGS=LIBTOOL=rlibtool"
+#         build.env-append "SLIBTOOL_AR=${configure.ar}"
+#         build.env-append "SLIBTOOL_NM=${configure.nm}"
+#         build.env-append "SLIBTOOL_RANLIB=${configure.ranlib}"
+#     }
     build.post_args     -k
 }
 
