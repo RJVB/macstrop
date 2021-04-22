@@ -175,6 +175,14 @@ if {[info exists LTO.custom_binaries]} {
                 "RANLIB=${configure.ranlib}"
         }
     }
+    pre-build {
+        if {[option LTO.use_archive_helpers]} {
+            build.env-append \
+                "AR=${configure.ar}" \
+                "NM=${configure.nm}" \
+                "RANLIB=${configure.ranlib}"
+        }
+    }
 } else {
     # check if port:cctools is installed; if so, use its ar/nm/ranlib.
     # We could add a depends_build on port:cctools, but these commands will
