@@ -22,6 +22,11 @@ default source_dir          {${worksrcpath}}
 options meson.build_type
 default meson.build_type    custom
 
+options meson.debugopts
+# Set meson.debugopts to the desired compiler debug options (or an empty string) if you want to
+# use custom options with the +debug variant.
+default meson.debugopts     {[meson::debugopts]}
+
 namespace eval meson {
     proc build.dir {} {
         return "[option build_dir]"
@@ -70,6 +75,16 @@ namespace eval meson {
             return "${configure.dir} ${build_dir}-${muniversal.current_arch} --cross-file=${muniversal.current_arch}-darwin"
         } else {
             return "${configure.dir} ${build_dir}"
+        }
+    }
+
+    proc debugopts {} {
+        global configure.cxx configure.cc
+        # get most if not all possible debug info
+        if {[string match *clang* ${configure.cxx}] || [string match *clang* ${configure.cc}]} {
+            return "-g -fno-limit-debug-info -fstandalone-debug"
+        } else {
+            return "-g -DDEBUG"
         }
     }
 }
@@ -160,5 +175,32 @@ proc meson.save_configure_cmd {{save_log_too ""}} {
             close ${fd}
             unset fd
         }
+    }
+}
+
+variant debug description "Enable debug binaries" {
+    default meson.build_type            debug
+    pre-configure {
+        configure.cflags-replace         -O2 -O0
+        configure.cxxflags-replace       -O2 -O0
+        configure.objcflags-replace      -O2 -O0
+        configure.objcxxflags-replace    -O2 -O0
+        configure.ldflags-replace        -O2 -O0
+        configure.cflags-replace         -Os -O0
+        configure.cxxflags-replace       -Os -O0
+        configure.objcflags-replace      -Os -O0
+        configure.objcxxflags-replace    -Os -O0
+        configure.ldflags-replace        -Os -O0
+
+        if {${meson.debugopts} ne [meson::debugopts]} {
+            ui_debug "+debug variant uses custom meson.debugopts=\"${meson.debugopts}\""
+        } else {
+            ui_debug "+debug variant uses default meson.debugopts=\"${meson.debugopts}\""
+        }
+        configure.cflags-append         ${meson.debugopts}
+        configure.cxxflags-append       ${meson.debugopts}
+        configure.objcflags-append      ${meson.debugopts}
+        configure.objcxxflags-append    ${meson.debugopts}
+        configure.ldflags-append        ${meson.debugopts}
     }
 }
