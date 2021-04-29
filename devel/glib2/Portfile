@@ -2,6 +2,7 @@
 
 PortSystem                  1.0
 PortGroup                   compiler_blacklist_versions 1.0
+PortGroup                   clang_dependency 1.0
 PortGroup                   locale_select 1.0
 PortGroup                   LTO 1.0
 PortGroup                   compress_workdir 1.0
@@ -11,10 +12,11 @@ PortGroup                   compress_workdir 1.0
 name                        glib2
 conflicts                   glib2-devel
 set my_name                 glib
-version                     2.58.1
-checksums                   rmd160  7951a41129225b9d38d7df72069f73560a9e86a0 \
-                            sha256  97d6a9d926b6aa3dfaadad3077cfb43eec74432ab455dff14250c769d526d7d6
-#                             size    4906444
+version                     2.58.3
+revision                    0
+checksums                   rmd160  3fafbb1e6288ff1e8146ecd0a14547ba779406e5 \
+                            sha256  8f43c31767e88a25da72b52a40f3301fefc49a665b56dc10ee7cc9565cbe7481
+#                             size    4863648
 
 set branch                  [join [lrange [split ${version} .] 0 1] .]
 categories                  devel
@@ -38,13 +40,14 @@ master_sites                gnome:sources/${my_name}/${branch}/
 patchfiles                  libintl.patch \
                             patch-glib-gmain.c.diff \
                             patch-glib_gunicollate.c.diff \
-                            patch-linux-gio_xdgmime_xdgmime.c.diff \
+                            patch-gio_xdgmime_xdgmime.c.diff \
                             patch-gio_gdbusprivate.c.diff \
                             patch-get-launchd-dbus-session-address.diff \
                             patch-gmodule-gmodule-dl.c.diff \
                             patch-configure-switch-for-gappinfo-impl.diff \
-                            POSIX-spawn.patch \
                             universal.patch
+# try to avoid aborting when a gsettings key isn't found
+patchfiles-append           patch-gsettings-tweak.diff
 
 depends_build               port:autoconf \
                             port:automake \
@@ -57,10 +60,6 @@ depends_lib                 port:gettext \
                             port:libiconv \
                             port:pcre \
                             port:zlib
-
-if {![file exists ${worksrcpath}/configure]} {
-    configure.cmd           ./autogen.sh
-}
 
 if {[vercmp ${macosx_deployment_target} 10.9] < 0} {
     # GLib-CRITICAL **: attempting to free a locked GVariant instance.  This should never happen.
@@ -98,16 +97,21 @@ if {${os.platform} ne "darwin"} {
 configure.perl              /usr/bin/perl
 configure.python            /usr/bin/python
 configure.env-append        PERL_PATH=${configure.perl}
+build.env-append            "CC=${configure.cc}"
+build.env-append            "CXX=${configure.cxx}"
 
 post-patch {
-    reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}|g" gio/gdbusprivate.c gio/xdgmime/xdgmime.c glib/gi18n-lib.h glib/gi18n.h
+    reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}|g" gio/gdbusprivate.c gio/xdgmime/xdgmime.c glib/gi18n-lib.h glib/gi18n.h gio/gdbusaddress.c
     reinplace "s|data_dirs = \"/usr|data_dirs = \"${prefix}/share:/usr|g" ${worksrcpath}/glib/gutils.c
     reinplace "s|path = \"/bin|path = \"${prefix}/bin:/bin|g" ${worksrcpath}/glib/gutils.c ${worksrcpath}/glib/gspawn.c
-    reinplace "s|#! */usr/bin/env python|#!${configure.python}|g" ${worksrcpath}/glib/gtester-report
+    reinplace "s|#! */usr/bin/env @PYTHON@|#!${configure.python}|g" ${worksrcpath}/glib/gtester-report.in
     reinplace "s|-Werror=missing-prototypes||" ${worksrcpath}/configure.ac
+
+    system -W ${worksrcpath} "env NOCONFIGURE=1 ./autogen.sh"
 }
 
 post-configure {
+    # make config.h compatible with a universal build:
     system "ed - ${worksrcpath}/config.h < ${filespath}/config.h.ed"
     # required under some circumstances?!
     reinplace "s|global_symbol_pipe=\"\"|global_symbol_pipe=\"cat\"|g" ${worksrcpath}/libtool
@@ -125,6 +129,20 @@ post-destroot {
     xinstall -d ${destroot}${docdir}
     xinstall -m 0644 -W ${worksrcpath} AUTHORS COPYING HACKING NEWS README.md \
         ${destroot}${docdir}
+    if {![file exists ${destroot}${prefix}/include/gio-unix-2.0/gio/gdesktopappinfo.h]} {
+        xinstall -m 644 ${worksrcpath}/gio/gdesktopappinfo.h ${destroot}${prefix}/include/gio-unix-2.0/gio/gdesktopappinfo.h
+    }
+}
+
+post-activate {
+    if {[file exists /usr/share/glib-2.0/schemas]} {
+        if {[catch {system "${prefix}/bin/glib-compile-schemas /usr/share/glib-2.0/schemas"} result]} {
+            ui_warning "glib-compile-schemas failed on /usr/share/glib-2.0/schemas: ${result}"
+        }
+    }
+    if {[catch {system "${prefix}/bin/glib-compile-schemas ${prefix}/share/glib-2.0/schemas"} result]} {
+        ui_warning "glib-compile-schemas failed on ${prefix}/share/glib-2.0/schemas: ${result}"
+    }
 }
 
 platform darwin {
