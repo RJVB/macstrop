@@ -58,6 +58,22 @@ if {![info exists LTO.allow_ThinLTO]} {
 # We should ascertain that configure.{ar,nm,ranlib} be full, absolute paths!
 # NB
 
+platform darwin {
+    # the Mac linker will complain without explicit LTO cache directory
+    # only applies to lto=thin mode but won't hurt with lto=full.
+    #
+    # For ports with use_configure=no, Portfiles need to call the function
+    # in an appropriate location where compiler and build.dir are set
+    # and before they inject ${configure.ldflags} where and how that's required.
+    proc LTO.set_lto_cache {} {
+        global configure.compiler configure.ldflags build.dir
+        if {[variant_isset LTO] && ${configure.compiler} ne "clang"} {
+            xinstall -m 755 -d ${build.dir}/.lto_cache
+            configure.ldflags-append    -Wl,-cache_path_lto,${build.dir}/.lto_cache
+        }
+    }
+}
+
 # out-of-line implementation so changes are made *now*.
 # Qt5 has its own mechanism to set LTO flags so don't do anything
 # if we end up being loaded for a build of Qt5 itself.
@@ -127,13 +143,8 @@ if {[variant_isset LTO] && ![info exists building_qt5]} {
             set merger_arch_flag            yes
         }
         platform darwin {
-            # the Mac linker will complain without explicit LTO cache directory
-            # only applies to lto=thin mode but won't hurt with lto=full.
             pre-configure {
-                if {${configure.compiler} ne "clang"} {
-                    xinstall -m 755 -d ${build.dir}/.lto_cache
-                    configure.ldflags-append    -Wl,-cache_path_lto,${build.dir}/.lto_cache
-                }
+                LTO.set_lto_cache
             }
         }
     }
