@@ -17,6 +17,7 @@ proc printUsage {} {
     puts "  -h    This help"
     puts "  -d    some debug output"
     puts "  -m    list files that will go missing (present in the active named port, not in the version-to-be-installed)"
+    puts "  -n    list files that are newer (can be combined with -v)"
     puts "  -q    quiet mode"
     puts "  -v    list new files (inVerse mode)"
     puts "  -V    show version and MacPorts version being used"
@@ -93,6 +94,7 @@ extend string {
 set macportsTclPath /Library/Tcl
 set inverse 0
 set missing 0
+set newer 0
 set showVersion 0
 set _WD_port {}
 
@@ -124,10 +126,18 @@ while {[string index [lindex $::argv 0] 0] == "-" } {
             set ::argv [lrange $::argv 1 end]
         }
         m {
-            if {!${inverse}} {
+            if {!${inverse} && !${newer}} {
                  set missing 1
             } else {
-                puts "-m and -v are mutually exclusive"
+                puts "-m is mutually exclusive with -n and -v"
+                exit 2
+            }
+        }
+        n {
+            if {!${missing}} {
+                 set newer 1
+            } else {
+                puts "-m, -n and -v are mutually exclusive"
                 exit 2
             }
         }
@@ -339,7 +349,9 @@ for {set i 0} {${i} < ${argc}} {incr i} {
             } else {
                 set InstalledDupsList {}
                 set DestrootDupsList {}
-                if {${inverse}} {
+                if {${newer}} {
+                    ui_debug "Checking [llength ${FILES}] files for newer and new items"
+                } elseif {${inverse}} {
                     ui_debug "Checking [llength ${FILES}] files for new, not-yet-installed items"
                 } else {
                     ui_debug "Checking [llength ${FILES}] files for already installed copies"
@@ -347,7 +359,11 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                 foreach f $FILES {
                     set g [string range ${f} 1 end]
                     if {[file exists "${g}"]} {
-                        if {!${inverse}} {
+                        if {${newer}} {
+                            if {[file mtime ${f}] > [file mtime ${g}]} {
+                                message ${g} "will be updated"
+                            }
+                        } elseif {!${inverse}} {
                             set InstalledDupsList [lappend InstalledDupsList "${g}"]
                             set DestrootDupsList [lappend DestrootDupsList "${f}"]
                         }
