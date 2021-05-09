@@ -1,0 +1,205 @@
+diff -u config_files.c config_files.c
+--- config_files.c	2013-05-18 07:29:13.000000000 +0200
++++ config_files.c	2021-05-09 13:12:45.738455433 +0200
+@@ -64,6 +64,7 @@
+   char *channel;
+   char *buffersize;
+   char *device;
++  char *pasource;
+   char *public;
+   char *verbosity;
+ 
+@@ -94,9 +95,9 @@
+   channel = gtk_combo_box_text_get_active_text  ( GTK_COMBO_BOX_TEXT(combo_channel));
+   buffersize = gtk_combo_box_text_get_active_text  ( GTK_COMBO_BOX_TEXT(combo_buffersize));
+   device = gtk_combo_box_text_get_active_text  ( GTK_COMBO_BOX_TEXT(combo_device));
++  pasource = (char *) gtk_entry_get_text ( (GtkEntry *) entry_pasource);
+   public = gtk_combo_box_text_get_active_text  ( GTK_COMBO_BOX_TEXT(combo_public));
+   verbosity = gtk_combo_box_text_get_active_text  ( GTK_COMBO_BOX_TEXT(combo_verbosity));
+-  
+ 
+   if (!( f_darksnow_cfg = (opt != 0)? fopen(darksnow_cfg, "w") : fopen(save_path, "w"))) {
+       printf("Error: Cannot open %s\n", (opt != 0)? darksnow_cfg: save_path);
+@@ -128,6 +129,7 @@
+   fprintf (f_darksnow_cfg, "channel=%s\n", channel);
+   fprintf (f_darksnow_cfg, "buffersize=%s\n", buffersize);
+   fprintf (f_darksnow_cfg, "device=%s\n", device);
++  fprintf (f_darksnow_cfg, "pasource=%s\n", pasource);
+   fprintf (f_darksnow_cfg, "public=%s\n", public);
+   fprintf (f_darksnow_cfg, "verbosity=%s\n", verbosity);
+   fprintf (f_darksnow_cfg, "remotedump=%s\n", remotedump);
+@@ -168,6 +170,7 @@
+   char channel[128] = {0};
+   char buffersize[128] = {0};
+   char device[128] = {0};
++  char pasource[128] = {0};
+   char public[128] = {0};
+ 
+   if (!(f_darksnow_cfg = fopen(darksnow_cfg, "r"))) {
+@@ -199,6 +202,7 @@
+   fscanf(f_darksnow_cfg, "%[^=]=%[^\n]\n", foo, channel);
+   fscanf(f_darksnow_cfg, "%[^=]=%[^\n]\n", foo, buffersize);
+   fscanf(f_darksnow_cfg, "%[^=]=%[^\n]\n", foo, device);
++  fscanf(f_darksnow_cfg, "%[^=]=%[^\n]\n", foo, pasource);
+   fscanf(f_darksnow_cfg, "%[^=]=%[^\n]\n", foo, public);
+   fscanf(f_darksnow_cfg, "%*[^=]=%*[^\n]\n"); /* the verbosity level is not needed */ 
+   fscanf(f_darksnow_cfg, "%[^=]=%[^\n]\n", foo, remotedump);
+@@ -226,9 +230,15 @@
+   fprintf(f_darkice_cfg, "%s", buffersize);        /* size of internal slip buffer, in seconds */
+   fprintf(f_darkice_cfg, "\n\n[input]");
+   fprintf(f_darkice_cfg, "\ndevice = ");
+-  fprintf(f_darkice_cfg, "%s", device); /* OSS, ALSA, Pulse or JACK */
+-  if (!strcmp(device, "pulseaudio")) {
+-      fprintf(f_darkice_cfg, "\npaSourceName = default");
++  if (!strncmp(device, "pulseaudio", 10)) {
++      fprintf(f_darkice_cfg, "pulseaudio\n");
++      if (*pasource) {
++          fprintf(f_darkice_cfg, "paSourceName = %s", pasource);
++      } else {
++          fprintf(f_darkice_cfg, "paSourceName = default");
++      }
++  } else {
++      fprintf(f_darkice_cfg, "%s", device); /* OSS, ALSA, Pulse or JACK */
+   }
+   fprintf(f_darkice_cfg, "\nsampleRate = "); 
+   fprintf(f_darkice_cfg, "%s", samplerate); /* sample rate in Hz. try 11025, 22050 or 44100 */
+diff -u darksnow.c darksnow.c
+--- darksnow.c	2013-05-18 07:29:13.000000000 +0200
++++ darksnow.c	2021-05-09 12:03:31.227043387 +0200
+@@ -410,6 +410,8 @@
+   gtk_combo_box_text_append_text ( GTK_COMBO_BOX_TEXT (combo_device), "hw:1,1");
+   gtk_combo_box_text_append_text ( GTK_COMBO_BOX_TEXT (combo_device), "hw:1,2");
+   gtk_entry_set_text ( GTK_ENTRY(gtk_bin_get_child (GTK_BIN (combo_device))),"/dev/dsp");
++  label_pasource = gtk_label_new ( gettext("PulseAudio source: "));
++  entry_pasource = gtk_entry_new ();
+ 
+   /* End Audio Options Widgets */
+   
+@@ -476,6 +478,7 @@
+   g_signal_connect ( G_OBJECT (GTK_FILE_CHOOSER_DIALOG (file_save)), "response", G_CALLBACK (dark_write_config), NULL);
+   g_signal_connect ( G_OBJECT (GTK_FILE_CHOOSER_DIALOG (file_localdump)), "response", G_CALLBACK (dark_localdump), NULL);
+ 
++  g_signal_connect ( G_OBJECT (combo_device), "changed", G_CALLBACK (toggle_pasource_active), NULL);
+   
+   /* pack the notebook, the buttons and textview widgets into the main table */
+   gtk_table_attach (GTK_TABLE (table), notebook, 0, SIZE_X, 0, 400, (GTK_FILL | GTK_SHRINK | GTK_EXPAND), (GTK_FILL | GTK_SHRINK), 5, 5);
+@@ -541,10 +544,13 @@
+ 
+   gtk_table_attach (GTK_TABLE (table_audio), label_buffersize, 0, SIZE_X/2, 176, 200, (GTK_FILL |  GTK_SHRINK),(GTK_FILL | GTK_SHRINK), 0, 5);
+   gtk_table_attach (GTK_TABLE (table_audio), combo_buffersize, SIZE_X/2+1, SIZE_X, 176, 200, (GTK_FILL |  GTK_SHRINK | GTK_EXPAND),(GTK_FILL | GTK_SHRINK), 10, 5);
+-  
++
+   gtk_table_attach (GTK_TABLE (table_audio), label_device, 0, SIZE_X/2, 201, 225, (GTK_FILL |  GTK_SHRINK),(GTK_FILL | GTK_SHRINK), 0, 5);
+   gtk_table_attach (GTK_TABLE (table_audio), combo_device, SIZE_X/2+1, SIZE_X, 201, 225, (GTK_FILL |  GTK_SHRINK | GTK_EXPAND),(GTK_FILL | GTK_SHRINK), 10, 5);
+ 
++  gtk_table_attach (GTK_TABLE (table_audio), label_pasource, 0, SIZE_X/2, 226, 250, (GTK_FILL |  GTK_SHRINK),(GTK_FILL | GTK_SHRINK), 0, 5);
++  gtk_table_attach (GTK_TABLE (table_audio), entry_pasource, SIZE_X/2+1, SIZE_X, 226, 250, (GTK_FILL |  GTK_SHRINK | GTK_EXPAND),(GTK_FILL | GTK_SHRINK), 10, 5);
++
+ 
+   /* description notebook tab */
+   gtk_table_attach (GTK_TABLE (table_description), label_radioname, 0, SIZE_X/2, 0, 25, (GTK_FILL |  GTK_SHRINK),(GTK_FILL | GTK_SHRINK), 0, 5);
+@@ -622,6 +628,10 @@
+   gtk_widget_show (label_device);
+   gtk_widget_show (combo_device);
+ 
++  gtk_widget_show (label_pasource);
++  gtk_widget_show (entry_pasource);
++  gtk_editable_set_editable(entry_pasource, FALSE);
++
+   gtk_widget_show (label_verbosity);
+   gtk_widget_show (combo_verbosity);
+   
+diff -u global.h global.h
+--- global.h	2013-05-14 19:20:23.000000000 +0200
++++ global.h	2021-05-08 23:51:23.062230220 +0200
+@@ -136,6 +136,8 @@
+ GtkWidget *combo_buffersize;
+ GtkWidget *label_device;
+ GtkWidget *combo_device;
++GtkWidget *label_pasource;
++GtkWidget *entry_pasource;
+ GtkWidget *label_public;
+ GtkWidget *combo_public;
+ GtkWidget *label_verbosity;
+diff -u interface.c interface.c
+--- interface.c	2013-05-14 19:20:23.000000000 +0200
++++ interface.c	2021-05-09 13:07:17.671303204 +0200
+@@ -140,6 +140,7 @@
+   char channel[128] = {0};
+   char buffersize[128] = {0};
+   char device[128] = {0};
++  char pasource[128] = {0};
+   char public[128] = {0};
+   char verbosity[8] = {0};
+   DIR *directory;
+@@ -180,6 +181,7 @@
+   fscanf(f_darksnow_cfg, "%[^=]=%[^\n]\n", foo, channel);
+   fscanf(f_darksnow_cfg, "%[^=]=%[^\n]\n", foo, buffersize);
+   fscanf(f_darksnow_cfg, "%[^=]=%[^\n]\n", foo, device);
++  fscanf(f_darksnow_cfg, "%[^=]=%[^\n]\n", foo, pasource);
+   fscanf(f_darksnow_cfg, "%[^=]=%[^\n]\n", foo, public);
+   fscanf(f_darksnow_cfg, "%[^=]=%[^\n]\n", foo, verbosity);
+   fscanf(f_darksnow_cfg, "%[^=]=%[^\n]\n", foo, remotedump);
+@@ -207,6 +209,14 @@
+   gtk_entry_set_text ( GTK_ENTRY(gtk_bin_get_child (GTK_BIN (combo_channel))), channel);
+   gtk_entry_set_text ( GTK_ENTRY(gtk_bin_get_child (GTK_BIN (combo_buffersize))), buffersize);
+   gtk_entry_set_text ( GTK_ENTRY(gtk_bin_get_child (GTK_BIN (combo_device))), device);
++  if (strncmp(device, "pulseaudio", 10) == 0) {
++    fprintf(stderr, "Activating pasource widget (%s)\n", pasource);
++    gtk_editable_set_editable((GtkEditable*)entry_pasource, TRUE);
++  } else {
++    fprintf(stderr, "Deactivating pasource widget (%s)\n", pasource);
++    gtk_editable_set_editable((GtkEditable*)entry_pasource, FALSE);
++  }
++  gtk_entry_set_text ((GtkEntry *) entry_pasource, pasource);
+   gtk_entry_set_text ( GTK_ENTRY(gtk_bin_get_child (GTK_BIN (combo_public))), public);
+   gtk_entry_set_text ( GTK_ENTRY(gtk_bin_get_child (GTK_BIN (combo_verbosity))),verbosity);
+ 
+@@ -407,3 +417,18 @@
+     gtk_window_resize (GTK_WINDOW(window), SIZE_X, SIZE_Y+110);
+   }
+ }
++
++void toggle_pasource_active (GtkWidget *widget, gpointer data) {
++
++  if ( (GtkComboBox*) widget == combo_device) {
++    gchar *device = gtk_combo_box_text_get_active_text (GTK_COMBO_BOX_TEXT(combo_device));
++    if (strncmp(device, "pulseaudio", 10) == 0) {
++      fprintf(stderr, "Activating pasource widget\n");
++      gtk_editable_set_editable((GtkEditable*)entry_pasource, TRUE);
++    } else {
++      fprintf(stderr, "Deactivating pasource widget\n");
++      gtk_editable_set_editable((GtkEditable*)entry_pasource, FALSE);
++    }
++    g_free (device);
++  }
++}
+diff -u interface.h interface.h
+--- interface.h	2013-05-14 19:20:23.000000000 +0200
++++ interface.h	2021-05-09 12:07:32.952394590 +0200
+@@ -42,6 +42,9 @@
+ /* Callback for the local dump file selector 'ok' button */
+ void dark_localdump (GtkWidget *widget, gint response_id,  gpointer data);
+ 
++/* Callback for the device combo box; updates the pasource editability */
++void toggle_pasource_active (GtkWidget *widget, gpointer data);
++
+ /* Cleans the buffer inside the view box */
+ void clean_text_view_memory();
+ 
+diff -u tooltips.c tooltips.c
+--- tooltips.c	2013-05-14 19:20:23.000000000 +0200
++++ tooltips.c	2021-05-09 11:31:32.475826926 +0200
+@@ -55,7 +55,11 @@
+ unconnected input \
+ port in jack, use 'jack', or use 'jack_auto' to automatically make Jack connect \
+ to the first source. (if you choose jack you must set the samplerate to the same jack samplerate!)"));
+-
++    gtk_widget_set_tooltip_text ( entry_pasource, gettext("Indicate which PulseAudio source to stream from.\
++Active only when the PulseAudio device has been selected above. When not set (empty),\
++the `default` PulseAudio source is used. Tip: you can select the monitor of a dedicated PulseAudio\
++null sink to select (via pavucontrol) which application plays to the icecast stream and not locally. For instance,\
++set the source to `icecast.monitor` if your sink is called `icecast`."));
+   }
+     
+ }
