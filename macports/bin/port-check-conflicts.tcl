@@ -271,6 +271,31 @@ proc message { filename message } {
     }
 }
 
+# see https://stackoverflow.com/a/29289660/1460868
+proc fileEqual {file1 file2} {
+    if {[file size $file1] == [file size $file2]} {
+        set f1 [open $file1]
+        fconfigure $f1 -translation binary
+        set f2 [open $file2]
+        fconfigure $f2 -translation binary
+        while {![info exist same]} {
+            if {[read $f1 4096] ne [read $f2 4096]} {
+                set same 0
+            } elseif {[eof $f1]} {
+                # The same if we got to EOF at the same time
+                set same [eof $f2]
+            } elseif {[eof $f2]} {
+                set same 0
+            }
+        }
+        close $f1
+        close $f2
+        return $same
+    } else {
+        return 0
+    }
+}
+
 if {[catch {mportinit ui_options global_options global_variations} result]} {
     puts \$::errorInfo
         fatal "Failed to initialise MacPorts, \$result"
@@ -361,7 +386,11 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                     if {[file exists "${g}"]} {
                         if {${newer}} {
                             if {[file mtime ${f}] > [file mtime ${g}]} {
-                                message ${g} "will be updated"
+                                if {[fileEqual ${f} ${g}]} {
+                                    message ${g} "will be touched"
+                                } else {
+                                    message ${g} "will be updated"
+                                }
                             }
                         } elseif {!${inverse}} {
                             set InstalledDupsList [lappend InstalledDupsList "${g}"]
