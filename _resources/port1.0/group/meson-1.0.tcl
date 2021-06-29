@@ -20,7 +20,7 @@ default build_dir           {${workpath}/build}
 default source_dir          {${worksrcpath}}
 
 options meson.build_type
-default meson.build_type    custom
+default meson.build_type    plain
 
 options meson.debugopts
 # Set meson.debugopts to the desired compiler debug options (or an empty string) if you want to
@@ -40,6 +40,7 @@ depends_skip_archcheck-append \
                             meson \
                             ninja
 
+# TODO: --buildtype=plain tells Meson not to add its own flags to the command line. This gives the packager total control on used flags.
 default configure.cmd       {${prefix}/bin/meson}
 default configure.post_args {[list [option source_dir] "."]}
 # from mcalhoun's commit to make this PG compatible with muniversal:
@@ -57,7 +58,9 @@ default build.target        ""
 # remove DESTDIR= from arguments, but rather take it from environmental variable
 destroot.env-append         DESTDIR=${destroot}
 default destroot.post_args  ""
-destroot.pre_args-prepend   -v
+if {![info exists python.default_version]} {
+    destroot.pre_args-prepend -v
+}
 
 # meson checks LDFLAGS during install to respect rpaths set via that variable
 # for safety, add LDFLAGS to both build and destroot environments
@@ -68,25 +71,30 @@ pre-destroot {
     destroot.env-append     "LDFLAGS=${configure.ldflags}"
 }
 
-namespace eval meson {
-    proc get_post_args {} {
-        global configure.dir build_dir muniversal.current_arch
-        if {[info exists muniversal.current_arch]} {
-            return "${configure.dir} ${build_dir}-${muniversal.current_arch} --cross-file=${muniversal.current_arch}-darwin"
-        } else {
-            return "${configure.dir} ${build_dir}"
-        }
-    }
+namespace eval meson { }
 
-    proc debugopts {} {
-        global configure.cxx configure.cc
-        # get most if not all possible debug info
-        if {[string match *clang* ${configure.cxx}] || [string match *clang* ${configure.cc}]} {
-            return "-g -fno-limit-debug-info -fstandalone-debug"
-        } else {
-            return "-g -DDEBUG"
-        }
+proc meson::get_post_args {} {
+    global configure.dir build_dir muniversal.current_arch
+    if {[info exists muniversal.current_arch]} {
+        return "${configure.dir} ${build_dir}-${muniversal.current_arch} --cross-file=${muniversal.current_arch}-darwin"
+    } else {
+        return "${configure.dir} ${build_dir}"
     }
+}
+
+proc meson::debugopts {} {
+    global configure.cxx configure.cc
+    # get most if not all possible debug info
+    if {[string match *clang* ${configure.cxx}] || [string match *clang* ${configure.cc}]} {
+        return "-g -fno-limit-debug-info -fstandalone-debug"
+    } else {
+        return "-g -DDEBUG"
+    }
+}
+
+proc meson::add_depends {} {
+    depends_build-append    port:meson \
+                            port:ninja
 }
 
 configure.args-append
@@ -110,7 +118,7 @@ pre-configure {
     } elseif {[string match *-O2* "${configure.cflags} ${configure.cxxflags} ${configure.optflags}"]} {
         configure.pre_args-append -Doptimization=s
     }
-    # override the optimisation setting by setting the build type to custom. Not using the override
+    # override the optimisation setting by setting the build type to plain (not custom). Not using the override
     # approach means meson will second-guess the buildtype regardless of what we asked for (there's
     # no guarantee it won't ever if we do use the override trick).
     configure.pre_args-append \
@@ -204,3 +212,5 @@ variant debug description "Enable debug binaries" {
         configure.ldflags-append        ${meson.debugopts}
     }
 }
+
+port::register_callback meson::add_depends
