@@ -871,7 +871,8 @@ if {[vercmp ${qt5.version} 5.15]>=0} {
     default supported_archs "x86_64 arm64"
 } elseif {[vercmp ${qt5.version} 5.10]>=0} {
     # see https://bugreports.qt.io/browse/QTBUG-58401
-    default supported_archs x86_64
+    # RJVB: add arm64 because what the heck...
+    default supported_archs "x86_64 arm64"
 } else {
     # no PPC support in Qt 5
     #     see http://lists.qt-project.org/pipermail/interest/2012-December/005038.html
