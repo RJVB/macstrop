@@ -549,16 +549,18 @@ proc kf5.set_project {project} {
                     }
                     set kf5::cat "Plasma5"
                 } else {
-                    if {[vercmp ${kf5.release} ${kf5.release_attic}] < 0} {
+                    if {[vercmp ${kf5.release} ${kf5.release_attic}] <= 0} {
                         set dbranch "Attic"
+                        set f   "${kf5.virtualPath}/${kf5.release}/src"
+                    } else {
+                        set f   "release-service/${kf5.release}/src"
                     }
-                    set f   "${kf5.virtualPath}/${kf5.release}/src"
                     if {![info exists version]} {
                         version \
                             ${kf5.release}
                     }
                     livecheck.url \
-                            https://download.kde.org/stable/${kf5.virtualPath}
+                            https://download.kde.org/stable/release-service
                     livecheck.regex \
                             (\\d+\\.\\d+\\.\\d)
                     set kf5::cat "KF5-Applications"
