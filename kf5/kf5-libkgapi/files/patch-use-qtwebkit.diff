@@ -1,0 +1,238 @@
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+index 913c7e2d3d8126d59ec7445d0a83124f94462126..cd094142ee35d9f9670ad22cb1a5650401c84771 100644
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -73,11 +73,23 @@ PRIVATE
+     KF5::KIOWidgets
+     KF5::WindowSystem
+     KF5::Wallet
+-    Qt5::WebEngineWidgets
+ PUBLIC
+     Qt5::Widgets
+ )
+ 
++if(ENABLE_QTWEBKIT)
++    target_compile_definitions(KPimGAPICore PUBLIC -DUSE_QTWEBKIT)
++    target_link_libraries(KPimGAPICore
++    PRIVATE
++        Qt5::WebKitWidgets
++    )
++else()
++    target_link_libraries(KPimGAPICore
++    PRIVATE
++        Qt5::WebEngineWidgets
++    )
++endif()
++
+ set_target_properties(KPimGAPICore PROPERTIES
+     VERSION ${KGAPI_VERSION_STRING}
+     SOVERSION ${KGAPI_SOVERSION}
+diff --git a/src/core/ui/authwidget_p.cpp b/src/core/ui/authwidget_p.cpp
+index c84a30f41d78728084a2d5315ab777c64db4ad6e..43ca4b64d7e17be90a75713bfd085af4f4058104 100644
+--- a/src/core/ui/authwidget_p.cpp
++++ b/src/core/ui/authwidget_p.cpp
+@@ -25,8 +25,11 @@
+ #include "private/newtokensfetchjob_p.h"
+ #include "../../debug.h"
+ 
++#ifdef USE_QTWEBKIT
++#else
+ #include <QWebEngineProfile>
+ #include <QWebEngineCertificateError>
++#endif
+ #include <QContextMenuEvent>
+ 
+ #include <QtGlobal>
+@@ -37,23 +40,32 @@
+ #include <QAbstractSocket>
+ #include <QUrlQuery>
+ #include <QDateTime>
++#ifdef USE_QTWEBKIT
++#include <QWebView>
++#include <QWebFrame>
++#include <QWebSettings>
++#else
+ #include <QWebEngineView>
++#endif
+ 
+ using namespace KGAPI2;
+ 
+ namespace
+ {
+ 
+-class WebView : public QWebEngineView
++class WebView : public WebViewClass
+ {
+     Q_OBJECT
+ public:
+     explicit WebView(QWidget *parent = nullptr)
+-        : QWebEngineView(parent)
++        : WebViewClass(parent)
+     {
++#ifdef USE_QTWEBKIT
++#else
+         // Don't store cookies, so that subsequent invocations of AuthJob won't remember
+         // the previous accounts.
+         QWebEngineProfile::defaultProfile()->setPersistentCookiesPolicy(QWebEngineProfile::NoPersistentCookies);
++#endif
+     }
+ 
+     void contextMenuEvent(QContextMenuEvent *e) override
+@@ -63,6 +75,7 @@ public:
+     }
+ };
+ 
++#ifndef USE_QTWEBKIT
+ class WebPage : public QWebEnginePage
+ {
+     Q_OBJECT
+@@ -95,7 +108,7 @@ Q_SIGNALS:
+ private:
+     QWebEngineCertificateError *mLastError;
+ };
+-
++#endif
+ }
+ 
+ 
+@@ -137,6 +150,7 @@ void AuthWidgetPrivate::setupUi()
+     auto hbox = new QHBoxLayout;
+     hbox->setSpacing(0);
+     sslIndicator = new QToolButton(q);
++#ifndef USE_QTWEBKIT
+     connect(sslIndicator, &QToolButton::clicked,
+             this, [this]() {
+                 auto page = qobject_cast<WebPage*>(webview->page());
+@@ -148,6 +162,16 @@ void AuthWidgetPrivate::setupUi()
+                     msg.exec();
+                 }
+             });
++#else
++    connect(sslIndicator, &QToolButton::clicked,
++            this, [this]() {
++                QMessageBox msg;
++                msg.setIconPixmap(sslIndicator->icon().pixmap(64));
++                msg.setText(QStringLiteral("No certificate (error) checking with QtWebkit!"));
++                msg.addButton(QMessageBox::Ok);
++                msg.exec();
++            });
++#endif
+     hbox->addWidget(sslIndicator);
+     urlEdit = new QLineEdit(q);
+     urlEdit->setReadOnly(true);
+@@ -162,17 +186,31 @@ void AuthWidgetPrivate::setupUi()
+ 
+     webview = new WebView(q);
+ 
++#ifndef USE_QTWEBKIT
+     auto webpage = new WebPage(webview);
+     connect(webpage, &WebPage::sslError,
+             this, [this]() {
+                 setSslIcon(QStringLiteral("security-low"));
+             });
+     webview->setPage(webpage);
++#endif
+ 
+     vbox->addWidget(webview);
+-    connect(webview, &QWebEngineView::loadProgress, progressbar, &QProgressBar::setValue);
+-    connect(webview, &QWebEngineView::urlChanged, this, &AuthWidgetPrivate::webviewUrlChanged);
+-    connect(webview, &QWebEngineView::loadFinished, this, &AuthWidgetPrivate::webviewFinished);
++    connect(webview, &WebViewClass::loadProgress, progressbar, &QProgressBar::setValue);
++    connect(webview, &WebViewClass::urlChanged, this, &AuthWidgetPrivate::webviewUrlChanged);
++    connect(webview, &WebViewClass::loadFinished, this, &AuthWidgetPrivate::webviewFinished);
++#ifdef USE_QTWEBKIT
++        connect(webview, &WebViewClass::statusBarMessage, this, [this](const QString &text) {
++            if (!text.isEmpty()) {
++                qCWarning(KGAPIDebug) << "Status bar message:" << text;
++            }
++        });
++        connect(webview->page(), &QWebPage::consoleMessageReceived, this, [this](QWebPage::MessageSource source,
++            QWebPage::MessageLevel level, const QString &message, int lineNumber, const QString &sourceID) {
++                qCWarning(KGAPIDebug) << "Received console message" << message << "at line" << lineNumber
++                    << "of" << sourceID << QStringLiteral("(source %1, level %2)").arg(source).arg(level);
++        });
++#endif
+ }
+ 
+ void AuthWidgetPrivate::setUrl(const QUrl &url)
+@@ -239,9 +277,12 @@ void AuthWidgetPrivate::webviewUrlChanged(const QUrl &url)
+         return;
+     }
+ 
++#ifndef USE_QTWEBKIT
+     if (qobject_cast<WebPage*>(webview->page())->lastCertificateError()) {
+         setSslIcon(QStringLiteral("security-low"));
+-    } else {
++    } else
++#endif
++    {
+         // We have no way of obtaining current SSL certificate from QWebEngine, but we
+         // handled SSL and accounts.google.com cases above and QWebEngine did not report
+         // any SSL error to us, so we can assume we are safe.
+@@ -253,17 +294,27 @@ void AuthWidgetPrivate::webviewUrlChanged(const QUrl &url)
+     // urlChanged, but not urlFinished.
+     if (isUsernameFrame(url)) {
+         if (!username.isEmpty()) {
+-            webview->page()->runJavaScript(QStringLiteral("document.getElementById(\"identifierId\").value = \"%1\";").arg(username));
++            const auto jsUserName = QStringLiteral("document.getElementById(\"identifierId\").value = \"%1\";").arg(username);
++#ifdef USE_QTWEBKIT
++            webview->page()->mainFrame()->evaluateJavaScript(jsUserName);
++#else
++            webview->page()->runJavaScript(jsUserName);
++#endif
+         }
+     } else if (isPasswordFrame(url)) {
+         if (!password.isEmpty()) {
+-            webview->page()->runJavaScript(QStringLiteral("var elems = document.getElementsByTagName(\"input\");"
++            const auto jsPassword = QStringLiteral("var elems = document.getElementsByTagName(\"input\");"
+                                                           "for (var i = 0; i < elems.length; i++) {"
+                                                           "  if (elems[i].type == \"password\" && elems[i].name == \"password\") {"
+                                                           "      elems[i].value = \"%1\";"
+                                                           "      break;"
+                                                           "  }"
+-                                                          "}").arg(password));
++                                                          "}").arg(password);
++#ifdef USE_QTWEBKIT
++            webview->page()->mainFrame()->evaluateJavaScript(jsPassword);
++#else
++            webview->page()->runJavaScript();
++#endif
+         }
+     }
+ }
+@@ -306,7 +357,7 @@ void AuthWidgetPrivate::socketReady()
+ 
+     const auto line = data.split(' ');
+     if (line.size() != 3 || line.at(0) != QByteArray("GET") || !line.at(2).startsWith(QByteArray("HTTP/1.1"))) {
+-        qCDebug(KGAPIDebug) << QStringLiteral("Token response invalid");
++        qCDebug(KGAPIDebug) << "Token response invalid:" << line;
+         emitError(InvalidResponse, tr("Token response invalid"));
+         return;
+     }
+diff --git a/src/core/ui/authwidget_p.h b/src/core/ui/authwidget_p.h
+index 984cae6a4be49e5acdcc474d41252abf1b706966..55ca998e4e2b36af1051ae9bb43ca1e550ae0f66 100644
+--- a/src/core/ui/authwidget_p.h
++++ b/src/core/ui/authwidget_p.h
+@@ -34,7 +34,13 @@
+ 
+ class QVBoxLayout;
+ class QLabel;
++#ifdef USE_QTWEBKIT
++class QWebView;
++using WebViewClass = QWebView;
++#else
+ class QWebEngineView;
++using WebViewClass = QWebEngineView;
++#endif
+ class QTcpServer;
+ class QTcpSocket;
+ 
+@@ -68,7 +74,7 @@ class KGAPICORE_EXPORT AuthWidgetPrivate: public QObject {
+     QLineEdit *urlEdit = nullptr;
+     QProgressBar *progressbar = nullptr;
+     QVBoxLayout *vbox = nullptr;
+-    QWebEngineView *webview = nullptr;
++    WebViewClass *webview = nullptr;
+     QLabel *label = nullptr;
+ 
+     QTcpServer *server = nullptr;
