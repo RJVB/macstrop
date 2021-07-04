@@ -150,6 +150,9 @@ if {![ info exists kf5.plasma ]} {
 }
 set kf5.plasma_attic    5.16.5
 
+# the software quality. Defaults to "stable" but can be set to "unstable" before calling kf5.set_project
+set kf5.quality         "stable"
+
 platforms               darwin linux
 categories              kf5 kde devel
 license                 GPL-2+
@@ -519,13 +522,14 @@ proc kf5.set_project {project} {
     global kf5.virtualPath
     global kf5.category
     global kf5.version
+    global kf5.quality
     global kf5.git.depth kf5.git.shallowbefore
     global fetch.type
     global filespath
     global version
     global kf5.frameworks_attic kf5.release_attic kf5.plasma_attic
     set p ${project}
-    set dbranch "stable"
+    set dbranch ${kf5.quality}
     # get rid of the currently registered category:
     categories-delete       ${kf5::cat}
     if { ![info exists kf5.framework] && ![info exists kf5.portingAid] } {
@@ -560,7 +564,7 @@ proc kf5.set_project {project} {
                             ${kf5.release}
                     }
                     livecheck.url \
-                            https://download.kde.org/stable/release-service
+                            https://download.kde.org/${kf5.quality}/release-service
                     livecheck.regex \
                             (\\d+\\.\\d+\\.\\d)
                     set kf5::cat "KF5-Applications"
