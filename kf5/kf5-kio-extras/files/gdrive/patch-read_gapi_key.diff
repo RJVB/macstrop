@@ -1,0 +1,65 @@
+diff --git a/src/keychainaccountmanager.cpp b/src/keychainaccountmanager.cpp
+index dfed14b..82ea0fa 100644
+--- a/src/keychainaccountmanager.cpp
++++ b/src/keychainaccountmanager.cpp
+@@ -11,6 +11,9 @@
+ 
+ #include <QDataStream>
+ #include <QEventLoop>
++#include <QStandardPaths>
++#include <QJsonDocument>
++#include <QJsonObject>
+ 
+ #include <qt5keychain/keychain.h>
+ 
+@@ -59,12 +62,50 @@ KGAPI2::AccountPtr KeychainAccountManager::account(const QString &accountName)
+ 
+ KGAPI2::AccountPtr KeychainAccountManager::createAccount()
+ {
++    auto clientJsonFile = QStandardPaths::locate(QStandardPaths::ConfigLocation,
++                                                 QStringLiteral("org.kde.kio-gdrive.google_client_secret.json"));
+     auto account = KGAPI2::AccountPtr(new KGAPI2::Account());
+     account->addScope(QUrl(QStringLiteral("https://www.googleapis.com/auth/drive")));
+     account->addScope(QUrl(QStringLiteral("https://www.googleapis.com/auth/drive.file")));
+     account->addScope(QUrl(QStringLiteral("https://www.googleapis.com/auth/drive.metadata.readonly")));
+     account->addScope(QUrl(QStringLiteral("https://www.googleapis.com/auth/drive.readonly")));
+ 
++    if (!clientJsonFile.isEmpty()) {
++        QFile f(clientJsonFile);
++        bool r = f.open(QFile::ReadOnly|QFile::Text);
++        if (r) {
++            QJsonParseError error;
++            const auto jsonDoc = QJsonDocument::fromJson(f.readAll(), &error);
++            if (error.error) {
++                qCWarning(GDRIVE) << "Failed to parse" << clientJsonFile << ":" << error.errorString();
++            } else {
++                bool ok = false;
++                if (!jsonDoc.isNull() && jsonDoc.isObject()
++                        && jsonDoc.object().keys().contains(QStringLiteral("installed"))) {
++                    const auto jO = jsonDoc.object()[QStringLiteral("installed")].toObject();
++                    if (!jO.isEmpty()
++                            && jO.keys().contains(QStringLiteral("client_id"))
++                            && jO.keys().contains(QStringLiteral("client_secret"))) {
++                        const auto id = jO.value(QStringLiteral("client_id")).toString();
++                        const auto secret = jO.value(QStringLiteral("client_secret")).toString();
++                        if (!id.isNull() && !secret.isNull()) {
++                            ok = true;
++                            s_apiKey = id;
++                            s_apiSecret = secret;
++                            qCDebug(GDRIVE) << "Read Google API data from" << clientJsonFile << "key="
++                                << s_apiKey;
++                        }
++                    }
++                }
++                if (!ok) {
++                    qCWarning(GDRIVE) << "Invalid/unsupported content in" << clientJsonFile << ":" << qPrintable(jsonDoc.toJson());
++                }
++            }
++        } else {
++            qCWarning(GDRIVE) << "Couldn't open" << clientJsonFile << ":" << f.errorString();
++        }
++    }
++
+     KGAPI2::AuthJob *authJob = new KGAPI2::AuthJob(account, s_apiKey, s_apiSecret);
+ 
+     QEventLoop eventLoop;
