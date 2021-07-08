@@ -1,0 +1,137 @@
+diff --git a/src/keychainaccountmanager.cpp b/src/keychainaccountmanager.cpp
+index dfed14b11c9bc2d9bd5b35c831c46d56f6992da1..5b017784aa0504a78b7c1f202af02a87457e553d 100644
+--- a/src/keychainaccountmanager.cpp
++++ b/src/keychainaccountmanager.cpp
+@@ -11,14 +11,59 @@
+ 
+ #include <QDataStream>
+ #include <QEventLoop>
++#include <QStandardPaths>
++#include <QJsonDocument>
++#include <QJsonObject>
+ 
+ #include <qt5keychain/keychain.h>
+ 
+ #include <KIO/Job> //for stat.h
+ #include <KGAPI/AuthJob>
+ 
+-QString KeychainAccountManager::s_apiKey = QStringLiteral("554041944266.apps.googleusercontent.com");
+-QString KeychainAccountManager::s_apiSecret = QStringLiteral("mdT1DjzohxN3npUUzkENT0gO");
++// cat kaccnt-providers-git/providers/google.provider.in
++// <?xml version="1.0" encoding="UTF-8" ?>
++// <provider id="google">
++//   <_name>Google</_name>
++//   <!-- Tooltip text appearing over the button to create this type of account -->
++//   <_description>Includes GMail, Hangouts, Google Drive and YouTube</_description>
++//   <icon>im-google</icon>
++//   <translations>kaccounts-providers</translations>
++//   <domains>.*google\.com</domains>
++// 
++//   <template>
++//     <group name="auth">
++//       <setting name="method">oauth2</setting>
++//       <setting name="mechanism">web_server</setting>
++//       <group name="oauth2">
++//         <group name="web_server">
++//           <setting name="Host">accounts.google.com</setting>
++//           <setting name="AuthPath">o/oauth2/auth?access_type=offline&amp;approval_prompt=force</setting>
++//           <setting name="TokenPath">o/oauth2/token</setting>
++//           <setting name="RedirectUri">http://localhost/oauth2callback</setting>
++//           <!-- HACK: access_type is non standard, but Google requires it in
++//                order to return a refresh token -->
++//           <setting name="ResponseType">code</setting>
++//           <setting name="Scope" type="as">[
++//               'https://www.googleapis.com/auth/userinfo.email',
++//               'https://www.googleapis.com/auth/userinfo.profile',
++//               'https://www.googleapis.com/auth/calendar',
++//               'https://www.googleapis.com/auth/tasks',
++//               'https://www.google.com/m8/feeds/',
++//               'https://www.googleapis.com/auth/drive',
++//               'https://www.googleapis.com/auth/youtube.upload'
++//           ]</setting>
++//           <setting name="AllowedSchemes" type="as">['https']</setting>
++//           <setting name="ClientId">317066460457-pkpkedrvt2ldq6g2hj1egfka2n7vpuoo.apps.googleusercontent.com</setting>
++//           <setting name="ClientSecret">Y8eFAaWfcanV3amZdDvtbYUq</setting>
++//           <setting name="ForceClientAuthViaRequestBody" type="b">true</setting>
++//         </group>
++//       </group>
++//     </group>
++//   </template>
++// </provider>
++// 
++QString KeychainAccountManager::s_apiKey = QStringLiteral("317066460457-pkpkedrvt2ldq6g2hj1egfka2n7vpuoo.apps.googleusercontent.com");
++QString KeychainAccountManager::s_apiSecret = QStringLiteral("Y8eFAaWfcanV3amZdDvtbYUq");
+ 
+ 
+ QSet<QString> KeychainAccountManager::accounts()
+@@ -59,11 +104,46 @@ KGAPI2::AccountPtr KeychainAccountManager::account(const QString &accountName)
+ 
+ KGAPI2::AccountPtr KeychainAccountManager::createAccount()
+ {
++    auto clientJsonFile = QStandardPaths::locate(QStandardPaths::ConfigLocation,
++                                                 QStringLiteral("org.kde.kio-gdrive.google_client_secret.json"));
+     auto account = KGAPI2::AccountPtr(new KGAPI2::Account());
+-    account->addScope(QUrl(QStringLiteral("https://www.googleapis.com/auth/drive")));
+-    account->addScope(QUrl(QStringLiteral("https://www.googleapis.com/auth/drive.file")));
+-    account->addScope(QUrl(QStringLiteral("https://www.googleapis.com/auth/drive.metadata.readonly")));
+-    account->addScope(QUrl(QStringLiteral("https://www.googleapis.com/auth/drive.readonly")));
++    account->setScopes( QList<QUrl>() << KGAPI2::Account::driveScopeUrl() );
++
++    if (!clientJsonFile.isEmpty()) {
++        QFile f(clientJsonFile);
++        bool r = f.open(QFile::ReadOnly|QFile::Text);
++        if (r) {
++            QJsonParseError error;
++            const auto jsonDoc = QJsonDocument::fromJson(f.readAll(), &error);
++            if (error.error) {
++                qCWarning(GDRIVE) << "Failed to parse" << clientJsonFile << ":" << error.errorString();
++            } else {
++                bool ok = false;
++                if (!jsonDoc.isNull() && jsonDoc.isObject()
++                        && jsonDoc.object().keys().contains(QStringLiteral("installed"))) {
++                    const auto jO = jsonDoc.object()[QStringLiteral("installed")].toObject();
++                    if (!jO.isEmpty()
++                            && jO.keys().contains(QStringLiteral("client_id"))
++                            && jO.keys().contains(QStringLiteral("client_secret"))) {
++                        const auto id = jO.value(QStringLiteral("client_id")).toString();
++                        const auto secret = jO.value(QStringLiteral("client_secret")).toString();
++                        if (!id.isNull() && !secret.isNull()) {
++                            ok = true;
++                            s_apiKey = id;
++                            s_apiSecret = secret;
++                            qCDebug(GDRIVE) << "Read Google API data from" << clientJsonFile << "key="
++                                << s_apiKey;
++                        }
++                    }
++                }
++                if (!ok) {
++                    qCWarning(GDRIVE) << "Invalid/unsupported content in" << clientJsonFile << ":" << qPrintable(jsonDoc.toJson());
++                }
++            }
++        } else {
++            qCWarning(GDRIVE) << "Couldn't open" << clientJsonFile << ":" << f.errorString();
++        }
++    }
+ 
+     KGAPI2::AuthJob *authJob = new KGAPI2::AuthJob(account, s_apiKey, s_apiSecret);
+ 
+@@ -72,11 +152,15 @@ KGAPI2::AccountPtr KeychainAccountManager::createAccount()
+                      &eventLoop, &QEventLoop::quit);
+     eventLoop.exec();
+ 
+-    account = authJob->account();
+     authJob->deleteLater();
+-
+-    if (!account->accountName().isEmpty()) {
+-        storeAccount(account);
++    if (authJob->error() != KGAPI2::NoError) {
++        qCWarning(GDRIVE) << "Authentication error:" << qPrintable(authJob->errorString());
++        account = KGAPI2::AccountPtr(new KGAPI2::Account());
++    } else {
++       account = authJob->account();
++       if (!account->accountName().isEmpty()) {
++           storeAccount(account);
++       }
+     }
+ 
+     return account;
