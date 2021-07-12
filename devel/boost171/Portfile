@@ -8,6 +8,7 @@ platform darwin {
     PortGroup   compress_workdir 1.0
 }
 
+# TODO: I will probably need to add an rpath specification to the LDFLAGS in the boost PG, on Linux
 version         1.71.0
 
 set branch      [join [lrange [split ${version} .] 0 1] .]
@@ -101,15 +102,17 @@ patchfiles-append patch-revert-lib-name-tagged.diff
 
 # see https://trac.macports.org/wiki/UsingTheRightCompiler
 patchfiles-append patch-compiler.diff
-post-patch {
-    reinplace "s|__MACPORTS_CXX__|${configure.cxx}|g" \
+if {${subport} ne "${name}-cmake_scripts"} {
+    post-patch {
+        reinplace "s|__MACPORTS_CXX__|${configure.cxx}|g" \
                     ${worksrcpath}/tools/build/src/tools/clang-darwin.jam \
                     ${worksrcpath}/tools/build/src/tools/clang-linux.jam \
                     ${worksrcpath}/tools/build/src/tools/gcc.jam \
                     ${worksrcpath}/tools/build/src/tools/gcc.py
-    reinplace "s|__MACPORTS_CC__|${configure.cc}|g" \
+        reinplace "s|__MACPORTS_CC__|${configure.cc}|g" \
                     ${worksrcpath}/tools/build/src/tools/gcc.jam \
                     ${worksrcpath}/tools/build/src/tools/gcc.py
+    }
 }
 
 # see https://github.com/boostorg/build/issues/440
@@ -165,6 +168,7 @@ if {${os.platform} eq "darwin"} {
         configure.args-append \
                     --with-toolset=clang-linux
     }
+    configure.ldflags-append  -Wl,-rpath,${bprefix}/lib
 }
 
 configure.universal_args
@@ -173,38 +177,40 @@ pre-configure {
     new_jam
 }
 
-post-configure {
+if {${subport} ne "${name}-cmake_scripts"} {
+    post-configure {
 
-    # rewrite this reinplace such that it won't apply recursively
-    reinplace -E "s|-install_name \"\\\$|-install_name \"${prefix}/lib/\$|" \
-        ${worksrcpath}/tools/build/src/tools/darwin.jam
+        # rewrite this reinplace such that it won't apply recursively
+        reinplace -E "s|-install_name \"\\\$|-install_name \"${bprefix}/lib/\$|" \
+            ${worksrcpath}/tools/build/src/tools/darwin.jam
 
-    set compileflags ""
-    platform darwin {
-        if {[string length ${configure.sdkroot}] != 0} {
-            set compileflags "<compileflags>\"-isysroot ${configure.sdkroot}\""
+        set compileflags ""
+        platform darwin {
+            if {[string length ${configure.sdkroot}] != 0} {
+                set compileflags "<compileflags>\"-isysroot ${configure.sdkroot}\""
+            }
         }
-    }
 
-    set cxx_stdlibflags {}
-    if {[string match *clang* ${configure.cxx}] && ${configure.cxx_stdlib} ne ""} {
-        set cxx_stdlibflags -stdlib=${configure.cxx_stdlib}
-    }
-
-    # see https://trac.macports.org/ticket/55857
-    # see https://svn.boost.org/trac10/ticket/13454
-    if {${os.platform} eq "darwin"} {
-        write_jam "using darwin : : ${configure.cxx} : <asmflags>\"${configure.cflags} [get_canonical_archflags cc]\" <cflags>\"${configure.cflags} [get_canonical_archflags cc]\" <cxxflags>\"${configure.cxxflags} [get_canonical_archflags cxx] ${cxx_stdlibflags}\" ${compileflags} <linkflags>\"${configure.ldflags} ${cxx_stdlibflags}\" : ;"
-    } elseif {${os.platform} eq "linux"} {
-        # somehow the user-config.jam approach raises an error about parameters already set, so we
-        # achieve the same thing by patching project-config.jam:
-        if {[string match *clang* ${configure.cxx}]} {
-            reinplace \
-                "s|using clang-linux \;|using clang-linux : : ${configure.cxx} : <asmflags>\"${configure.cflags}\" <cflags>\"${configure.cflags}\" <cxxflags>\"${configure.cxxflags} ${cxx_stdlibflags}\" ${compileflags} <linkflags>\"${configure.ldflags} ${cxx_stdlibflags}\" : \;|g" \
-                ${worksrcpath}/project-config.jam
+        set cxx_stdlibflags {}
+        if {[string match *clang* ${configure.cxx}] && ${configure.cxx_stdlib} ne ""} {
+            set cxx_stdlibflags -stdlib=${configure.cxx_stdlib}
         }
-    }
 
+        # see https://trac.macports.org/ticket/55857
+        # see https://svn.boost.org/trac10/ticket/13454
+        if {${os.platform} eq "darwin"} {
+            write_jam "using darwin : : ${configure.cxx} : <asmflags>\"${configure.cflags} [get_canonical_archflags cc]\" <cflags>\"${configure.cflags} [get_canonical_archflags cc]\" <cxxflags>\"${configure.cxxflags} [get_canonical_archflags cxx] ${cxx_stdlibflags}\" ${compileflags} <linkflags>\"${configure.ldflags} ${cxx_stdlibflags}\" : ;"
+        } elseif {${os.platform} eq "linux"} {
+            # somehow the user-config.jam approach raises an error about parameters already set, so we
+            # achieve the same thing by patching project-config.jam:
+            if {[string match *clang* ${configure.cxx}]} {
+                reinplace \
+                    "s|using clang-linux \;|using clang-linux : : ${configure.cxx} : <asmflags>\"${configure.cflags}\" <cflags>\"${configure.cflags}\" <cxxflags>\"${configure.cxxflags} ${cxx_stdlibflags}\" ${compileflags} <linkflags>\"${configure.ldflags} ${cxx_stdlibflags}\" : \;|g" \
+                    ${worksrcpath}/project-config.jam
+            }
+        }
+
+    }
 }
 
 build.cmd       ${worksrcpath}/b2
@@ -236,7 +242,9 @@ destroot.post_args
 
 pre-destroot {
     destroot.args {*}${build.args} --prefix=${destroot}${bprefix}
-    system "find ${worksrcpath} -type f -name '*.gch' -exec rm {} \\;"
+    if {${subport} ne "${name}-cmake_scripts"} {
+        system "find ${worksrcpath} -type f -name '*.gch' -exec rm {} \\;"
+    }
 }
 
 proc boost_docs_install {} {
@@ -303,12 +311,13 @@ foreach s ${pythons_suffixes} {
             configure.cxxflags-append \
                 -I${prefix}/include/python${v}m
         }
-
-        patchfiles-append   ${bppatch} patch-tools-build-src-tools-python.jam.diff \
+        if {\"${subport}\" ne \"${name}-cmake_scripts\"} {
+            patchfiles-append ${bppatch} patch-tools-build-src-tools-python.jam.diff \
                             patch-tools-build-src-tools-python-2.jam.diff
 
-        post-patch {
-            reinplace s|@FRAMEWORKS_DIR@|${frameworks_dir}| ${worksrcpath}/tools/build/src/tools/python.jam
+            post-patch {
+                reinplace s|@FRAMEWORKS_DIR@|${frameworks_dir}| ${worksrcpath}/tools/build/src/tools/python.jam
+            }
         }
     "
 }
@@ -329,9 +338,9 @@ post-destroot {
     foreach f [glob -nocomplain -directory ${destroot}${bprefix}/lib/ *python*.dylib *python*.so] {
         set tf [file tail ${f}]
         ln -s ${tf} ${destroot}${bprefix}/lib/[string map "${selected_python} python"  ${tf}]
-	   if {![variant_isset python27]} {
+        if {![variant_isset python27]} {
             ln -s ${tf} ${destroot}${bprefix}/lib/[string map "${selected_python} python3" ${tf}]
-	   }
+        }
     }
 }
 
@@ -401,7 +410,7 @@ if {$subport eq $name} {
     }
 
     post-destroot {
-        delete file {*}[glob ${destroot}${bprefix}/include/boost/python/numpy*]
+        delete file {*}[glob -nocomplain ${destroot}${bprefix}/include/boost/python/numpy*]
     }
 
     if {[mpi_variant_isset]} {
@@ -445,7 +454,7 @@ if {$subport eq $name} {
     }
 
     livecheck.type  none
-} else {
+} elseif {${subport} eq "${name}-numpy"} {
     post-destroot {
         move {*}[glob ${destroot}${bprefix}/lib/libboost_numpy*] ${destroot}${bprefix}
         move {*}[glob ${destroot}${bprefix}/include/boost/python/numpy*] ${destroot}${bprefix}
@@ -554,18 +563,9 @@ variant cmake_scripts description "Stub variant; install Boost CMake find script
 if {${subport} eq "${name}"} {
     depends_build-append bin:bsdtar:libarchive
 }
-post-destroot {
-    ui_debug "Creating devport archive ${destroot}${bprefix}/lib/cmake_scripts.tar.bz2 from the cmake directory"
-    if {[catch {system -W ${destroot} "bsdtar -cjvf .${bprefix}/lib/cmake_scripts.tar.bz2 .${bprefix}/lib/cmake"} err]} {
-        ui_error "Failure creating ${destroot}${bprefix}/lib/cmake_scripts.tar.bz2: ${err}"
-        file delete -force ${destroot}${bprefix}/lib/cmake_scripts.tar.bz2
-    } else {
-        ui_debug "Deleting archived \"${destroot}${bprefix}/lib/cmake\""
-        file delete -force ${destroot}${bprefix}/lib/cmake
-    }
-}
 
-subport ${name}-cmake_scripts {
+subport ${name}-cmake_scripts {}
+if {${subport} eq "${name}-cmake_scripts"} {
     description         "CMake scripts for port:${name}"
     long_description    {*}${description}
     depends_fetch
@@ -592,6 +592,17 @@ subport ${name}-cmake_scripts {
         } else {
             ui_error "The port's content archive doesn't exists or is empty (${bprefix}/lib/cmake_scripts.tar.bz2)!"
             return -code error "Missing or invalid content archive; try re-activating or reinstalling port:${name}"
+        }
+    }
+} else {
+    post-destroot {
+        ui_debug "Creating devport archive ${destroot}${bprefix}/lib/cmake_scripts.tar.bz2 from the cmake directory"
+        if {[catch {system -W ${destroot} "bsdtar -cjvf .${bprefix}/lib/cmake_scripts.tar.bz2 .${bprefix}/lib/cmake"} err]} {
+            ui_error "Failure creating ${destroot}${bprefix}/lib/cmake_scripts.tar.bz2: ${err}"
+            file delete -force ${destroot}${bprefix}/lib/cmake_scripts.tar.bz2
+        } else {
+            ui_debug "Deleting archived \"${destroot}${bprefix}/lib/cmake\""
+            file delete -force ${destroot}${bprefix}/lib/cmake
         }
     }
 }
