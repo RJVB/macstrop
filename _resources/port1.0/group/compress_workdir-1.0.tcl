@@ -47,7 +47,7 @@ namespace eval compress_workdir {
 
 proc compress_workdir::build_dirs {} {
     global build.dir
-    return [glob -type d ${build.dir}*]
+    return [glob -nocomplain -type d ${build.dir}*]
 }
 
 options compress.build_dir \
