@@ -44,10 +44,12 @@ default LTO_supports_i386 yes
 options configure.ar \
         configure.nm \
         configure.ranlib \
-        LTO.use_archive_helpers
+        LTO.use_archive_helpers \
+        LTO.cpuflags
 
 # give the port a say over whether or not the selected helpers are used
 default LTO.use_archive_helpers yes
+default LTO.cpuflags {}
 
 if {![info exists LTO.allow_ThinLTO]} {
     set LTO.allow_ThinLTO yes
@@ -146,6 +148,11 @@ if {[variant_isset LTO] && ![info exists building_qt5]} {
             pre-configure {
                 LTO.set_lto_cache
             }
+            if {[info exists LTO_needs_pre_build]} {
+                pre-build {
+                    LTO.set_lto_cache
+                }
+            }
         }
     }
 }
@@ -213,18 +220,30 @@ if {[info exists LTO.custom_binaries]} {
 variant cputuned conflicts cpucompat description {Build using -march=native for optimal tuning to your CPU} {}
 variant cpucompat conflicts cputuned description {Build using some commonly supported SIMD settings for optimal cross-CPU tuning} {}
 
+if {[variant_isset cputuned]} {
+    default LTO.cpuflags "-march=native"
+}
+if {[variant_isset cpucompat]} {
+    default LTO.cpuflags "-march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul"
+}
 pre-configure {
-    if {[variant_isset cputuned]} {
-        set optflags "-march=native"
-    }
-    if {[variant_isset cpucompat]} {
-        set optflags "-march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul"
-    }
     if {[variant_isset cputuned] || [variant_isset cpucompat]} {
-        configure.cflags-append     {*}${optflags}
-        configure.cxxflags-append   {*}${optflags}
-        configure.objcflags-append  {*}${optflags}
-        configure.objcxxflags-append  {*}${optflags}
-        configure.ldflags-append    {*}${optflags}
+        configure.cflags-append     {*}${LTO.cpuflags}
+        configure.cxxflags-append   {*}${LTO.cpuflags}
+        configure.objcflags-append  {*}${LTO.cpuflags}
+        configure.objcxxflags-append  {*}${LTO.cpuflags}
+        configure.ldflags-append    {*}${LTO.cpuflags}
+    }
+}
+
+if {[info exists LTO_needs_pre_build]} {
+    pre-build {
+        if {[variant_isset cputuned] || [variant_isset cpucompat]} {
+            configure.cflags-append     {*}${LTO.cpuflags}
+            configure.cxxflags-append   {*}${LTO.cpuflags}
+            configure.objcflags-append  {*}${LTO.cpuflags}
+            configure.objcxxflags-append  {*}${LTO.cpuflags}
+            configure.ldflags-append    {*}${LTO.cpuflags}
+        }
     }
 }
