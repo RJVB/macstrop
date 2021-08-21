@@ -1,11 +1,28 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 
 PortSystem                  1.0
+PortGroup                   locale_select 1.0
+if {${os.platform} eq "darwin"} {
+    PortGroup               LTO 1.0
+} else {
+    variant LTO description {enable LTO} {
+        configure.args-append \
+                            --enable-lto
+    }
+    variant cpucompat description {CPU optimisation compat mode} {}
+    if {[variant_isset cpucompat]} {
+        configure.optflags-append -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
+    }
+}
 
 name                        e2fsprogs
-version                     1.44.2
+version                     1.45.6
+checksums                   rmd160  541a235a3f3122f03fcf612e2339176572597edd \
+                            sha256  5f64ac50a2b60b8e67c5b382bb137dec39344017103caffc3a61554424f2d693
+#                             size    7938544
+
 categories                  sysutils
-platforms                   darwin
+platforms                   darwin linux
 maintainers                 {ryandesign @ryandesign} openmaintainer
 license                     GPL-2 LGPL-2+ MIT BSD
 
@@ -19,44 +36,87 @@ long_description            Utilities to create, check and manipulate extended 2
 homepage                    http://e2fsprogs.sourceforge.net/
 master_sites                sourceforge:project/e2fsprogs/e2fsprogs/v${version}
 
-checksums                   rmd160  96e6df94f809056b20c78e258244ea3e620134d1 \
-                            sha256  e5c05a5ba4a9a1766f4b500ad7ef3220843860bfa64ebdda1b462b23bcb37f68 \
-                            size    7562398
-
 depends_build               port:pkgconfig
+platform linux {
+    depends_build-append    port:gettext-dev
+    configure.env-append    "LIBS=-L${prefix}/lib -lintl"
+    configure.args-append   --with-gnu-ld \
+                            --enable-symlink-install \
+                            --enable-symlink-build \
+                            --enable-elf-shlibs \
+                            --enable-verbose-makecmds \
+                            --disable-ubsan \
+                            --disable-addrsan \
+                            --disable-threadsan \
+                            --disable-e2initrd-helper \
+                            --disable-fsck
+    configure.cflags-append -fPIC
+}
+
 depends_lib                 port:gettext
 
-patchfiles                  patch-lib__Makefile.darwin-lib.diff
+# destroot fails without gmkdir
+# Report this bug to the developers
+depends_build-append        port:coreutils
 
-configure.args-append       --enable-bsd-shlibs
+platform darwin {
+    patchfiles              patch-lib__Makefile.darwin-lib.diff
+    configure.args-append   --enable-bsd-shlibs
+}
+
 
 # Enable verbose build messages
 build.args-append           V=1
 
 if {${subport} eq ${name}} {
-    revision                    0
 
     universal_variant           no
 
     configure.args-append       --disable-libuuid \
                                 --disable-uuidd \
-						  --enable-libblkid
+                                --enable-libblkid
 
-    depends_lib-append          port:ossp-uuid \
-                                port:libcomerr
-
-    patchfiles-append           patch-Makefile.in-remove-included-libcomerr.diff
+    patchfiles-append       patch-Makefile.in-remove-included-libcomerr.diff
+    if {${os.platform} eq "darwin"} {
+        depends_lib-append      port:ossp-uuid
+        patchfiles-append       loff_t.patch
+        configure.args-append   --enable-libblkid \
+                                --enable-bsd-shlibs
+    } else {
+        depends_lib-append      port:util-linux \
+                                port:systemd
+        # util-linux also installs a libblkid which is a dependency, so we
+        # install simply into a subprefix.
+        set rootprefix          ${prefix}
+        prefix                  ${prefix}/libexec/e2fsprogs
+        destroot.violate_mtree  yes
+#         build.post_args-append  -wk "LDFLAGS+=\"-Wl,--enable-new-dtags -Wl,-rpath,${prefix}/lib -Wl,-rpath,${rootprefix}/lib -shared\""
+        configure.ldflags-append \
+                                -L${rootprefix}/lib -Wl,-rpath,${rootprefix}/lib
+        ui_msg ${configure.ldflags}
+    }
+    depends_lib-append          port:libcomerr
 
     pre-build {
-        ln -fs ${prefix}/bin/compile_et ${worksrcpath}/lib/et/compile_et
-        ln -fs ${prefix}/lib/libcom_err.1.1.dylib ${worksrcpath}/lib/libcom_err.dylib
+        if {${os.platform} eq "darwin"} {
+            ln -fs ${prefix}/bin/compile_et ${worksrcpath}/lib/et/compile_et
+            ln -fs ${prefix}/lib/libcom_err.1.1.dylib ${worksrcpath}/lib/libcom_err.dylib
+        } else {
+            ln -fs ${rootprefix}/bin/compile_et ${worksrcpath}/lib/et/compile_et
+            ln -fs ${rootprefix}/lib/libcom_err.so.2.1 ${worksrcpath}/lib/libcom_err.so
+        }
     }
 
     destroot.target-append      install-libs
 
     post-destroot {
-        ln -s libblkid.2.0.dylib ${destroot}${prefix}/lib/libblkid.2.dylib
-        ln -s libblkid.2.dylib ${destroot}${prefix}/lib/libblkid.dylib
+        if {${os.platform} eq "darwin"} {
+            ln -s libblkid.2.0.dylib ${destroot}${prefix}/lib/libblkid.2.dylib
+            ln -s libblkid.2.dylib ${destroot}${prefix}/lib/libblkid.dylib
+        } else {
+            file delete ${destroot}/etc/cron.d/e2scrub_all
+            ln -fs ${rootprefix}/lib/libcom_err.so.2.1 ${destroot}${prefix}/lib/libcom_err.so
+        }
     }
 
     livecheck.type              regex
@@ -66,7 +126,6 @@ if {${subport} eq ${name}} {
 }
 
 subport libcomerr {
-    revision                    0
 
     description                 common error description library
     long_description            \
@@ -82,24 +141,8 @@ subport libcomerr {
     build.args-append           -C lib/et
     destroot.args-append        -C lib/et
     post-destroot {
-        ln -fs libcom_err.1.1.dylib ${destroot}${prefix}/lib/libcom_err.dylib
-    }
-
-    pre-activate {
-        # both kerberos5 and e2fsprogs previsouly conflicted because they installed files now provided by libcomerr
-        if {![catch {set installed [lindex [registry_active kerberos5] 0]}]} {
-            set krb_version [lindex $installed 1]
-            if {[vercmp $krb_version 1.11] < 0} {
-                # kerberos5 used to install some files now provided by libcomerr in versions < 1.11
-                registry_deactivate_composite kerberos5 "" [list ports_nodepcheck 1]
-            }
-        }
-        if {![catch {set installed [lindex [registry_active e2fsprogs] 0]}]} {
-            set e2fs_version [lindex $installed 1]
-            if {[vercmp $e2fs_version 1.42.7] < 0} {
-                # e2fsprogs used to install some files now provided by libcomerr in versions < 1.42.7
-                registry_deactivate_composite e2fsprogs "" [list ports_nodepcheck 1]
-            }
+        if {${os.platform} eq "darwin"} {
+            ln -fs libcom_err.1.1.dylib ${destroot}${prefix}/lib/libcom_err.dylib
         }
     }
 }
