@@ -2,7 +2,7 @@
 #
 # Copyright (c) 2009 Orville Bennett <illogical1 at gmail.com>
 # Copyright (c) 2010-2015 The MacPorts Project
-# Copyright (c) 2015-2018 R.J.V. Bertin
+# Copyright (c) 2015-2021 R.J.V. Bertin
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -50,7 +50,9 @@ options                             cmake.build_dir \
                                     cmake_share_module_dir \
                                     cmake.out_of_source \
                                     cmake.set_osx_architectures \
-                                    cmake.debugopts
+                                    cmake.debugopts \
+                                    cmake.set_c_standard \
+                                    cmake.set_cxx_standard
 
 ## Explanation of and default values for the options defined above ##
 
@@ -89,6 +91,9 @@ default cmake.module_path           {}
 # use custom options with the +debug variant.
 # Example: `cmake.debugopts-delete -DDEBUG` .
 default cmake.debugopts             {[cmake::debugopts]}
+# Propagate c/c++ standards to the build
+default cmake.set_c_standard        no
+default cmake.set_cxx_standard      no
 
 # CMake provides several different generators corresponding to different utilities
 # (and IDEs) used for building the sources. We support "Unix Makefiles" (the default)
@@ -109,11 +114,7 @@ default cmake.debugopts             {[cmake::debugopts]}
 # cmake.generator_blacklist <generator-pattern>
 # (patterns are case-insensitive, e.g. "*ninja*")
 #
-if {[vercmp [macports_version] 2.5.3] <= 0} {
-    default cmake.generator             {"CodeBlocks - Unix Makefiles"}
-} else {
-    default cmake.generator             "CodeBlocks - Unix Makefiles"
-}
+default cmake.generator             "CodeBlocks - Unix Makefiles"
 default cmake.generator_blacklist   {}
 # CMake generates Unix Makefiles that contain a special "fast" install target
 # which skips the whole "let's see if there's anything left to (re)build before
@@ -199,13 +200,6 @@ proc cmake::handle_generator {option action args} {
                 # unset the DESTDIR env. variable if it has been set before
                 destroot.env-delete \
                                 DESTDIR=${destroot}
-#                     proc ui_progress_info {string} {
-#                         if {[scan $string "\[%d%%\] " perc] == 1} {
-#                             return $perc
-#                         } else {
-#                             return -1
-#                         }
-#                     }
             }
             "*Ninja" {
                 ui_debug "Selecting the Ninja generator ($args)"
@@ -276,7 +270,11 @@ proc cmake::ccaching {} {
     if {${cccache} && [file exists ${prefix}/bin/ccache]} {
         return [list \
             -DCMAKE_C_COMPILER_LAUNCHER=${prefix}/bin/ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=${prefix}/bin/ccache]
+            -DCMAKE_CXX_COMPILER_LAUNCHER=${prefix}/bin/ccache \
+            -DCMAKE_Fortran_COMPILER_LAUNCHER=${prefix}/bin/ccache \
+            -DCMAKE_OBJC_COMPILER_LAUNCHER=${prefix}/bin/ccache \
+            -DCMAKE_OBJCXX_COMPILER_LAUNCHER=${prefix}/bin/ccache \
+            -DCMAKE_ISPC_COMPILER_LAUNCHER=${prefix}/bin/ccache]
     }
 }
 proc cmake::distccing {} {
@@ -287,7 +285,11 @@ proc cmake::distccing {} {
     if {${distcc} && !${cccache}} {
         return [list \
             -DCMAKE_C_COMPILER_LAUNCHER=distcc \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=distcc]
+            -DCMAKE_CXX_COMPILER_LAUNCHER=distcc \
+            -DCMAKE_Fortran_COMPILER_LAUNCHER=distcc \
+            -DCMAKE_OBJC_COMPILER_LAUNCHER=distcc \
+            -DCMAKE_OBJCXX_COMPILER_LAUNCHER=distcc \
+            -DCMAKE_ISPC_COMPILER_LAUNCHER=distcc]
     }
 }
 
@@ -305,17 +307,19 @@ default configure.pre_args {[list \
                     -DCMAKE_INSTALL_PREFIX="${cmake.install_prefix}" \
                     -DCMAKE_INSTALL_NAME_DIR="${cmake.install_prefix}/lib" \
                     {*}[cmake::system_prefix_path] \
-                    -DCMAKE_MAKE_PROGRAM=${build.cmd} \
                     {*}[cmake::ccaching] \
                     {*}[cmake::distccing] \
                     {-DCMAKE_C_COMPILER="$CC"} \
                     {-DCMAKE_CXX_COMPILER="$CXX"} \
+                    {-DCMAKE_OBJC_COMPILER="$CC"} \
+                    {-DCMAKE_OBJCXX_COMPILER="$CXX"} \
                     -DCMAKE_POLICY_DEFAULT_CMP0025=NEW \
                     -DCMAKE_POLICY_DEFAULT_CMP0060=NEW \
                     -DCMAKE_VERBOSE_MAKEFILE=ON \
                     -DCMAKE_COLOR_MAKEFILE=ON \
                     -DCMAKE_FIND_FRAMEWORK=LAST \
                     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+                    -DCMAKE_MAKE_PROGRAM=${build.cmd} \
                     {*}[cmake::module_path] \
                     {*}[cmake::rpath_flags] \
                     -Wno-dev
@@ -585,6 +589,26 @@ proc cmake.save_configure_cmd {{save_log_too ""}} {
             file copy -force ${build.dir}/CMakeCache.txt ${build.dir}/CMakeCache-MacPorts.txt
         }
     }
+}
+
+pre-configure {
+        # C/C++ standard - we set that on all platforms!
+        if {[option cmake.set_cxx_standard] && ${compiler.cxx_standard} ne ""} {
+            # https://cmake.org/cmake/help/latest/prop_tgt/CXX_STANDARD.html
+            if {${compiler.cxx_standard} < 1998} {
+                compiler.cxx_standard 1998
+            }
+            configure.args-append -DCMAKE_CXX_STANDARD=[string range ${compiler.cxx_standard} end-1 end]
+        }
+        if {[option cmake.set_c_standard] && ${compiler.c_standard} ne ""} {
+            # Base defaults to 1989 which is not valid as a C standard
+            # (at least as far as CMake is concerned)
+            # https://cmake.org/cmake/help/latest/prop_tgt/C_STANDARD.html#prop_tgt:C_STANDARD
+            if {${compiler.c_standard} < 1990} {
+                compiler.c_standard 1990
+            }
+            configure.args-append -DCMAKE_C_STANDARD=[string range ${compiler.c_standard} end-1 end]
+        }
 }
 
 platform darwin {
