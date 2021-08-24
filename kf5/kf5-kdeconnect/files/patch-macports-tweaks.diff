@@ -1,0 +1,250 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8e0909a0..9ea1f728 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -48,7 +48,10 @@ else()
+     endif()
+     find_package(Qca-qt5 ${QCA_MIN_VERSION} REQUIRED)
+     if(NOT WIN32 AND NOT APPLE)
+-        find_package(KF5PulseAudioQt REQUIRED)
++        find_package(KF5PulseAudioQt)
++        if(KF5PulseAudioQt_FOUND)
++            add_definitions(-DHAVE_PULSEQT)
++        endif()
+     endif()
+     add_definitions(-DQT_NO_URL_CAST_FROM_STRING -DQT_NO_KEYWORDS -DQT_NO_CAST_FROM_ASCII)
+ endif()
+@@ -73,7 +76,7 @@ set_package_properties(KF5Kirigami2 PROPERTIES
+ )
+ 
+ option(PRIVATE_DBUS_ENABLED "Use private dbus session for kdeconnect" OFF)
+-if(PRIVATE_DBUS_ENABLED OR APPLE)
++if(PRIVATE_DBUS_ENABLED)
+     add_compile_definitions(USE_PRIVATE_DBUS)
+ endif()
+ add_subdirectory(core)
+diff --git a/plugins/CMakeLists.txt b/plugins/CMakeLists.txt
+index 095670d4..f69ad63e 100644
+--- a/plugins/CMakeLists.txt
++++ b/plugins/CMakeLists.txt
+@@ -34,7 +34,7 @@ if(NOT SAILFISHOS)
+         add_subdirectory(pausemusic)
+     endif()
+ 
+-    if(Qt5Multimedia_FOUND AND KF5PulseAudioQt_FOUND)
++    if(Qt5Multimedia_FOUND)
+         add_subdirectory(findthisdevice)
+     endif()
+ endif()
+diff --git a/plugins/findthisdevice/CMakeLists.txt b/plugins/findthisdevice/CMakeLists.txt
+index f32602ad..9b218d65 100644
+--- a/plugins/findthisdevice/CMakeLists.txt
++++ b/plugins/findthisdevice/CMakeLists.txt
+@@ -13,7 +13,7 @@ target_link_libraries(kdeconnect_findthisdevice
+     Qt5::DBus
+ )
+ 
+-if (NOT WIN32)
++if (KF5PulseAudioQt_FOUND)
+     target_link_libraries(kdeconnect_findthisdevice
+         KF5::PulseAudioQt
+     )
+diff --git a/plugins/findthisdevice/findthisdeviceplugin.cpp b/plugins/findthisdevice/findthisdeviceplugin.cpp
+index 52952b6d..a89d049d 100644
+--- a/plugins/findthisdevice/findthisdeviceplugin.cpp
++++ b/plugins/findthisdevice/findthisdeviceplugin.cpp
+@@ -23,7 +23,7 @@
+ // KF
+ #include <KPluginFactory>
+ 
+-#ifndef Q_OS_WIN
++#if !defined(Q_OS_WIN) && defined(HAVE_PULSEQT)
+ #include <PulseAudioQt/Context>
+ #include <PulseAudioQt/Sink>
+ #endif
+@@ -96,7 +96,7 @@ bool FindThisDevicePlugin::receivePacket(const NetworkPacket& np)
+     player->setVolume(100);
+     player->play();
+ 
+-#ifndef Q_OS_WIN
++#if !defined(Q_OS_WIN) && defined(HAVE_PULSEQT)
+     const auto sinks = PulseAudioQt::Context::instance()->sinks();
+     QVector<PulseAudioQt::Sink*> mutedSinks;
+ 
+diff --git a/plugins/pausemusic/CMakeLists.txt b/plugins/pausemusic/CMakeLists.txt
+index af997637..58d94310 100644
+--- a/plugins/pausemusic/CMakeLists.txt
++++ b/plugins/pausemusic/CMakeLists.txt
+@@ -4,8 +4,12 @@ target_link_libraries(kdeconnect_pausemusic
+     kdeconnectcore
+     Qt5::Core
+     Qt5::DBus
+-    KF5::PulseAudioQt
+ )
++if(KF5PulseAudioQt_FOUND)
++    target_link_libraries(kdeconnect_pausemusic
++	   KF5::PulseAudioQt
++    )
++endif()
+ 
+ #######################################
+ # Config
+diff --git a/plugins/pausemusic/pausemusicplugin.cpp b/plugins/pausemusic/pausemusicplugin.cpp
+index bd3fcd06..e382cd58 100644
+--- a/plugins/pausemusic/pausemusicplugin.cpp
++++ b/plugins/pausemusic/pausemusicplugin.cpp
+@@ -26,8 +26,10 @@
+ #include <QDBusReply>
+ 
+ #include <KPluginFactory>
++#ifdef HAVE_PULSEQT
+ #include <PulseAudioQt/Context>
+ #include <PulseAudioQt/Sink>
++#endif
+ 
+ #include <dbushelper.h>
+ 
+@@ -66,6 +68,7 @@ bool PauseMusicPlugin::receivePacket(const NetworkPacket& np)
+ 
+         if (mute) {
+             qCDebug(KDECONNECT_PLUGIN_PAUSEMUSIC) << "Muting system volume";
++#ifdef HAVE_PULSEQT
+             const auto sinks = PulseAudioQt::Context::instance()->sinks();
+             for (const auto sink : sinks) {
+                 if (!sink->isMuted()) {
+@@ -73,6 +76,7 @@ bool PauseMusicPlugin::receivePacket(const NetworkPacket& np)
+                     mutedSinks.insert(sink->name());
+                 }
+             }
++#endif
+         }
+ 
+         if (pause) {
+@@ -102,12 +106,14 @@ bool PauseMusicPlugin::receivePacket(const NetworkPacket& np)
+ 
+             qCDebug(KDECONNECT_PLUGIN_PAUSEMUSIC) << "Unmuting system volume";
+ 
++#if HAVE_PULSEQT
+             const auto sinks = PulseAudioQt::Context::instance()->sinks();
+             for (const auto sink : sinks) {
+                 if (mutedSinks.contains(sink->name())) {
+                     sink->setMuted(false);
+                 }
+             }
++#endif
+             mutedSinks.clear();
+         }
+ 
+diff --git a/plugins/systemvolume/CMakeLists.txt b/plugins/systemvolume/CMakeLists.txt
+index cbbf1b37..dabfe230 100644
+--- a/plugins/systemvolume/CMakeLists.txt
++++ b/plugins/systemvolume/CMakeLists.txt
+@@ -30,6 +30,10 @@ else()
+     target_link_libraries(kdeconnect_systemvolume
+         kdeconnectcore
+         Qt5::Core
+-        KF5::PulseAudioQt
+     )
++    if(KF5PulseAudioQt_FOUND)
++        target_link_libraries(kdeconnect_systemvolume
++            KF5::PulseAudioQt
++        )
++    endif()
+ endif()
+diff --git a/plugins/systemvolume/systemvolumeplugin-pulse.cpp b/plugins/systemvolume/systemvolumeplugin-pulse.cpp
+index da4fb0a6..6774241f 100644
+--- a/plugins/systemvolume/systemvolumeplugin-pulse.cpp
++++ b/plugins/systemvolume/systemvolumeplugin-pulse.cpp
+@@ -31,8 +31,10 @@
+ 
+ #include <core/device.h>
+ 
+-#include <PulseAudioQt/Sink>
+-#include <PulseAudioQt/Context>
++#ifdef HAVE_PULSEQT
++    #include <PulseAudioQt/Sink>
++    #include <PulseAudioQt/Context>
++#endif
+ 
+ K_PLUGIN_CLASS_WITH_JSON(SystemvolumePlugin, "kdeconnect_systemvolume.json")
+ 
+@@ -40,12 +42,15 @@ Q_LOGGING_CATEGORY(KDECONNECT_PLUGIN_SYSTEMVOLUME, "kdeconnect.plugin.systemvolu
+ 
+ SystemvolumePlugin::SystemvolumePlugin(QObject* parent, const QVariantList& args)
+     : KdeConnectPlugin(parent, args)
++#ifdef HAVE_PULSEQT
+     , sinksMap()
++#endif
+ {}
+ 
+ bool SystemvolumePlugin::receivePacket(const NetworkPacket& np)
+ {
+ 
++#ifdef HAVE_PULSEQT
+     if (!PulseAudioQt::Context::instance()->isValid())
+         return false;
+ 
+@@ -65,6 +70,9 @@ bool SystemvolumePlugin::receivePacket(const NetworkPacket& np)
+         }
+     }
+     return true;
++#else
++    return false;
++#endif
+ }
+ 
+ void SystemvolumePlugin::sendSinkList() {
+@@ -72,6 +80,7 @@ void SystemvolumePlugin::sendSinkList() {
+     QJsonDocument document;
+     QJsonArray array;
+ 
++#ifdef HAVE_PULSEQT
+     sinksMap.clear();
+ 
+     const auto sinks = PulseAudioQt::Context::instance()->sinks();
+@@ -108,10 +117,12 @@ void SystemvolumePlugin::sendSinkList() {
+     NetworkPacket np(PACKET_TYPE_SYSTEMVOLUME);
+     np.set<QJsonDocument>(QStringLiteral("sinkList"), document);
+     sendPacket(np);
++#endif
+ }
+ 
+ void SystemvolumePlugin::connected()
+ {
++#ifdef HAVE_PULSEQT
+     connect(PulseAudioQt::Context::instance(), &PulseAudioQt::Context::sinkAdded, this, [this] {
+         sendSinkList();
+     });
+@@ -124,6 +135,7 @@ void SystemvolumePlugin::connected()
+     for (PulseAudioQt::Sink* sink : sinks) {
+         sinksMap.insert(sink->name(), sink);
+     }
++#endif
+ }
+ 
+ #include "systemvolumeplugin-pulse.moc"
+diff --git a/plugins/systemvolume/systemvolumeplugin-pulse.h b/plugins/systemvolume/systemvolumeplugin-pulse.h
+index f362fb08..b4a383da 100644
+--- a/plugins/systemvolume/systemvolumeplugin-pulse.h
++++ b/plugins/systemvolume/systemvolumeplugin-pulse.h
+@@ -26,7 +26,9 @@
+ 
+ #include <core/kdeconnectplugin.h>
+ 
+-#include <PulseAudioQt/Sink>
++#ifdef HAVE_PULSEQT
++    #include <PulseAudioQt/Sink>
++#endif
+ 
+ #define PACKET_TYPE_SYSTEMVOLUME QStringLiteral("kdeconnect.systemvolume")
+ #define PACKET_TYPE_SYSTEMVOLUME_REQUEST QStringLiteral("kdeconnect.systemvolume.request")
+@@ -45,7 +47,9 @@ public:
+ 
+ private:
+     void sendSinkList();
++#ifdef HAVE_PULSEQT
+     QMap<QString, PulseAudioQt::Sink*> sinksMap;
++#endif
+ };
+ 
+ #endif
