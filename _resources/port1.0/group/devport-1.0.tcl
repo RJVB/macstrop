@@ -138,7 +138,7 @@ proc restore_devport_tarball {baseport} {
         global name subport portdbpath os.platform os.major build_arch portarchivetype prefix
         set portimage "${portdbpath}/software/${baseport}/${baseport}-${cVersion}_${cRevision}${cVariants}.${os.platform}_${os.major}.${build_arch}.${portarchivetype}"
         if {[file exists ${portimage}]} {
-            if {[catch {system -W ${prefix} "bsdtar -xf ${portimage} .${dev::archdir}/${dev::archname}"} err]} {
+            if {[catch {system -W ${dev::archdir} "bsdtar -xOf ${portimage} .${dev::archdir}/${dev::archname} > ${dev::archname}"} err]} {
                 ui_warn "Failure restoring ${dev::archdir}/${dev::archname}: ${err}"
             } elseif {![file exists ${dev::archdir}/${dev::archname}]
                 || [file size ${dev::archdir}/${dev::archname}] == 0} {
@@ -156,6 +156,7 @@ proc restore_devport_tarball {baseport} {
     } else {
         ui_warn "Cannot determine installed image name for ${baseport}"
     }
+    return 0
 }
 
 proc unpack_devport_content {} {
