@@ -34,8 +34,6 @@ namespace eval meson {
 
 }
 
-depends_build-append        port:meson \
-                            bin:ninja:ninja
 depends_skip_archcheck-append \
                             meson \
                             ninja
@@ -94,7 +92,7 @@ proc meson::debugopts {} {
 
 proc meson::add_depends {} {
     depends_build-append    port:meson \
-                            port:ninja
+                            path:bin/ninja:ninja
 }
 
 configure.args-append
