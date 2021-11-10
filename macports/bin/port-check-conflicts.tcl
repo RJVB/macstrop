@@ -264,6 +264,9 @@ proc message { filename message } {
     } else {
         puts -nonewline "${filename}"
     }
+    if {[file type ${filename}] ne "file"} {
+        puts -nonewline " ([file type ${filename}])"
+    }
     if {![macports::ui_isset ports_quiet]} {
         puts " ${message}"
     } else {
@@ -384,17 +387,19 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                 foreach f $FILES {
                     set g [string range ${f} 1 end]
                     if {[file exists "${g}"]} {
-                        if {${newer}} {
-                            if {[file mtime ${f}] > [file mtime ${g}]} {
-                                if {[fileEqual ${f} ${g}]} {
-                                    message ${g} "will be touched"
-                                } else {
-                                    message ${g} "will be updated"
+                        if {[file type "${f}"] eq "file" && [file type "${g}"] eq "file"} {
+                            if {${newer}} {
+                                if {[file mtime ${f}] > [file mtime ${g}]} {
+                                    if {[fileEqual ${f} ${g}]} {
+                                        message ${g} "will be touched"
+                                    } else {
+                                        message ${g} "will be updated"
+                                    }
                                 }
+                            } elseif {!${inverse}} {
+                                set InstalledDupsList [lappend InstalledDupsList "${g}"]
+                                set DestrootDupsList [lappend DestrootDupsList "${f}"]
                             }
-                        } elseif {!${inverse}} {
-                            set InstalledDupsList [lappend InstalledDupsList "${g}"]
-                            set DestrootDupsList [lappend DestrootDupsList "${f}"]
                         }
                     } elseif {${inverse}} {
                         message ${g} "doesn't exist yet"
