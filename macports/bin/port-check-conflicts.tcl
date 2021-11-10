@@ -264,7 +264,7 @@ proc message { filename message } {
     } else {
         puts -nonewline "${filename}"
     }
-    if {[file type ${filename}] ne "file"} {
+    if {[file exists ${filename}] && [file type ${filename}] ne "file"} {
         puts -nonewline " ([file type ${filename}])"
     }
     if {![macports::ui_isset ports_quiet]} {
