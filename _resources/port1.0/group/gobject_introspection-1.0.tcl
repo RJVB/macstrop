@@ -81,13 +81,15 @@ proc gobject_introspection_pg::gobject_introspection_setup {} {
 
         # this is the major deviation from configure_main
         # -isysroot cannot be empty (see _osx_support.py in python installation)
-        if {[option configure.sdkroot] ne ""} {
-            set sdk_root "[option configure.sdkroot]"
-        } else {
-            set sdk_root "/"
+        platform darwin {
+            if {[option configure.sdkroot] ne ""} {
+                set sdk_root "[option configure.sdkroot]"
+            } else {
+                set sdk_root "/"
+            }
+            gobject_introspection.build.cflags-append   "-isysroot${sdk_root}"
+            gobject_introspection.build.ldflags-append  "-Wl,-syslibroot,${sdk_root}"
         }
-        gobject_introspection.build.cflags-append   "-isysroot${sdk_root}"
-        gobject_introspection.build.ldflags-append  "-Wl,-syslibroot,${sdk_root}"
 
         if {![exists universal_archs_supported] || ![variant_exists universal] || ![variant_isset universal]} {
             # muniversal PG is *not* being used
