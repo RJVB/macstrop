@@ -101,6 +101,11 @@ proc openssl::set_openssl_dependency {} {
         set openssl_cache_branch_nodot [openssl::branch_nodot]
         set openssl_cache_configure    ""
         depends_[option openssl.depends_type]-append port:openssl[openssl::branch_nodot]
+        if {${os.platform} ne "darwin"} {
+            # add a single build dependency on the correct opensslXY dev-port.
+            depends_build-delete port:openssl[openssl::branch_nodot]-dev
+            depends_build-append port:openssl[openssl::branch_nodot]-dev
+        }
     }
 }
 port::register_callback openssl::set_openssl_dependency
