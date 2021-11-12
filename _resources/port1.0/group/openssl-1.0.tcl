@@ -82,7 +82,7 @@ proc openssl::is_enabled {} {
 }
 
 proc openssl::set_openssl_dependency {} {
-    global openssl_cache_branch_nodot openssl_cache_depends
+    global openssl_cache_branch_nodot openssl_cache_depends os.platform
     
     if { [openssl::is_enabled] } {
 
