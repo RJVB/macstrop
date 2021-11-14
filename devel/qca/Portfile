@@ -3,7 +3,6 @@
 PortSystem              1.0
 
 name                    qca
-version                 2.3.4
 
 # Qt version handling logic
 global Qt_Major
@@ -11,10 +10,19 @@ subport ${name}-qt5     {}
 
 if {[string match "${name}-qt5*" ${subport}]} {
     PortGroup           qt5 1.0
-    set Qt_Major        5
+    set Qt_Major        qt5
+    version             2.3.4
+    checksums           rmd160  88589c5b4f2a87cb048b5a90ff39256ec996fdb1 \
+                        sha256  6b695881a7e3fd95f73aaee6eaeab96f6ad17e515e9c2b3d4b3272d7862ff5c4
+#                         size    737072
 } else {
     PortGroup           qt4 1.0
-    set Qt_Major        4
+    set Qt_Major        qt4
+    version             2.2.1
+    epoch               202111
+    checksums           rmd160  dddc3cf240dc5424b9df13fc1bf41c8e04f3b814 \
+                        sha256  d716d2d8e3ed8d95bbdb061f03081d7d032206f746a30a4d29d72196f50e7b02 \
+                        size    691676
 }
 # best included after the required Qt PG
 PortGroup               cmake 1.1
@@ -33,19 +41,53 @@ platforms               darwin
 homepage                https://userbase.kde.org/QCA
 master_sites            https://download.kde.org/stable/qca/${version}
 use_xz                  yes
-checksums               rmd160  88589c5b4f2a87cb048b5a90ff39256ec996fdb1 \
-                        sha256  6b695881a7e3fd95f73aaee6eaeab96f6ad17e515e9c2b3d4b3272d7862ff5c4
-#                         size    737072
 
 patch.pre_args          -Np1
-patchfiles-append       patch-qca-ossl.diff \
-                        patch-unique_ptr.diff
+
+switch -- ${Qt_Major} {
+    qt4 {
+        set OSSLDEPSPEC     port:openssl11
+        if {${os.platform} ne "darwin"} {
+            set OSSLDEPBSPEC    port:openssl11-dev
+        }
+        patchfiles-append \
+                        patch-qca221-ossl.diff \
+                        qt4/patch-installname.diff \
+                        qt4/patch-cmakeminver.diff
+        configure.args-append \
+                        -DQT4_BUILD:BOOL=ON
+    }
+    qt5 {
+        if {${os.major} < 11 } {
+            ui_warn "This port currently requires Qt 5.6 or up, so OS X 10.7 or newer"
+            known_fail yes
+        }
+        if {${os.platform} eq "darwin"} {
+            # let's use whatever the default OpenSSL port is set to
+            set OSSLDEPSPEC     path:lib/libssl.dylib:openssl
+        } else {
+            set OSSLDEPSPEC     path:lib/libssl.so:openssl
+            set OSSLDEPBSPEC    path:lib/libssl.so:openssl-dev
+        }
+        patchfiles-append \
+                        patch-qca-ossl.diff \
+                        patch-unique_ptr.diff \
+                        qt5/patch-qca210-qt550.diff \
+                        qt5/patch-support-older-qt5.diff
+        configure.args-append \
+                        -DQCA_SUFFIX:STRING="qt5"
+        build.post_args-append -wk
+    }
+    default {
+        ui_warn "unsupported Qt version \"${Qt_Major}\""
+    }
+}
 
 # the QCA plugins have been rolled into the main source tarball and are built by default
 # when their dependencies are available. Allow this for all plugins that were not already
 # available through an individual port; no reason to impose new dependencies on our dependents.
 # This is mostly of interest for Qt5-based dependents, evidently.
-configure.args          -DCMAKE_INSTALL_PREFIX:PATH=${qt_dir} \
+configure.args-append   -DCMAKE_INSTALL_PREFIX:PATH=${qt_dir} \
                         -DQCA_PLUGINS_INSTALL_DIR:PATH=${qt_plugins_dir} \
                         -DQCA_LIBRARY_INSTALL_DIR:PATH=${qt_libs_dir} \
                         -DQCA_BINARY_INSTALL_DIR:PATH=${qt_bins_dir} \
@@ -61,21 +103,6 @@ configure.args          -DCMAKE_INSTALL_PREFIX:PATH=${qt_dir} \
 compiler.cxx_standard   2011
 configure.cxxflags-append \
                         -std=c++11
-
-if {${Qt_Major} eq "4"} {
-    configure.args-append \
-                        -DQT4_BUILD:BOOL=ON
-} elseif {${Qt_Major} eq "5"} {
-    if {${os.major} < 11 } {
-        ui_warn "This port currently requires Qt 5.6 or up, so OS X 10.7 or newer"
-        known_fail yes
-    }
-    patchfiles-append   patch-qca210-qt550.diff \
-                        patch-support-older-qt5.diff
-    configure.args-append \
-                        -DQCA_SUFFIX:STRING="qt5"
-    build.post_args-append -wk
-}
 
 post-destroot {
     if {${subport} eq ${name} || ${subport} eq "${subport}-qt5"} {
@@ -124,12 +151,6 @@ foreach qv ${qt.versions} {
         configure.args-append   -DBUILD_PLUGINS:STRING="botan\;gcrypt\;logger\;nss\;softstore"
     }
 
-    if {${os.platform} eq "darwin"} {
-        set OSSLDEPSPEC         path:lib/libssl.dylib:openssl
-    } else {
-        set OSSLDEPSPEC         path:lib/libssl.so:openssl
-        set OSSLDEPBSPEC        path:lib/libssl.so:openssl-dev
-    }
     # plugins depend on the corresponding main port and the libraries of which they expose the Functionality
     subport ${name}${qv}-ossl {
         license                 LGPL-2.1+
