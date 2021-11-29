@@ -5,6 +5,10 @@ Instructions to use are given below. Make sure to read everything, especially th
 
 ## Installation
 
+*Update 20211129 It has been brought to my attention that Apple have made use of the computers as traditional Unix workstations yet a bit more difficult. See issue #86 (https://github.com/RJVB/macstrop/issues/86) which has an adequate description of a pitfall I wasn't aware of.
+I probably shouldn't be giving out advice about disabling SIP and whatever else Apple invented to "protect ourselves against using our computers" ... suffice it to say that it'd be the 1st thing I will disable on systems that have been burdened with it.
+*
+
 To "install", clone the repository to a location of choice. My original is in the root of the MacPorts prefix: /opt/local/site-ports; let's say you want to do the same:
 
 %> sudo git clone --depth=1 --no-single-branch http://github.com/RJVB/macstrop.git /opt/local/site-ports
