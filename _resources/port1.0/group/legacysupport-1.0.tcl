@@ -3,14 +3,22 @@
 # This portgroup provides support for various missing library functions
 # on older OS releases.
 
-# Newest OSX release that requires legacy support.
-# Currently OSX 10.11 (Darwin 15) due to clock_gettime
+# Newest Darwin version that requires legacy support.
+# Currently OS X 10.12 ( Sierra, Darwin 16) due to utimensat, fsgetpath, setattrlistat
 options legacysupport.newest_darwin_requires_legacy
-default legacysupport.newest_darwin_requires_legacy 15
+default legacysupport.newest_darwin_requires_legacy 16
 
-# allow static linking of legacysupport if preferred (eg compilers)
+# allow static linking of legacysupport if preferred (e.g. compilers)
 options legacysupport.use_static
 default legacysupport.use_static no
+
+proc get_legacysupport_depends_type {} {
+    if {[option legacysupport.use_static]} {
+        return depends_build
+    } else {
+        return depends_lib
+    }
+}
 
 proc add_legacysupport {} {
 
@@ -28,7 +36,8 @@ proc add_legacysupport {} {
     # Delete everything first to avoid duplicate values
 
     # port dependency
-    depends_lib-delete path:lib/libMacportsLegacySupport.dylib:legacy-support
+    set legacy_dep path:lib/libMacportsLegacySupport.dylib:legacy-support
+    [get_legacysupport_depends_type]-delete ${legacy_dep}
 
     # configure options
     configure.ldflags-delete    ${AddLDFlag}
@@ -50,7 +59,7 @@ proc add_legacysupport {} {
         ui_debug "Adding legacy build support"
 
         # Depend on the support library or devel version if installed
-        depends_lib-append path:lib/libMacportsLegacySupport.dylib:legacy-support
+        [get_legacysupport_depends_type]-append ${legacy_dep}
 
         # Add to configure options
         if {[option legacysupport.use_static]} {
