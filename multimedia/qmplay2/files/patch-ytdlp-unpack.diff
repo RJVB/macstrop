@@ -1,0 +1,142 @@
+diff --git a/src/qmplay2/YouTubeDL.cpp b/src/qmplay2/YouTubeDL.cpp
+index 58cd1f13..ffac08c2 100644
+--- a/src/qmplay2/YouTubeDL.cpp
++++ b/src/qmplay2/YouTubeDL.cpp
+@@ -43,6 +45,16 @@ QString YouTubeDL::getFilePath()
+ #endif
+     ;
+ }
++
++QString YouTubeDL::getUnpackedFilePath()
++{
++    return QMPlay2Core.getSettingsDir() + "__main__.py"
++#ifdef Q_OS_WIN
++    "_x86.exe"
++#endif
++    ;
++}
++
+ QStringList YouTubeDL::getCommonArgs()
+ {
+     QStringList commonArgs {
+@@ -82,9 +94,14 @@ bool YouTubeDL::fixUrl(const QString &url, QString &outUrl, IOController<> *ioCt
+ 
+ YouTubeDL::YouTubeDL()
+     : m_ytDlPath(getFilePath())
++    , m_ytDLUnpackedPath(getUnpackedFilePath())
+     , m_commonArgs(getCommonArgs())
+     , m_aborted(false)
+-{}
++{
++    if (!QFileInfo::exists(m_ytDLUnpackedPath)) {
++        m_ytDLUnpackedPath.clear();
++    }
++}
+ YouTubeDL::~YouTubeDL()
+ {}
+ 
+@@ -343,6 +360,7 @@ bool YouTubeDL::download()
+                 {
+                     emit QMPlay2Core.sendMessage(tr("\"youtube-dl\" has been successfully downloaded!"), g_name);
+                     QMPlay2Core.setWorking(false);
++                    unpack();
+                     return true;
+                 }
+             }
+@@ -394,6 +412,7 @@ bool YouTubeDL::update()
+         {
+             QMPlay2Core.setWorking(false);
+             emit QMPlay2Core.sendMessage(tr("\"youtube-dl\" has been successfully updated!"), g_name);
++            unpack();
+             return true;
+         }
+     }
+@@ -406,6 +425,34 @@ bool YouTubeDL::update()
+     return true;
+ }
+ 
++bool YouTubeDL::unpack()
++{
++    bool ret = false;
++#ifdef Q_OS_UNIX
++    const auto unzip = QStandardPaths::findExecutable("unzip");
++    if (!unzip.isNull() && !unzip.isEmpty() && !m_aborted) {
++        QProcess unzipIt;
++        unzipIt.setWorkingDirectory(QMPlay2Core.getSettingsDir());
++        unzipIt.setProgram(unzip);
++        unzipIt.setArguments(QStringList() << "-o" << "-q" << m_ytDlPath);
++        unzipIt.start();
++        unzipIt.waitForFinished(-1);
++        if (unzipIt.exitStatus() == QProcess::NormalExit && unzipIt.exitCode() <= 1) {
++            qDebug() << m_ytDlPath << "unpacked";
++            const QString unpacked = getUnpackedFilePath();
++            if (QFileInfo::exists(unpacked)) {
++                m_ytDLUnpackedPath = unpacked;
++                ret = true;
++            } else {
++                qWarning() << "unpacking did not give a __main__.py file!";
++                m_ytDLUnpackedPath.clear();
++            }
++        }
++    }
++#endif
++    return ret;
++}
++
+ void YouTubeDL::ensureExecutable()
+ {
+ #ifndef Q_OS_WIN
+@@ -414,6 +461,11 @@ void YouTubeDL::ensureExecutable()
+         QFile file(m_ytDlPath);
+         file.setPermissions(file.permissions() | QFile::ExeOwner | QFile::ExeUser | QFile::ExeGroup | QFile::ExeOther);
+     }
++    if (!m_ytDLUnpackedPath.isEmpty() && !QFileInfo(m_ytDLUnpackedPath).isExecutable())
++    {
++        QFile file(m_ytDLUnpackedPath);
++        file.setPermissions(file.permissions() | QFile::ExeOwner | QFile::ExeUser | QFile::ExeGroup | QFile::ExeOther);
++    }
+ #endif
+ }
+ 
+@@ -431,7 +483,7 @@ bool YouTubeDL::onProcessCantStart()
+ 
+ void YouTubeDL::startProcess(QStringList args)
+ {
+-    QString program = m_ytDlPath;
++    QString program = !m_ytDLUnpackedPath.isEmpty()? m_ytDLUnpackedPath : m_ytDlPath;
+ 
+ #ifndef Q_OS_WIN
+     QFile ytDlFile(program);
+@@ -445,6 +497,7 @@ void YouTubeDL::startProcess(QStringList args)
+             if (QStandardPaths::findExecutable(pythonCmd).endsWith(pythonCmd))
+             {
+                 args.prepend(program);
++                args.prepend("-OO");
+                 program = pythonCmd;
+             }
+         }
+diff --git a/src/qmplay2/YouTubeDL.hpp b/src/qmplay2/YouTubeDL.hpp
+index df967bb3..c3d3ac75 100644
+--- a/src/qmplay2/YouTubeDL.hpp
++++ b/src/qmplay2/YouTubeDL.hpp
+@@ -48,10 +48,12 @@ private:
+     void abort() override;
+ 
+ private:
++    static QString getUnpackedFilePath();
+     bool prepare();
+ 
+     bool download();
+     bool update();
++    bool unpack();
+ 
+     void ensureExecutable();
+ 
+@@ -61,6 +63,7 @@ private:
+ 
+ private:
+     const QString m_ytDlPath;
++    QString m_ytDLUnpackedPath;
+     const QStringList m_commonArgs;
+     IOController<NetworkReply> m_reply;
+     QProcess m_process;
