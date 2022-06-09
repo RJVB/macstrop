@@ -10,10 +10,16 @@ if {![variant_isset official]} {
 PortGroup           compiler_blacklist_versions 1.0
 PortGroup           active_variants 1.1
 
-if {[file exists ${prefix}/etc/macports/locales.tcl]} {
-    PortGroup       locale_select 1.0
-}
+    if {[file exists ${prefix}/etc/macports/locales.tcl]} {
+        PortGroup   locale_select 1.0
+    }
 
+    # VLC-2.1 and later are x86_64-only: https://trac.videolan.org/vlc/ticket/8161
+    supported_archs x86_64
+    universal_variant no
+} else {
+    supported_archs x86_64 arm64
+    universal_variant yes
 }
 
 name                VLC
@@ -30,11 +36,10 @@ long_description    VLC media player is a highly portable multimedia player for 
 
 homepage            https://www.videolan.org
 
-# VLC-2.1 and later are x86_64-only: https://trac.videolan.org/vlc/ticket/8161
-universal_variant   no
-supported_archs     "x86_64 arm64"
-
-version             3.0.12
+# NB: currently there are no Mac builds of the current 3.0.17.4 release ?!
+version             3.0.17.3
+# NB: remove the following line when that situation changes!
+livecheck.version   3.0.17.4
 license             GPL-2
 
 platforms           darwin
@@ -44,13 +49,13 @@ platforms           darwin
 set vlcprefix       ${prefix}/libexec/vlc3
 
 master_sites        https://download.videolan.org/pub/videolan/vlc/${version}/:source
-dist_subdir         VLC
 distfiles           vlc-${version}.tar.xz:source
 
 checksums           vlc-${version}.tar.xz \
-                    rmd160  5975ce21a183893ae2541ac38d5131329e539fbd \
-                    sha256  eff458f38a92126094f44f2263c2bf2c7cdef271b48192d0fe7b1726388cf879
-#                     size    25997468
+                    rmd160  35a3ccfad774284eda2f286903f89654467fb607 \
+                    sha256  6f7e90ef8973d31d96de64db817173e345150829717a94084b1bb8321cde2014
+#                     size    26393440
+dist_subdir         VLC
 
 #### new installation approach:
 if {[variant_isset official]} {
@@ -64,13 +69,38 @@ if {${os.platform} eq "darwin" && ${os.major} < 11} {
 }
 
 master_sites-append https://download.videolan.org/pub/videolan/vlc/${version}/macosx:installer
-distfiles-append    vlc-${version}-intel64.dmg:installer
-checksums-append    vlc-${version}-intel64.dmg \
-                    rmd160  323e07773bbb4b58d6d072430ddcb10b59c37e26 \
-                    sha256  9b8b5a78ee0d7448e840680df34c1417f7c8c87161127c2d150794b2449be5d1
-#                     size    51967175
+if {[variant_exists universal] && [variant_isset universal]} {
+        set dmg     vlc-${version}-universal.dmg
+        checksums-append \
+                    ${dmg} \
+                    rmd160  08924e84e90b13e7597024003278de53a76a0f19 \
+                    sha256  cff4e9d41ced0e29f88b75cb683a8fd5c788a9492047390d2b8a3ca7e8e37456
+#                     size    53855475
+} else {
+    switch ${build_arch} {
+        "x86_64" {
+            set dmg vlc-${version}-intel64.dmg
+            checksums-append \
+                    ${dmg} \
+                    rmd160  2dbc736d5feade8469235745a0e5fd65e4581b3f \
+                    sha256  cca267f2c51ae568e02f3b4d8a6adba87b2bde5f011a2b87c595c102d89f11d8
+#                     size    53855475
+        }
+        "arm64" {
+            set dmg vlc-${version}-arm64.dmg
+            checksums-append \
+                    ${dmg} \
+                    rmd160  b986b43056937464b33a9e8e9481ce4d38951ea5 \
+                    sha256  cdee78a660c88758cbaa3424948dfbdb7c969824be1becfcbbe2aef725655200
+#                     size    48370499
+            extract.only \
+                    vlc-${version}-arm64.dmg
+        }
+    }
+}
+distfiles-append    ${dmg}:installer
+extract.only        ${dmg}
 use_dmg             yes
-extract.only        vlc-${version}-intel64.dmg
 post-extract {
     ui_msg "--->    Extracting sources (partial)"
     system -W ${workpath} "tar -xf ${distpath}/vlc-${version}.tar.xz vlc-${version}/include"
@@ -102,10 +132,26 @@ post-destroot {
     foreach l {libvlc.pc vlc-plugin.pc} {
         xinstall -m 644 ${filespath}/${l} ${destroot}${vlcprefix}/lib/pkgconfig
         reinplace "s|@PREFIX@|${prefix}|g" ${destroot}${vlcprefix}/lib/pkgconfig/${l}
-        reinplace "s|@VERSION@|${version}|g" ${destroot}${vlcprefix}/lib/pkgconfig/${l}
     }
+    reinplace "s|\$\{VERSION\}|${version}|g" ${destroot}${vlcprefix}/lib/pkgconfig/vlc-plugin.pc
+    reinplace "s|@VERSION@|${version}|g" ${destroot}${vlcprefix}/lib/pkgconfig/libvlc.pc
     system "echo \"#!/bin/sh\nexec \\\"${applications_dir}/VLC3.app/Contents/MacOS/VLC\\\" \\\"\\\$\@\\\"\" > ${destroot}${prefix}/bin/vlc3"
     system "chmod 755 ${destroot}${prefix}/bin/vlc3"
+    if {${os.major} < 16} {
+        # libmacosx_plugin.dylib links to the MediaPlayer framework, which is 10.12+ . For some reason this
+        # doesn't cause runtime failures on earlier OS versions but `port rev-upgrade` will balk.
+        # Since this dependency is apparently not relevant, replace it with one on an existing framework:
+        depends_build-append port:cctools
+        system "install_name_tool -change /System/Library/Frameworks/MediaPlayer.framework/Versions/A/MediaPlayer \
+            /System/Library/Frameworks/MediaToolbox.framework/Versions/A/MediaToolbox \
+            ${destroot}${applications_dir}/VLC3.app/Contents/MacOS/plugins/libmacosx_plugin.dylib"
+    }
+    if {[variant_exists universal] && [variant_isset universal] && ${os.major} < 15} {
+        # idem for /System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage in a +universal install
+        system "install_name_tool -change /System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage \
+            /System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics \
+            ${destroot}${applications_dir}/VLC3.app/Contents/MacOS/plugins/libci_filters_plugin.dylib"
+    }
 }
 
 } else {
@@ -149,10 +195,6 @@ platform darwin {
     }
 }
 ##################################################
-
-# VLC-2.1 and later are x86_64-only: https://trac.videolan.org/vlc/ticket/8161
-universal_variant   no
-supported_archs     x86_64
 
 version             3.0.11 ; revision 1
 license             GPL-2
@@ -364,9 +406,6 @@ if {${subport} ne "lib${name}"} {
 } else {
     destroot.target install
 }
-
-livecheck.url       https://download.videolan.org/pub/videolan/vlc/
-livecheck.regex     <a href=\"(\\d\[\\d|\.|\\w\]+).*/\">
 
 # Other
 configure.args-append \
@@ -624,13 +663,21 @@ post-activate {
 }
 
 post-activate {
-    system "defaults write /Library/Preferences/org.videolan.vlc SUEnableAutomaticChecks 0"
+    if {[catch {exec defaults write /Library/Preferences/org.videolan.vlc SUEnableAutomaticChecks 0} result]} {
+        ui_debug "Couldn't write (deactivate) SUEnableAutomaticChecks default"
+    }
 }
 pre-deactivate {
-    system "defaults delete /Library/Preferences/org.videolan.vlc SUEnableAutomaticChecks"
+    if {[catch {exec defaults delete /Library/Preferences/org.videolan.vlc SUEnableAutomaticChecks} result]} {
+        ui_debug "Couldn't delete SUEnableAutomaticChecks default"
+    }
 }
 
 notes-append "MIDI support requires installing one or more SoundFont files,\
     in ${prefix}/share/sounds/sf2, for instance from port:generaluser-soundfont."
+
+
+livecheck.url       https://download.videolan.org/pub/videolan/vlc/
+livecheck.regex     <a href=\"(\\d\[\\d|\.|\\w\]+).*/\">
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
