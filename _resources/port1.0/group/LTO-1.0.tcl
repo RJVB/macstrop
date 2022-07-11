@@ -239,6 +239,7 @@ pre-configure {
 if {[info exists LTO_needs_pre_build]} {
     pre-build {
         if {[variant_isset cputuned] || [variant_isset cpucompat]} {
+		  ui_debug "LTO: Appending CPU flags to compiler/linker flags: \"${LTO.cpuflags}\""
             configure.cflags-append     {*}${LTO.cpuflags}
             configure.cxxflags-append   {*}${LTO.cpuflags}
             configure.objcflags-append  {*}${LTO.cpuflags}
