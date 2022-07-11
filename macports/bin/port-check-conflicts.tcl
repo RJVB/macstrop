@@ -433,7 +433,7 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                         puts [join ${DUPS}]
                     }
                     if {${checkdpkg} ne ""} {
-                        if {${os.platform} eq "linux"} {
+                        if {${os.platform} eq "linux" || ${portName} eq "MacPorts-devel"} {
                             puts "check host packages with `dpkg -S ${checkdpkg}`"
                         }
                     }
