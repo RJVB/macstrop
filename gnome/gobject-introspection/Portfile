@@ -1,36 +1,47 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 
 PortSystem          1.0
+PortGroup           meson 1.0
 PortGroup           active_variants 1.1
 
 PortGroup           locale_select 1.0
 PortGroup           preserve_runtime_libraries 1.0
+PortGroup           LTO 1.0
 
 name                gobject-introspection
-version             1.60.2
+conflicts           gobject-introspection-devel
+set my_name         gobject-introspection
+
+version             1.72.0
 revision            0
-set branch          [join [lrange [split ${version} .] 0 1] .]
+
 categories          gnome
 platforms           darwin
 # library under LGPL-2+, tools under GPL-2+
 license             {LGPL GPL-2+}
-maintainers         {devans @dbevans} openmaintainer
+maintainers         {mascguy @mascguy} openmaintainer
+
 description         GObject Introspection
 long_description    Gobject Introspection acts as a bridge between low-level C+GObject code and \
                     a managed runtime (JavaScript, Python, Java, Lua, .NET, Scheme, etc.).
-
 homepage            https://wiki.gnome.org/Projects/GObjectIntrospection
-master_sites        gnome:sources/${name}/${branch}/
+
+set branch          [join [lrange [split ${version} .] 0 1] .]
+master_sites        gnome:sources/${my_name}/${branch}/
+dist_subdir         ${my_name}
+distname            ${my_name}-${version}
 use_xz              yes
 
-checksums           rmd160  6455f1b5e4427b8f0a26efb94597a476ed9ca96e \
-                    sha256  ffdfe2368fb2e34a547898b01aac0520d52d8627fdeb1c306559bcb503ab5e9c
-#                     size    1285000
+checksums           rmd160  9a340f9c422a0ee215f543e49553405276f3d760 \
+                    sha256  02fe8e590861d88f83060dd39cda5ccaa60b2da1d21d0f95499301b186beaabc 
+#                     size    1040936
+
+meson.save_configure_cmd "log too"
 
 platform linux {
     subport system-girepository {}
     if {${subport} eq "system-girepository"} {
-        version 1.0 ; revision 1
+        version 1.0 ; revision 2
         distfiles
         installs_libs   no
         supported_archs noarch
@@ -42,7 +53,8 @@ platform linux {
             xinstall -m 755 -d ${destroot}${prefix}/lib/girepository-1.0
             foreach g [glob -nocomplain /usr/lib/girepository-1.0/*] {
                 set gb [file tail ${g}]
-                if {![file exists ${prefix}/lib/girepository-1.0/${gb}]} {
+                if {![file exists ${prefix}/lib/girepository-1.0/${gb}] || \
+                        [registry_file_registered ${prefix}/lib/girepository-1.0/${gb}] eq "${subport}"} {
                     ln -s ${g} ${destroot}${prefix}/lib/girepository-1.0/${gb}
                 }
             }
@@ -50,65 +62,81 @@ platform linux {
         return
     }
 }
+set py_ver          3.7
+set py_ver_nodot    [string map {. {}} ${py_ver}]
 
 if {${subport} eq "${name}"} {
+depends_build       port:pkgconfig \
+                    port:bison \
+                    port:python${py_ver_nodot} \
+                    port:py${py_ver_nodot}-cython
 
-depends_build       port:pkgconfig
-
-depends_lib         path:lib/pkgconfig/glib-2.0.pc:glib2 \
+depends_lib         path:lib/pkgconfig/cairo.pc:cairo \
+                    path:lib/pkgconfig/glib-2.0.pc:glib2 \
                     port:libffi \
-                    port:py37-mako \
-                    port:py37-markdown
-platform darwin {
-    depends_lib-append \
-                    path:lib/pkgconfig/cairo.pc:cairo
-}
+                    port:py${py_ver_nodot}-mako \
+                    port:py${py_ver_nodot}-markdown
 
-depends_run         bin:glibtool:libtool
+patchfiles          patch-fix-scanner-in-build-execution.diff \
+                    patch-fix-tools-python.diff
 
-patchfiles          no-env-shebang.patch
 if {${os.platform} eq "darwin"} {
     patchfiles-append \
                     patch-fix-rpath-gir-typelib.diff
     post-patch {
-        reinplace "s|libcairo-gobject.2.dylib|${prefix}/lib/libcairo-gobject.2.dylib|g" ${worksrcpath}/configure.ac
+        reinplace "s|libcairo-gobject.2.dylib|${prefix}/lib/libcairo-gobject.2.dylib|g" ${worksrcpath}/gir/meson.build
+        reinplace "s|@MP_LIB@|${prefix}/lib/|g" ${worksrcpath}/giscanner/shlibs.py
     }
 } else {
+    configure.args-append \
+                    --libdir ${prefix}/lib
     configure.ldflags-append \
                     -Wl,-rpath,${prefix}/lib
-    post-build {
-        # the typelib files are (re)generated during the destroot, so we can splice in the rpaths at this point
-        system -W ${worksrcpath} "patch -Np0 -i ${filespath}/patch-rpath-in-gir-linux.diff"
-        foreach g [glob ${worksrcpath}/*.gir] {
-            reinplace "s|@PREFIX@|${prefix}|g" ${g}
+    post-destroot {
+        system -W ${destroot}${prefix}/share/gir-1.0 "patch -Np0 -i ${filespath}/patch-rpath-in-gir-linux.diff"
+        foreach g [glob ${destroot}${prefix}/share/gir-1.0/*.gir] {
+            reinplace -q "s|@PREFIX@|${prefix}|g" ${g}
+            # regenerate the typelib file
+		  set typelib "[file rootname ${g}].typelib"
+            system -W ${destroot}${prefix}/share/gir-1.0 "${build.dir}/tools/g-ir-compiler -o ${typelib} ${g} \
+                --includedir ${build.dir}/gir --includedir ${worksrcpath}/gir"
         }
     }
     notes-append       "Don't forget to install port:system-girepository!"
 }
-
-
-configure.python    ${prefix}/bin/python3.7
-
-if {![file exists ${worksrcpath}/config.log]} {
-    depends_build-append \
-                    port:autoconf-archive
-    # use autoreconf to sync with our build tools
-    use_autoreconf      yes
-    autoreconf.args     -fvi
+post-patch {
+    reinplace "s|@MP_PYTHON_CMD@|${configure.python}|g" ${worksrcpath}/tools/meson.build
+    reinplace "s|#!/usr/bin/env python3|#!${configure.python}|g" \
+        ${worksrcpath}/misc/update-glib-annotations.py \
+        misc/update-gtkdoc-tests.py \
+        misc/update-vulkan-gir.py \
+        tests/gi-tester
 }
 
-build.args          CC="${configure.cc} ${configure.cc_archflags}" V=1
+configure.python    ${prefix}/bin/python${py_ver}
+
+configure.args-append \
+                    -Ddoctool=enabled \
+                    -Dpython=${configure.python}
+
+# By default, gir will attempt to link programs using
+# the same compiler used to build Python itself. However,
+# the system clang on 10.6 does not appear to respect
+# LIBRARY_PATH, resulting in g-ir-scanner errors such as:
+#
+# ld: library not found for -lgio-2.0
+#
+# The following workaround selects a more up-to-date linker
+# when building this project. Identical logic already exists
+# in the gobject_introspection PortGroup, so dependent projects
+# should not require modification.
+build.env-append    CC=${configure.cc}
 
 platform darwin 8 {
-    # GObject introspection doesn't build with tiger's make, #32358
-    depends_build-append    port:gmake
-    build.cmd               ${prefix}/bin/gmake
-
     # Tiger does not support RPATHs at this time
     patchfiles-append patch-girscanner-tiger-no-rpath.diff
 
-    # Tiger requires
-    configure.args-append --disable-dependency-tracking
+    build.env-append DYLD_LIBRARY_PATH=${workpath}/build/girepository
 }
 
 post-destroot {
@@ -116,5 +144,5 @@ post-destroot {
 }
 
 livecheck.type      gnome
-
+livecheck.name      ${my_name}
 }
