@@ -31,7 +31,7 @@ depends_skip_archcheck-append \
                             meson \
                             ninja
 
-# TODO: --buildtype=plain tells Meson not to add its own flags to the command line. This gives the packager total control on used flags.
+# TODO: "--buildtype plain" tells Meson not to add its own flags to the command line. This gives the packager total control on used flags.
 default configure.cmd       {${prefix}/bin/meson}
 default configure.post_args {[list [option source_dir] "."]}
 # from mcalhoun's commit to make this PG compatible with muniversal:
@@ -69,13 +69,13 @@ proc meson::get_post_args {} {
     if {[info exists muniversal.build_arch]} {
         # muniversal 1.1 PG is being used
         if {[option muniversal.is_cross.[option muniversal.build_arch]]} {
-            return "${configure.dir} ${build.dir} --cross-file=[option muniversal.build_arch]-darwin"
+            return "${configure.dir} ${build.dir} --cross-file [option muniversal.build_arch]-darwin"
         } else {
             return "${configure.dir} ${build.dir}"
         }
     } elseif {[info exists muniversal.current_arch]} {
         # muniversal 1.0 PG is being used
-        return "${configure.dir} ${build_dir}-${muniversal.current_arch} --cross-file=${muniversal.current_arch}-darwin"
+        return "${configure.dir} ${build_dir}-${muniversal.current_arch} --cross-file ${muniversal.current_arch}-darwin"
     } else {
         return "${configure.dir} ${build_dir}"
     }
@@ -98,7 +98,7 @@ proc meson::add_depends {} {
 
 configure.args-append
 platform linux {
-    configure.args-append   --libdir=${prefix}/lib
+    configure.args-append   --libdir ${prefix}/lib
 }
 
 pre-configure {
@@ -121,7 +121,7 @@ pre-configure {
     # approach means meson will second-guess the buildtype regardless of what we asked for (there's
     # no guarantee it won't ever if we do use the override trick).
     configure.pre_args-append \
-                            --buildtype=${meson.build_type}
+                            --buildtype ${meson.build_type}
 }
 
 proc meson.save_configure_cmd {{save_log_too ""}} {
