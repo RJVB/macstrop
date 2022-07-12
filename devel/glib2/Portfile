@@ -60,6 +60,16 @@ depends_lib                 port:gettext \
                             port:libiconv \
                             port:pcre \
                             port:zlib
+platform linux {
+    depends_build-append    port:gettext-dev \
+                            port:libiconv-dev
+    configure.env-append    "LIBS=-L${prefix}/lib -lintl"
+    build.env-append        "LIBS=-L${prefix}/lib -lintl"
+}
+
+if {![file exists ${worksrcpath}/config.log]} {
+    configure.cmd           ./autogen.sh
+}
 
 if {[vercmp ${macosx_deployment_target} 10.9] < 0} {
     # GLib-CRITICAL **: attempting to free a locked GVariant instance.  This should never happen.
@@ -92,6 +102,7 @@ configure.args              --enable-static --disable-libelf \
                             ac_cv_path_GTKDOC_REBASE=
 if {${os.platform} ne "darwin"} {
     configure.args-append   --with-libiconv=gnu
+    configure.args-delete   --disable-libelf
 }
 
 configure.perl              /usr/bin/perl
@@ -100,8 +111,20 @@ configure.env-append        PERL_PATH=${configure.perl}
 build.env-append            "CC=${configure.cc}"
 build.env-append            "CXX=${configure.cxx}"
 
+variant static description {build static libraries too} {}
+if {[variant_isset static]} {
+    configure.args-replace  --disable-static \
+                            --enable-static
+}
+
 post-patch {
-    reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}|g" gio/gdbusprivate.c gio/xdgmime/xdgmime.c glib/gi18n-lib.h glib/gi18n.h gio/gdbusaddress.c
+    if {${os.platform} eq "darwin"} {
+        reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}|g" gio/gdbusprivate.c gio/xdgmime/xdgmime.c glib/gi18n-lib.h glib/gi18n.h gio/gdbusaddress.c
+    } else {
+        reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}|g" glib/gi18n-lib.h glib/gi18n.h 
+        reinplace -W ${worksrcpath} "s|@PREFIX@||g" gio/gdbusprivate.c gio/gdbusaddress.c
+        reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}/share:/usr/local|g" gio/xdgmime/xdgmime.c
+    }
     reinplace "s|data_dirs = \"/usr|data_dirs = \"${prefix}/share:/usr|g" ${worksrcpath}/glib/gutils.c
     reinplace "s|path = \"/bin|path = \"${prefix}/bin:/bin|g" ${worksrcpath}/glib/gutils.c ${worksrcpath}/glib/gspawn.c
     reinplace "s|#! */usr/bin/env @PYTHON@|#!${configure.python}|g" ${worksrcpath}/glib/gtester-report.in
@@ -113,8 +136,12 @@ post-patch {
 post-configure {
     # make config.h compatible with a universal build:
     system "ed - ${worksrcpath}/config.h < ${filespath}/config.h.ed"
-    # required under some circumstances?!
-    reinplace "s|global_symbol_pipe=\"\"|global_symbol_pipe=\"cat\"|g" ${worksrcpath}/libtool
+}
+pre-build {
+    # needed on Linux when building with clang?!
+    # libtool can be regenerated during a build so do the reinplace in the
+    # pre-build so that at least a subsequent build will succeed.
+    reinplace -q "s|global_symbol_pipe=\"\"|global_symbol_pipe=\"cat\"|g" ${worksrcpath}/libtool
 }
 
 build.args                  V=1
@@ -145,9 +172,9 @@ post-activate {
     }
 }
 
-platform darwin {
-    configure.args-append   --disable-dtrace
-}
+# platform darwin {
+    configure.args-append   --enable-dtrace
+# }
 
 if {${os.platform} eq "darwin" && ${os.major} <= 10} {
     # Requires python 2.7 as of 2.53.4
@@ -161,10 +188,14 @@ variant quartz conflicts x11 {
 }
 
 variant x11 conflicts quartz {
-    configure.args-append   --with-appinfo-impl=generic
+    if {${os.platform} eq "darwin"} {
+        configure.args-append   --with-appinfo-impl=generic
+    } else {
+        configure.args-append   --with-appinfo-impl=native
+    }
 }
 
-if {![variant_isset quartz]} {
+if {${os.platform} ne "darwin" || ![variant_isset quartz]} {
     default_variants +x11
 }
 if {![variant_isset x11]} {
