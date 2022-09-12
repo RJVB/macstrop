@@ -1,132 +1,166 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:filetype=tcl:et:sw=4:ts=4:sts=4
 
-PortSystem      1.0
-PortGroup       clang_dependency 1.0
-PortGroup       preserve_runtime_libraries 1.0
-PortGroup       LTO 1.0
+PortSystem          1.0
+PortGroup           clang_dependency 1.0
+PortGroup           preserve_runtime_libraries 1.0
+PortGroup           LTO 1.0
+PortGroup           compress_workdir 1.0
 
-name            icu
-set my_name     icu4c
-# Don't forget to increase the revision number of the dependents (e.g. boost)
-# whenever the library version number changes. Thanks.
-# To find dependencies, use:
-# port file all | sort -u | xargs grep -El ':icu( |$)' | rev | cut -d / -f 2 | rev | sort -u
-version         65.1
-if {${subport} eq "${name}-bootstrap" || ${subport} eq "${name}58"} {
-version         58.3
-}
-categories      devel textproc
-platforms       darwin freebsd
-maintainers     nomaintainer
-license         Permissive
+name                icu
+set my_name         icu4c
 
-description     International Components for Unicode
+#===============================================================================
+# *** IMPORTANT NOTE ***
+#
+# Any updates to this port require coordination with all maintainers, as the
+# number of downstream dependents is very large. And it shouldn't be updated,
+# without prior communication (and approval) via the Dev mailing list.
+#===============================================================================
+
+# Please increase the revision number of the dependents whenever the library
+# version number changes. To find dependencies, use:
+#  port file all | sort -u | xargs grep -El ':icu( |$)' | rev | cut -d / -f 2 | rev | sort -u
+#
+# Please confirm that all ports and its subport can be build. To find the list, use:
+#  port file all | sort -u | xargs grep -El ':icu( |$)' | rev | cut -d / -f 2 | rev | xargs port info --name --subport | cut -d : -f 2 | tr ',' ' ' | grep -v '\-\-' | tr ' ' '\n' | sort -u
+
+version             71.1
+revision            0
+epoch               1
+subport             ${name}-docs         { revision 0 }
+subport             ${name}-lx           { revision 0 }
+subport             ${name}-doxygen-docs { revision 0 }
+
+categories          devel textproc
+platforms           darwin freebsd
+maintainers         {@catap korins.ky:kirill} openmaintainer
+license             Permissive
+
+description         International Components for Unicode
 
 long_description \
-                The International Components for Unicode (ICU) libraries provide robust \
-                and full-featured Unicode services on a wide variety of platforms. ICU \
-                supports the most current version of the Unicode standard, and they provide \
-                support for supplementary Unicode characters (needed for GB 18030 repertoire support).
+    The International Components for Unicode (ICU) libraries provide robust \
+    and full-featured Unicode services on a wide variety of platforms. ICU \
+    supports the most current version of the Unicode standard, and they provide \
+    support for supplementary Unicode characters (needed for GB 18030 repertoire support).
 
-homepage        http://site.icu-project.org/
-master_sites    https://github.com/unicode-org/icu/releases/download/release-[string map {. -} ${version}]/
+homepage            https://icu.unicode.org/
+master_sites        https://github.com/unicode-org/icu/releases/download/release-[string map {. -} ${version}]/
+set docdir          ${prefix}/share/doc/${name}
 
-distname        ${my_name}-[string map {. _} ${version}]-src
-extract.suffix  .tgz
-worksrcdir      ${name}/source
+if {${subport} eq ${name} || ${subport} eq "${name}-lx"} {
 
-checksums       rmd160  4537a0ce1879b24cdee150862615a7a899d6fa05 \
-                sha256  53e37466b3d6d6d01ead029e3567d873a43a5d1c668ed2278e253b683136d948 \
-                size    24267934
+    # we will only use the muniversal PG on < 10.14. (see footnote 1).
+    set using_muniversal_PG false
+    if {${os.platform} eq "darwin" && ${os.major} < 18} {
 
-if {${os.major} >= 11 || ${subport} eq "${name}-bootstrap" || ${subport} eq "${name}58"} {
+        set using_muniversal_PG true
+        PortGroup muniversal 1.0
+
+        # ICU needs to run binaries when building, to generate its data. (see footnote 2).
+        merger_must_run_binaries yes
+    }
+
+    distname            ${my_name}-[string map {. _} ${version}]-src
+    extract.suffix      .tgz
+    worksrcdir          ${name}/source
+
+    # please also update the icu-docs checksums at the bottom of the Portfile
+    checksums           rmd160  e2cdd18bb849514081a541ec7b580ed652473554 \
+                        sha256  67a7e6e51f61faf1306b6935333e13b2c48abd8da6d2f46ce6adca24b1e21ebf
+#                         size    25701340
+
+    # use full pathnames to libraries in tools and make certain all versions of llvm-ar are called correctly
+    platform darwin {
+        patchfiles-append   patch-config-mh-darwin.diff
+    }
+    patchfiles-append patch-i18n-formatted_string_builder.h.diff
+
+    compiler.cxx_standard   2011
     configure.python        /usr/bin/python
-} else {
-    depends_build-append    port:python27
-    configure.python        ${prefix}/bin/python2.7
-}
 
-# This port is used by clang-3.4 to bootstrap libcxx
-subport ${name}-bootstrap {
-    revision                0
-    configure.pre_args      --prefix=${prefix}/libexec/libcxx-bootstrap
-    configure.cxx_stdlib    libstdc++
-    compiler.whitelist      clang llvm-gcc-4.2 gcc-4.2 apple-gcc-4.2
-}
-# Also needed by later clangs.
-if {${os.platform} eq "darwin" && ${os.major} < 11 && ${cxx_stdlib} eq "libc++"} {
-    clang_dependency.extra_versions 3.7
-}
+    # prevent ICU from finding installed icu when upgrading (#11981).
+    compiler.cpath
+    compiler.library_path
+    configure.cppflags-delete -I${prefix}/include
+    configure.ldflags-delete  -L${prefix}/lib
 
-subport ${name}58 {
-    revision                0
-    configure.pre_args      --prefix=${prefix}/libexec/${subport}
-}
+    configure.args      --disable-layoutex \
+                        --disable-samples \
+                        --enable-static
 
-if { [vercmp ${version} 59] < 0 } {
-    patchfiles-append       CVE-2017-7867-CVE-2017-7868.patch
-    checksums               rmd160  0b1ad8ea9bccd5d0f96a89bd0cdc12b5751ed46e \
-                            sha256  2680f3c547cd26cba1d7ebd819cd336ff92cf444a270e195fd3b10bfdf22276c
-#                             size    22626103
-} else {
-    if {[info exists compiler.cxx_standard]} {
-        compiler.cxx_standard   2011
-    } else {
-        configure.cxxflags-append -std=c++11
+    configure.universal_args-delete --disable-dependency-tracking
+
+    build.type      gnu
+    build.args      VERBOSE=1
+    build.post_args-append  -wk
+    use_parallel_build  yes
+
+    post-build {
+        if {[variant_exists universal] && [variant_isset universal] && ${using_muniversal_PG}} {
+            set dirs {}
+            foreach arch ${universal_archs_to_use} {
+                lappend dirs ${worksrcpath}-${arch}
+            }
+        } else {
+            set dirs ${worksrcpath}
+        }
+        foreach dir ${dirs} {
+            # Remove architecture-specific differences to allow merging. (See footnote 3).
+            reinplace {s| -DSIZEOF_VOID_P=[48]||g}              ${dir}/config/Makefile.inc \
+                                                                ${dir}/config/icu-config
+            reinplace -E {s| -arch +[^ ]+||g}                   ${dir}/config/pkgdata.inc
+            reinplace {s|host=\".*\"|host=\"\"|g}               ${dir}/config/icu-config
+            reinplace {s|host_alias=\".*\"|host_alias=\"\"|g}   ${dir}/config/icu-config
+            reinplace {s|host_cpu=\".*\"|host_cpu=\"\"|g}       ${dir}/config/icu-config
+        }
+    }
+
+    test.run        yes
+    test.target     check
+    test.args       VERBOSE=1
+
+    if {${os.platform} eq "darwin" && (${os.major} < 11 || ${os.major} > 20)} {
+        depends_build-append    port:python27
+        license_noconflict      python27
+        configure.python        ${prefix}/bin/python2.7
+    }
+
+    if {${build_arch} eq "ppc" || ${build_arch} eq "ppc64"} {
+        # (#59514) TODO: still needed?
+        post-extract {
+            xinstall -d -m 0755 ${worksrcpath}/data/out
+        }
+    }
+
+    platform darwin 8 {
+        patchfiles-append patch-common-putil.cpp.diff
+    }
+
+    platform freebsd {
+        configure.cmd   ./runConfigureICU FreeBSD
+        build.env       MAKE=/usr/local/bin/gmake
+        destroot.env    MAKE=/usr/local/bin/gmake
+    }
+    platform linux {
+        configure.cmd   ./runConfigureICU Linux
     }
 }
 
-set docdir      ${prefix}/share/doc/${name}
-
-configure.args  --disable-layoutex \
-                --disable-samples \
-                --enable-static
-
-subport ${name}-docs {
-    revision            0
-    conflicts           ${name}-doxygen-docs
-    supported_archs     noarch
-
-    description-append  (documentation)
-    long_description-append Documentation.
-
-    use_zip             yes
-    distname            ${my_name}-[string map {. _} ${version}]-docs
-    checksums           rmd160  cbcd2e6ccaace975381924fec597d8ae0d2b8336 \
-                        sha256  8fcc9b3d8a1092933b38541047c46743c14c4967310f830eeba2d92056e72163
-#                        size    7868905
-
-    extract.dir         ${worksrcpath}/doc/html
-
-    use_configure       no
-
-    build {}
-
-    destroot {
-        xinstall -m 755 -d ${destroot}${docdir}
-        copy ${worksrcpath}/doc/html ${destroot}${docdir}
+if {${subport} eq ${name}} {
+    post-destroot {
+        preserve_libraries ${prefix}/lib "libicu*.*.dylib libicu*.so.*"
+        update_preserved_libraries
+        xinstall -d ${destroot}${docdir}
+        xinstall -m 0644 {*}[glob ${worksrcpath}/../*.{css,html,txt}] ${destroot}${docdir}
     }
 }
 
-subport ${name}-doxygen-docs {
-    revision            0
-    conflicts           ${name}-docs
-    supported_archs     noarch
+if {${subport} eq "${name}-lx"} {
 
-    depends_build-append    port:doxygen
-
-    description-append  (build documentation)
-    long_description-append Build documentation.
-
-    build.target     doc
-    destroot.target  install-doc
-}
-
-subport ${name}-lx {
-    revision                0
     # http://userguide.icu-project.org/layoutengine/paragraph
     description             ICU paragraph layout library
-    long_description        ${description}
+    long_description        {*}${description}
 
     depends_build-append    port:pkgconfig
     depends_lib-append      port:icu \
@@ -135,26 +169,70 @@ subport ${name}-lx {
     configure.args-replace  --disable-layoutex --enable-layoutex
 
     destroot.dir            ${worksrcpath}/layoutex
+    post-destroot {
+        preserve_libraries ${prefix}/lib "libicu*.*.dylib libicu*.so.*"
+        update_preserved_libraries
+    }
+}
+
+if {${subport} eq "${name}-docs"} {
+    supported_archs         noarch
+
+    description-append      (documentation)
+    long_description-append Documentation.
+
+    use_zip                 yes
+    distname                ${my_name}-[string map {. _} ${version}]-docs
+    checksums               rmd160  06c9db2c6dfc989e65426e9e671188c69b713464 \
+                            sha256  b2b6ec8bc5234d0ebe47aaee3d1f80dcf3dba4fda666588531b07f5b0d9cffc8
+#                             size    8136508
+
+    extract.dir             ${worksrcpath}/doc/html
+    use_configure           no
+    build {}
+    destroot {
+        xinstall -m 755 -d ${destroot}${docdir}
+        copy ${worksrcpath}/doc/html ${destroot}${docdir}
+    }
+}
+
+if {${subport} eq "${name}-doxygen-docs"} {
+    # remove after 20220407
+    PortGroup               obsolete 1.0
+
+    replaced_by             ${name}-docs
 }
 
 if {${subport} eq ${name}} {
-    revision                1
+    livecheck.url       http://site.icu-project.org/download
+    livecheck.regex     "ICU (\[0-9.\]+) is now available."
+} else {
+    livecheck.type      none
 }
 
-if { ${subport} ne "${name}-docs" } {
-    if { ${supported_archs} ne "noarch" } {
-        PortGroup       muniversal 1.0
-    }
+# Note 1:
+    # prior to 10.14, universal means different library bit depths or endianness,
+    # so we had to build separately and lipo together using the muniversal PG
 
-    platform darwin {
-        if { [vercmp ${version} 59] < 0 } {
-            patchfiles-append   patch-bootstrap_config-mh-darwin.diff
-        } else {
-            patchfiles-append   patch-config-mh-darwin.diff
-            # https://trac.macports.org/ticket/59391
-            patchfiles-append   max_align_t.patch
-        }
-    }
+    # We can't easily use the muniversal PG on darwin20+ (footnote 2), however we don't
+    # need to use it because the universal build there has the same library bit
+    # depth and endianness on both Intel and arm64. Therefore we can build universal in
+    # one pass using clang's ability to generate both archs at once.
+
+
+# Note 2:
+    # ICU needs to run binaries when building, to generate its data.
+    # Simply disallowing cross compiling is the simplest solution, however
+    # that means that an x86_64/arm64 universal version can never be built on an Intel Mac.
+    # ancient refs: #29904, ancient solutions tried (r79660, r73865, and r73849)
+
+# Note 3:
+    # Remove architecture-specific differences to allow merging. (See note 2).
+    # we do not believe icu-config uses SIZEOF_VOID_P. Projects using Makefile
+    # include files may experience problems. The developers of ICU suggest using
+    # pkg-config over both icu-config and the Makefile includes.
+    # calling icu-config for the host information is not mentioned in any
+    # icu man pages, differs between architectures, and can't be merged
 
     # ICU has three mechanisms to aid other projects in building properly
     #     1) .pc files for pkg-config
@@ -168,108 +246,9 @@ if { ${subport} ne "${name}-docs" } {
     #     2) icu-config does not print them out, but they are still contained in the script itself.
     #     3) They still exist in the Makefile include files.
     #
-    # for descriptions of the problem, see
-    #     r101578
-    #     #40069
+    # for descriptions of the problem, see r101578, (#40069)
     #     https://bugs.gentoo.org/show_bug.cgi?id=202059
     #
     # for upstream reports and discussion, see
     #    http://bugs.icu-project.org/trac/ticket/10308
     #    http://bugs.icu-project.org/trac/ticket/6102
-    if {${supported_archs} ne "noarch"} {
-        post-build {
-            if {[variant_exists universal] && [variant_isset universal]} {
-                set dirs {}
-                foreach arch ${universal_archs_to_use} {
-                    lappend dirs ${worksrcpath}-${arch}
-                }
-            } else {
-                set dirs ${worksrcpath}
-            }
-            foreach dir ${dirs} {
-                # Removing architecture-specific differences is necessary to facilitate merging.
-                # This should not be a problem for projects using icu-config because we do not
-                # believe icu-config uses SIZEOF_VOID_P anyway. Projects using the Makefile
-                # include files may experience problems. The developers of ICU suggest using
-                # pkg-config over both icu-config and the Makefile includes.
-                reinplace {s| -DSIZEOF_VOID_P=[48]||g} \
-                    ${dir}/config/Makefile.inc \
-                    ${dir}/config/icu-config
-                reinplace -E {s| -arch +[^ ]+||g} \
-                    ${dir}/config/pkgdata.inc
-            }
-        }
-    }
-
-    # NB; on Linux we should use Linux/gcc when using GCC...
-    set platform [switch ${os.platform} {darwin {format MacOSX} linux {format Linux} freebsd {format FreeBSD}}]
-    configure.cmd   ./runConfigureICU ${platform}
-    
-    configure.universal_args-delete --disable-dependency-tracking
-    if {[variant_isset universal]} {
-        # ICU detects cross compiling by trying to run binaries.
-        # r73849 and #29904 indicate that cross compiling is a problem.
-        # Of the solutions tried (r79660, r73865, and r73849), simply disallowing cross compiling is by far the simplest.
-        # Note that #29904 should not show up again because universal now better recognizes 32/64-bit cross compiling (r79658)
-        set merger_must_run_binaries "yes"
-    }
-    
-    # Fix bug #11981 that prevents ICU from building when upgrading.
-    # The default configure flags causes utilisation of outdated ICU
-    # headers/libs instead of the right ones.
-    configure.cppflags
-    if {${os.platform} eq "darwin"} {
-        configure.ldflags
-    } else {
-        configure.ldflags-delete -L${prefix}/lib
-    }
-# this should be handled in "base" now:
-#     if {${os.platform} ne "darwin"} {
-#         configure.ldflags-append \
-#                     -Wl,-R,${prefix}/lib -Wl,-rpath,${prefix}/lib
-#     }
-
-    build.type      gnu
-    build.args      VERBOSE=1
-    build.post_args-append -wk
-    
-    use_parallel_build  yes
-    
-    test.run        yes
-    test.target     check
-    test.args       VERBOSE=1
-    
-    if { ${name} eq ${subport} } {
-        post-destroot {
-            preserve_libraries ${prefix}/lib "libicu*.*.dylib libicu*.so.*"
-            update_preserved_libraries
-            xinstall -d ${destroot}${docdir}
-            xinstall -m 0644 {*}[glob ${worksrcpath}/../*.{css,html,txt}] ${destroot}${docdir}
-        }
-    } elseif {${subport} eq "${name}-lx"} {
-        post-destroot {
-            preserve_libraries ${prefix}/lib "libicu*.*.dylib libicu*.so.*"
-            update_preserved_libraries
-        }
-    }
-
-    platform freebsd {
-        build.env       MAKE=/usr/local/bin/gmake
-        destroot.env    MAKE=/usr/local/bin/gmake
-    }
-    
-    platform darwin 8 {
-        if { [vercmp ${version} 59] < 0 } {
-            patchfiles-append patch-bootstrap_common-putil.cpp.diff
-        } else {
-            patchfiles-append patch-common-putil.cpp.diff
-        }
-    }
-}
-
-if {${subport} eq ${name}} {
-    livecheck.url       http://site.icu-project.org/download
-    livecheck.regex     "ICU4C-Download\">(\[0-9.\]+)"
-} else {
-    livecheck.type      none
-}
