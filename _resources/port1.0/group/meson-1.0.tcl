@@ -96,9 +96,10 @@ proc meson::add_depends {} {
                             path:bin/ninja:ninja
 }
 
-configure.args-append
 platform linux {
-    configure.args-append   --libdir ${prefix}/lib
+    # many ports are misbehaved and reset configure.args, so use pre_args to
+    # ensure libraries go where we want them to:
+    configure.pre_args-append --libdir ${prefix}/lib
 }
 
 pre-configure {
