@@ -9,6 +9,7 @@ if {${os.platform} eq "darwin" && ${os.major} < 11} {
     # tweaks recently, for 10.6 and earlier.
     name                libcxx_from_macstrop
     version             0
+    ui_msg "${name}@${version}"
     replaced_by         libcxx
     PortGroup           obsolete 1.0
     return
@@ -29,8 +30,9 @@ epoch                   1
 
 version                 9.0.1
 if {[variant_isset macports_libcxx]} {
-    revision            2
+    revision            3
 }
+
 categories              lang
 platforms               darwin
 license                 MIT NCSA
@@ -57,13 +59,14 @@ use_xz                  yes
 variant replacemnt_libcxx description {EXPERTS ONLY: Build a replacement libcxxabi and libcxx even if it is already part of the base OS.} {}
 variant macports_libcxx description "EXPERTS ONLY: Install the libcxx library so that MacPorts build will link against it" {}
 
-if {${os.major} < 11 || [variant_isset replacemnt_libcxx] || [variant_isset macports_libcxx]} {
-    # cmake requires C++11 and thus libc++. Avoid circular dependencies and allow
-    # building using the cmake build system only when the system has already has libc++
-    # installed, either natively or because the libc++ conversion has been bootstrapped.
-    # Also require cmake to be present.
-    set use_cmake       [expr [file exists /usr/lib/libc++.dylib] && [file exists ${prefix}/bin/cmake]]
-} else {
+# cmake requires C++11 and thus libc++. Avoid circular dependencies and allow
+# building using the cmake build system only when the system has already has libc++
+# installed, either natively or because the libc++ conversion has been bootstrapped.
+# Also require cmake to be present.
+# check the presence of cmake by checking the registry for the activated port as
+# ${prefix} will be set to "${prefix}" during portindex'ing ...
+set use_cmake           [expr [file exists /usr/lib/libc++.dylib] && [lindex [lindex [registry_active cmake] 0] 2]]
+if {${os.major} >= 11 && ![variant_isset replacemnt_libcxx] && ![variant_isset macports_libcxx]} {
     # nothing to be done in this case, we're a stub port
     set is_stub         yes
 }
@@ -75,6 +78,7 @@ if {![tbool use_cmake]} {
     # We could also embed the bootstrap version, maintaining the 2 different build methods
     # like we long did, except clamping the bootstart libc++ version to 5.0.1
     name                libcxx_from_macstrop
+    ui_msg "${name}@${version}"
     long_description    ${description} \n\
                         This port can only been installed if you already have a libc++ in /usr/lib \
                         and have port:cmake installed.
@@ -96,6 +100,23 @@ checksums               ${libcxxabi_distname}${extract.suffix} \
                         rmd160  b85b557e1fa372f2f3eb854c13ca103abb671d66 \
                         sha256  0981ff11b862f4f179a13576ab0a2f5530f46bd3b6b4a90f568ccc6a62914b34
 
+if {${name} eq "libcxx"} {
+    PortGroup           devport 1.0
+    create_devport      port:${name}
+}
+
+if {![is_mainport]} {
+    if {![tbool use_cmake] || [tbool is_stub]} {
+        long_description-append \n>>> This is a stub port unless you set +macports_libcxx
+        pre-destroot {
+            ui_error "This port only exists when port:libcxx is installed +macports_libcxx"
+            return -code error "invalid configuration"
+        }
+    }
+    # nothing else to be done
+    return
+}
+
 if {[tbool use_cmake]} {
     PortGroup           cmake 1.1
     distfiles-append    llvm-${version}.src${extract.suffix}
@@ -103,6 +124,7 @@ if {[tbool use_cmake]} {
     checksums-append    llvm-${version}.src${extract.suffix} \
                         rmd160  151c137ac3a514b6d32aaee5bb77dd32eb7d1f19 \
                         sha256  00a1ee1f389f81e9979f3a640a01c431b3021de0d42278f6508391a2f0b81c9a
+    installs_libs       yes
 
     # these are used during the build but not linked to by the resulting libraries
     depends_build-append \
@@ -210,7 +232,7 @@ variant runtime description "EXPERTS ONLY: Install the libcxx library so that it
 if {[variant_isset macports_libcxx]} {
     depends_build-append \
                         port:cctools
-    notes-append "Rebuild ports or start applications via ${prefix}/bin/optlibs to use libc++ v${version}, or\
+    notes-append "Install port:libcxx-dev and rebuild ports or start applications via ${prefix}/bin/optlibs to use libc++ v${version}, or\
          set DYLD_INSERT_LIBRARIES as illustrated in that script."
 }
 
@@ -268,7 +290,14 @@ if {![tbool is_stub]} {
             reinplace "s|@PREFIX@|${prefix}|g" ${destroot}${prefix}/bin/optlibs
         }
     }
+    if {[variant_isset macports_libcxx]} {
+        post-destroot {
+            register_devport_standard_content
+            create_devport_content_archive
+        }
+    }
 } else {
+    long_description-append \n>>> This is a stub port unless you set +replacemnt_libcxx or +macports_libcxx
     distfiles
     patchfiles
     fetch {}
