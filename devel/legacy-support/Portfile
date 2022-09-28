@@ -20,7 +20,7 @@ description         Installs wrapper headers to add missing functionality to leg
 long_description    {*}${description}
 
 # Primary release version
-set release_ver     1.0.2
+set release_ver     1.0.6
 
 # Binary compatibility version
 set compat_ver      1.0.0
@@ -28,21 +28,21 @@ set compat_ver      1.0.0
 subport ${name} {
     conflicts           ${name}-devel
     github.setup        macports macports-legacy-support ${release_ver} v
-    revision            0
-    checksums           rmd160  a4fefd28e84d91fa72af5c2392d225e747e37f6f \
-                        sha256  4fb0ccc5d88b303a5f7f16ce4094ffb2e39addac4d7b4f26e9430fc2c21f17f3
-#                        size    46129
+    revision            1
+    checksums           rmd160  dd0cc654a70aca90c465c625c4f9beb69f93bf24 \
+                        sha256  165068ed58369610a760fa4bb14b80774732e51e84deb85b30d57158ffbf9f13 \
+                        size    54909
 }
 
 subport ${name}-devel {
     conflicts           ${name}
-    github.setup        macports macports-legacy-support 264de2b7ae77d7b09942e83ed9d438c9165558d2
-    version             20210611
+    github.setup        macports macports-legacy-support 03a02c1fb64e1ca254cb7c563ec367b12bd7fb18
+    version             20220805
     revision            0
     livecheck.type      none
-    checksums           rmd160  a4fefd28e84d91fa72af5c2392d225e747e37f6f \
-                        sha256  4fb0ccc5d88b303a5f7f16ce4094ffb2e39addac4d7b4f26e9430fc2c21f17f3
-#                        size    46129
+    checksums           rmd160  184349c368953b87dd10ea5f200e7b84fc651f08 \
+                        sha256  9a4c6479c869489f8212349e4ee3585d009154822589bfa3bf97d03b507f63d8 \
+                        size    55028
     set v_split         [split ${release_ver} .]
     set release_ver     [lindex ${v_split} 0].[lindex ${v_split} 1].99
 }
@@ -53,9 +53,20 @@ use_configure       no
 # https://build.macports.org/builders/ports-10.10_x86_64-builder/builds/141962/steps/install-port/logs/stdio
 # use_parallel_build  no
 
+post-extract {
+    # until upstream can be fixed, do not include atexit symbols
+    # under certain circumstances, infinite recursive loops can form
+    delete ${worksrcpath}/src/macports_legacy_atexit.c
+}
+
+patch.pre_args      -Np1
+patchfiles-append   patch-ARFLAGS.diff
+
+# for a newer lipo:
 depends_build-append port:cctools
 
 set max_darwin_reexport 19
+set max_darwin_optool   20
 
 if {[tbool configure.ccache]} {
     build.env-append \
@@ -80,6 +91,18 @@ destroot.env        PREFIX=${prefix}
 configure.cflags-append {*}${LTO.cpuflags}
 configure.cxxflags-append {*}${LTO.cpuflags}
 configure.ldflags-append {*}${LTO.cpuflags}
+# install Tiger-specific fixes
+platform darwin 8 {
+    # there is no system copyfile.h, so find local copy
+    configure.cflags-append -isystem${worksrcpath}/tiger_only/include
+    post-destroot {
+        # use Tiger version of copyfile.h
+        delete ${destroot}${prefix}/include/LegacySupport/copyfile.h
+        # Copy all tiger specific 'binaries' and includes
+        tiger_copy ${worksrcpath}/tiger_only/bin      ${destroot}${prefix}/bin/
+        tiger_copy ${worksrcpath}/tiger_only/include  ${destroot}${prefix}/include/LegacySupport/
+    }
+}
 
 if {![info exists universal_possible]} {
     set universal_possible [expr {${os.universal_supported} && [llength ${configure.universal_archs}] >= 2}]
@@ -102,11 +125,16 @@ test.env            {*}${build.env}
 test.run            yes
 test.target         test
 
-platform darwin 8 {
-    post-destroot {
-        # install Tiger-specific fixes
-        # very slightly modified which command to match behaviour of 10.5+
-        copy ${worksrcpath}/tiger_only/bin/which ${destroot}${prefix}/bin/which
+proc tiger_copy {from to} {
+    fs-traverse f [glob -directory ${from} *] {
+        if {[file isdirectory ${f}]} {
+            set base_dir [file tail ${f}]
+            xinstall -d ${to}${base_dir}
+            tiger_copy ${f} ${to}${base_dir}
+        } else {
+            ui_debug "Copying ${f} to ${to}"
+            copy ${f} ${to}
+        }
     }
 }
 
@@ -114,7 +142,7 @@ platform darwin 8 {
 # on newer systems as the reexport link option to /usr/lib/libSystem.B.dylib
 # does not work, due to the file system library cache added in macOS11.
 # Fallback to using optool here. Optool also currently not working on arm.
-if { ${build_arch} ne "arm64" && ${os.major} > ${max_darwin_reexport} } {
+if { ${build_arch} ne "arm64" && ${os.major} > ${max_darwin_reexport} && ${os.major} <= ${max_darwin_optool} } {
     depends_build-append port:optool
     post-destroot {
         set legSupp   ${prefix}/lib/libMacportsLegacySupport.dylib
