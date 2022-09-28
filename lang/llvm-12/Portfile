@@ -61,26 +61,39 @@ if {${subport} ne "lldb-${llvm_version}"} {
     }
 }
 
+variant no_libcxx description {don't build/install with embedded libc++ (also uses hardcoded rpaths as in older llvm ports)} {}
+default_variants-append +no_libcxx
+# conflicts_build-append  libcxx-dev
+
 # We can't (CAN?!) use Ninja with our custom destrooting plan for llvm
 cmake.generator         Ninja
 build.pre_args-prepend  -k 0
 cmake.install_prefix    ${sub_prefix}
 # cmake.build_type        Release
 
-# clean up some cmake-PG added values we don't want to use, because we want @rpaths
-cmake.install_rpath
+if {![variant_isset no_libcxx]} {
+    # clean up some cmake-PG added values we don't want to use, because we want @rpaths
+    cmake.install_rpath
 
-configure.pre_args-delete \
-    -DCMAKE_INSTALL_NAME_DIR=${cmake.install_prefix}/lib \
-    -DCMAKE_INSTALL_RPATH=${cmake.install_prefix}/lib
+    configure.pre_args-delete \
+        -DCMAKE_INSTALL_NAME_DIR=${cmake.install_prefix}/lib \
+        -DCMAKE_INSTALL_RPATH=${cmake.install_prefix}/lib
 
-configure.pre_args-replace \
-    -DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=ON \
-    -DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=OFF
+    configure.pre_args-replace \
+        -DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=ON \
+        -DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=OFF
 
-configure.pre_args-replace \
-    -DCMAKE_SYSTEM_PREFIX_PATH="${prefix}\;/usr" \
-    -DCMAKE_SYSTEM_PREFIX_PATH="${cmake.install_prefix}\;${prefix}\;/usr"
+    configure.pre_args-replace \
+        -DCMAKE_SYSTEM_PREFIX_PATH="${prefix}\;/usr" \
+        -DCMAKE_SYSTEM_PREFIX_PATH="${cmake.install_prefix}\;${prefix}\;/usr"
+} else {
+    # with this config we need a libc++ under ${prefix}
+    require_active_variants port:libcxx macports_libcxx
+    depends_build-append \
+        port:libcxx-dev
+    depends_run-append \
+        port:libcxx-dev
+}
 
 configure.args-append \
     -DLLVM_LINK_LLVM_DYLIB=ON \
@@ -157,7 +170,9 @@ if {${os.platform} eq "darwin" && ${os.major} < 10} {
         0024-10.5-and-less-compiler-rt-work-around-no-libdispatch.patch
 }
 # RJVB
-patchfiles-append       patch-accept-build_types.diff
+patchfiles-append \
+    patch-accept-build_types.diff \
+    patch-RTLD_FIRST.diff
 
 post-patch {
     reinplace "s|@@PREFIX@@|${prefix}|" \
@@ -191,6 +206,11 @@ if {${subport} eq "llvm-${llvm_version}"} {
 
     configure.args-append \
         -DLLVM_ENABLE_PROJECTS="polly"
+    if {[variant_isset no_libcxx]} {
+        configure.args-append \
+            -DLLVM_BUILD_RUNTIME=OFF       \
+            -DLIBCXX_INSTALL_LIBRARY=OFF
+    }
 }
 
 if {${subport} eq "clang-${llvm_version}"} {
@@ -239,12 +259,28 @@ if {${subport} eq "clang-${llvm_version}"} {
         -DCLANG_ENABLE_STATIC_ANALYZER=OFF \
         -DCLANG_ENABLE_ARCMT=OFF           \
         -DDARWIN_PREFER_PUBLIC_SDK=ON      \
-        -DLLVM_BUILD_RUNTIME=ON            \
-        -DLIBCXX_ENABLE_SHARED=ON          \
-        -DLIBCXX_INSTALL_LIBRARY=ON
-
-    configure.args-append   \
-        -DLLVM_ENABLE_PROJECTS="clang\;clang-tools-extra\;compiler-rt\;libcxx\;libcxxabi\;flang\;mlir\;lld"
+        -DLLVM_BUILD_RUNTIME=ON
+    if {[variant_isset no_libcxx]} {
+        # configure such that the libc++ headers will be prepared but the libraries not built nor installed
+        # also build only the shared libcxxabi but do not install it, so its headers will be prepared.
+        configure.args-append \
+            -DLIBCXX_ENABLE_SHARED=OFF     \
+            -DLIBCXX_ENABLE_STATIC=OFF     \
+            -DLIBCXX_ENABLE_EXPERIMENTAL_LIBRARY=OFF \
+            -DLIBCXX_INSTALL_HEADERS=ON    \
+            -DLIBCXX_INSTALL_SHARED_LIBRARY=OFF \
+            -DLIBCXX_INSTALL_STATIC_LIBRARY=OFF \
+            -DLIBCXX_INSTALL_EXPERIMENTAL_LIBRARY=OFF \
+            -DLIBCXXABI_ENABLE_STATIC=OFF  \
+            -DLIBCXXABI_INSTALL_STATIC_LIBRARY=OFF \
+            -DLIBCXXABI_INSTALL_SHARED_LIBRARY=OFF
+    } else {
+        configure.args-append \
+            -DLIBCXX_ENABLE_SHARED=ON      \
+            -DLIBCXX_INSTALL_LIBRARY=ON
+    }
+        configure.args-append   \
+            -DLLVM_ENABLE_PROJECTS="clang\;clang-tools-extra\;compiler-rt\;libcxx\;libcxxabi\;flang\;mlir\;lld"
 
     if {${os.major} <= 18} {
         # on systems that might build i386, we need atomic builtins
@@ -396,9 +432,20 @@ if {${subport} eq "clang-${llvm_version}"} {
             tools/lld/install \
             tools/mlir/install \
             tools/flang/install \
-            projects/compiler-rt/install \
-            projects/libcxx/install \
+            projects/compiler-rt/install
+    if {![variant_isset no_libcxx]} {
+        destroot.pre_args-append \
             projects/libcxxabi/install
+    } else {
+        # install only the libc++ headers, as earlier port:clang versions
+        destroot.pre_args-append \
+            projects/libcxx/include/install
+        # also install the 2 libcxxabi headers (has to be done manually)
+        post-destroot {
+            xinstall -m 644 ${build.dir}/include/c++/v1/__cxxabi_config.h ${destroot}${sub_prefix}/include/c++/v1/
+            xinstall -m 644 ${build.dir}/include/c++/v1/cxxabi.h ${destroot}${sub_prefix}/include/c++/v1/
+        }
+    }
     destroot.target
 }
 
