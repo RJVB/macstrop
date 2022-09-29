@@ -19,6 +19,8 @@ proc printUsage {} {
     puts "  -m    list files that will go missing (present in the active named port, not in the version-to-be-installed)"
     puts "  -n    list files that are newer (can be combined with -v)"
     puts "  -q    quiet mode"
+    puts "  -T    take datestamp of newer but unchanged headerfiles (under a /include/ directory)"
+    puts "        from the installed files (requires -n)"
     puts "  -v    list new files (inVerse mode)"
     puts "  -V    show version and MacPorts version being used"
     puts ""
@@ -96,6 +98,7 @@ set inverse 0
 set missing 0
 set newer 0
 set showVersion 0
+set touchHeaders 0
 set _WD_port {}
 
 array set ui_options        {}
@@ -138,6 +141,14 @@ while {[string index [lindex $::argv 0] 0] == "-" } {
                  set newer 1
             } else {
                 puts "-m, -n and -v are mutually exclusive"
+                exit 2
+            }
+        }
+        T {
+            if {${newer}} {
+                 set touchHeaders 1
+            } else {
+                puts "-T requires -n"
                 exit 2
             }
         }
@@ -391,7 +402,13 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                             if {${newer}} {
                                 if {[file mtime ${f}] > [file mtime ${g}]} {
                                     if {[fileEqual ${f} ${g}]} {
-                                        message ${g} "will be touched"
+                                        # check if the installed file is probably a headerfile
+                                        if {$touchHeaders && [string first "/include/" ${g}]} {
+                                            file mtime ${f} [file mtime ${g}]
+                                            message ${g} "mtime set to that of the installed file"
+                                        } else {
+                                            message ${g} "will be touched"
+                                        }
                                     } else {
                                         message ${g} "will be updated"
                                     }
