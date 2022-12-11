@@ -45,11 +45,13 @@ options configure.ar \
         configure.nm \
         configure.ranlib \
         LTO.use_archive_helpers \
-        LTO.cpuflags
+        LTO.cpuflags \
+        LTO.compatcpu
 
 # give the port a say over whether or not the selected helpers are used
 default LTO.use_archive_helpers yes
 default LTO.cpuflags {}
+default LTO.compatcpu westmere
 
 if {![info exists LTO.allow_ThinLTO]} {
     set LTO.allow_ThinLTO yes
@@ -224,7 +226,7 @@ if {[variant_isset cputuned]} {
     default LTO.cpuflags "-march=native"
 }
 if {[variant_isset cpucompat]} {
-    default LTO.cpuflags "-march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul"
+    default LTO.cpuflags "-march=${LTO.compatcpu} -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul"
 }
 pre-configure {
     if {[variant_isset cputuned] || [variant_isset cpucompat]} {
