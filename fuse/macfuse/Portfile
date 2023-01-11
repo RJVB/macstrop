@@ -1,0 +1,118 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
+PortSystem          1.0
+PortGroup           github 1.0
+
+github.setup        osxfuse osxfuse 4.4.1 macfuse- ; revision 0
+name                macfuse
+conflicts           osxfuse
+categories          fuse
+platforms           darwin
+supported_archs     arm64 x86_64
+license             Restrictive
+maintainers         {outlook.com:mohd.akram @mohd-akram} {ra1nb0w @ra1nb0w} openmaintainer
+
+description         FUSE for macOS
+
+long_description    FUSE extends macOS by adding support for user space file \
+                    systems.
+
+homepage            https://osxfuse.github.io/
+
+github.tarball_from releases
+distname            ${name}-${version}
+use_dmg             yes
+
+checksums           rmd160  e2331fe6a52f71a254edb7f474923470429bca15 \
+                    sha256  2a2d0f37ec5fcff547c5efa7d08539103a0b46bc16080c2b41a7e749f6e65c61
+#                     size    5980270
+
+if {${os.platform} eq "darwin" && ${os.major} < 16} {
+    if {${os.major} < 13} {
+        known_fail yes
+        pre-fetch {
+            ui_error "${name} is only supported on macOS 10.9 or later."
+            return -code error "unsupported platform version"
+        }
+    } else {
+        set is_stub yes
+    }
+}
+
+set pkg ${workpath}/pkg/Core.pkg
+
+post-extract {
+    if {![tbool is_stub]} {
+        system -W ${worksrcpath} \
+            "pkgutil --expand 'Extras/macFUSE ${version}.pkg' ${workpath}/pkg"
+        system -W ${pkg} "gzip -dc Payload | cpio -id"
+    }
+}
+
+use_configure       no
+
+build {
+    if {![tbool is_stub]} {
+        system -W ${pkg} "install_name_tool -id ${prefix}/lib/libfuse.2.dylib \
+            usr/local/lib/libfuse.2.dylib"
+
+        system -W ${pkg} "install_name_tool \
+            -id ${prefix}/Library/Frameworks/macFUSE.framework/Versions/A/macFUSE \
+            -change /usr/local/lib/libfuse.2.dylib ${prefix}/lib/libfuse.2.dylib \
+            Library/Frameworks/macFUSE.framework/Versions/A/macFUSE"
+
+        system -W ${pkg} "codesign -fs - \
+            usr/local/lib/libfuse.2.dylib \
+            Library/Frameworks/macFUSE.framework/Versions/A/macFUSE"
+    }
+}
+
+set dir /Library/Filesystems/macfuse.fs
+
+destroot {
+    if {![tbool is_stub]} {
+        copy ${pkg}/Library/Filesystems ${destroot}${prefix}/Library
+        xinstall -W ${pkg}${dir}/Contents/Resources -m 4755 load_macfuse mount_macfuse \
+            ${destroot}${prefix}${dir}/Contents/Resources
+        copy {*}[glob ${pkg}/Library/Frameworks/*] ${destroot}${prefix}/Library/Frameworks
+        copy {*}[glob ${pkg}/usr/local/include/*] ${destroot}${prefix}/include
+        copy {*}[glob ${pkg}/usr/local/lib/pkgconfig/*] ${destroot}${prefix}/lib/pkgconfig
+        reinplace "s|/usr/local|${prefix}|g" [glob ${destroot}${prefix}/lib/pkgconfig/*]
+        copy {*}[glob -type f ${pkg}/usr/local/lib/*] ${destroot}${prefix}/lib
+        # remove unwanted files like ._uninstall_macfuse.app
+        system "find  ${destroot}${prefix} -type f -iname '._*' -delete"
+    } else {
+        xinstall -m 755 -d ${destroot}${prefix}/var/lib/macfuse
+        ui_msg "xinstall -m 755 '${worksrcpath}/Extras/macFUSE ${version}.pkg' ${destroot}${prefix}/var/lib/macfuse/macFUSE-${version}.pkg"
+        xinstall -m 755 "${worksrcpath}/Extras/macFUSE ${version}.pkg" ${destroot}${prefix}/var/lib/macfuse/macFUSE-${version}.pkg
+        xinstall -m 755 -d  ${destroot}${prefix}/Library/Filesystems
+        xinstall -m 755 -d  ${destroot}${prefix}/Library/Frameworks
+        ln -s ${dir} ${destroot}${prefix}/Library/Filesystems/
+        ln -s /Library/Frameworks/OSXFUSE.framework ${destroot}${prefix}/Library/Frameworks/
+        ln -s /usr/local/include/fuse ${destroot}${prefix}/include/
+        ln -s /usr/local/lib/pkgconfig/fuse.pc ${destroot}${prefix}/lib/pkgconfig/
+        system "ln -s /usr/local/lib/libfuse.* ${destroot}${prefix}/lib/"
+        system "ln -s /usr/local/lib/libosxfuse*.dylib ${destroot}${prefix}/lib/"
+    }
+}
+
+if {![tbool is_stub]} {
+    notes  "
+    Run the following before using macFUSE:
+
+        sudo ln -fsn ${prefix}${dir} ${dir}
+"
+} else {
+    post-activate {
+        if {![file exists ${dir}]} {
+            ui_warn "Now spawning the official MacFUSE installer: please complete this step to finish the installation"
+            system "open ${prefix}/var/lib/macfuse/macFUSE-${version}.pkg"
+        } else {
+            ui_debug "MacFUSE already installed at the system level"
+            # TODO:
+            # use `system "/Library/Filesystems/macfuse.fs/Contents/Resources/mount_macfuse 2>&1 | fgrep ${version}"`
+            # (with `catch`) to determine if the correct version is installed!
+        }
+    }
+}
+
