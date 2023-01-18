@@ -92,8 +92,8 @@ default cmake.module_path           {}
 # Example: `cmake.debugopts-delete -DDEBUG` .
 default cmake.debugopts             {[cmake::debugopts]}
 # Propagate c/c++ standards to the build
-default cmake.set_c_standard        no
-default cmake.set_cxx_standard      no
+default cmake.set_c_standard        {[expr {${compiler.c_standard} >= 1999}]}
+default cmake.set_cxx_standard      {[expr {${compiler.cxx_standard} > 2011}]}
 
 # CMake provides several different generators corresponding to different utilities
 # (and IDEs) used for building the sources. We support "Unix Makefiles" (the default)

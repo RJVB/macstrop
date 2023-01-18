@@ -922,9 +922,12 @@ if {[vercmp ${qt5.version} 5.9]>=0} {
         set qt_qmake_spec_64    linux-clang
         pre-configure {
             # this has probably not been taken care of:
-            if {![string match "*-std=c++*" ${configure.cxxflags}]} {
+            if {${compiler.cxx_standard} > 2011} {
                 configure.cxxflags-append \
-                                -std=c++11
+                            -std=c++[string range ${compiler.cxx_standard} end-1 end]
+            } else {
+                configure.cxxflags-append \
+                            -std=c++11
             }
         }
     } else {
@@ -938,9 +941,12 @@ if {[vercmp ${qt5.version} 5.9]>=0} {
         set qt_qmake_spec_32    "${os.platform}-clang"
         pre-configure {
             # this has probably not been taken care of:
-            if {![string match "*-std=c++*" ${configure.cxxflags}]} {
+            if {${compiler.cxx_standard} > 2011} {
                 configure.cxxflags-append \
-                                -std=c++11
+                            -std=c++[string range ${compiler.cxx_standard} end-1 end]
+            } else {
+                configure.cxxflags-append \
+                            -std=c++11
             }
         }
     } else {
