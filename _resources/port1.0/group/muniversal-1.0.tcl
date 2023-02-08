@@ -118,14 +118,14 @@ proc universal_setup {args} {
         } elseif {${os.arch} eq "i386"} {
             set universal_archs_supported [ldelete ${universal_archs_supported} "ppc64"]
             set universal_archs_supported [ldelete ${universal_archs_supported} "arm64"]
-            if {${os.major} >= 9 && [sysctl hw.cpu64bit_capable] == 0} {
+            if {${os.major} >= 9 && ![catch {sysctl hw.cpu64bit_capable} result] && $result == 0} {
                 set universal_archs_supported [ldelete ${universal_archs_supported} "x86_64"]
             }
         } else {
             set universal_archs_supported [ldelete ${universal_archs_supported} "i386"]
             set universal_archs_supported [ldelete ${universal_archs_supported} "x86_64"]
             set universal_archs_supported [ldelete ${universal_archs_supported} "arm64"]
-            if {${os.major} >= 9 && [sysctl hw.cpu64bit_capable] == 0} {
+            if {${os.major} >= 9 && ![catch {sysctl hw.cpu64bit_capable} result] && $result == 0} {
                 set universal_archs_supported [ldelete ${universal_archs_supported} "ppc64"]
             }
         }
@@ -206,9 +206,22 @@ variant universal {
         depends_build-append    port:cctools
     }
 
+    if {${os.platform} eq "darwin" && ${os.major} >= 22} {
+        depends_build-append port:diffutils-for-muniversal
+    }
+
     foreach arch ${configure.universal_archs} {
         foreach lang {c cxx objc objcxx cpp ld} {
             configure.universal_${lang}flags-delete -arch ${arch}
+        }
+    }
+
+    proc muniversal_get_diff_to_use {} {
+        global prefix os.platform os.major
+        if {${os.platform} eq "darwin" && ${os.major} >= 22} {
+          return "${prefix}/libexec/diffutils/bin/diff"
+        } else {
+          return "/usr/bin/diff"
         }
     }
 
@@ -297,11 +310,11 @@ variant universal {
                 if {$merger_host($arch) ne ""} {
                     set host  --host=$merger_host($arch)
                 }
-            } elseif {[file tail ${configure.cmd}] ne "cmake"} {
+            } elseif {([file tail ${configure.cmd}] ne "cmake") && ([file tail ${configure.cmd}] ne "meson")} {
                 # check if building for a word length we can't run
                 set bits_differ 0
                 if {${arch} in [list ppc64 x86_64] &&
-                    (${os.major} < 9 || [sysctl hw.cpu64bit_capable] == 0)} {
+                    (${os.major} < 9 || (![catch {sysctl hw.cpu64bit_capable} result] && $result == 0))} {
                     set bits_differ 1
                 }
 
@@ -611,6 +624,11 @@ variant universal {
             reinplace -q {s:-m32::g} ${tempfile1} ${tempfile2}
             reinplace -q {s:-m64::g} ${tempfile1} ${tempfile2}
 
+            # also strip out host information and stray space runs
+            reinplace -q -E {s:--host=[^ ]+::g}     ${tempfile1} ${tempfile2}
+            reinplace -q -E {s:host_alias=[^ ]+::g} ${tempfile1} ${tempfile2}
+            reinplace -q -E {s:  +: :g}             ${tempfile1} ${tempfile2}
+
             if { ! [catch {system "/usr/bin/cmp -s \"${tempfile1}\" \"${tempfile2}\""}] } {
                 # modified files are identical
                 ui_debug "universal: merge: ${fl} differs in ${dir1} and ${dir2} but are the same when stripping out -m32, -m64, and -arch XXX"
@@ -719,7 +737,7 @@ variant universal {
 
                                     ui_debug "universal: merge: created ${prefixDir}/${fl} to include ${prefixDir}/${arch1}-${fl} ${prefixDir}/${arch1}-${fl}"
 
-                                    system "/usr/bin/diff -d ${diffFormat} \"${dir}/${arch1}-${fl}\" \"${dir}/${arch2}-${fl}\" > \"${dir}/${fl}\"; test \$? -le 1"
+                                    system "[muniversal_get_diff_to_use] -d ${diffFormat} \"${dir}/${arch1}-${fl}\" \"${dir}/${arch2}-${fl}\" > \"${dir}/${fl}\"; test \$? -le 1"
 
                                     copy -force ${dir1}/${fl} ${dir}/${arch1}-${fl}
                                     copy -force ${dir2}/${fl} ${dir}/${arch2}-${fl}
@@ -823,7 +841,7 @@ variant universal {
                                             if { ! [catch {system "test \"`head -c2 ${dir1}/${fl}`\" = '#!'"}] } {
                                                 # Shell script, hopefully striping out arch flags works...
                                                 mergeStripArchFlags ${dir1} ${dir2} ${dir} ${fl}
-                                            } elseif { ! [catch {system "/usr/bin/diff -dw ${diffFormat} \"${dir1}/${fl}\" \"${dir2}/${fl}\" > \"${dir}/${fl}\"; test \$? -le 1"}] } {
+                                            } elseif { ! [catch {system "[muniversal_get_diff_to_use] -dw ${diffFormat} \"${dir1}/${fl}\" \"${dir2}/${fl}\" > \"${dir}/${fl}\"; test \$? -le 1"}] } {
                                                 # diff worked
                                                 ui_debug "universal: merge: used diff to create ${prefixDir}/${fl}"
                                             } else {
