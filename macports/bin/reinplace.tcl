@@ -1,6 +1,5 @@
 #!/opt/local/libexec/macports/bin/tclsh8.5
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:filetype=tcl:et:sw=4:ts=4:sts=4
-# $Id:$
 
 # Create a namespace for some local variables
 namespace eval portclient::progress {
@@ -28,7 +27,7 @@ array set global_variations {}
 set args $argv
 
 # proc reinplace {args}  {
-    global env workpath macosx_version ui_options
+    global env workpath macosx_version macos_version ui_options
     set extended 0
     set suppress 0
     set quiet 0
@@ -89,6 +88,7 @@ set args $argv
     set os_platform ${macports::os_platform}
     set os_subplatform {}
     set macosx_version ${macports::macosx_version}
+    set macos_version ${macports::macos_version}
     set os_version ${macports::os_version}
     set os_arch ${macports::os_arch}
     set portpath "./"
