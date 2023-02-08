@@ -54,11 +54,6 @@ PortGroup           compress_workdir 1.0
 PortGroup           LTO 1.0
 #<< RJVB
 
-platform darwin {
-    if {${os.major} < 13} {
-        PortGroup   cxx11 1.1
-    }
-}
 description         A Free, Cross-Platform Digital Audio Editor.
 long_description    Audacity is a free, easy-to-use, multi-track audio editor and recorder \
                     for Windows, Mac OS X, GNU/Linux and other operating systems. The interface is translated \
@@ -109,11 +104,10 @@ if {${subport} eq "${name}-legacy"} {
     # so using git instead of a tarball fetch type is more appropriate for the current maintainer
     fetch.type      git
     distname        audacity-git
-#     worksrcdir      audacity-${version}
     checksums       rmd160  3615af185a7338b83fba23c943b9898c7bbb260d \
                     sha256  58349631840adf45a81b57037819e14e18cb684586cde249630e66488b911902
 #                     size    64490814
-    set PPREFIX     devel/
+    set PPREFIX     3.0.2/
 
     livecheck.type  none
 }
@@ -155,11 +149,14 @@ proc add_patchfile_ifexists {args} {
     }
 }
 
-# openssl is a dependency of curl in cmake
+# openssl is a dependency of curl in cmake and (indirectly) of git, both build dependencies
 license_noconflict  openssl
 use_parallel_build  yes
 
 homepage            http://www.audacityteam.org/
+
+## Audacity's build depends on a python3 interpreter but it will find a suitable one from the installed versions
+## itself - and at least one must be installed because it's an indirect dependency of port:git .
 
 if {[variant_isset wxsystem]} {
     if {[variant_exists wx32] && [variant_isset wx32]} {
@@ -175,7 +172,7 @@ if {[variant_isset wxsystem]} {
 
     depends_lib-append  port:${wxWidgets.port}
 } else {
-    set wxCommit    07e7d83
+    set wxCommit    837669d
     # different master_sites so we need to fetch and extract the audacity-wxWidgets sources "manually"
     post-fetch {
         if {![file exists ${distpath}/wxWidgets-${wxCommit}.tar.gz]} {
@@ -200,9 +197,7 @@ if {[variant_isset wxsystem]} {
 
 depends_build-append \
                     port:pkgconfig \
-                    port:python37 \
                     port:cctools
-set python_bin      ${prefix}/bin/python3.7
 
 depends_lib-append  port:freetype \
                     path:lib/pkgconfig/harfbuzz.pc:harfbuzz \
@@ -234,12 +229,10 @@ platform darwin {
                     port:nasm
 
     patchfiles-append \
-                    portaudio-no-universal-build.diff                       \
                     buildinfo-clarify-no-gstreamer.diff           \
                     patch-aboutdlg-compiler.diff                  \
                     add_enGB_translation.diff                     \
                     patch-more-decent-font-sizes.diff             \
-                    patch-python.diff                             \
                     patch-libnyquist-symbol-visibility.diff
     # use lame from MacPorts (partial revert of ae431bc5)
     # load ffmpeg libs from MacPorts (reverts of 1d40f33e)
@@ -420,11 +413,6 @@ if {${configure.cxx_stdlib} ne "" && [string match *clang* ${configure.cxx}]} {
                     -stdlib=${configure.cxx_stdlib}
 }
 
-pre-configure {
-    configure.args-append \
-                    "CPPFLAGS=\"${configure.cppflags}\""
-}
-
 if {${build.cmd} ne "ninja"} {
     build.args-append   V=1 VERBOSE=1
 } else {
@@ -434,8 +422,6 @@ if {${build.cmd} ne "ninja"} {
 # with everything defined/declared as intended we can now
 # handle the post-patch step with its reinplace statements.
 post-patch {
-    reinplace -W ${worksrcpath} "s|@@PYTHON@@|${python_bin}|g" \
-                                lib-src/lv2/configure
     reinplace -W ${worksrcpath} "s|/usr/local|${prefix}|g" \
                                 src/effects/ladspa/LadspaEffect.cpp \
                                 src/effects/VST/VSTEffect.cpp \
@@ -446,33 +432,8 @@ post-patch {
                                 lib-src/libvamp/src/vamp-hostsdk/PluginHostAdapter.cpp
     reinplace -W ${worksrcpath} "s|/Library/Application Support/audacity/libs|${prefix}/lib|g" \
                                 src/FFmpeg.h
-    reinplace -W ${worksrcpath} "s| -Werror||g" \
-                                lib-src/portaudio-v19/configure.in \
-                                lib-src/portaudio-v19/configure
     reinplace -W ${worksrcpath} "s|@PREFIX@|/opt/local|g" \
                                 cmake-proxies/lv2/CMakeLists.txt
-    platform darwin {
-        # audacity contains C++ files that include system SDK headers and ObjC code on OS X;
-        # they must thus be built as ObjC++
-        set make_objcpp { \
-            {CommandManager src/commands    {src/Makefile.in src/Makefile.am}} \
-            {Effect         src/effects     {src/Makefile.in src/Makefile.am}} \
-            {LV2Effect      src/effects/lv2 {src/Makefile.in src/Makefile.am}} \
-            {KeyboardCapture src            {src/Makefile.in src/Makefile.am}} \
-        }
-        foreach mm ${make_objcpp} {
-            set f  [lindex ${mm} 0]
-            set d  [lindex ${mm} 1]
-            set mk [lindex ${mm} 2]
-            # it's easiest to symlink f.mm to f.cpp; clang++ will do the rest.
-            if {![file exists ${worksrcpath}/${d}/${f}.mm]} {
-                ln -s ${f}.cpp ${worksrcpath}/${d}/${f}.mm
-            }
-        }
-        if {[file exists ${worksrcpath}/src/menus/WindowMenus.cpp] && ![file exists ${worksrcpath}/src/menus/WindowMenus.mm]} {
-            ln -s WindowMenus.cpp ${worksrcpath}/src/menus/WindowMenus.mm
-        }
-    }
 }
 
 pre-build {
@@ -483,10 +444,10 @@ pre-build {
     } else {
         system "echo '#define GIT_DESC \"${version}\"' > ${worksrcpath}/src/GitDesc.h"
     }
-    if {[file exists ${build.dir}/build.ninja]} {
-        # work around a (probable) cmake error; note this doesn't catch "recmake" actions triggered during the build!
-        reinplace "s|-framework QtWidgets QtGui QtCore||g" ${build.dir}/build.ninja
-    }
+#     if {[file exists ${build.dir}/build.ninja]} {
+#         # work around a (probable) cmake error; note this doesn't catch "recmake" actions triggered during the build!
+#         reinplace "s|-framework QtWidgets QtGui QtCore||g" ${build.dir}/build.ninja
+#     }
 }
 
 platform darwin {
@@ -591,8 +552,10 @@ notes "
 "
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
+#>> RJVB
 PortGroup           locale_select 1.0
 platform darwin {
     langselect_lproj_dir-append \
                     ${destroot}${aud_app_path}/Contents/Resources
 }
+#<< RJVB
