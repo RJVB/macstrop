@@ -164,6 +164,8 @@ wxWidgets.macosx_version_min
 options     wxWidgets.use
 option_proc wxWidgets.use wxWidgets._set
 
+PortGroup   compiler_blacklist_versions 1.0
+
 ## TODO: it would be nice to make the changes reversible
 ##
 ## parameters:
@@ -196,13 +198,13 @@ proc wxWidgets._set {option action args} {
 
         pre-fetch {
             # 10.8 (or later) -or- 10.7 with Xcode 4.4 (or later)
-            if {${os.major} >= 12 || [vercmp $xcodeversion 4.4] >= 0} {
+            if {${os.major} >= 12 || [vercmp $xcodeversion >= 4.4]} {
                 ui_error "${wxWidgets.port} cannot be built on macOS >= 10.7 with Xcode >= 4.4; please use port wxWidgets-3.0 or wxgtk-2.8 instead"
                 return -code return "wxWidgets-2.8 cannot be built on macOS >= 10.7 with Xcode >= 4.4; please use port wxWidgets-3.0 or wxgtk-2.8 instead"
             } else {
                 # 10.7
                 if {${os.major} == 11} {
-                    if {[vercmp $xcodeversion 4.3] < 0} {
+                    if {[vercmp $xcodeversion < 4.3]} {
                         set sdks_dir "${developer_dir}/SDKs"
                     } else {
                         set sdks_dir "${developer_dir}/Platforms/MacOSX.platform/Developer/SDKs"
