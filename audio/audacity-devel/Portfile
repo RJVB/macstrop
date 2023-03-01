@@ -3,22 +3,77 @@
 PortSystem          1.0
 
 PortGroup           github 1.0
+# PortGroups for the main ports
+PortGroup           wxWidgets 1.0
+PortGroup           active_variants 1.1
+PortGroup           cmake 1.1
+PortGroup           compiler_blacklist_versions 1.0
+#>> RJVB
+PortGroup           compress_workdir 1.0
+PortGroup           LTO 1.0
+#<< RJVB
 
+# placeholder name
 name                audacity
-conflicts           audacity-gtk
 categories          audio
 maintainers         {gmail.com:rjvbertin @RJVB} openmaintainer
 platforms           darwin
 license             GPL-2+
 universal_variant   no
 
-# PortGroups for the main ports
-PortGroup           active_variants 1.1
-PortGroup           cmake 1.1
+subport audacity-wxWidgets {}
+
+dist_subdir         ${name}
+
+# default to our own "stealth" wxWidgets prefix; these will be reset 
+# by wxWidget.use if +wxsystem
+wxWidgets.name      wxWidgets
+wxWidgets.version   audacity-3.1
+wxWidgets.prefix    ${prefix}/libexec/${wxWidgets.name}/${wxWidgets.version}
+wxWidgets.wxdir     ${wxWidgets.prefix}/bin
+wxWidgets.wxconfig  ${wxWidgets.wxdir}/wx-config
+wxWidgets.wxrc      ${wxWidgets.wxdir}/wxrc
+# dependencies for wxWidgets:
+set awx_deps        {path:include/turbojpeg.h:libjpeg-turbo \
+                    port:tiff
+                    port:libpng \
+                    port:zlib \
+                    port:libiconv}
+
+supported_archs     x86_64 arm64
+cmake.generator     Ninja
+if {${build.cmd} ne "ninja"} {
+    build.args-append   V=1 VERBOSE=1
+    build.post_args-append -k
+} else {
+    build.pre_args-prepend -k 0
+}
+
+
 #>> RJVB
-PortGroup           compress_workdir 1.0
-PortGroup           LTO 1.0
+cmake.save_configure_cmd "log too"
 #<< RJVB
+
+platform darwin {
+    compiler.blacklist *gcc* {clang < 602}
+    foreach clv {3.3 3.4 3.5 3.7 5.0 6.0 7.0 8.0} {
+        compiler.blacklist-append macports-clang-${clv}
+    }
+    foreach clv {9.0 10 11 12 13 14 15} {
+        if {[file exists ${prefix}/bin/clang-mp-${clv}]} {
+            compiler.whitelist-prepend macports-clang-${clv}
+        }
+        compiler.fallback-prepend macports-clang-${clv}
+    }
+}
+
+# ensure pre-compiled headers and the possible use of ccache can co-exist
+configure.env-append \
+                    "CCACHE_SLOPPINESS=pch_defines,time_macros"
+build.env-append    "CCACHE_SLOPPINESS=pch_defines,time_macros"
+
+if {${subport} ne "audacity-wxWidgets"} {
+    ######### main port #########
 
 description         A Free, Cross-Platform Digital Audio Editor.
 long_description    Audacity is a free, easy-to-use, multi-track audio editor and recorder \
@@ -33,19 +88,17 @@ long_description    Audacity is a free, easy-to-use, multi-track audio editor an
                     Numerous effects including change the speed or pitch of a recording. \n\
                     And more!
 
-    conflicts       "audacity2-legacy" audacity
-    ## 576b7e66 looks like possibly the last commit before the takeover by the new project owner:
-    github.setup    audacity audacity a3856938a167b97f3c03f23d56a0ff7cdf33af5b
-    name            audacity-devel
-    version         3.2.4.440
-    # this port is intended to facilitate development efforts shared with "upstreams"
-    # so using git instead of a tarball fetch type is more appropriate for the current maintainer
-    fetch.type      git
-    distname        audacity-git
-    set PPREFIX     3.2.4/
-    set conanWxVersion 3.1.3.4-audacity
+conflicts           "audacity2-legacy" audacity audacity-gtk
+github.setup        audacity audacity a3856938a167b97f3c03f23d56a0ff7cdf33af5b
 
-livecheck.type      none
+name                audacity-devel
+version             3.2.4.440
+# this port is intended to facilitate development efforts shared with "upstreams"
+# so using git instead of a tarball fetch type is more appropriate for the current maintainer
+fetch.type          git
+distname            audacity-git
+set PPREFIX         3.2.4/
+set conanWxVersion  3.1.3.4-audacity
 
 ##>> RJVB : set this to 15 (10.11) for upstream!
 set min_OS_for_wx32 13
@@ -64,18 +117,7 @@ platform darwin {
     }
 }
 
-if {![variant_exists wxsystem] || [variant_isset wxsystem]} {
-    PortGroup       wxWidgets 1.0
-}
-
-supported_archs     x86_64 arm64
 compiler.cxx_standard 2014
-build.post_args-append -k
-cmake.generator     Ninja
-
-#>> RJVB
-cmake.save_configure_cmd "log too"
-#<< RJVB
 
 proc add_patchfile_ifexists {args} {
     global PPREFIX filespath
@@ -96,14 +138,13 @@ if {[variant_isset wxsystem]} {
 
     require_active_variants ${wxWidgets.port} "" stdlib
 
-    depends_lib-append  port:${wxWidgets.port}
-} else {
     depends_lib-append \
-                    path:include/turbojpeg.h:libjpeg-turbo \
-                    port:tiff \
-                    port:libpng \
-                    port:zlib \
-                    port:libiconv
+                    port:${wxWidgets.port}
+} else {
+    depends_build-append \
+                    port:audacity-wxWidgets
+    depends_lib-append \
+                    {*}${awx_deps}
 }
 
 depends_build-append \
@@ -121,7 +162,8 @@ depends_lib-append  port:freetype \
                     port:lame \
                     port:libogg \
                     port:libsndfile \
-                    port:libvorbis
+                    port:libvorbis \
+                    port:sqlite3
 # platform linux {
 #     depends_lib-append \
 #                     path:lib/libuuid.so:ossp-uuid
@@ -141,25 +183,25 @@ patch.pre_args      -Np1
 # the wx build system no longer exports private libraries. Carbon could be temporary because wxW
 # dropped Carbon usage somewhere around 3.1.4 but drops support for 10.9- earlier. This is not
 # required when building against port:wxWidgets-3.1 but it won't hurt either.
-patchfiles-append   ${PPREFIX}patch-cmakefiles-@prefix@.diff \
-                    ${PPREFIX}patch-build-preparations.diff \
-                    ${PPREFIX}patch-fix_bundlepy-@prefix@.diff \
-                    ${PPREFIX}patch-build-pre-1014.diff
+patchfiles-append   patch-cmakefiles-@prefix@.diff \
+                    patch-build-preparations.diff \
+                    patch-fix_bundlepy-@prefix@.diff \
+                    patch-build-pre-1014.diff
 
 if {[variant_isset wxsystem]} {
     # make certain we're not embedding any wxWidgets libraries
     add_patchfile_ifexists \
-                ${PPREFIX}patch-no-embedded-wxW.diff
+                    patch-no-embedded-wxW.diff
 } else {
     # make certain we're embedding our wxWidgets libraries
     add_patchfile_ifexists \
-                ${PPREFIX}patch-embed-wxW.diff
+                    patch-embed-wxW.diff
 }
 
 patchfiles-append   patch-aboutdlg.diff \
                     add_enGB_translation.diff \
                     patch-libnyquist-symbol-visibility.diff \
-                    ${PPREFIX}patch-ffmpeg-functions.diff
+                    patch-ffmpeg-functions.diff
 
 platform darwin {
     depends_build-append \
@@ -169,21 +211,15 @@ platform darwin {
     patchfiles-append \
                     patch-more-decent-font-sizes.diff \
                     patch-use-MPlame.diff
-    # load ffmpeg libs from MacPorts (reverts of 1d40f33e)
-#                     patch-use-MPffmpeg.diff
     # work around a missing implementation in wxCocoa's wxSound class
     patchfiles-append \
                     patch-implement-progdial=beep.diff
     add_patchfile_ifexists \
-                    ${PPREFIX}patch-no-sdk1013.diff
+                    patch-no-sdk1013.diff
 }
 patchfiles-append   patch-enable-compact-menu.diff
 add_patchfile_ifexists \
                     ${PPREFIX}patch-temp-fixes.diff
-if {[variant_isset wxsystem] && ${wxWidgets.use} ne "wxWidgets-3.2"} {
-    add_patchfile_ifexists \
-                    ${PPREFIX}patch-wxw-31x.diff
-}
 
 platform darwin {
     variant suil description {Build the GUI library for LV2 plugins\; requires Qt5} {
@@ -224,7 +260,7 @@ if {${os.platform} eq "darwin"} {
         # no OS specifics.
         if {${os.major} < 20} {
             macosx_deployment_target 10.13
-            patchfiles-delete ${PPREFIX}patch-no-sdk1013.diff
+            patchfiles-delete patch-no-sdk1013.diff
             configure.sdkroot
         }
     } elseif {${os.major} == 13} {
@@ -281,6 +317,7 @@ configure.args-append \
                     -D${_OPT}use_twolame=system \
                     -D${_OPT}use_midi=system \
                     -D${_OPT}has_vst3=off \
+                    -D${_OPT}use_sqlite=system \
                     -D${_OPT}use_pch=on \
                     -DCMAKE_DISABLE_FIND_PACKAGE_JACK=On
 ## Is this automatic nowadays?
@@ -289,62 +326,20 @@ configure.args-append \
 #                     -D${_OPT}use_mad=off \
 #                     -D${_OPT}use_id3tag=off
 # }
-# if {${subport} eq ${name}} {
-    # using port:sqlite3 leads to unstable behaviour?!
-    configure.args-append \
-                    -D${_OPT}use_sqlite=system
-# } else {
-    depends_lib-append \
-                    port:sqlite3
-# }
-if {[variant_isset wxsystem]} {
+
+    # in this port implementation we always get wxWidgets from the system
+    # (but we embed the libraries if building -wxsystem)
     configure.args-append \
                     -DwxWidgets_CONFIG_EXECUTABLE=${wxWidgets.wxconfig} \
                     -D${_OPT}use_wxwidgets=system
     configure.env-append \
                     WX_CONFIG=${wxWidgets.wxconfig}
-} else {
-    configure.args-append \
-                    -D${_OPT}use_wxwidgets=local
-    platform darwin {
-        # this shouldn't be necessary but apparently it is:
-        set xy [join [lrange [split ${conanWxVersion} .] 0 1] .]
-        configure.cppflags-append \
-                        -I${build.dir}/.wxincludes/wx-${xy} \
-                        -I${build.dir}/.wxincludes/osx_cocoa-unicode-${xy} \
-                        -D__WXOSX_COCOA__
-        post-configure {
-            # (re)initialise the .wxinclude directory:
-            file delete -force ${build.dir}/.wxincludes
-            xinstall -m 755 -d ${build.dir}/.wxincludes
-            set incdir [glob ${build.dir}/.conan/data/wxwidgets/${conanWxVersion}/_/_/package/*/include/wx-${xy}]
-            ln -s ${incdir} ${build.dir}/.wxincludes/
-            # we also need the osx_cocoa-unicode-3.1 include dir which somehow doesn't get "installed"
-            set incdir [glob ${build.dir}/.conan/data/wxwidgets/${conanWxVersion}/_/_/package/*/lib/wx/include/osx_cocoa-unicode-${xy}]
-            if {[file exists ${incdir}/wx/setup.h]} {
-                ln -s ${incdir} ${build.dir}/.wxincludes/
-            }
-        }
-    }
-}
-
-# ensure pre-compiled headers and the possible use of ccache can co-exist
-configure.env-append \
-                    "CCACHE_SLOPPINESS=pch_defines,time_macros"
-build.env-append    "CCACHE_SLOPPINESS=pch_defines,time_macros"
 
 if {[variant_isset suil]} {
     configure.args-replace \
                     -D${_OPT}use_suil_qt5=OFF \
                     -D${_OPT}use_suil_qt5=ON
 }
-# platform darwin {
-#     # Since version 2.2.0 we need to use the embedded (modified) Portaudio version.
-#     # (this has actually become the only option despite my patch for 3.0.2; the
-#     # buildsystem derails if we try to use the system portaudio.)
-#     configure.args-append \
-#                     -Daudacity_use_portaudio=local
-# }
 
 # make sure the C++ stdlib argument is added to the LDFLAGS too
 if {${configure.cxx_stdlib} ne "" && [string match *clang* ${configure.cxx}]} {
@@ -354,12 +349,6 @@ if {${configure.cxx_stdlib} ne "" && [string match *clang* ${configure.cxx}]} {
 
 post-configure {
     reinplace -q "s|compiler.libcxx=libstdc++|compiler.libcxx=libc++|g" ${build.dir}/.conan/profiles/default
-}
-
-if {${build.cmd} ne "ninja"} {
-    build.args-append   V=1 VERBOSE=1
-} else {
-    build.pre_args-prepend -k 0
 }
 
 # with everything defined/declared as intended we can now
@@ -389,10 +378,6 @@ pre-build {
     } else {
         system "echo '#define GIT_DESC \"${version}\"' > ${worksrcpath}/src/GitDesc.h"
     }
-#     if {[file exists ${build.dir}/build.ninja]} {
-#         # work around a (probable) cmake error; note this doesn't catch "recmake" actions triggered during the build!
-#         reinplace "s|-framework QtWidgets QtGui QtCore||g" ${build.dir}/build.ninja
-#     }
 }
 
 platform darwin {
@@ -408,14 +393,6 @@ platform darwin {
         }
     }
 
-    if {${subport} eq "${name}" && ![variant_isset wxsystem]} {
-        destroot {
-            # replace the destroot'ed app bundle with the one in ${build.dir}/bin that contains
-            # the right install_name settings in most of the wxWidgets libraries
-            file delete -force ${destroot}${aud_app_path}
-            system "ditto --rsrc ${build.dir}/bin/Audacity.app ${destroot}${aud_app_path}"
-        }
-    }
     post-destroot {
         fixup_wx_libraries
         xinstall -m 755 -d ${destroot}${prefix}/share/audacity
@@ -469,6 +446,10 @@ notes "
     https://manual.audacityteam.org/man/installing_and_updating_audacity_on_mac_os_x.html#locate)
 "
 
+if {![variant_isset wxsystem]} {
+    notes-append ">> You can now `sudo port deactivate audacity-wxWidgets`! <<"
+}
+
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
 #>> RJVB
 PortGroup           locale_select 1.0
@@ -477,3 +458,85 @@ platform darwin {
                     ${destroot}${aud_app_path}/Contents/Resources
 }
 #<< RJVB
+
+    ######### end main port #########
+} else {
+    ######### wxWidgets #########
+    github.setup        audacity wxWidgets 837669d
+
+    name                audacity-wxWidgets
+    version             3.1.3.2
+    distname            awxWidgets-git
+    checksums           rmd160  594e539c0cb8e4ebd21303ac5c7354efcd70f54a \
+                        sha256  0547bd279056ce33db8da88ecfe4d85de28513e18983fffd558ac6051feea368
+#                         size    20462802
+
+    description         C++ framework for cross-platform GUI development
+    long_description    Audacity's version of wxWidgets 3.1, an open-source cross-platform C++ \
+                        GUI framework for Mac OS, Unix, Linux, Windows. This port is not intended \
+                        for use with 3rd party software, and only needs to be active when building \
+                        Audacity WITHOUT the `wxsystem` variant set (i.e. -wxsystem). \n\
+                        >> Use of this wxWidgets version is compulsory if the port:Audacity does \
+                        not have a `wxsystem` variant! ! <<
+    license             wxwidgets-3.1
+
+    depends_lib-append  {*}${awx_deps}
+
+    patch.pre_args      -Np1
+    patchfiles-append   wxW/patch-relax-buildoption-check.diff \
+                        wxW/patch-windowmm.diff
+    # patchfiles borrowed from audacity's conan build for their wxWidgets:
+    patchfiles-append   wxW/patch-configcmake.diff \
+                        wxW/patch-fix-cocoa-process.diff \
+                        wxW/patch-cocoa-build.diff
+
+    set wxtype          osx_cocoa
+    compiler.c_standard 2011
+    compiler.cxx_standard 2014
+
+    cmake.install_prefix ${wxWidgets.prefix}
+    configure.args-append \
+                        -DwxBUILD_TOOLKIT=${wxtype} \
+                        -DwxUSE_ACCESSIBILITY=ON \
+                        -DwxUSE_LIBICONV=sys \
+                        -DwxUSE_LIBJPEG=sys \
+                        -DwxUSE_LIBTIFF=sys \
+                        -DwxUSE_LIBPNG=sys \
+                        -DwxUSE_ZLIB=sys \
+                        -DwxUSE_LIBLZMA=sys \
+                        -DwxUSE_OPENGL=ON \
+                        -DwxUSE_LIBSDL=OFF \
+                        -DwxUSE_AUI=ON \
+                        -DwxUSE_DISPLAY=ON \
+                        -DwxUSE_XRC=ON \
+                        -DwxUSE_GRAPHICS_CONTEXT=ON \
+                        -DwxBUILD_PRECOMP=ON \
+                        -DwxBUILD_STRIPPED_RELEASE_DEFAULT=OFF \
+                        -DwxBUILD_CXX_STANDARD=14 \
+                        -DCMAKE_CXX_STANDARD_REQUIRED=ON \
+                        -DwxBUILD_COMPATIBILITY=3.0
+
+    if { ${os.major} == 13 } {
+        configure.sdkroot ${developer_dir}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.10.sdk
+    }
+
+    pre-destroot {
+        if {![catch "registry_active ${subport}"]} {
+            ui_error "${subport} cannot be packaged (destrooted) it is already active."
+            ui_error "Please forcibly deactivate the existing copy, e.g. by running:"
+            ui_error ""
+            ui_error "    sudo port -f deactivate ${subport}"
+            ui_error ""
+            ui_error "Then try again."
+            return -code error "port is active"
+        }
+    }
+
+    post-destroot {
+        set confscript ${wxWidgets.prefix}/lib/wx/config/${wxtype}-unicode-3.1
+        ln -s ${confscript} ${destroot}${wxWidgets.prefix}/bin/wx-config
+        ln -s wxrc ${destroot}${wxWidgets.prefix}/bin/wxrc-3.1
+    }
+}
+
+livecheck.type      none
