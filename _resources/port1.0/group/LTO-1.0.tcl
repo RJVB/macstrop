@@ -171,6 +171,16 @@ if {[string match *clang* ${configure.compiler}]} {
             set LTO.custom_binaries 1
         }
     }
+    if {${os.platform} ne "darwin" \
+        && [string match macports-clang* ${configure.compiler}]
+        && [variant_isset LTO]} {
+        ## clang on ~Darwin doesn't like -Os -flto so remove that flag from the initial C*FLAGS
+        configure.cflags-replace -Os -O2
+        configure.objcflags-replace -Os -O2
+        configure.cxxflags-replace -Os -O2
+        configure.objcxxflags-replace -Os -O2
+        configure.ldflags-replace -Os -O2
+    }
 } elseif {${os.platform} eq "linux"} {
     if {${configure.compiler} eq "cc"} {
         default configure.ar "[string map {"cc" "gcc-ar"} ${configure.cc}]"
