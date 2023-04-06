@@ -134,7 +134,7 @@ proc meson.save_configure_cmd {{save_log_too ""}} {
     set statevar yes
 
     if {![info exists configure.args]} {
-        configure.args ""
+        configure.args-append
     }
     if {${save_log_too} ne ""} {
         pre-configure {
