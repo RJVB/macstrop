@@ -62,7 +62,7 @@ if {![info exists LTO.allow_ThinLTO]} {
 # We should ascertain that configure.{ar,nm,ranlib} be full, absolute paths!
 # NB
 
-platform darwin {
+if {${os.platform} eq "darwin"} {
     # the Mac linker will complain without explicit LTO cache directory
     # only applies to lto=thin mode but won't hurt with lto=full.
     #
@@ -79,7 +79,16 @@ platform darwin {
     post-destroot {
         if {[variant_isset LTO] && ${configure.compiler} ne "clang"} {
             file delete -force ${build.dir}/.lto_cache
-            set morecrud [glob -nocomplain -directory ${workpath}/.tmp/ thinlto-* cc-*.o]
+            set morecrud [glob -nocomplain -directory ${workpath}/.tmp/ thinlto-* cc-*.o lto-llvm-*.o]
+            if {${morecrud} ne {}} {
+                file delete -force {*}${morecrud}
+            }
+        }
+    }
+} else {
+    post-destroot {
+        if {[variant_isset LTO]} {
+            set morecrud [glob -nocomplain -directory ${workpath}/.tmp/ thinlto-* cc-*.o lto-llvm-*.o]
             if {${morecrud} ne {}} {
                 file delete -force {*}${morecrud}
             }
