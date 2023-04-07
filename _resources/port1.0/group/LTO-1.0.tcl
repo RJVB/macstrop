@@ -76,6 +76,15 @@ platform darwin {
             configure.ldflags-append    -Wl,-cache_path_lto,${build.dir}/.lto_cache
         }
     }
+    post-destroot {
+        if {[variant_isset LTO] && ${configure.compiler} ne "clang"} {
+            file delete -force ${build.dir}/.lto_cache
+            set morecrud [glob -nocomplain -directory ${workpath}/.tmp/ thinlto-* cc-*.o]
+            if {${morecrud} ne {}} {
+                file delete -force {*}${morecrud}
+            }
+        }
+    }
 }
 
 # out-of-line implementation so changes are made *now*.
