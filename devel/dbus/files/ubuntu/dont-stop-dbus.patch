@@ -1,0 +1,98 @@
+From: Martin Pitt <martin.pitt@ubuntu.com>
+Date: Tue, 31 Mar 2015 18:46:06 +0200
+Subject: Don't stop D-Bus in the service unit
+
+D-Bus is getting stopped too early during shutdown, so that services on the bus
+are still running (and being shut down) after that. This leads to shutdown
+hangs due to remote file systems not getting unmounted as wpa_supplicant is
+already gone, or avahi or NetworkManager getting lots of errors because they
+get disconnected, etc.  As D-Bus does not keep its state between restarts,
+dbus.socket also does not help us.
+
+Also, stopping D-Bus in a running system isn't something which we ever
+supported; to the contrary, we patched several packages to avoid
+restarting/stopping D-Bus in postinsts, as stopping d-bus in a running system
+is shooting yourself into the foot (independent of which init system you use).
+Thus leaving D-Bus running until the bitter end should be fine, it doesn't have
+any file system things to do on shutdown. This also approximates the brave new
+kdbus world where d-bus is basically "always available".
+
+Bug: https://bugs.freedesktop.org/show_bug.cgi?id=89847
+Bug-Ubuntu: https://launchpad.net/bugs/1438612
+
+26 Feb 2021 Updates from xnox
+
+Whilst the original patch was okish, it didn't actually work
+right. dbus.service had Requires dbus.socket, which in turn did not
+try refuse being stopped, thus socket was being stopped / going away
+whilst the dbus service is still running. Also that happened on
+shutdown. And sometimes dbus can hang and refuses to answer, in such
+cases it is best to let people be able to kill it and restart it. Plus
+with needrestart integration we kind of can restart dbus and some
+basic services to keep machine alive. So, to actually prevent dbus
+from being stopped on shutdown undo the previous incarnation of the
+patch and instead do this:
+
+Dependencies:
+* Add DefaultDependencies=no
+* Instead of Requires/After sysinit.target, add back Wants/After sysinit.target.
+* Add back After basic.target
+* Do not add back Conflicts/Before shutdown.target
+
+Do that for _both_ dbus.service and dbus.socket.
+
+dbus.service:
+* Drop the Killmode, ExecStop things
+* Make ExecStart be @/usr/bin/dbus-daemon @dbus-daemon .... thus it
+  will now be survie systemd-shutdown kill spree
+
+End result is that now one can use $ sudo
+/etc/needrestart/restart.d/dbus.service to restart dbus, and yet it is
+not part of the shutdown transactions.
+
+09 Sep 2021 Updates from slyon
+
+The previous update made it be not part of the shutdown transaction, but
+introduced a deadlock during bootup like this:
+
+  systemd[1]: basic.target: starting held back, waiting for: sockets.target
+  systemd[1]: dbus.socket: starting held back, waiting for: basic.target
+  systemd[1]: dbus.service: starting held back, waiting for: dbus.socket
+
+Therefore we need to remove the After=basic.target dependency of dbus.socket
+to break that dependency loop.
+
+---
+ bus/dbus.service.in | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- bus/dbus.service.in
++++ bus/dbus.service.in
+@@ -2,10 +2,14 @@
+ Description=D-Bus System Message Bus
+ Documentation=man:dbus-daemon(1)
+ Requires=dbus.socket
++# Do not stop on shutdown
++DefaultDependencies=no
++Wants=sysinit.target
++After=sysinit.target basic.target
+ 
+ [Service]
+ Type=notify
+ NotifyAccess=main
+-ExecStart=@EXPANDED_BINDIR@/dbus-daemon --system --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only
++ExecStart=@@EXPANDED_BINDIR@/dbus-daemon @dbus-daemon --system --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only
+ ExecReload=@EXPANDED_BINDIR@/dbus-send --print-reply --system --type=method_call --dest=org.freedesktop.DBus / org.freedesktop.DBus.ReloadConfig
+ OOMScoreAdjust=-900
+--- bus/dbus.socket.in
++++ bus/dbus.socket.in
+@@ -1,5 +1,9 @@
+ [Unit]
+ Description=D-Bus System Message Bus Socket
++# Do not stop on shutdown
++DefaultDependencies=no
++Wants=sysinit.target
++After=sysinit.target
+ 
+ [Socket]
+ ListenStream=@DBUS_SYSTEM_SOCKET@
