@@ -1,6 +1,6 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
-# Copyright (c) 2015-19 R.J.V. Bertin
+# Copyright (c) 2015-23 R.J.V. Bertin
 
 PortSystem          1.0
 PortGroup           conflicts_build 1.0
@@ -27,6 +27,10 @@ if {${subport} eq "${name}-x11" || (${subport} eq "${name}" && ${os.platform} ne
     revision        [expr ${revision} + 1]
 }
 # for the help collection updater script
+if {${subport} eq "${name}"} {
+    revision    [expr ${revision} + 1]
+}
+# for building in C++14 and suppressing a warning message
 if {${subport} eq "${name}"} {
     revision    [expr ${revision} + 1]
 }
@@ -585,8 +589,13 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         configure.args-append \
             -no-libproxy
         if {${os.major} <= 13} {
+            compiler.cxx_standard 2011
             configure.args-append \
                 -c++std "c++11"
+        } else {
+            compiler.cxx_standard 2014
+            configure.args-append \
+                -c++std "c++14"
         }
     } else {
         # make the configure script ignore the presence of /System/Library/Frameworks/Carbon.framework
@@ -609,6 +618,9 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
             -R ${prefix}/${build_arch}-linux-gnu \
             -R ${qt_libs_dir}   \
             -no-reduce-relocations
+        compiler.cxx_standard 2014
+        configure.args-append \
+            -c++std "c++14"
         configure.env-append "LD_LIBRARY_PATH=${prefix}/lib:${prefix}/lib/${build_arch}-linux-gnu"
         build.env-append "LD_LIBRARY_PATH=${prefix}/lib:${prefix}/lib/${build_arch}-linux-gnu"
     }
@@ -824,6 +836,13 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
                 reinplace \
                     "s|__MACPORTS_DEVICE_ARCHS__|${build_arch}|g" ${worksrcpath}/qtbase/mkspecs/${spec}/qmake.conf
             }
+            if {${os.platform} ne "darwin"} {
+                foreach qmconf [glob -nocomplain ${worksrcpath}/mkspecs/*/qmake.conf] {
+                    reinplace -q \
+                        "s|/usr/X11R6/lib64|${prefix}/lib|g" \
+                        ${qmconf}
+                }
+            }
         }
 
         post-patch {
@@ -916,6 +935,8 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
     patchfiles-append       ${PF59x}patch-fix-qtconn-ambigconv.diff
     # fix a build failure due to undefined PATH_MAX with clang 5 under Linux
     patchfiles-append       ${PF59x}patch-path_max.diff
+    # fix a build failure due to a missing math.h headerfile
+    patchfiles-append       ${PF59x}patch-jp2-pow.diff
 
     # see https://github.com/RJVB/macstrop/issues/88
     platform darwin {
@@ -930,6 +951,10 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
                             -force-debug-info
     }
     configure.args-append   -no-strip -no-separate-debug-info
+
+    # make sure we don't fail on the use of "register" keywords in e.g. X11 headerfiles
+    # if ever C++17 mode is selected (which happens when the compiler supports it)
+    configure.cxxflags-append -Wno-register
 
     # use a simple way to get our compiler + options in:
     pre-configure {
@@ -1190,12 +1215,19 @@ if { (${subport} eq ${name}) || (${subport} eq "${name}-x11") } {
         configure.ldflags-append    ${debugopts}
     }
 
-    variant cputuned description {Build using -O3 -march=native for optimal tuning to your CPU} {
+    variant cputuned conflicts cpucompat description {Build using -O3 -march=native for optimal tuning to your CPU} {
         configure.cflags-append     -O3 -march=native
         configure.cxxflags-append   -O3 -march=native
         configure.objcflags-append  -O3 -march=native
         configure.objcxxflags-append  -O3 -march=native
         configure.ldflags-append    -O3 -march=native
+    }
+    variant cpucompat conflicts cputuned description {Build using -O3 -march=westmere and some commonly supported SIMD extensions} {
+        configure.cflags-append     -O3 -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
+        configure.cxxflags-append   -O3 -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
+        configure.objcflags-append  -O3 -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
+        configure.objcxxflags-append  -O3 -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
+        configure.ldflags-append    -O3 -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
     }
 
     configure.post_args-append      QMAKE_CXX=${configure.cxx} QMAKE_CC=${configure.cc}
@@ -1767,7 +1799,8 @@ subport ${name}-qtwebengine {
     # some kind of process multiplication (I've seen peak CPU loads of 30 in a supposedly
     # serial build ...)
     supported_archs     "x86_64 arm64"
-    use_parallel_build  no
+    build.env-append    NINJA_JOBS=${build.jobs} \
+                        SAMUFLAGS=-j${build.jobs}
     # use NINJAFLAGS to tell ninja to use the desired number (N) of parallel compile jobs
     # this still leads to CPU loads that are significantly higher than N though not more than 2x
     # If necessary we can use ninja's -l N option which limits CPU load instead of job number.
@@ -1780,6 +1813,8 @@ subport ${name}-qtwebengine {
     }
     variant strip conflicts debug {reduce the disk footprint by stripping debug-related information (at the cost of increased build time)} {}
 
+    depends_build-append \
+                        path:bin/ninja:ninja
     # the QtWebengine components is built using an included copy of ninja
     depends_lib-append \
                         ${qt5_dependency} \
@@ -1913,6 +1948,12 @@ subport ${name}-qtwebengine {
                         -- -proprietary-codecs \
                         -system-opus \
                         -system-ffmpeg
+    }
+    post-configure {
+        if {[file exists ${build.dir}/src/3rdparty/ninja/ninja]} {
+            file delete -force ${build.dir}/src/3rdparty/ninja/ninja
+		  ln -s ${prefix}/bin/ninja ${build.dir}/src/3rdparty/ninja/ninja
+        }
     }
     # do NOT forget this one!!
     build.target
@@ -2164,6 +2205,7 @@ subport ${name}-psql-plugin {
     configure.dir           ${worksrcpath}/qtbase/src/plugins/sqldrivers/psql
     build.dir               ${configure.dir}
     destroot.dir            ${configure.dir}
+    destroot.post_args      -j${build.jobs}
     # lets get more verbose qmake output in case something breaks - again...
     configure.pre_args-append \
                             -d
@@ -2377,7 +2419,7 @@ post-destroot {
 
 post-activate {
     if {${subport} eq "${name}" && ![file exists ${prefix}/bin/update-qthelp-collection-mp.tcl]} {
-        xinstall 755 ${filespath}/update-qthelp-collection-mp.tcl ${prefix}/bin/update-qthelp-collection-mp
+        xinstall -m 755 ${filespath}/update-qthelp-collection-mp.tcl ${prefix}/bin/update-qthelp-collection-mp
         reinplace "s|@MPTCLSH@|[lindex [glob ${prefix}/libexec/macports/bin/tclsh*] 0]|g" ${prefix}/bin/update-qthelp-collection-mp
     }
 
