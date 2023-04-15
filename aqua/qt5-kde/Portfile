@@ -30,8 +30,11 @@ if {${subport} eq "${name}-x11" || (${subport} eq "${name}" && ${os.platform} ne
 if {${subport} eq "${name}"} {
     revision    [expr ${revision} + 1]
 }
-# for building in C++14 and suppressing a warning message
+# for building in C++14, suppressing a warning message and more fixes
 if {${subport} eq "${name}"} {
+    revision    [expr ${revision} + 2]
+}
+if {${subport} eq "${name}-x11"} {
     revision    [expr ${revision} + 1]
 }
 ####
@@ -235,7 +238,7 @@ if { ${os.platform} ne "darwin" } {
 } else {
     if { ${os.major} == 13 && ${subport} ne "${name}-qtwebengine"} {
         pre-fetch {
-            ui_warn "OS X 10.9 is not officially supported by Qt but possible by reintroducing code \
+            ui_warn "OS X 10.9 is not officially supported by Qt but made possible by reintroducing code\
                     that was removed from the Cocoa QPA plugin"
             ui_warn "See http://qt-project.org/doc/qt-5/supported-platforms.html#reference-configurations"
         }
@@ -302,6 +305,8 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
     # does not include certain parts
     conflicts-append    qt3 qt3-mac [qt5_port_conflicts {qtbase x11}]
     PortGroup           xcodeversion 1.0
+    PortGroup           openssl 1.0
+    openssl.branch      1.1
 
     minimum_xcodeversions   {13 6.2}
 
@@ -457,12 +462,6 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         }
         # support NSMenuFunctionKey and Qt::Key_Menu
         patchfiles-append   ${PF59x}patch-keyboard-support-menukey.diff
-        # https://trac.macports.org/ticket/53369
-        patchfiles-append   ${PF59x}patch-use-openssl-mp.diff
-        # https://trac.macports.org/ticket/58218
-        # alternative patches available from OpenSUSE:
-        # https://build.opensuse.org/package/show/openSUSE:Leap:15.1:Update/libqt5-qtbase
-        patchfiles-append   ${PF59x}patch-openssl11-support-qt597.diff
         # https://codereview.qt-project.org/#/c/255898/
         patchfiles-append   ${PF59x}patch-fix-bearer+session.diff
         platform darwin 13 {
@@ -484,6 +483,13 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         patchfiles-append   ${PF59x}patch-nm-not-when-quitting.diff
 
     }
+    # https://trac.macports.org/ticket/53369
+    patchfiles-append       ${PF59x}patch-use-openssl-mp.diff
+    # https://trac.macports.org/ticket/58218
+    # alternative patches available from OpenSUSE:
+    # https://build.opensuse.org/package/show/openSUSE:Leap:15.1:Update/libqt5-qtbase
+    patchfiles-append       ${PF59x}patch-openssl11-support-qt597.diff
+
     # https://codereview.qt-project.org/#/c/177188/
     patchfiles-append       ${PF59x}patch-ibus-fix.diff
     # avoid warnings about -Wdate-time
@@ -571,7 +577,7 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
             -no-mtdev         \
             -no-harfbuzz      \
             -openssl-runtime  \
-            OPENSSL_PREFIX=${prefix} \
+            OPENSSL_PREFIX=[openssl::install_area] \
             -no-xinput2       \
             -no-xcb           \
             -no-xcb-xlib
@@ -588,14 +594,15 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
             -no-egl
         configure.args-append \
             -no-libproxy
-        if {${os.major} <= 13} {
-            compiler.cxx_standard 2011
-            configure.args-append \
-                -c++std "c++11"
-        } else {
+        variant cxx14 description {build using C++14 instead of C++11} { }
+        if {[variant_isset cxx14]} {
             compiler.cxx_standard 2014
             configure.args-append \
                 -c++std "c++14"
+        } else {
+            compiler.cxx_standard 2011
+            configure.args-append \
+                -c++std "c++11"
         }
     } else {
         # make the configure script ignore the presence of /System/Library/Frameworks/Carbon.framework
@@ -634,8 +641,9 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         reinplace -W ${worksrcpath}/qtbase "s|@PREFIX@|${prefix}|g" \
                 mkspecs/features/toolchain.prf \
                 src/platformsupport/themes/genericunix/qgenericunixthemes.cpp \
-                src/network/ssl/qsslsocket_openssl_symbols.cpp \
                 src/corelib/io/qstandardpaths_unix.cpp
+        reinplace -W ${worksrcpath}/qtbase "s|@PREFIX@|[openssl::install_area]|g" \
+                src/network/ssl/qsslsocket_openssl_symbols.cpp
     }
 
 # Additional options:
@@ -718,9 +726,11 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         # hopefully the MACOSX_DEPLOYMENT_TARGET exists and is set by now.  if
         # not, last resort (which is not desirable) is to use the os.version.
         if {${macosx_deployment_target} ne ""} {
+            set OSX_MAJOR [lindex [split ${macosx_deployment_target} "."] 0]
             set OSX_MINOR [lindex [split ${macosx_deployment_target} "."] 1]
         } else {
-            set OSX_MINOR [expr ${os.major} - 4]
+            set OSX_MAJOR [lindex [split ${macos_version_major} "."] 0]
+            set OSX_MINOR [lindex [split ${macos_version_major} "."] 1]
         }
         if {${OSX_MINOR} == 9} {
             pre-configure {
@@ -741,27 +751,27 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
                 -sdk ${SDK}
         } else {
             # default: build for the current OS version, requesting the corresponding SDK explicitly
-            if {[catch {exec xcrun --show-sdk-path -sdk macosx10.${OSX_MINOR}} result]} {
-                ui_debug "Couldn't find preferred SDK macosx10.${OSX_MINOR}: ${result}"
+            if {[catch {exec xcrun --show-sdk-path -sdk macosx${OSX_MAJOR}.${OSX_MINOR}} result]} {
+                ui_debug "Couldn't find preferred SDK macosx${OSX_MAJOR}.${OSX_MINOR}: ${result}"
                 # the preferred matching SDK isn't available; check if the default SDK is
-                set SDK [exec xcrun -show-sdk-version]
-                if {${SDK} >= 12} {
+                set SDKver [exec xcrun -show-sdk-version]
+                if {${SDKver} >= 12} {
                     # on this (and newer?) OS versions we need to use `-sdk macosx`
                     # see https://github.com/RJVB/macstrop/issues/92
-                    set SDK ""
+                    set SDKver ""
                 }
-                if {[catch {exec xcrun --show-sdk-path -sdk macosx${SDK}} result]} {
-                    ui_msg "Couldn't find the preferred nor a SDK macosx${SDK}: ${result}"
+                if {[catch {exec xcrun --show-sdk-path -sdk macosx${SDKver}} result]} {
+                    ui_msg "Couldn't find the preferred SDK nor an SDK macosx${SDKver}: ${result}"
                     ui_msg "WARNING: this has been known to lead to build errors"
                 } else {
-                    ui_debug "Using default SDK macosx${SDK}"
+                    ui_debug "Using default SDK macosx${SDKver}"
                     configure.args-append \
-                            -sdk macosx${SDK}
+                            -sdk macosx${SDKver}
                 }
             } else {
-                ui_debug "Using SDK macosx${os.major}.${OSX_MINOR} : ${result}"
+                ui_debug "Using SDK macosx${OSX_MAJOR}.${OSX_MINOR} : ${result}"
                 configure.args-append \
-                        -sdk [string tolower "macosx${os.major}.${OSX_MINOR}"]
+                        -sdk [string tolower "macosx${OSX_MAJOR}.${OSX_MINOR}"]
             }
         }
 
@@ -895,6 +905,21 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
     configure.universal_cflags
     configure.universal_cxxflags
     configure.universal_cppflags
+    # Qt's default optimisation is -O2
+    set optim_flag "-O2"
+    options qt5.unset_cflags qt5.unset_cxxflags
+    default qt5.unset_cflags    {}
+    default qt5.unset_cxxflags  {}
+    if {[string match "*-O3*" ${configure.optflags}]} {
+        set optim_flag -O3
+        qt5.unset_cflags -O2
+        qt5.unset_cxxflags -O2
+    }
+    if {[string match "*-Ofast*" ${configure.optflags}]} {
+        set optim_flag -Ofast
+        qt5.unset_cflags -O2
+        qt5.unset_cxxflags -O2
+    }
 
     # patches for improving the KDE experience (and facilitating debugging)
     patchfiles-append       ${PF59x}patch-enable-dumpObjectInfo.diff
@@ -929,14 +954,16 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
                             ${PF59x}patch-qfontcombox-nopreview.diff
     # prevent a crash on certain unconnected HttpSocketEngine operations
     patchfiles-append       ${PF59x}patch-httpsockeng-fix.diff
-    # Mac OS 10.15 chokes on the mapbox-gl plugin; disable it everywhere.
-    patchfiles-append       ${PF59x}patch-no-mapboxgl.diff
-    # fix ambiguous conversions in qtconnectivity (on 10.15+)
-    patchfiles-append       ${PF59x}patch-fix-qtconn-ambigconv.diff
-    # fix a build failure due to undefined PATH_MAX with clang 5 under Linux
-    patchfiles-append       ${PF59x}patch-path_max.diff
-    # fix a build failure due to a missing math.h headerfile
-    patchfiles-append       ${PF59x}patch-jp2-pow.diff
+    if {${subport} eq "${name}"} {
+        # Mac OS 10.15 chokes on the mapbox-gl plugin; disable it everywhere.
+        patchfiles-append   ${PF59x}patch-no-mapboxgl.diff
+        # fix ambiguous conversions in qtconnectivity (on 10.15+)
+        patchfiles-append   ${PF59x}patch-fix-qtconn-ambigconv.diff
+        # fix a build failure due to undefined PATH_MAX with clang 5 under Linux
+        patchfiles-append   ${PF59x}patch-path_max.diff
+        # fix a build failure due to a missing math.h headerfile
+        patchfiles-append   ${PF59x}patch-jp2-pow.diff
+    }
 
     # see https://github.com/RJVB/macstrop/issues/88
     platform darwin {
@@ -958,6 +985,10 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
 
     # use a simple way to get our compiler + options in:
     pre-configure {
+        ui_info "Trying to coax the build to use ${optim_flag} optimisation"
+        configure.args-append \
+            QMAKE_CFLAGS_RELEASE=${optim_flag} \
+            QMAKE_CFLAGS_OPTIMIZE=${optim_flag}
         xinstall -m 755 -d ${build.dir}/qtbase
         set qt5::cache [open "${build.dir}/.qmake.cache" w 0644]
         puts ${qt5::cache} "QMAKE_CC=${configure.cc}"
@@ -966,8 +997,14 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         puts ${qt5::cache} "QMAKE_LINK_C_SHLIB=${configure.cc}"
         puts ${qt5::cache} "QMAKE_LINK=${configure.cxx}"
         puts ${qt5::cache} "QMAKE_LINK_SHLIB=${configure.cxx}"
+        puts ${qt5::cache} "QMAKE_CFLAGS_OPTIMIZE=${optim_flag}"
+        puts ${qt5::cache} "QMAKE_CFLAGS_RELEASE=${optim_flag}"
         puts ${qt5::cache} "QMAKE_CFLAGS+=[join ${configure.cflags}]"
         puts ${qt5::cache} "QMAKE_CXXFLAGS+=[join ${configure.cxxflags}]"
+        if {[info exists qt5.unset_cflags]} {
+            puts ${qt5::cache} "QMAKE_CFLAGS-=${qt5.unset_cflags}"
+            puts ${qt5::cache} "QMAKE_CXXFLAGS-=${qt5.unset_cxxflags}"
+        }
         close ${qt5::cache}
         file copy -force ${build.dir}/.qmake.cache ${build.dir}/qtbase/.qmake.cache
     }
@@ -997,7 +1034,6 @@ if { (${subport} eq ${name}) || (${subport} eq "${name}-x11") } {
             port:freetype                        \
             port:fontconfig                      \
             path:bin/dbus-daemon:dbus            \
-            path:lib/libssl.dylib:openssl        \
             port:tiff                            \
             port:libmng                          \
             path:lib/pkgconfig/glib-2.0.pc:glib2 \
@@ -1011,7 +1047,6 @@ if { (${subport} eq ${name}) || (${subport} eq "${name}-x11") } {
             port:zlib                            \
             port:libpng                          \
             path:include/turbojpeg.h:libjpeg-turbo                            \
-            path:lib/libssl.so:openssl           \
             port:tiff                            \
             port:openal-soft                     \
             port:pcre2
@@ -1215,19 +1250,19 @@ if { (${subport} eq ${name}) || (${subport} eq "${name}-x11") } {
         configure.ldflags-append    ${debugopts}
     }
 
-    variant cputuned conflicts cpucompat description {Build using -O3 -march=native for optimal tuning to your CPU} {
-        configure.cflags-append     -O3 -march=native
-        configure.cxxflags-append   -O3 -march=native
-        configure.objcflags-append  -O3 -march=native
-        configure.objcxxflags-append  -O3 -march=native
-        configure.ldflags-append    -O3 -march=native
+    variant cputuned conflicts cpucompat description {Build using -march=native for optimal tuning to your CPU} {
+        configure.cflags-append     -march=native
+        configure.cxxflags-append   -march=native
+        configure.objcflags-append  -march=native
+        configure.objcxxflags-append  -march=native
+        configure.ldflags-append    -march=native
     }
-    variant cpucompat conflicts cputuned description {Build using -O3 -march=westmere and some commonly supported SIMD extensions} {
-        configure.cflags-append     -O3 -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
-        configure.cxxflags-append   -O3 -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
-        configure.objcflags-append  -O3 -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
-        configure.objcxxflags-append  -O3 -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
-        configure.ldflags-append    -O3 -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
+    variant cpucompat conflicts cputuned description {Build using -march=westmere and some commonly supported SIMD extensions} {
+        configure.cflags-append     -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
+        configure.cxxflags-append   -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
+        configure.objcflags-append  -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
+        configure.objcxxflags-append  -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
+        configure.ldflags-append    -march=westmere -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul
     }
 
     configure.post_args-append      QMAKE_CXX=${configure.cxx} QMAKE_CC=${configure.cc}
@@ -1355,6 +1390,10 @@ if { [lsearch \
             move_and_proxy_appbundles
 
             if {[file exists ${destroot}${qt_mkspecs_dir}/qmodule.pri]} {
+                if {[file exists ${build.dir}/qtbase/mkspecs/qmodule.pri.dist ]} {
+                    xinstall -m 755 ${build.dir}/qtbase/mkspecs/qmodule.pri.dist \
+                        ${destroot}${qt_mkspecs_dir}/qmodule.pri
+                }
                 # clean up the generated mkspecs/qmodule.pri:
                 # undo any symlink normalisation that introduced the clang version number into QMAKE_CC/CXX (e.g. clang++-mp-3.5)
                 # (NB: I could check and only do this when required...)
@@ -1363,9 +1402,8 @@ if { [lsearch \
                 # UsingTheRightCompiler:
                 reinplace -q -W ${destroot}${qt_mkspecs_dir}/common "s|${configure.cxx}|clang++|g" clang.conf
                 reinplace -q -W ${destroot}${qt_mkspecs_dir}/common "s|${configure.cc}|clang|g" clang.conf
-            }
-            if {[file exists ${destroot}${qt_mkspecs_dir}/qmodule.pri]} {
-                correct_qmodulepri_flags  ${destroot}${qt_mkspecs_dir}/qmodule.pri
+
+                correct_qmodulepri_flags  ${destroot}${qt_mkspecs_dir}/qmodule.pri true
                 if {![variant_isset debug]} {
                     reinplace -q "s|-fno-limit-debug-info||g" ${destroot}${qt_mkspecs_dir}/qmodule.pri
                 }
@@ -1526,12 +1564,24 @@ pre-configure {
     }
 }
 
-proc correct_qmodulepri_flags {qmopri} {
+proc correct_qmodulepri_flags {qmopri {no_optim_tweak ""}} {
+    global build.dir qt5.unset_cflags qt5.unset_cxxflags optim_flag
     # if the user used configure.optflags="-something" make sure that gets added to compiler and linker
     # options qmake determines, rather than replacing all of those
     reinplace -q "s|QMAKE_CFLAGS = |QMAKE_CFLAGS \+= |g"  ${qmopri}
     reinplace -q "s|QMAKE_CXXFLAGS = |QMAKE_CXXFLAGS \+= |g"  ${qmopri}
     reinplace -q "s|QMAKE_LFLAGS = |QMAKE_LFLAGS \+= |g"  ${qmopri}
+    if {${no_optim_tweak} eq ""} {
+        xinstall -m 755 ${qmopri} ${qmopri}.dist
+        set qfp [open ${build.dir}/qtbase/mkspecs/qmodule.pri a]
+        puts ${qfp} "QMAKE_CFLAGS_OPTIMIZE=${optim_flag}"
+        puts ${qfp} "QMAKE_CFLAGS_RELEASE=${optim_flag}"
+        if {[info exists qt5.unset_cflags]} {
+            puts ${qfp} "QMAKE_CFLAGS-=${qt5.unset_cflags}"
+            puts ${qfp} "QMAKE_CXXFLAGS-=${qt5.unset_cxxflags}"
+        }
+        close ${qfp}
+    }
 }
 
 post-configure {
