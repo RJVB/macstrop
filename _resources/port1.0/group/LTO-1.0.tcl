@@ -36,9 +36,22 @@ if {[variant_exists LTO]} {
     return
 }
 
-variant LTO description {build with link-time optimisation} {}
+if {[tbool LTO.disable_LTO]} {
+    variant LTO description {stub variant: link-time optimisation disabled for this port} {}
+} else {
+    variant LTO description {build with link-time optimisation} {}
+}
 options LTO_supports_i386
 default LTO_supports_i386 yes
+
+proc variant_enabled {v} {
+    global LTO.disable_LTO
+    if {${v} eq "LTO" && [tbool LTO.disable_LTO]} {
+        return 0
+    } else {
+        return [variant_isset ${v}]
+    }
+}
 
 # Set up AR, NM and RANLIB to prepare for +LTO even if we don't end up using it
 options configure.ar \
@@ -71,13 +84,13 @@ if {${os.platform} eq "darwin"} {
     # and before they inject ${configure.ldflags} where and how that's required.
     proc LTO.set_lto_cache {} {
         global configure.compiler configure.ldflags build.dir
-        if {[variant_isset LTO] && ${configure.compiler} ne "clang"} {
+        if {[variant_enabled LTO] && ${configure.compiler} ne "clang"} {
             xinstall -m 755 -d ${build.dir}/.lto_cache
             configure.ldflags-append    -Wl,-cache_path_lto,${build.dir}/.lto_cache
         }
     }
     post-destroot {
-        if {[variant_isset LTO] && ${configure.compiler} ne "clang"} {
+        if {[variant_enabled LTO] && ${configure.compiler} ne "clang"} {
             file delete -force ${build.dir}/.lto_cache
             set morecrud [glob -nocomplain -directory ${workpath}/.tmp/ thinlto-* cc-*.o lto-llvm-*.o]
             if {${morecrud} ne {}} {
@@ -87,7 +100,7 @@ if {${os.platform} eq "darwin"} {
     }
 } else {
     post-destroot {
-        if {[variant_isset LTO]} {
+        if {[variant_enabled LTO]} {
             set morecrud [glob -nocomplain -directory ${workpath}/.tmp/ thinlto-* cc-*.o lto-llvm-*.o]
             if {${morecrud} ne {}} {
                 file delete -force {*}${morecrud}
@@ -99,7 +112,7 @@ if {${os.platform} eq "darwin"} {
 # out-of-line implementation so changes are made *now*.
 # Qt5 has its own mechanism to set LTO flags so don't do anything
 # if we end up being loaded for a build of Qt5 itself.
-if {[variant_isset LTO] && ![info exists building_qt5]} {
+if {[variant_enabled LTO] && ![info exists building_qt5]} {
     # some projects have their own configure option for LTO (often --enable-lto);
     # use this if the port tells us to
     if {[info exists LTO.configure_option]} {
@@ -191,7 +204,7 @@ if {[string match *clang* ${configure.compiler}]} {
     }
     if {${os.platform} ne "darwin" \
         && [string match macports-clang* ${configure.compiler}]
-        && [variant_isset LTO]} {
+        && [variant_enabled LTO]} {
         ## clang on ~Darwin doesn't like -Os -flto so remove that flag from the initial C*FLAGS
         configure.cflags-replace -Os -O2
         configure.objcflags-replace -Os -O2
