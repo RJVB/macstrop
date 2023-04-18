@@ -1,3 +1,53 @@
+diff --git a/authfd.c b/authfd.c
+index 25a363664cd292d17a12dd135f59fcf5fd382af1..33c186ff9637613df3a5284270475a9eddfc8eef 100644
+--- a/authfd.c
++++ b/authfd.c
+@@ -127,10 +127,44 @@ ssh_get_authentication_socket(int *fdp)
+ 		*fdp = -1;
+ 
+ 	authsocket = getenv(SSH_AUTHSOCKET_ENV_NAME);
++#ifdef __APPLE_LAUNCHD__
++    int from_launchd = 0;
++	char* (^launchd_getenv)()= ^(){
++        FILE *f = popen("launchctl getenv "SSH_AUTHSOCKET_ENV_NAME, "r");
++        static char line[256];
++        int got_data = 0;
++        if (f) {
++            if (fgets(line, sizeof(line), f)) {
++                if (line[strlen(line)-1] == '\n') {
++                    line[strlen(line)-1] = '\0';
++                }
++                got_data = 1;
++            }
++            pclose(f);
++        }
++        return got_data ? line : NULL; };
++	if (authsocket == NULL || *authsocket == '\0') {
++        if ((authsocket = launchd_getenv())) {
++            from_launchd = 1;
++        }
++    }
++#endif
+ 	if (authsocket == NULL || *authsocket == '\0')
+ 		return SSH_ERR_AGENT_NOT_PRESENT;
+ 
+-	return ssh_get_authentication_socket_path(authsocket, fdp);
++	int ret = ssh_get_authentication_socket_path(authsocket, fdp);
++#ifdef __APPLE_LAUNCHD__
++    // let's see if we have more success with the socket obtained from launchd
++    // if we didn't already just use that socket.
++    if (ret && !from_launchd) {
++        if ((authsocket = launchd_getenv())) {
++            if (fdp != NULL)
++                *fdp = -1;
++            ret = ssh_get_authentication_socket_path(authsocket, fdp);
++        }
++    }
++#endif
++    return ret;
+ }
+ 
+ /* Communicate with agent: send request and read reply */
 diff --git a/clientloop.c
 --- a/clientloop.c	2023-03-15 16:28:19.000000000 -0500
 +++ b/clientloop.c	2023-03-16 13:56:15.000000000 -0500
