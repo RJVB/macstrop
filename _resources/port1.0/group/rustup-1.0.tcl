@@ -78,13 +78,30 @@ namespace eval rustup {
                 reinplace "s|mktemp|gmktemp|g" ${rustup::home}/rustup-install.sh
             }
             file attributes ${rustup::home}/rustup-install.sh -permissions ug+x
+            platform linux {
+                # the script downloads the rustup-init binary and installs it as
+                # $CARGO_HOME/bin/rustup ; on my Linux this can generate an EAGAIN
+                # error, apparently because I'm running ZFS. So, we download that
+                # binary ourselves...
+                ui_debug "Downloading the rustup installer binary directly"
+                xinstall -d ${rustup::home}/Cargo/bin/
+                curl fetch --progress ui_progress_download \
+                    https://static.rust-lang.org/rustup/dist/[exec uname -m]-unknown-linux-gnu/rustup-init \
+                    ${rustup::home}/Cargo/bin/rustup
+                file attributes ${rustup::home}/Cargo/bin/rustup -permissions ug+x
+            }
         }
     }
 
     pre-extract {
-        if {[rustup::use_rustup] && ![file exists ${rustup::home}/Cargo/bin/rustup]} {
+        if {[rustup::use_rustup] && ![file exists ${rustup::home}/Cargo/bin/cargo]} {
             ui_msg "--->  Doing rustup install"
-            system "${rustup::home}/rustup-install.sh --profile minimal --no-modify-path -y"
+            if {[file exists ${rustup::home}/Cargo/bin/rustup]} {
+                system "${rustup::home}/Cargo/bin/rustup set profile minimal"
+                system "${rustup::home}/Cargo/bin/rustup install stable"
+            } else {
+                system "${rustup::home}/rustup-install.sh --profile minimal --no-modify-path -y"
+            }
         }
     }
 
