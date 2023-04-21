@@ -1,0 +1,121 @@
+PortSystem 1.0
+platform darwin {
+    PortGroup legacysupport 1.0
+}
+PortGroup cmake 1.1
+PortGroup locale_select 1.0
+PortGroup LTO 1.0
+PortGroup openssl 1.0
+PortGroup compress_workdir 1.0
+
+# v0.104.x was the last version that doesn't require rust for building. If we want to upgrade
+# beyond that without imposing the installation of a sufficiently up-to-date port:rust (which
+# is quite a challenge to port to Linux). The solution may be to use a "rustup" install inside
+# `port work clamav`. We'd download the install script using
+# curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > $TMPDIR/install.sh 
+# then probably need to modify it to invoke our own gmktemp instead of the system mktemp
+# and then invoke it with the arguments `-profile minimal --no-modify-path` and RUSTUP_HOME and
+# CARGO_HOME set appropriately. Quick testing suggests we would need to invoke cargo and rustc
+# directly from the toolchains/stable-*/bin directory, or keep the RUSTUP_HOME env.var set.
+PortGroup rustup 1.0
+
+name			clamav1 ; dist_subdir clamav
+version		 	1.0.1
+categories		sysutils
+maintainers	 	{geeklair.net:dluke @danielluke}
+description	 	clamav antivirus software
+license			{GPL-2 OpenSSLException}
+
+long_description	Clam AntiVirus is a GPL anti-virus toolkit for UNIX. The \
+			main purpose of this software is the integration with mail \
+			servers (attachment scanning).
+
+homepage		http://www.clamav.net
+master_sites		http://www.clamav.net/downloads/production
+distname		clamav-${version}
+checksums	rmd160	c4abb4771e07c18a8b6763f53e2fb56164493a11 \
+		sha256	0872dc1b82ff4cd7e8e4323faf5ee41a1f66ae80865d05429085b946355d86ee
+# 		size	31305590
+
+platforms       linux
+
+# Disable tests to avoid extra dependencies
+configure.args-append	-DENABLE_TESTS=OFF \
+			-DENABLE_MILTER=OFF \
+			-DENABLE_STATIC_LIB=OFF \
+			-DBYTECODE_RUNTIME=llvm \
+			-DDATABASE_DIRECTORY=/var/lib/clamav \
+			-DLLVM_CONFIG=${prefix}/bin/llvm-config-mp-9.0 \
+			-DENABLE_SYSTEMD=OFF
+
+use_parallel_build	yes
+
+depends_build-append \
+			port:pkgconfig \
+			bin:git:git
+
+depends_lib-append \
+			port:libiconv \
+			port:zlib \
+			port:bzip2 \
+			port:ncurses \
+			port:pcre2 \
+			port:libxml2 \
+			port:curl \
+			port:json-c \
+			port:libtool
+
+## older systems support
+post-extract {
+ if { ${os.platform} eq "darwin" && ${os.major} < 11 } {
+
+	# use linux version of openssl cert util on systems < 10.7 that don't support the macOS version
+	# ./common/linux/cert_util_linux.c -> ./common/mac/cert_util_mac.m
+	# passes all tests. See: https://trac.macports.org/ticket/59168
+
+	ui_msg	"replacing mac security with linux security"
+	delete	${worksrcpath}/common/mac/cert_util_mac.m
+	copy	${worksrcpath}/common/linux/cert_util_linux.c \
+		${worksrcpath}/common/mac/cert_util_mac.m
+
+	# remove two switchs not supported by the older gcc versions often used on these systems
+	reinplace "s/-Wno-logical-op-parentheses//g"	${worksrcpath}/libclamunrar/CMakeLists.txt
+	reinplace "s/-Wno-dangling-else//g"		${worksrcpath}/libclamunrar/CMakeLists.txt
+ }
+}
+
+platform darwin 8 {
+	configure.args-append	-DOPTIMIZE=OFF
+}
+
+variant clamav_milter description {build with libmilter support} {
+	depends_lib-append port:libmilter
+	configure.args-replace	-DENABLE_MILTER=OFF -DENABLE_MILTER=ON
+}
+
+pre-test {
+    if {![variant_isset tests]} {
+        ui_error "'tests' variant must be activated to enable test support"
+        error "Please enable the 'tests' variant and try again"
+    }
+}
+
+variant tests description {Enable running 'port test'} {
+	ui_msg "Tests run using the installed version of this port."
+
+	depends_test	port:check \
+			port:py310-pytest
+
+	configure.args-delete	-DENABLE_TESTS=OFF
+	configure.pre_args-replace	-DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=ON \
+					-DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=OFF
+
+
+	test.run yes
+	test.cmd ctest
+	test.target --rerun-failed --output-on-failure
+}
+
+livecheck.type		regex
+livecheck.url		http://www.clamav.net/downloads
+livecheck.regex		clamav-(\\d+.\\d+.\\d+)${extract.suffix}
