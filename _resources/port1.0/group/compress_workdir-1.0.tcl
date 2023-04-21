@@ -87,6 +87,17 @@ platform darwin {
             return 1
         }
 
+        post-extract {
+            if {[file exists ${prefix}/bin/afsctool]} {
+                ui_debug "--->  Compressing the source directory once more..."
+                catch {hfscompress ${worksrcpath}}
+                if {[info exists rustup::home]} {
+                    ui_msg "---> Compressing the rustup install directory ${rustup::home}"
+                    catch {hfscompress ${rustup::home}}
+                }
+            }
+        }
+
         post-build {
             if {[file exists ${prefix}/bin/afsctool]} {
                 ui_msg "--->  Compressing the build directory ..."
