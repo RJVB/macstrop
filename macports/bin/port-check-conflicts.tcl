@@ -288,9 +288,15 @@ proc message { filename message } {
 # see https://stackoverflow.com/a/29289660/1460868
 proc fileEqual {file1 file2} {
     if {[file size $file1] == [file size $file2]} {
-        set f1 [open $file1]
+        if {[catch {set f1 [open $file1]} cresult]} {
+            puts $::errorInfo
+            return 0
+        }
         fconfigure $f1 -translation binary
-        set f2 [open $file2]
+        if {[catch {set f2 [open $file2]} cresult]} {
+            puts $::errorInfo
+            return 0
+        }
         fconfigure $f2 -translation binary
         while {![info exist same]} {
             if {[read $f1 4096] ne [read $f2 4096]} {
