@@ -61,8 +61,8 @@ namespace eval rustup {
         }
         set env(RUSTUP_HOME)    ${home}
         set env(CARGO_HOME)     ${home}/Cargo
-        set env(PATH)           ${home}/Cargo/bin:$env(PATH)
     }
+    set env(PATH)               ${home}/Cargo/bin:$env(PATH)
 
     post-fetch {
         # There is no way to guarantee that the rustup install script will always be the same
@@ -102,6 +102,10 @@ namespace eval rustup {
             } else {
                 system "${rustup::home}/rustup-install.sh --profile minimal --no-modify-path -y"
             }
+            if {[tbool configureccache]} {
+                 file rename ${rustup::home}/Cargo/bin/rustc ${rustup::home}/Cargo/bin/rustc.bin
+                 rustup::ccache-wrapper ${rustup::home}/Cargo/bin/rustc ${rustup::home}/Cargo/bin/rustc.bin
+            }
         }
     }
 
@@ -121,6 +125,12 @@ namespace eval rustup {
         ui_debug "PATH=$env(PATH)"
         if {![rustup::use_rustup]} {
             xinstall -m 755 -d ${rustup::home}/Cargo/bin/
+# cargo from port:cargo invokes rustc from port:rustc, period.
+#             file delete -force \
+#                 ${rustup::home}/Cargo/bin/rustc
+#             if {[tbool configureccache]} {
+#                 rustup::ccache-wrapper ${rustup::home}/Cargo/bin/rustc ${prefix}/bin/rustc
+#             }
         }
         file delete -force \
             ${rustup::home}/Cargo/bin/cc \
