@@ -105,8 +105,33 @@ namespace eval rustup {
         }
     }
 
+    proc ccache-wrapper {pth comm} {
+        if {![catch {set f [open "${pth}" "w"]} err]} {
+            puts ${f} "#!/bin/sh\n"
+            puts ${f} "exec ccache ${comm} \"$@\""
+            close ${f}
+            file attributes ${pth} -permissions ug+x
+        } else {
+            ui_error $::errorInfo
+            return -code error "failed to create ccache wrapper ${pth} for ${comm}: ${err}"
+        }
+    }
+
     pre-configure {
         ui_debug "PATH=$env(PATH)"
+        if {![rustup::use_rustup]} {
+            xinstall -m 755 -d ${rustup::home}/Cargo/bin/
+        }
+        file delete -force \
+            ${rustup::home}/Cargo/bin/cc \
+            ${rustup::home}/Cargo/bin/c++
+        if {[tbool configureccache]} {
+            rustup::ccache-wrapper ${rustup::home}/Cargo/bin/cc ${configure.cc}
+            rustup::ccache-wrapper ${rustup::home}/Cargo/bin/c++ ${configure.cxx}
+        } else {
+            ln -s ${configure.cc} ${rustup::home}/Cargo/bin/cc
+            ln -s ${configure.cxx} ${rustup::home}/Cargo/bin/c++
+        }
     }
 
     pre-build {
