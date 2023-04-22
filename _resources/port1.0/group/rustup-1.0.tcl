@@ -48,22 +48,38 @@ namespace eval rustup {
     # the post-X blocks below because they are not executed inside
     # our own namespace!
     set home    ${workpath}/.rustup
+}
 
-    if {![use_rustup]} {
+if {![rustup::use_rustup]} {
+    PortGroup rust 1.0
+} else {
+    # too tricky to remove the port:rust and port:cargo deps
+   # that are added by the rust PG so we don't include it...
+    PortGroup openssl 1.0
+    PortGroup compiler_wrapper 1.0
+    if {${os.platform} eq "darwin"} {
+        # for gmktemp:
         depends_build-append \
-            bin:rustc:rust \
-            bin:cargo:cargo
-    } else {
-        if {${os.platform} eq "darwin"} {
-            # for gmktemp:
-            depends_build-append \
-                port:coreutils
-        }
-        set env(RUSTUP_HOME)    ${home}
-        set env(CARGO_HOME)     ${home}/Cargo
+            port:coreutils
     }
-    set env(PATH)               ${home}/Cargo/bin:$env(PATH)
+    if {![info exists configure.ld]} {
+        options configure.ld
+        configure.ld        ${prefix}/bin/ld
+        if {${os.platform} eq "darwin"} {
+            depends_build-append port:ld64
+        } else {
+            depends_build-append port:binutils
+        }
+    }
+    set env(RUSTUP_HOME)    ${rustup::home}
+    set env(CARGO_HOME)     ${rustup::home}/Cargo
+    # Rust does not easily pass external flags to compilers, so add them to compiler wrappers
+    default compwrap.compilers_to_wrap          {cc cxx ld}
+    default compwrap.ccache_supported_compilers {}
+}
+set env(PATH)               ${rustup::home}/Cargo/bin:$env(PATH)
 
+namespace eval rustup {
     post-fetch {
         # There is no way to guarantee that the rustup install script will always be the same
         # and that snapshots will continue to work. Ports would thus have to provide a copy
@@ -124,14 +140,18 @@ namespace eval rustup {
         }
         file delete -force \
             ${rustup::home}/Cargo/bin/cc \
-            ${rustup::home}/Cargo/bin/c++
-        if {[tbool configureccache]} {
-            rustup::ccache-wrapper ${rustup::home}/Cargo/bin/cc ${configure.cc}
-            rustup::ccache-wrapper ${rustup::home}/Cargo/bin/c++ ${configure.cxx}
+            ${rustup::home}/Cargo/bin/c++ \
+            ${rustup::home}/Cargo/bin/ld
+        if {![tbool configure.ccache] && [tbool configureccache]} {
+            # the cmake PG unsets configure.ccache but not configureccache; the
+            # compwrap wrappers thus still need a ccache wrapper...
+            rustup::ccache-wrapper ${rustup::home}/Cargo/bin/cc     [compwrap::wrap_compiler cc]
+            rustup::ccache-wrapper ${rustup::home}/Cargo/bin/c++    [compwrap::wrap_compiler cxx]
         } else {
-            ln -s ${configure.cc} ${rustup::home}/Cargo/bin/cc
-            ln -s ${configure.cxx} ${rustup::home}/Cargo/bin/c++
+            ln -s [compwrap::wrap_compiler cc]  ${rustup::home}/Cargo/bin/cc
+            ln -s [compwrap::wrap_compiler cxx] ${rustup::home}/Cargo/bin/c++
         }
+        ln -s [compwrap::wrap_compiler ld]      ${rustup::home}/Cargo/bin/ld
     }
 
     pre-build {
