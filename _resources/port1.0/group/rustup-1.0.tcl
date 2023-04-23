@@ -48,6 +48,7 @@ namespace eval rustup {
     # the post-X blocks below because they are not executed inside
     # our own namespace!
     set home    ${workpath}/.rustup
+
 }
 
 if {![rustup::use_rustup]} {
@@ -64,11 +65,11 @@ if {![rustup::use_rustup]} {
     }
     if {![info exists configure.ld]} {
         options configure.ld
-        configure.ld        ${prefix}/bin/ld
         if {${os.platform} eq "darwin"} {
-            depends_build-append port:ld64
+            default configure.ld    ${configure.cc}
         } else {
-            depends_build-append port:binutils
+            default configure.ld    ${prefix}/bin/ld
+            depends_build-append    port:binutils
         }
     }
     set env(RUSTUP_HOME)    ${rustup::home}
@@ -78,6 +79,33 @@ if {![rustup::use_rustup]} {
     default compwrap.ccache_supported_compilers {}
 }
 set env(PATH)               ${rustup::home}/Cargo/bin:$env(PATH)
+
+if {[tbool rustup.shim_cargo_portgroup] && [rustup::use_rustup]} {
+    options cargo.bin \
+            cargo.offline_cmd
+    default cargo.bin           {${rustup::home}/Cargo/bin/cargo}
+    default cargo.offline_cmd   {--frozen}
+    # adapted from the cargo PG:
+    default use_configure       no
+
+    default build.cmd           {${cargo.bin} build}
+    default build.target        {}
+    default build.pre_args      {--release -vv -j${build.jobs}}
+    default build.args          {}
+
+    destroot {
+        ui_error "No destroot phase in the Portfile!"
+        ui_msg "Here is an example destroot phase:"
+        ui_msg
+        ui_msg "destroot {"
+        ui_msg {    xinstall -m 0755 ${worksrcpath}/target/[option triplet.${muniversal.build_arch}]/release/${name} ${destroot}${prefix}/bin/}
+        ui_msg {    xinstall -m 0444 ${worksrcpath}/doc/${name}.1 ${destroot}${prefix}/share/man/man1/}
+        ui_msg "}"
+        ui_msg
+        ui_msg "Please check if there are additional files (configuration, documentation, etc.) that need to be installed."
+        error "destroot phase not implemented"
+    }
+}
 
 namespace eval rustup {
     post-fetch {
@@ -133,7 +161,12 @@ namespace eval rustup {
         }
     }
 
-    pre-configure {
+    if {[tbool use_configure]} {
+        set prephase pre-configure
+    } else {
+        set prephase pre-build
+    }
+    ${prephase} {
         ui_debug "PATH=$env(PATH)"
         if {![rustup::use_rustup]} {
             xinstall -m 755 -d ${rustup::home}/Cargo/bin/

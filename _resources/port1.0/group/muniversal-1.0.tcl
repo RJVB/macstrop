@@ -206,14 +206,14 @@ variant universal {
         depends_build-append    port:cctools
     }
 
-    if {${os.platform} eq "darwin" && ${os.major} >= 22} {
-        depends_build-append port:diffutils-for-muniversal
-    }
-
     foreach arch ${configure.universal_archs} {
         foreach lang {c cxx objc objcxx cpp ld} {
             configure.universal_${lang}flags-delete -arch ${arch}
         }
+    }
+
+    if {${os.platform} eq "darwin" && ${os.major} >= 22} {
+        depends_build-append port:diffutils-for-muniversal
     }
 
     proc muniversal_get_diff_to_use {} {
