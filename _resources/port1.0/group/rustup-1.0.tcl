@@ -74,6 +74,7 @@ if {![rustup::use_rustup]} {
     }
     set env(RUSTUP_HOME)    ${rustup::home}
     set env(CARGO_HOME)     ${rustup::home}/Cargo
+    set env(RUST_BACKTRACE) "full"
     # Rust does not easily pass external flags to compilers, so add them to compiler wrappers
     default compwrap.compilers_to_wrap          {cc cxx ld}
     default compwrap.ccache_supported_compilers {}
