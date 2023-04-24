@@ -81,17 +81,22 @@ if {![rustup::use_rustup]} {
 }
 set env(PATH)               ${rustup::home}/Cargo/bin:$env(PATH)
 
-if {[tbool rustup.shim_cargo_portgroup] && [rustup::use_rustup]} {
+if {[tbool rustup.shim_cargo_portgroup]} {
     options cargo.bin \
             cargo.offline_cmd
-    default cargo.bin           {${rustup::home}/Cargo/bin/cargo}
     default cargo.offline_cmd   {--frozen}
     # adapted from the cargo PG:
     default use_configure       no
 
     default build.cmd           {${cargo.bin} build}
     default build.target        {}
-    default build.pre_args      {--release -vv -j${build.jobs}}
+    if {[rustup::use_rustup]} {
+        default cargo.bin       {${rustup::home}/Cargo/bin/cargo}
+        default build.pre_args  {--release -vv -j${build.jobs}}
+    } else {
+        default cargo.bin       {${prefix}/bin/cargo}
+        default build.pre_args  {--release ${cargo.offline_cmd} -vv -j${build.jobs}}
+    }
     default build.args          {}
 
     destroot {
