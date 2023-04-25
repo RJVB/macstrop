@@ -61,7 +61,9 @@ if {![rustup::use_rustup]} {
     if {${os.platform} eq "darwin"} {
         # for gmktemp:
         depends_build-append \
-            port:coreutils
+            port:coreutils \
+            port:cctools \
+            port:curl
     }
     if {![info exists configure.ld]} {
         options configure.ld
@@ -78,6 +80,7 @@ if {![rustup::use_rustup]} {
     # Rust does not easily pass external flags to compilers, so add them to compiler wrappers
     default compwrap.compilers_to_wrap          {cc cxx ld}
     default compwrap.ccache_supported_compilers {}
+    universal_variant no
 }
 set env(PATH)               ${rustup::home}/Cargo/bin:$env(PATH)
 
@@ -93,6 +96,12 @@ if {[tbool rustup.shim_cargo_portgroup]} {
     if {[rustup::use_rustup]} {
         default cargo.bin       {${rustup::home}/Cargo/bin/cargo}
         default build.pre_args  {--release -vv -j${build.jobs}}
+        proc cargo.rust_platform {{arch ""}} {
+            if {${arch} ne ""} {
+                ui_warn "cargo.rust_platform is a stub with +rustup_build"
+            }
+            return ""
+        }
     } else {
         default cargo.bin       {${prefix}/bin/cargo}
         default build.pre_args  {--release ${cargo.offline_cmd} -vv -j${build.jobs}}
@@ -148,9 +157,22 @@ namespace eval rustup {
             ui_msg "--->  Doing rustup install"
             if {[file exists ${rustup::home}/Cargo/bin/rustup]} {
                 system "${rustup::home}/Cargo/bin/rustup set profile minimal"
+                platform darwin {
+                    # now make certain we use an up-to-date libcurl, or else download failures may occur
+                    system "install_name_tool -change /usr/lib/libcurl.4.dylib ${prefix}/lib/libcurl.4.dylib ${rustup::home}/Cargo/bin/rustup"
+                    system "install_name_tool -change /usr/lib/libcurl.4.dylib ${prefix}/lib/libcurl.4.dylib ${rustup::home}/Cargo/bin/cargo"
+                }
                 system "${rustup::home}/Cargo/bin/rustup install stable"
             } else {
                 system "${rustup::home}/rustup-install.sh --profile minimal --no-modify-path -y"
+                platform darwin {
+                    system "install_name_tool -change /usr/lib/libcurl.4.dylib ${prefix}/lib/libcurl.4.dylib ${rustup::home}/Cargo/bin/cargo"
+                }
+            }
+            platform darwin {
+                foreach c [glob ${rustup::home}/toolchains/stable-*-apple-darwin/bin/cargo] {
+                    system "install_name_tool -change /usr/lib/libcurl.4.dylib ${prefix}/lib/libcurl.4.dylib ${c}"
+                }
             }
         }
     }
