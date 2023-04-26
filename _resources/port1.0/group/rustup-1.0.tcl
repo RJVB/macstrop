@@ -49,6 +49,8 @@ namespace eval rustup {
     # our own namespace!
     set home    ${workpath}/.rustup
 
+    options rustup.force_cargo_update
+    default rustup.force_cargo_update   no
 }
 
 if {![rustup::use_rustup]} {
@@ -89,11 +91,28 @@ if {[tbool rustup.shim_cargo_portgroup]} {
             cargo.offline_cmd
     default cargo.offline_cmd   {--frozen}
     # adapted from the cargo PG:
-    default use_configure       no
 
     default build.cmd           {${cargo.bin} build}
     default build.target        {}
     if {[rustup::use_rustup]} {
+        default configure.cmd   {${cargo.bin} update}
+        default configure.pre_args \
+                                {}
+        pre-configure {
+            # by default we'll use the configure phase to show what packages/crates
+            # could be updated. This is useful for e.g. openssl-sys in port:sccache;
+            # the 0.9.60 version referenced by the source fails to build against
+            # port:openssl3 (at least on Linux).
+            # If `cargo update` allows the updating of specific crates only we
+            # could consider providing an option var to select those, but for
+            # now letting the port handle this through configure.args seems enough.
+            if {!${rustup.force_cargo_update}} {
+                default configure.pre_args \
+                                {--dry-run}
+            } else {
+                ui_msg "--->    Updating Cargo.lock"
+            }
+        }
         default cargo.bin       {${rustup::home}/Cargo/bin/cargo}
         default build.pre_args  {--release -vv -j${build.jobs}}
         proc cargo.rust_platform {{arch ""}} {
@@ -103,6 +122,7 @@ if {[tbool rustup.shim_cargo_portgroup]} {
             return ""
         }
     } else {
+        default use_configure   no
         default cargo.bin       {${prefix}/bin/cargo}
         default build.pre_args  {--release ${cargo.offline_cmd} -vv -j${build.jobs}}
     }
@@ -220,5 +240,4 @@ namespace eval rustup {
     }
 
     set includecounter [expr ${includecounter} + 1]
-
 }
