@@ -155,6 +155,9 @@ namespace eval rustup {
                 ${rustup::home}/rustup-install.sh
             platform darwin {
                 reinplace "s|mktemp|gmktemp|g" ${rustup::home}/rustup-install.sh
+                if {${os.platform} eq "darwin" && ${os.major} < 14} {
+                    reinplace "s|/dist/|/|g" ${rustup::home}/rustup-install.sh
+                }
             }
             file attributes ${rustup::home}/rustup-install.sh -permissions ug+x
             platform linux {
@@ -184,6 +187,10 @@ namespace eval rustup {
                 }
                 system "${rustup::home}/Cargo/bin/rustup install stable"
             } else {
+                if {${os.platform} eq "darwin" && ${os.major} < 14} {
+                    ui_warn "--->    downloading the older rustup 1.25.2"
+                    set env(RUSTUP_UPDATE_ROOT) "https://static.rust-lang.org/rustup/archive/1.25.2"
+                }
                 system "${rustup::home}/rustup-install.sh --profile minimal --no-modify-path -y"
                 platform darwin {
                     system "install_name_tool -change /usr/lib/libcurl.4.dylib ${prefix}/lib/libcurl.4.dylib ${rustup::home}/Cargo/bin/cargo"
