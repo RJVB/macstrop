@@ -384,7 +384,6 @@ proc muniversal::merge {base1 base2 base prefixDir arch1 arch2 merger_dont_diff 
         set lipo_cmd            /usr/bin/lipo
         set libtool_cmd         /usr/bin/libtool
     }
-    ui_msg "$UI_PREFIX [format [msgcat::mc "  Merging %1\$s destroots"] ${subport}]"
 
     xinstall -d -m 0755 ${dir}
 
@@ -1008,6 +1007,8 @@ proc portdestroot::destroot_finish {args} {
     global  workpath \
             muniversal.dont_diff \
             muniversal.combine
+    # RJVB
+    global  UI_PREFIX subport
 
     # GNU diff can merge two C/C++ files
     # See https://www.gnu.org/software/diffutils/manual/html_mono/diff.html#If-then-else
@@ -1047,6 +1048,9 @@ proc portdestroot::destroot_finish {args} {
 %<#else
 %>#endif
 '}
+
+    # RJVB
+    ui_msg "$UI_PREFIX [format [msgcat::mc "  Merging %1\$s destroots"] ${subport}]"
 
     muniversal::merge  ${workpath}/destroot-ppc      ${workpath}/destroot-ppc64     ${workpath}/destroot-powerpc   ""  ppc ppc64      ${muniversal.dont_diff}  ${muniversal.combine} ${diffFormatM}
     muniversal::merge  ${workpath}/destroot-i386     ${workpath}/destroot-x86_64    ${workpath}/destroot-intel     ""  i386 x86_64    ${muniversal.dont_diff}  ${muniversal.combine} ${diffFormatM}
