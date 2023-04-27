@@ -163,7 +163,8 @@ namespace eval rustup {
             platform linux {
                 # the script downloads the rustup-init binary and installs it as
                 # $CARGO_HOME/bin/rustup ; on my Linux this can generate an EAGAIN
-                # error, apparently because I'm running ZFS. So, we download that
+                # error, apparently because I'm running a ZFS version that doesn't
+                # work nicely with copy_file_range(2). So, we download that
                 # binary ourselves...
                 ui_debug "Downloading the rustup installer binary directly"
                 xinstall -d ${rustup::home}/Cargo/bin/
