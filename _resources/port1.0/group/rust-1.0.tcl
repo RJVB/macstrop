@@ -33,8 +33,8 @@
 #    baz    author/baz  branch  abcdef12345678...commit...abcdef12345678  fedcba654321...
 #
 
-PortGroup   muniversal          1.1
 PortGroup   compiler_wrapper    1.0
+PortGroup   muniversal          1.1
 # ideally, we would like to add the openssl PG, however
 #     its use of `option_proc` makes changing the default value of `openssl.branch` difficult, and
 #     it interferes with our intended use of compiler_wrapper PG
@@ -130,6 +130,7 @@ default     triplet.os              {${os.platform}}
 
 # Rust does not easily pass external flags to compilers, so add them to compiler wrappers
 default     compwrap.compilers_to_wrap          {cc cxx ld}
+set compwrap.stored_ccache_supported_compilers  ${compwrap.ccache_supported_compilers}
 default     compwrap.ccache_supported_compilers {}
 
 # possible OpenSSL versions: empty, 3, 1.1, and 1.0
