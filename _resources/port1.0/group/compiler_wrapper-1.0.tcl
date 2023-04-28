@@ -43,7 +43,7 @@ default compwrap.ccache_supported_compilers [list cc objc cxx objcxx]
 
 proc compwrap::use_ccache {tag} {
     global prefix
-    return [ expr {[option configure.ccache] &&
+    return [ expr {([option configure.ccache] || [option configureccache]) &&
                  [file exists ${prefix}/bin/ccache] &&
                  [lsearch -exact [option compwrap.ccache_supported_compilers] ${tag}] >= 0} ]
 }
