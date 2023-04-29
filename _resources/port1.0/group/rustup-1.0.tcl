@@ -217,17 +217,26 @@ namespace eval rustup {
 # do configure.ld checking here
 if {![info exists configure.ld]} {
     options configure.ld
-    if {${os.platform} eq "darwin"} {
-        default configure.ld        ${configure.cc}
+}
+if {${os.platform} eq "darwin"} {
+    default configure.ld            ${configure.cc}
+} else {
+    default configure.ld            ${prefix}/bin/ld
+    depends_build-append            port:binutils \
+                                    port:wrapped-syscalls
+    if {[info exists env(LD_PRELOAD)]} {
+        set env(LD_PRELOAD)         "${prefix}/lib/libwrapped_syscalls.so:$env(LD_PRELOAD)"
     } else {
-        default configure.ld        ${prefix}/bin/ld
-        depends_build-append        port:binutils
+        set env(LD_PRELOAD)         "${prefix}/lib/libwrapped_syscalls.so"
+    }
+    extract.env-append              "COPY_FILE_RANGE_VERBOSE=1"
+    configure.env-append            "COPY_FILE_RANGE_VERBOSE=1"
+    build.env-append                "COPY_FILE_RANGE_VERBOSE=1"
 #         if {${os.platform} eq "linux"} {
 #             # this is a new requirement?!
 #             configure.ldflags-append \
 #                                     -L${rustup::home}/lib
 #         }
-    }
 }
 
 if {[variant_isset cputuned] || [variant_isset cpucompat]} {
