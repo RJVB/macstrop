@@ -60,10 +60,8 @@ namespace eval rustup {
 
     post-fetch {
         if {${subport} ne "rustup"} {
-            # we're not building port:rustup itself so we can depend on it
-            depends_build-append    port:rustup
             xinstall -d ${rustup::home}/Cargo/bin
-            ln -s ${prefix}/bin/rustup ${rustup::home}/Cargo/bin/
+            ln -s ${prefix}/bin/rustup-init ${rustup::home}/Cargo/bin/
         } elseif {![file exists ${rustup::home}/rustup-install.sh]} {
             xinstall -d ${rustup::home}
             curl fetch --remote-time --progress ui_progress_download \
@@ -86,25 +84,27 @@ namespace eval rustup {
                 xinstall -d ${rustup::home}/Cargo/bin/
                 curl fetch --progress ui_progress_download \
                     https://static.rust-lang.org/rustup/dist/[exec uname -m]-unknown-linux-gnu/rustup-init \
-                    ${rustup::home}/Cargo/bin/rustup
-                file attributes ${rustup::home}/Cargo/bin/rustup -permissions ug+x
+                    ${rustup::home}/Cargo/bin/rustup-init
+                file attributes ${rustup::home}/Cargo/bin/rustup-init -permissions ugo+x
             }
         }
     }
 
     pre-extract {
         if {[rustup::use_rustup]} {
+            set env(RUSTUP_INIT_SKIP_PATH_CHECK) yes
             if {![file exists ${rustup::home}/Cargo/bin/cargo]} {
                 ui_msg "--->  Doing rustup install"
-                if {[file exists ${rustup::home}/Cargo/bin/rustup]} {
-                    system "${rustup::home}/Cargo/bin/rustup set profile minimal"
+                if {[file exists ${rustup::home}/Cargo/bin/rustup-init]} {
                     platform darwin {
                         # now make certain we use an up-to-date libcurl, or else download failures may occur
                         # (the first replace is superfluous if we're using port:rustup)
-                        system "install_name_tool -change /usr/lib/libcurl.4.dylib ${prefix}/lib/libcurl.4.dylib ${rustup::home}/Cargo/bin/rustup"
-                        system "install_name_tool -change /usr/lib/libcurl.4.dylib ${prefix}/lib/libcurl.4.dylib ${rustup::home}/Cargo/bin/cargo"
+                        system "install_name_tool -change /usr/lib/libcurl.4.dylib ${prefix}/lib/libcurl.4.dylib ${rustup::home}/Cargo/bin/rustup-init"
+#                         system "install_name_tool -change /usr/lib/libcurl.4.dylib ${prefix}/lib/libcurl.4.dylib ${rustup::home}/Cargo/bin/cargo"
                     }
-                    system "${rustup::home}/Cargo/bin/rustup install stable"
+#                     system "${rustup::home}/Cargo/bin/rustup set profile minimal"
+#                     system "${rustup::home}/Cargo/bin/rustup install --no-self-update stable"
+                    system "${rustup::home}/Cargo/bin/rustup-init --profile minimal --no-modify-path -y"
                 } else {
                     if {${os.platform} eq "darwin" && ${os.major} < 14} {
                         ui_warn "--->    downloading the older rustup 1.25.2"
@@ -121,6 +121,7 @@ namespace eval rustup {
                     }
                 }
             }
+            file delete -force ${rustup::home}/Cargo/bin/rustup-init
         }
 #         platform linux {
 #             # rust builds can link libgcc_s explicitly but there isn't always a libgcc_s.so on the linker path
@@ -280,6 +281,10 @@ if {![rustup::use_rustup]} {
 
     PortGroup muniversal 1.1
 
+    if {${subport} ne "rustup"} {
+        # we're not building port:rustup itself so we can depend on it
+        depends_build-append        port:rustup
+    }
     if {${os.platform} eq "darwin"} {
         # make certain we use triplets that don't include ${os.major}
         triplet.os                  ${os.platform}
