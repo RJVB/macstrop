@@ -122,6 +122,20 @@ namespace eval rustup {
                 }
             }
         }
+#         platform linux {
+#             # rust builds can link libgcc_s explicitly but there isn't always a libgcc_s.so on the linker path
+#             # so we have to provide one - ${rustup::home}/lib was already added to the wrapper script.
+#             ui_msg [glob -nocomplain /usr/lib/libgcc_s.so /usr/*-linux-*/libgcc_s.so /lib/libgcc_s.so \
+#                                 /lib/*-linux-*/libgcc_s.so]
+#             if {[glob -nocomplain /usr/lib/libgcc_s.so /usr/*-linux-*/libgcc_s.so /lib/libgcc_s.so \
+#                     /lib/*-linux-*/libgcc_s.so] eq {}} {
+#                 xinstall -d ${rustup::home}/lib
+#                 foreach l [glob -nocomplain /usr/lib/libgcc_s.so.1 /usr/*-linux-*/libgcc_s.so.1 /lib/libgcc_s.so.1 \
+#                 /lib/*-linux-*/libgcc_s.so.1] {
+#                     ln -sf ${l} ${rustup::home}/lib/libgcc_s.so
+#                 }
+#             }
+#         }
     }
 
     proc ccache-wrapper {pth comm} {
@@ -150,7 +164,7 @@ namespace eval rustup {
             if {[file exists ${cargo.home}/config.toml]} {
                 ui_warn "replacing existing ${cargo.home}/config.toml"
                 ui_debug "config.toml contents:"
-                ui_debug "> [exec cat ${cargo.home}/config.toml] <"
+                ui_debug ">>> [exec cat ${cargo.home}/config.toml] <<<"
             }
             set conf [open "${cargo.home}/config.toml" "w"]
 
@@ -158,11 +172,15 @@ namespace eval rustup {
             puts $conf "rustflags = \[\"--remap-path-prefix=[file normalize ${worksrcpath}]=\", \
                 \"--remap-path-prefix=${cargo.home}=\", \
                 \"--remap-path-prefix=$env(RUSTUP_HOME)=RUSTUP_HOME\"\]"
-            # be sure to include all architectures in case, e.g., a 64-bit Cargo compiles a 32-bit port
-            foreach arch {arm64 x86_64 i386 ppc ppc64} {
-                if {[option triplet.${arch}] ne "none"} {
-                    puts $conf "\[target.[option triplet.${arch}]\]"
-                    puts $conf "linker = \"[compwrap::wrap_compiler ld]\""
+            if {${os.platform} eq "darwin"} {
+                # be sure to include all architectures in case, e.g., a 64-bit Cargo compiles a 32-bit port
+                # note that setting the linker on linux causes weird failures even if the executed wrapper
+                # script is the same...
+                foreach arch {arm64 x86_64 i386 ppc ppc64} {
+                    if {[option triplet.${arch}] ne "none"} {
+                        puts $conf "\[target.[option triplet.${arch}]\]"
+                        puts $conf "linker = \"[compwrap::wrap_compiler ld]\""
+                    }
                 }
             }
             close $conf
@@ -196,10 +214,28 @@ namespace eval rustup {
 # global namespace code
 #############################################################################
 
+# do configure.ld checking here
+if {![info exists configure.ld]} {
+    options configure.ld
+    if {${os.platform} eq "darwin"} {
+        default configure.ld        ${configure.cc}
+    } else {
+        default configure.ld        ${prefix}/bin/ld
+        depends_build-append        port:binutils
+#         if {${os.platform} eq "linux"} {
+#             # this is a new requirement?!
+#             configure.ldflags-append \
+#                                     -L${rustup::home}/lib
+#         }
+    }
+}
+
 if {[variant_isset cputuned] || [variant_isset cpucompat]} {
     configure.cflags-append         {*}${LTO.cpuflags}
     configure.cxxflags-append       {*}${LTO.cpuflags}
-    configure.ldflags-append        {*}${LTO.cpuflags}
+    if {${os.platform} eq "darwin"} {
+        configure.ldflags-append    {*}${LTO.cpuflags}
+    }
 }
 
 if {![rustup::use_rustup]} {
@@ -234,10 +270,10 @@ if {![rustup::use_rustup]} {
     PortGroup compiler_wrapper 1.0
 
     PortGroup muniversal 1.1
-    # make certain we use triplets that don't include ${os.major}
-    triplet.os                      ${os.platform}
 
     if {${os.platform} eq "darwin"} {
+        # make certain we use triplets that don't include ${os.major}
+        triplet.os                  ${os.platform}
         if {${subport} eq "rustup"} {
             # for gmktemp:
             depends_build-append    port:coreutils
@@ -245,18 +281,11 @@ if {![rustup::use_rustup]} {
         depends_build-append        port:cctools \
                                     port:curl
     }
-    if {![info exists configure.ld]} {
-        options configure.ld
-        if {${os.platform} eq "darwin"} {
-            default configure.ld    ${configure.cc}
-        } else {
-            default configure.ld    ${prefix}/bin/ld
-            depends_build-append    port:binutils
-        }
-    }
+    # configure.ld checking was done here.
     set env(RUSTUP_HOME)            ${rustup::home}
     set env(CARGO_HOME)             ${rustup::home}/Cargo
     set env(RUST_BACKTRACE)         "full"
+#     set env(CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_DEBUG) "true"
     # Rust does not easily pass external flags to compilers, so add them to compiler wrappers
     default compwrap.compilers_to_wrap \
                                     {cc cxx ld}
