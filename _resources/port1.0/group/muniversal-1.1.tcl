@@ -138,10 +138,22 @@ default muniversal.is_cross.ppc64   {[expr { ${os.arch} ne "powerpc" || !${os.cp
 # see https://wiki.osdev.org/Target_Triplet
 ##########################################################################################
 options triplet.vendor
-default triplet.vendor      {apple}
-
 options triplet.os
-default triplet.os          {${os.platform}${os.major}}
+switch ${os.platform} {
+    "darwin" {
+        default triplet.vendor  {apple}
+        default triplet.os      {${os.platform}${os.major}}
+    }
+    "linux" {
+        default triplet.vendor  {unknown}
+        default triplet.os      {linux-gnu}
+    }
+    default {
+        default triplet.vendor  {unknown}
+        default triplet.os      {${os.platform}}
+    }
+}
+
 
 options triplet.host_cmd
 default triplet.host_cmd    {--host=}
@@ -866,7 +878,7 @@ variant universal {
     }
 
     # RJVB for $prefix/bin/lipo
-    if {[string match macports-clang* ${configure.compiler}]} {
+    if {${os.platform} eq "darwin" && [string match macports-clang* ${configure.compiler}]} {
         depends_build-append    port:cctools
     }
 

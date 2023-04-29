@@ -194,6 +194,15 @@ proc universal_setup {args} {
 
 ui_debug "muniversal: adding universal variant"
 
+# RJVB
+proc muniversal_get_vendor {} {
+    if {${os.platform} eq "darwin"} {
+        return "apple"
+    } else {
+        return "unknown"
+    }
+}
+
 variant universal {
     # RJVB
     if {${supported_archs} eq "noarch"} {
@@ -202,7 +211,7 @@ variant universal {
     }
 
     # RJVB for $prefix/bin/lipo
-    if {[string match macports-clang* ${configure.compiler}]} {
+    if {${os.platform} eq "darwin" && [string match macports-clang* ${configure.compiler}]} {
         depends_build-append    port:cctools
     }
 
@@ -329,11 +338,11 @@ variant universal {
                                  || (${os.arch} eq "i386" && ${arch} in [list arm64 ppc ppc64])
                                  || (${os.arch} eq "powerpc" && ${arch} in [list i386 x86_64])} {
                     switch -- ${arch} {
-                        arm64   {set host "--host=aarch64-apple-${os.platform}${os.version}"}
-                        x86_64  {set host "--host=x86_64-apple-${os.platform}${os.version}"}
-                        i386    {set host "--host=i686-apple-${os.platform}${os.version}"}
-                        ppc     {set host "--host=powerpc-apple-${os.platform}${os.version}"}
-                        ppc64   {set host "--host=powerpc64-apple-${os.platform}${os.version}"}
+                        arm64   {set host "--host=aarch64-[muniversale_get_vendor]-${os.platform}${os.version}"}
+                        x86_64  {set host "--host=x86_64-[muniversale_get_vendor]-${os.platform}${os.version}"}
+                        i386    {set host "--host=i686-[muniversale_get_vendor]-${os.platform}${os.version}"}
+                        ppc     {set host "--host=powerpc-[muniversale_get_vendor]-${os.platform}${os.version}"}
+                        ppc64   {set host "--host=powerpc64-[muniversale_get_vendor]-${os.platform}${os.version}"}
                     }
                 }
             }
