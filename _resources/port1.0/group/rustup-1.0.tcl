@@ -61,7 +61,7 @@ namespace eval rustup {
     post-fetch {
         if {${subport} ne "rustup"} {
             xinstall -d ${rustup::home}/Cargo/bin
-            ln -s ${prefix}/bin/rustup-init ${rustup::home}/Cargo/bin/
+            xinstall ${prefix}/bin/rustup ${rustup::home}/Cargo/bin/rustup-init
         } elseif {![file exists ${rustup::home}/rustup-install.sh]} {
             xinstall -d ${rustup::home}
             curl fetch --remote-time --progress ui_progress_download \
