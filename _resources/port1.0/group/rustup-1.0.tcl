@@ -20,7 +20,14 @@
 # dependencies are bumped to their latest versions. This requires a rustup
 # build (+rustup_build) and unsetting configure.pre_args .
 
-set LTO.disable_LTO yes
+if {${os.platform} eq "darwin"} {
+    set LTO.allow_ThinLTO no
+} else {
+    # linking is done by invoking the actual linker (ld) so we cannot
+    # know (easily enough) how to enable LTO, what plugin to invoke
+    # to read the compiled object files etc. Bummer...
+    set LTO.disable_LTO yes
+}
 PortGroup LTO 1.0
 
 namespace eval rustup {
