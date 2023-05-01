@@ -62,8 +62,8 @@ namespace eval rustup {
     # our own namespace!
     set home    ${workpath}/.rustup
 
-    options rustup.force_cargo_update
-    default rustup.force_cargo_update   no
+#     options rustup.force_cargo_update
+#     default rustup.force_cargo_update   no
 
     post-fetch {
         if {${subport} ne "rustup"} {
@@ -130,6 +130,9 @@ namespace eval rustup {
             }
             file delete -force ${rustup::home}/Cargo/bin/rustup-init
         }
+        if {[file exists ${prefix}/bin/cargo-cache-autoclean]} {
+            ln -s ${prefix}/bin/cargo-cache-autoclean ${rustup::home}/Cargo/bin/
+        }
 #         platform linux {
 #             # rust builds can link libgcc_s explicitly but there isn't always a libgcc_s.so on the linker path
 #             # so we have to provide one - ${rustup::home}/lib was already added to the wrapper script.
@@ -165,6 +168,7 @@ namespace eval rustup {
     }
     ${prephase} {
         ui_debug "PATH=$env(PATH)"
+        catch {system -W ${worksrcpath} "${rustup::home}/Cargo/bin/cargo-cache-autoclean"}
         if {![rustup::use_rustup]} {
             xinstall -m 755 -d ${rustup::home}/Cargo/bin/
         } else {
@@ -215,6 +219,9 @@ namespace eval rustup {
 
     pre-build {
         ui_debug "PATH=$env(PATH)"
+    }
+    post-build {
+        catch {system -W ${worksrcpath} "${rustup::home}/Cargo/bin/cargo-cache-autoclean"}
     }
 }
 
@@ -322,8 +329,10 @@ set env(PATH)                       ${rustup::home}/Cargo/bin:$env(PATH)
 # adapted from or overriding the rust & cargo PGs:
 options                             cargo.bin \
                                     cargo.offline_cmd \
-                                    cargo.home
+                                    cargo.home \
+                                    cargo.update
 default cargo.offline_cmd           {--frozen}
+default cargo.update                {no}
 
 default build.cmd                   {${cargo.bin} build}
 default build.target                {}
@@ -338,7 +347,7 @@ if {[rustup::use_rustup]} {
         # If `cargo update` allows the updating of specific crates only we
         # could consider providing an option var to select those, but for
         # now letting the port handle this through configure.args seems enough.
-        if {!${rustup.force_cargo_update}} {
+        if {![option cargo.update]} {
             default configure.pre_args \
                                     {--dry-run}
         } else {
