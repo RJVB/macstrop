@@ -29,7 +29,9 @@ if {${os.platform} eq "darwin"} {
 } else {
     # linking is done by invoking the actual linker (ld) so we cannot
     # know (easily enough) how to enable LTO, what plugin to invoke
-    # to read the compiled object files etc. Bummer...
+    # to read the compiled object files etc. Even when `cc` is used
+    # (as when in port:clamav) there will be errors about "unknown print
+    # print request `-split-debuginfo` which I yet have to avoid. Bummer...
     set LTO.disable_LTO yes
 }
 PortGroup LTO 1.0
