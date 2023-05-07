@@ -19,6 +19,10 @@
 # some config information and optionally to update the cargo.lock file so
 # dependencies are bumped to their latest versions. This requires a rustup
 # build (+rustup_build) and unsetting configure.pre_args .
+#
+# This PG can also be used because another type of build system (e.g. cmake)
+# requires the presence of rustc. In this case the build system should not
+# be redefined: set rustup.disable_cargo to "true" before including us.
 
 if {${os.platform} eq "darwin"} {
     set LTO.allow_ThinLTO no
@@ -107,7 +111,6 @@ namespace eval rustup {
                         # now make certain we use an up-to-date libcurl, or else download failures may occur
                         # (the first replace is superfluous if we're using port:rustup)
                         system "install_name_tool -change /usr/lib/libcurl.4.dylib ${prefix}/lib/libcurl.4.dylib ${rustup::home}/Cargo/bin/rustup-init"
-#                         system "install_name_tool -change /usr/lib/libcurl.4.dylib ${prefix}/lib/libcurl.4.dylib ${rustup::home}/Cargo/bin/cargo"
                     }
 #                     system "${rustup::home}/Cargo/bin/rustup set profile minimal"
 #                     system "${rustup::home}/Cargo/bin/rustup install --no-self-update stable"
@@ -131,7 +134,7 @@ namespace eval rustup {
             file delete -force ${rustup::home}/Cargo/bin/rustup-init
         }
         if {[file exists ${prefix}/bin/cargo-cache-autoclean]} {
-            ln -s ${prefix}/bin/cargo-cache-autoclean ${rustup::home}/Cargo/bin/
+            ln -sf ${prefix}/bin/cargo-cache-autoclean ${rustup::home}/Cargo/bin/
         }
 #         platform linux {
 #             # rust builds can link libgcc_s explicitly but there isn't always a libgcc_s.so on the linker path
@@ -173,29 +176,33 @@ namespace eval rustup {
             xinstall -m 755 -d ${rustup::home}/Cargo/bin/
         } else {
             xinstall -m 755 -d ${cargo.home}
-            if {[file exists ${cargo.home}/config.toml]} {
-                ui_warn "replacing existing ${cargo.home}/config.toml"
-                ui_debug "config.toml contents:"
-                ui_debug ">>> [exec cat ${cargo.home}/config.toml] <<<"
-            }
-            set conf [open "${cargo.home}/config.toml" "w"]
+            if {![tbool rustup.disable_cargo]} {
+                if {[file exists ${cargo.home}/config.toml]} {
+                    ui_warn "replacing existing ${cargo.home}/config.toml"
+                    ui_debug "config.toml contents:"
+                    ui_debug ">>> [exec cat ${cargo.home}/config.toml] <<<"
+                }
+                set conf [open "${cargo.home}/config.toml" "w"]
 
-            puts $conf "\[build\]"
-            puts $conf "rustflags = \[\"--remap-path-prefix=[file normalize ${worksrcpath}]=\", \
-                \"--remap-path-prefix=${cargo.home}=\", \
-                \"--remap-path-prefix=$env(RUSTUP_HOME)=RUSTUP_HOME\"\]"
-            if {${os.platform} eq "darwin"} {
-                # be sure to include all architectures in case, e.g., a 64-bit Cargo compiles a 32-bit port
-                # note that setting the linker on linux causes weird failures even if the executed wrapper
-                # script is the same...
-                foreach arch {arm64 x86_64 i386 ppc ppc64} {
-                    if {[option triplet.${arch}] ne "none"} {
-                        puts $conf "\[target.[option triplet.${arch}]\]"
-                        puts $conf "linker = \"[compwrap::wrap_compiler ld]\""
+                puts $conf "\[build\]"
+                puts $conf "rustflags = \[\"--remap-path-prefix=[file normalize ${worksrcpath}]=\", \
+                    \"--remap-path-prefix=${cargo.home}=\", \
+                    \"--remap-path-prefix=$env(RUSTUP_HOME)=RUSTUP_HOME\"\]"
+                if {${os.platform} eq "darwin"} {
+                    # be sure to include all architectures in case, e.g., a 64-bit Cargo compiles a 32-bit port
+                    # note that setting the linker on linux causes weird failures even if the executed wrapper
+                    # script is the same...
+                    foreach arch {arm64 x86_64 i386 ppc ppc64} {
+                        if {[option triplet.${arch}] ne "none"} {
+                            puts $conf "\[target.[option triplet.${arch}]\]"
+                            puts $conf "linker = \"[compwrap::wrap_compiler ld]\""
+                        }
                     }
                 }
+                close $conf
+            } else {
+                ui_debug "### Using non cargo build system with \"${configure.cmd}\" and \"${build.cmd}\""
             }
-            close $conf
         }
         file delete -force \
             ${rustup::home}/Cargo/bin/cc \
@@ -247,11 +254,6 @@ if {${os.platform} eq "darwin"} {
     extract.env-append              "COPY_FILE_RANGE_VERBOSE=1"
     configure.env-append            "COPY_FILE_RANGE_VERBOSE=1"
     build.env-append                "COPY_FILE_RANGE_VERBOSE=1"
-#         if {${os.platform} eq "linux"} {
-#             # this is a new requirement?!
-#             configure.ldflags-append \
-#                                     -L${rustup::home}/lib
-#         }
 }
 
 if {[variant_isset cputuned] || [variant_isset cpucompat]} {
@@ -266,7 +268,9 @@ if {![rustup::use_rustup]} {
     set cflags                      ${configure.cflags}
     set cxxflags                    ${configure.cxxflags}
     set ldflags                     ${configure.ldflags}
+    ### include upstream rust PG
     PortGroup rust 1.0
+    ###
     # deviate a bit from default behaviour: restore the compiler
     # and linker flags that were reset by the rust PG; idem
     # for compwrap.ccache_supported_compilers (requires custom
@@ -333,52 +337,59 @@ options                             cargo.bin \
                                     cargo.update
 default cargo.offline_cmd           {--frozen}
 default cargo.update                {no}
-
-default build.cmd                   {${cargo.bin} build}
-default build.target                {}
 if {[rustup::use_rustup]} {
-    default configure.cmd           {${cargo.bin} update}
-    default configure.pre_args      {}
-    pre-configure {
-        # by default we'll use the configure phase to show what packages/crates
-        # could be updated. This is useful for e.g. openssl-sys in port:sccache;
-        # the 0.9.60 version referenced by the source fails to build against
-        # port:openssl3 (at least on Linux).
-        # If `cargo update` allows the updating of specific crates only we
-        # could consider providing an option var to select those, but for
-        # now letting the port handle this through configure.args seems enough.
-        if {![option cargo.update]} {
-            default configure.pre_args \
-                                    {--dry-run}
-        } else {
-            ui_msg "--->    Updating Cargo.lock"
-        }
-    }
     default cargo.home              {$env(CARGO_HOME)}
 #         default cargo.home          {${workpath}/.home/.cargo}
     default cargo.bin               {${rustup::home}/Cargo/bin/cargo}
-    default build.pre_args          {--release -vv -j${build.jobs}}
+} else {
+    default cargo.bin               {${prefix}/bin/cargo}
+}
 
-    proc cargo.rust_platform {{arch ""}} {
-        if {${arch} eq ""} {
-            set arch [option muniversal.build_arch]
-            # muniversal.build_arch is empty if we are not doing a universal build
-            if {${arch} eq ""} {
-                set arch [option configure.build_arch]
-                if {${arch} eq ""} {
-                    error "No build arch configured"
-                }
+if {![tbool rustup.disable_cargo]} {
+    default build.cmd               {${cargo.bin} build}
+    default build.target            {}
+}
+if {![tbool rustup.disable_cargo]} {
+    if {[rustup::use_rustup]} {
+        default configure.cmd       {${cargo.bin} update}
+        default configure.pre_args  {}
+        pre-configure {
+            # by default we'll use the configure phase to show what packages/crates
+            # could be updated. This is useful for e.g. openssl-sys in port:sccache;
+            # the 0.9.60 version referenced by the source fails to build against
+            # port:openssl3 (at least on Linux).
+            # If `cargo update` allows the updating of specific crates only we
+            # could consider providing an option var to select those, but for
+            # now letting the port handle this through configure.args seems enough.
+            if {![option cargo.update]} {
+                default configure.pre_args \
+                                    {--dry-run}
+            } else {
+                ui_msg "--->    Updating Cargo.lock"
             }
         }
-        return [option triplet.${arch}]
+        default build.pre_args      {--release -vv -j${build.jobs}}
+
+        proc cargo.rust_platform {{arch ""}} {
+            if {${arch} eq ""} {
+                set arch [option muniversal.build_arch]
+                # muniversal.build_arch is empty if we are not doing a universal build
+                if {${arch} eq ""} {
+                    set arch [option configure.build_arch]
+                    if {${arch} eq ""} {
+                        error "No build arch configured"
+                    }
+                }
+            }
+            return [option triplet.${arch}]
+        }
+    } else {
+        default configure.cmd       {${cargo.bin} config}
+        default configure.pre_args  {-Z unstable-options get}
+        default build.pre_args      {--release ${cargo.offline_cmd} -vv -j${build.jobs}}
     }
-} else {
-    default configure.cmd           {${cargo.bin} config}
-    default configure.pre_args      {-Z unstable-options get}
-    default cargo.bin               {${prefix}/bin/cargo}
-    default build.pre_args          {--release ${cargo.offline_cmd} -vv -j${build.jobs}}
+    default build.args              {}
 }
-default build.args                  {}
 
 # it would be nice to generate a lean config.toml in rustup mode because
 #     # normally we have only 1 toolchain installed
@@ -410,19 +421,20 @@ foreach stage {configure build destroot} {
     }
 }
 
-destroot {
-    ui_error "No destroot phase in the Portfile!"
-    ui_msg "Here is an example destroot phase:"
-    ui_msg
-    ui_msg "destroot {"
-    ui_msg {    xinstall -m 0755 ${worksrcpath}/target/[option triplet.${muniversal.build_arch}]/release/${name} ${destroot}${prefix}/bin/}
-    ui_msg {    xinstall -m 0444 ${worksrcpath}/doc/${name}.1 ${destroot}${prefix}/share/man/man1/}
-    ui_msg "}"
-    ui_msg
-    ui_msg "Please check if there are additional files (configuration, documentation, etc.) that need to be installed."
-    error "destroot phase not implemented"
+if {![tbool rustup.disable_cargo]} {
+    destroot {
+        ui_error "No destroot phase in the Portfile!"
+        ui_msg "Here is an example destroot phase:"
+        ui_msg
+        ui_msg "destroot {"
+        ui_msg {    xinstall -m 0755 ${worksrcpath}/target/[option triplet.${muniversal.build_arch}]/release/${name} ${destroot}${prefix}/bin/}
+        ui_msg {    xinstall -m 0444 ${worksrcpath}/doc/${name}.1 ${destroot}${prefix}/share/man/man1/}
+        ui_msg "}"
+        ui_msg
+        ui_msg "Please check if there are additional files (configuration, documentation, etc.) that need to be installed."
+        error "destroot phase not implemented"
+    }
 }
-
 namespace eval rustup {
     set includecounter [expr ${includecounter} + 1]
 }
