@@ -82,7 +82,7 @@ namespace eval langselect {
 }
 
 if {[variant_isset langselect]} {
-    post-fetch {
+    post-destroot {
         if {[file exists ${prefix}/etc/macports/locales.tcl] &&
             (${langselect::has_nonstandard_locations} || \
 		  [file exists ${destroot}${prefix}/share/locale] || \
