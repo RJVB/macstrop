@@ -56,6 +56,19 @@ default langselect_lproj_dir     {}
 
 namespace eval langselect {
 
+    set has_nonstandard_locations 0
+
+    proc nonstandard_locations_handler {option action args} {
+	   global langselect::has_nonstandard_locations
+        if {${action} eq "set"} {
+            set langselect::has_nonstandard_locations 1
+        }
+    }
+    option_proc langselect_qm_dir langselect::nonstandard_locations_handler
+    option_proc langselect_html_dir langselect::nonstandard_locations_handler
+    option_proc langselect_dirs_dir langselect::nonstandard_locations_handler
+    option_proc langselect_lproj_dir langselect::nonstandard_locations_handler
+
     proc check_against_basenames {fname} {
         global langselect_qm_basename
         foreach bn ${langselect_qm_basename} {
@@ -69,12 +82,14 @@ namespace eval langselect {
 }
 
 if {[variant_isset langselect]} {
-    post-destroot {
+    post-fetch {
         if {[file exists ${prefix}/etc/macports/locales.tcl] &&
-            ([file exists ${destroot}${prefix}/share/locale] || \
+            (${langselect::has_nonstandard_locations} || \
+		  [file exists ${destroot}${prefix}/share/locale] || \
             [file exists [join ${langselect_qm_dir}]] || \
             [file exists ${destroot}${prefix}/share/man])
         } {
+            ui_debug "Reading local locale prefs from \"${prefix}/etc/macports/locales.tcl\""
             if {[catch {source "${prefix}/etc/macports/locales.tcl"} err]} {
                 ui_error "Error reading ${prefix}/etc/macports/locales.tcl: $err"
                 return -code error "Error reading ${prefix}/etc/macports/locales.tcl"
@@ -136,6 +151,7 @@ if {[variant_isset langselect]} {
             }
             if {[file exists [join ${langselect_dirs_dir}]]} {
                 set ldirdir [join ${langselect_dirs_dir}]
+                ui_debug "Pruning \"${ldirdir}\": [glob -nocomplain -types d ${ldirdir}/*]"
                 foreach l [glob -nocomplain -types d ${ldirdir}/*] {
                     set lang [file rootname [file tail ${l}]]
                     if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
@@ -145,6 +161,8 @@ if {[variant_isset langselect]} {
                         ui_debug "won't delete ${l} (${lang})"
                     }
                 }
+            } elseif {${langselect_dirs_dir} ne {}} {
+                ui_warn "Non-existent langselect_dirs_dir: \"${langselect_dirs_dir}\""
             }
             if {[file exists [join ${langselect_lproj_dir}]]} {
                 set ldirdir [join ${langselect_lproj_dir}]
