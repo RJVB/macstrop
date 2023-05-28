@@ -24,9 +24,10 @@ set my_name         ffmpeg
 conflicts           ffmpeg-devel ffmpeg-upstream
 
 # Please increase the revision of mpv whenever ffmpeg's version is updated.
+version             4.4.4
+revision            0
 epoch               1
-version             4.4.2
-revision            5
+
 license             LGPL-2.1+
 categories          multimedia
 maintainers         {mascguy @mascguy} {devans @dbevans} {jeremyhu @jeremyhu} openmaintainer
@@ -69,9 +70,9 @@ distname            ${my_name}-${version}
 dist_subdir         ${my_name}
 use_xz              yes
 
-checksums           rmd160  22a690edfad74f25de0d24557f8edf4b2366b1a0 \
-                    sha256  af419a7f88adbc56c758ab19b4c708afbcae15ef09606b82b855291f6a6faa93
-#                    size    9562968
+checksums           rmd160  ac9916e0915cfe3952993644d0a26d9e7c70e1b7 \
+                    sha256  e80b380d595c809060f66f96a5d849511ef4a76a26b76eacf5778b94c3570309 \
+                    size    9565584
 
 depends_build-append \
                     port:pkgconfig \
@@ -98,21 +99,20 @@ depends_lib-append \
                     port:fontconfig \
                     port:freetype \
                     port:fribidi \
+                    path:lib/pkgconfig/harfbuzz.pc:harfbuzz \
                     path:lib/libspeex.dylib:speex \
                     port:soxr \
+                    port:dav1d \
                     port:bzip2 \
                     port:xz \
+                    port:zimg \
                     port:zlib
 
 patchfiles-append   patch-libavcodec-audiotoolboxenc.c.diff
 
-# work around vec_xl intrinsic does not exist on older PowerPC processors
-# https://trac.ffmpeg.org/ticket/8750
-patchfiles-append     patch-ffmpeg-powerpc-yuv2rgb-altivec-fix.diff
-# fix an upstream bug that overrides the max_b_frames setting
+# Fix an upstream bug that overrides the max_b_frames setting
 # https://trac.ffmpeg.org/ticket/9231
-# this bug is fixed upstream in commit 55d9d6767967794edcdd6e1bbd8840fc6f4e9315
-# and should therefore be available in the next release version.
+# Fixed via upstream commit: 55d9d6767967794edcdd6e1bbd8840fc6f4e9315
 patchfiles-append   patch-libavcodec-videotoolboxenc.c.diff
 
 #
@@ -121,10 +121,13 @@ patchfiles-append   patch-libavcodec-videotoolboxenc.c.diff
 # Fixed via upstream commit: b786bc7433dfe082441a57c1ba9ae9ea47904b78
 patchfiles-append   patch-issue-9439-non-b-frame-encoding.diff
 
-# Patch for libsdl2; support newer versions
-# https://trac.macports.org/ticket/65703
-# Fixed via upstream commit: e5163b1d34381a3319214a902ef1df923dd2eeba
-patchfiles-append   patch-libsdl2-version.diff
+# Patch for upstream issue:
+# libavcodec/libsvtav1.c:124:53: error: no member named 'compressed_ten_bit_format' in 'struct EbSvtAv1EncConfiguration'
+#         (config->encoder_bit_depth > 8) && (config->compressed_ten_bit_format == 0) ? 1 : 0;
+#                                             ~~~~~~  ^
+# https://trac.macports.org/ticket/67327
+# Fixed via upstream commit: 031f1561cd286596cdb374da32f8aa816ce3b135
+patchfiles-append   patch-libavcodec-libsvtav1-ten_bit_format.diff
 
 # enable auto configure of asm optimizations
 # requires Xcode 3.1 or better on Leopard
@@ -163,12 +166,14 @@ configure.args-append \
                     --enable-libspeex \
                     --enable-libass \
                     --enable-libbluray \
+                    --enable-libzimg \
                     --enable-libzvbi \
                     --enable-lzma \
                     --enable-gnutls \
                     --enable-fontconfig \
                     --enable-libfreetype \
                     --enable-libfribidi \
+                    --enable-libdav1d \
                     --enable-zlib \
                     --disable-libjack \
                     --disable-libopencore-amrnb \
@@ -189,12 +194,6 @@ configure.args-append \
                     --disable-stripping \
                     --cc=${configure.cc}
 
-
-# zimg doesn't currently build on 10.7 and below, so only enable it on supported systems
-if { ${os.platform} eq "darwin" && ${os.major} > 11 } {
-    configure.args-append   --enable-libzimg
-    depends_lib-append      port:zimg
-}
 # RJVB: don't depend on texinfo opportunistically
 configure.args-append \
                     --disable-htmlpages
@@ -226,21 +225,15 @@ platform darwin {
         configure.args-replace --disable-audiotoolbox --enable-audiotoolbox
     }
 
-    if {${os.major} > 9} {
+    if {${os.major} > 9 && ${build_arch} ni [list ppc ppc64]} {
         # libsdl2 requires minimum Xcode 10.7 SDK to build successfully
-        # but builds on Snow Leopard
+        # but builds on Snow Leopard x86. Exclude ppc until fixed.
         configure.args-replace --disable-sdl2 --enable-sdl2
         depends_lib-append     port:libsdl2
-
-        # Dav1d: 10.6+ No PowerPC or Apple Silicon (for now)
-        if {![regexp -all (arm64|ppc*) [get_canonical_archs]]} {
-            configure.args-append   --enable-libdav1d
-            depends_lib-append      port:dav1d
-        }
     }
 
     # VideoToolbox, a new hardware acceleration framework, is supported on 10.8+ and "here to stay".
-    # It provides support for H264, H263, MPEG1, MPEG2 and MPEG4.
+    # It provides support for H265, H264, H263, MPEG1, MPEG2 and MPEG4.
     if {${os.major} > 11} {
         configure.args-replace --disable-videotoolbox --enable-videotoolbox
     }
@@ -322,8 +315,6 @@ platform powerpc {
     #  "___atomic_fetch_sub_8", referenced from:
     #      _fifo_thread_dispatch_message.part.4 in fifo.o
     configure.ldflags-append -latomic
-
-
 }
 
 platform darwin 8 {
@@ -335,14 +326,11 @@ platform darwin 8 {
 # configure isn't autoconf and they do use a dep cache
 configure.universal_args-delete --disable-dependency-tracking
 
-if {![info exists universal_possible]} {
-    set universal_possible [expr {${os.universal_supported} && [llength ${configure.universal_archs}] >= 2}]
-}
 if {${universal_possible} && [variant_isset universal]} {
     foreach arch ${configure.universal_archs} {
         set merger_host($arch) ""
         lappend merger_configure_args($arch) --arch=${arch}
-        lappend merger_configure_env($arch)  ASFLAGS='-arch ${arch}'
+        lappend merger_configure_env($arch)  "ASFLAGS=-arch ${arch}"
     }
     if {[string match "*86*" ${configure.universal_archs}]} {
         depends_build-append port:nasm
@@ -359,16 +347,13 @@ if {${universal_possible} && [variant_isset universal]} {
 }
 
 variant x11 {
-#
-# enable x11grab_xcb input device
-#
+    # enable x11grab_xcb input device
     depends_lib-append      port:xorg-libxcb \
                             port:xorg-libXext \
                             port:xorg-libXfixes
-
     configure.args-delete   --disable-libxcb \
                             --disable-libxcb-shm \
-                            --disable-libxcb-xfixes \
+                            --disable-libxcb-xfixes
 }
 
 if {[variant_isset x11]} {
@@ -390,18 +375,7 @@ variant libdc1394 description {Enable IIDC-1394 frame grabbing using libdc1394 (
 
 variant librtmp description {Use librtmp (from rtmpdump) as rtmp[t][es]:// protocol handler} {
     configure.args-append   --enable-librtmp
-
     depends_lib-append      port:rtmpdump
-}
-
-# x265 currently does not support OS X < 10.6 (#48336, #48338)
-# only enable libx265 support on 10.6 or greater
-
-platform darwin {
-    if {${os.major} > 9 && [variant_isset gpl2]} {
-        configure.args-append   --enable-libx265
-        depends_lib-append      port:x265
-    }
 }
 
 variant jack description {Enable jack library and indev support} {
@@ -423,10 +397,11 @@ variant gpl2 description {Enable GPL code, license will be GPL-2+} {
     configure.args-append   --enable-gpl \
                             --enable-postproc \
                             --enable-libx264 \
+                            --enable-libx265 \
                             --enable-libxvid
     depends_lib-append      port:XviD \
-                            port:x264
-
+                            port:x264 \
+                            port:x265
     license                 GPL-2+
 }
 
@@ -437,7 +412,6 @@ variant gpl3 requires gpl2 description {Enable GPL code, license will be GPL-3+}
 
     depends_lib-append      bin:smbclient:samba4 \
                             port:libaribb24
-
     license                 GPL-3+
 }
 
@@ -513,4 +487,4 @@ and is therefore licensed under LGPL v2.1 or later.
 
 livecheck.type      regex
 livecheck.url       ${master_sites}
-livecheck.regex     "${my_name}-(\\d+(?:\\.\\d+)*)${extract.suffix}"
+livecheck.regex     "${my_name}-(4(?:\\.\\d+)*)${extract.suffix}"
