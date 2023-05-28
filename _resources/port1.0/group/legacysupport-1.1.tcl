@@ -150,6 +150,7 @@ proc legacysupport::relink_libSystem { exe } {
 set ls_cache_incpath  [list]
 set ls_cache_ldflags  [list]
 set ls_cache_cppflags [list]
+variable legacysupport::installed_libcxx_port
 
 proc legacysupport::add_legacysupport {} {
     global prefix os.platform os.major
@@ -177,22 +178,21 @@ proc legacysupport::add_legacysupport {} {
 
         # Flags for using MP libcxx
         if { [option legacysupport.use_mp_libcxx] && ${configure.cxx_stdlib} eq "libc++" } {
-            # use a path-style depspec for port:macports-libcxx so that port:libcxx can match;
-            # it would be logical to use one of the dylibs but the "++" in their name makes that
-            # inpractical if not not impossible.
-            legacysupport::add_once depends_lib append path:include/libcxx/v1/version:macports-libcxx
             # we accept port:libcxx from MacStrop but it needs to be installed +macports_libcxx!
-            if {![catch {set installed [lindex [registry_active libcxx] 0]}]} {
-                depends_build-append port:libcxx-dev
+            if {![catch {set legacysupport::installed_libcxx_port [lindex [registry_active libcxx] 0]}]} {
+                legacysupport::add_once depends_lib append port:libcxx
+                legacysupport::add_once depends_build append port:libcxx-dev
                 pre-configure {
-                    set varlist [split [lindex $installed 3] +]
+                    set varlist [split [lindex ${legacysupport::installed_libcxx_port} 3] +]
                     ui_debug "port:libcxx : ${varlist}"
                     if {[lsearch ${varlist} macports_libcxx] == -1} {
                             ui_error "port:libcxx will need to be installed +macports_libcxx"
                             return -code error "install/activate the proper port:libcxx variant or port:macports-libcxx"
                     }
-                    unset varlist installed
+                    unset varlist
                 }
+            } else {
+                legacysupport::add_once depends_lib append port:macports-libcxx
             }
             append ls_cache_incpath  " ${prefix}/include/libcxx/v1"
             append ls_cache_ldflags  " -L${prefix}/lib/libcxx"
