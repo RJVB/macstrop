@@ -1,128 +1,221 @@
-diff --git a/src/modules/FFmpeg/FFDecVTB.cpp b/src/modules/FFmpeg/FFDecVTB.cpp
-index 74838792da90ec42b95d4facaf67364ab6fccbc5..ddab3e42cfe9093b827957984d049576cd84dadd 100644
---- a/src/modules/FFmpeg/FFDecVTB.cpp
-+++ b/src/modules/FFmpeg/FFDecVTB.cpp
-@@ -34,10 +34,61 @@ extern "C"
-     #include <libavcodec/avcodec.h>
-     #include <libavutil/hwcontext.h>
-     #include <libavutil/hwcontext_videotoolbox.h>
-+    #include <libavcodec/videotoolbox.h>
- }
+diff --git a/src/qmplay2/opengl/OpenGLHWInterop.hpp b/src/qmplay2/opengl/OpenGLHWInterop.hpp
+index 85e92c5216529ee120e74080f35f1848e55bee1b..741d7230c76f6ca59bf7ae6f04de87142b50d8f7 100644
+--- a/src/qmplay2/opengl/OpenGLHWInterop.hpp
++++ b/src/qmplay2/opengl/OpenGLHWInterop.hpp
+@@ -25,7 +25,7 @@
  
-+#include <dlfcn.h>
-+
- using namespace std;
+ class ImgScaler;
  
-+static bool isCodecSupported(const StreamInfo &streamInfo) // Put this above "vtbGetFormat"
-+{
-+    CMVideoCodecType cmCType;
-+    switch (streamInfo.params->codec_id)
-+    {
-+        case AV_CODEC_ID_H263:
-+            cmCType = kCMVideoCodecType_H263;
-+            break;
-+        case AV_CODEC_ID_H264:
-+            cmCType = kCMVideoCodecType_H264;
-+            break;
-+        case AV_CODEC_ID_HEVC:
-+            // kCMVideoCodecType_HEVC isn't defined on all Mac OS versions
-+            cmCType = 'hvc1';
-+            break;
-+        case AV_CODEC_ID_MPEG1VIDEO:
-+            cmCType = kCMVideoCodecType_MPEG1Video;
-+            break;
-+        case AV_CODEC_ID_MPEG2VIDEO:
-+            cmCType = kCMVideoCodecType_MPEG2Video;
-+            break;
-+        case AV_CODEC_ID_MPEG4:
-+            cmCType = kCMVideoCodecType_MPEG4Video;
-+            break;
-+        case AV_CODEC_ID_VP9:
-+            // kCMVideoCodecType_VP9 isn't defined on all Mac OS versions
-+            cmCType = 'vp09';
-+            break;
-+        default:
-+            cmCType = 0;
-+            break;
-+    }
-+
-+    if (!cmCType)
-+        return false;
-+
-+    // VTIsHardwareDecodeSupported() was introduced in 10.13 only so in order to run on older OS versions
-+    // without resorting to conditional code we obtain (and cache) a pointer to the function via dlsym().
-+    // According to https://www.objc.io/issues/23-video/videotoolbox/ Macs (running OS X 10.10) support
-+    // "usually both H.264 and MPEG-4 Part 2 in hardware". H263 and MPEG 1,2 are supported in software
-+    // which is of no use for us here.
-+    static auto VTIsHardwareDecodeSupported = (bool (*)(CMVideoCodecType))dlsym(RTLD_DEFAULT, "VTIsHardwareDecodeSupported");
-+    return VTIsHardwareDecodeSupported 
-+        ? VTIsHardwareDecodeSupported(cmCType)
-+        : (cmCType == kCMVideoCodecType_H264 || cmCType == kCMVideoCodecType_MPEG4Video)
-+    ;
-+}
-+
- static AVPixelFormat vtbGetFormat(AVCodecContext *codecCtx, const AVPixelFormat *pixFmt)
+-class OpenGLHWInterop : public HWDecContext
++class QMPLAY2SHAREDLIB_EXPORT OpenGLHWInterop : public HWDecContext
  {
-     Q_UNUSED(codecCtx)
-@@ -73,7 +124,7 @@ QString FFDecVTB::name() const
+ public:
+     enum Format
+diff --git a/src/modules/FFmpeg/CMakeLists.txt b/src/modules/FFmpeg/CMakeLists.txt
+index ef45fc16c0f2e64ec36ecb4cb25ca2e5f5de3875..e15ad7628fbc459e3e328f629520961f28869f2b 100644
+--- a/src/modules/FFmpeg/CMakeLists.txt
++++ b/src/modules/FFmpeg/CMakeLists.txt
+@@ -127,6 +130,8 @@ if(USE_FFMPEG_VAAPI OR USE_FFMPEG_VDPAU OR USE_FFMPEG_DXVA2 OR USE_FFMPEG_D3D11V
+     endif()
+ endif()
  
- bool FFDecVTB::open(StreamInfo &streamInfo)
++add_definitions(-DFFMPEG_MODULE)
++
+ add_library(${PROJECT_NAME} ${QMPLAY2_MODULE}
+     ${FFmpeg_HDR}
+     ${FFmpeg_SRC}
+diff --git a/src/modules/FFmpeg/FFDec.hpp b/src/modules/FFmpeg/FFDec.hpp
+index a520effb6b9b1ef3ee95c51171340f956e43d5a5..f4b7dc6f5a8e7239281b7d06a058bf8f618c9e3f 100644
+--- a/src/modules/FFmpeg/FFDec.hpp
++++ b/src/modules/FFmpeg/FFDec.hpp
+@@ -23,6 +23,14 @@
+ #include <QString>
+ #include <QList>
+ 
++#include <QtGlobal>
++
++#if defined(FFMPEG_MODULE)
++    #define FFMPEGVTB_EXPORT Q_DECL_EXPORT
++#else
++    #define FFMPEGVTB_EXPORT Q_DECL_IMPORT
++#endif
++
+ #ifdef USE_VULKAN
+ namespace QmVk {
+ class ImagePool;
+@@ -34,7 +42,7 @@ struct AVPacket;
+ struct AVCodec;
+ struct AVFrame;
+ 
+-class FFDec : public Decoder
++class FFMPEGVTB_EXPORT FFDec : public Decoder
  {
--    if (streamInfo.params->codec_type != AVMEDIA_TYPE_VIDEO)
-+    if (streamInfo.params->codec_type != AVMEDIA_TYPE_VIDEO || !hasHWAccel("videotoolbox"))
-         return false;
+ protected:
+     FFDec();
+diff --git a/src/modules/FFmpeg/FFDecHWAccel.hpp b/src/modules/FFmpeg/FFDecHWAccel.hpp
+index f6ba032281644410e07109ce6440ff583bff6888..0f17017c3405a298d4ba9657160bd92d4d13ee14 100644
+--- a/src/modules/FFmpeg/FFDecHWAccel.hpp
++++ b/src/modules/FFmpeg/FFDecHWAccel.hpp
+@@ -20,7 +20,7 @@
  
-     const AVPixelFormat pix_fmt = streamInfo.pixelFormat();
-@@ -86,10 +137,19 @@ bool FFDecVTB::open(StreamInfo &streamInfo)
-     {
-         return false;
-     }
-+    
-+    if (!isCodecSupported(streamInfo))
-+    {
-+        qWarning() << streamInfo.codec_name << "is not supported by VTB";
-+        return false;
-+    }
+ #include <FFDec.hpp>
  
-     AVCodec *codec = init(streamInfo);
--    if (!codec || !hasHWAccel("videotoolbox"))
-+    if (!codec)
-+    {
-+        qWarning() << "VTB: no or unsupported codec";
-         return false;
-+    }
+-class FFDecHWAccel : public FFDec
++class FFMPEGVTB_EXPORT FFDecHWAccel : public FFDec
+ {
+ protected:
+     FFDecHWAccel();
+diff --git a/src/modules/FFmpeg/FFDecSW.hpp b/src/modules/FFmpeg/FFDecSW.hpp
+index a3aa8909add8aae3e3fa05279b48995ec76127af..c2eff8f568b5cce1a1c639f59477d4444ab55742 100644
+--- a/src/modules/FFmpeg/FFDecSW.hpp
++++ b/src/modules/FFmpeg/FFDecSW.hpp
+@@ -49,7 +49,7 @@ public:
  
- #ifdef USE_OPENGL
-     shared_ptr<VTBOpenGL> vtbOpenGL;
-@@ -103,14 +163,20 @@ bool FFDecVTB::open(StreamInfo &streamInfo)
- #endif
+ struct SwsContext;
  
-     if (!m_hwDeviceBufferRef && av_hwdevice_ctx_create(&m_hwDeviceBufferRef, AV_HWDEVICE_TYPE_VIDEOTOOLBOX, nullptr, nullptr, 0) != 0)
-+    {
-+        qWarning() << "VTB: failed to create hwdevice_ctx";
-         return false;
-+    }
+-class FFDecSW final : public FFDec
++class FFMPEGVTB_EXPORT FFDecSW final : public FFDec
+ {
+ public:
+     FFDecSW(Module &);
+diff --git a/src/modules/FFmpeg/FFDecVTB.hpp b/src/modules/FFmpeg/FFDecVTB.hpp
+index f6f4d547b301eeab9299d0b096273616fc25a5f8..d47eede2379a5defa9be0af06cad8c7e298a44ab 100644
+--- a/src/modules/FFmpeg/FFDecVTB.hpp
++++ b/src/modules/FFmpeg/FFDecVTB.hpp
+@@ -20,7 +20,7 @@
  
- #ifdef USE_OPENGL
-     if (QMPlay2Core.renderer() == QMPlay2CoreClass::Renderer::OpenGL && !vtbOpenGL)
-     {
-         vtbOpenGL = make_shared<VTBOpenGL>(m_hwDeviceBufferRef);
-         if (!QMPlay2Core.gpuInstance()->setHWDecContextForVideoOutput(vtbOpenGL))
-+        {
-+            qWarning() << "VTB: failed to set VTB GPU context";
-             return false;
-+        }
-     }
+ #include <FFDecHWAccel.hpp>
  
-     if (vtbOpenGL)
-@@ -121,7 +187,10 @@ bool FFDecVTB::open(StreamInfo &streamInfo)
-     codec_ctx->get_format = vtbGetFormat;
-     codec_ctx->thread_count = 1;
-     if (!openCodec(codec))
-+    {
-+        qWarning() << "VTB: failed to open codec";
-         return false;
-+    }
- 
-     m_timeBase = streamInfo.time_base;
-     return true;
+-class FFDecVTB final : public FFDecHWAccel
++class FFMPEGVTB_EXPORT FFDecVTB final : public FFDecHWAccel
+ {
+ public:
+     FFDecVTB(Module &module);
+## diff --git a/src/modules/FFmpeg/FFDecVTB.cpp b/src/modules/FFmpeg/FFDecVTB.cpp
+## index 74838792da90ec42b95d4facaf67364ab6fccbc5..ddab3e42cfe9093b827957984d049576cd84dadd 100644
+## --- a/src/modules/FFmpeg/FFDecVTB.cpp
+## +++ b/src/modules/FFmpeg/FFDecVTB.cpp
+## @@ -34,10 +34,61 @@ extern "C"
+##      #include <libavcodec/avcodec.h>
+##      #include <libavutil/hwcontext.h>
+##      #include <libavutil/hwcontext_videotoolbox.h>
+## +    #include <libavcodec/videotoolbox.h>
+##  }
+##  
+## +#include <dlfcn.h>
+## +
+##  using namespace std;
+##  
+## +static bool isCodecSupported(const StreamInfo &streamInfo) // Put this above "vtbGetFormat"
+## +{
+## +    CMVideoCodecType cmCType;
+## +    switch (streamInfo.params->codec_id)
+## +    {
+## +        case AV_CODEC_ID_H263:
+## +            cmCType = kCMVideoCodecType_H263;
+## +            break;
+## +        case AV_CODEC_ID_H264:
+## +            cmCType = kCMVideoCodecType_H264;
+## +            break;
+## +        case AV_CODEC_ID_HEVC:
+## +            // kCMVideoCodecType_HEVC isn't defined on all Mac OS versions
+## +            cmCType = 'hvc1';
+## +            break;
+## +        case AV_CODEC_ID_MPEG1VIDEO:
+## +            cmCType = kCMVideoCodecType_MPEG1Video;
+## +            break;
+## +        case AV_CODEC_ID_MPEG2VIDEO:
+## +            cmCType = kCMVideoCodecType_MPEG2Video;
+## +            break;
+## +        case AV_CODEC_ID_MPEG4:
+## +            cmCType = kCMVideoCodecType_MPEG4Video;
+## +            break;
+## +        case AV_CODEC_ID_VP9:
+## +            // kCMVideoCodecType_VP9 isn't defined on all Mac OS versions
+## +            cmCType = 'vp09';
+## +            break;
+## +        default:
+## +            cmCType = 0;
+## +            break;
+## +    }
+## +
+## +    if (!cmCType)
+## +        return false;
+## +
+## +    // VTIsHardwareDecodeSupported() was introduced in 10.13 only so in order to run on older OS versions
+## +    // without resorting to conditional code we obtain (and cache) a pointer to the function via dlsym().
+## +    // According to https://www.objc.io/issues/23-video/videotoolbox/ Macs (running OS X 10.10) support
+## +    // "usually both H.264 and MPEG-4 Part 2 in hardware". H263 and MPEG 1,2 are supported in software
+## +    // which is of no use for us here.
+## +    static auto VTIsHardwareDecodeSupported = (bool (*)(CMVideoCodecType))dlsym(RTLD_DEFAULT, "VTIsHardwareDecodeSupported");
+## +    return VTIsHardwareDecodeSupported 
+## +        ? VTIsHardwareDecodeSupported(cmCType)
+## +        : (cmCType == kCMVideoCodecType_H264 || cmCType == kCMVideoCodecType_MPEG4Video)
+## +    ;
+## +}
+## +
+##  static AVPixelFormat vtbGetFormat(AVCodecContext *codecCtx, const AVPixelFormat *pixFmt)
+##  {
+##      Q_UNUSED(codecCtx)
+## @@ -73,7 +124,7 @@ QString FFDecVTB::name() const
+##  
+##  bool FFDecVTB::open(StreamInfo &streamInfo)
+##  {
+## -    if (streamInfo.params->codec_type != AVMEDIA_TYPE_VIDEO)
+## +    if (streamInfo.params->codec_type != AVMEDIA_TYPE_VIDEO || !hasHWAccel("videotoolbox"))
+##          return false;
+##  
+##      const AVPixelFormat pix_fmt = streamInfo.pixelFormat();
+## @@ -86,10 +137,19 @@ bool FFDecVTB::open(StreamInfo &streamInfo)
+##      {
+##          return false;
+##      }
+## +    
+## +    if (!isCodecSupported(streamInfo))
+## +    {
+## +        qWarning() << streamInfo.codec_name << "is not supported by VTB";
+## +        return false;
+## +    }
+##  
+##      AVCodec *codec = init(streamInfo);
+## -    if (!codec || !hasHWAccel("videotoolbox"))
+## +    if (!codec)
+## +    {
+## +        qWarning() << "VTB: no or unsupported codec";
+##          return false;
+## +    }
+##  
+##  #ifdef USE_OPENGL
+##      shared_ptr<VTBOpenGL> vtbOpenGL;
+## @@ -103,14 +163,20 @@ bool FFDecVTB::open(StreamInfo &streamInfo)
+##  #endif
+##  
+##      if (!m_hwDeviceBufferRef && av_hwdevice_ctx_create(&m_hwDeviceBufferRef, AV_HWDEVICE_TYPE_VIDEOTOOLBOX, nullptr, nullptr, 0) != 0)
+## +    {
+## +        qWarning() << "VTB: failed to create hwdevice_ctx";
+##          return false;
+## +    }
+##  
+##  #ifdef USE_OPENGL
+##      if (QMPlay2Core.renderer() == QMPlay2CoreClass::Renderer::OpenGL && !vtbOpenGL)
+##      {
+##          vtbOpenGL = make_shared<VTBOpenGL>(m_hwDeviceBufferRef);
+##          if (!QMPlay2Core.gpuInstance()->setHWDecContextForVideoOutput(vtbOpenGL))
+## +        {
+## +            qWarning() << "VTB: failed to set VTB GPU context";
+##              return false;
+## +        }
+##      }
+##  
+##      if (vtbOpenGL)
+## @@ -121,7 +187,10 @@ bool FFDecVTB::open(StreamInfo &streamInfo)
+##      codec_ctx->get_format = vtbGetFormat;
+##      codec_ctx->thread_count = 1;
+##      if (!openCodec(codec))
+## +    {
+## +        qWarning() << "VTB: failed to open codec";
+##          return false;
+## +    }
+##  
+##      m_timeBase = streamInfo.time_base;
+##      return true;
