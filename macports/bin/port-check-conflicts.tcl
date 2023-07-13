@@ -8,9 +8,17 @@
 #
 # everything else (c) 2017-2019 R.J.V. Bertin
 
-set SCRIPTVERSION 0.2
+set SCRIPTVERSION 0.3
 
 array set portsSeen {}
+
+# Begin
+
+package require Tclx
+package require macports
+package require Pextlib 1.0
+
+package require fileutil::traverse
 
 proc printUsage {} {
     puts "Usage: $::argv0 \[-vV\] \[-t macports-tcl-path\] port-name\[s\]"
@@ -18,6 +26,7 @@ proc printUsage {} {
     puts "  -d    some debug output"
     puts "  -m    list files that will go missing (present in the active named port, not in the version-to-be-installed)"
     puts "  -n    list files that are newer (can be combined with -v)"
+    puts "  -N    like -n but do an `ls -l` of the compared files (the new file will show up as \".${macports::prefix}/XXX\")"
     puts "  -q    quiet mode"
     puts "  -T    take datestamp of newer but unchanged headerfiles (under a /include/ directory)"
     puts "        from the installed files (requires -n)"
@@ -29,15 +38,6 @@ proc printUsage {} {
     puts "  (for checking projects that are not yet available as a port;"
     puts "   in this case it can be followed by a reference port name)"
 }
-
-
-# Begin
-
-package require Tclx
-package require macports
-package require Pextlib 1.0
-
-package require fileutil::traverse
 
 # fileutil::traverse filter:
 proc trAccept {path} {
@@ -97,6 +97,7 @@ set macportsTclPath /Library/Tcl
 set inverse 0
 set missing 0
 set newer 0
+set listnewer 0
 set showVersion 0
 set touchHeaders 0
 set _WD_port {}
@@ -132,15 +133,25 @@ while {[string index [lindex $::argv 0] 0] == "-" } {
             if {!${inverse} && !${newer}} {
                  set missing 1
             } else {
-                puts "-m is mutually exclusive with -n and -v"
+                puts "-m is mutually exclusive with -n|N and -v"
                 exit 2
             }
         }
         n {
             if {!${missing}} {
                  set newer 1
+                 set listnewer 0
             } else {
-                puts "-m, -n and -v are mutually exclusive"
+                puts "-m, -n|N and -v are mutually exclusive"
+                exit 2
+            }
+        }
+        N {
+            if {!${missing}} {
+                 set newer 1
+                 set listnewer 1
+            } else {
+                puts "-m, -n|N and -v are mutually exclusive"
                 exit 2
             }
         }
@@ -269,17 +280,22 @@ proc port_contents { portname } {
 }
 
 proc message { filename message } {
-    regsub -all {[ \r\t\n]+} ${filename} "" gg
-    if {${filename} ne ${gg}} {
-        puts -nonewline "\"${filename}\""
-    } else {
-        puts -nonewline "${filename}"
-    }
-    if {[file exists ${filename}] && [file type ${filename}] ne "file"} {
-        puts -nonewline " ([file type ${filename}])"
+    if {${filename} ne ""} {
+        regsub -all {[ \r\t\n]+} ${filename} "" gg
+        if {${filename} ne ${gg}} {
+            puts -nonewline "\"${filename}\""
+        } else {
+            puts -nonewline "${filename}"
+        }
+        if {[file exists ${filename}] && [file type ${filename}] ne "file"} {
+            puts -nonewline " ([file type ${filename}])"
+        }
+        if {![macports::ui_isset ports_quiet]} {
+            puts -nonewline " "
+        }
     }
     if {![macports::ui_isset ports_quiet]} {
-        puts " ${message}"
+        puts "${message}"
     } else {
         puts ""
     }
@@ -322,7 +338,7 @@ if {[catch {mportinit ui_options global_options global_variations} result]} {
 }
 
 if {$showVersion} {
-    puts "Version $SCRIPTVERSION"
+    puts "Version ${SCRIPTVERSION}"
     puts "MacPorts version [macports::version]"
     exit 0
 }
@@ -417,6 +433,9 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                                         }
                                     } else {
                                         message ${g} "will be updated"
+                                        if {${listnewer}} {
+                                            message "" [exec ls -alsF ${f} ${g}]
+                                        }
                                     }
                                 }
                             } elseif {!${inverse}} {
