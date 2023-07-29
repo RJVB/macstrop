@@ -3,6 +3,14 @@ PortGroup               compiler_blacklist_versions 1.0
 PortGroup               LTO 1.0
 PortGroup               compress_workdir 1.0
 
+# cmake requires C++11 and thus libc++. Avoid circular dependencies and allow
+# building using the cmake build system only when the system has already has libc++
+# installed, either natively or because the libc++ conversion has been bootstrapped.
+# Also require cmake to be present.
+# check the presence of cmake by checking the registry for the activated port as
+# ${prefix} will be set to "${prefix}" during portindex'ing ...
+set use_cmake           [expr [file exists /usr/lib/libc++.dylib] && [lindex [lindex [registry_active cmake] 0] 2]]
+
 if {${os.platform} eq "darwin" && ${os.major} < 11} {
     ui_debug "Platform ${os.platform}, version ${os.major}.${os.minor}"
     # The official/mainstream port:libcxx has received some useful
@@ -13,9 +21,33 @@ if {${os.platform} eq "darwin" && ${os.major} < 11} {
     replaced_by         libcxx
     PortGroup           obsolete 1.0
     return
+} elseif {![tbool use_cmake]} {
+    ui_debug "/usr/lib/libc++.dylib and/or ${prefix}/bin/cmake are missing"
+    # force a bootstrap using the mainstream port:libcxx
+    ## NB ##
+    # We could also embed the bootstrap version, maintaining the 2 different build methods
+    # like we long did, except clamping the bootstart libc++ version to 5.0.1
+    name                libcxx_from_macstrop
+    ui_msg "${name}@${version}"
+    long_description    ${description} \n\
+                        This port can only been installed if you already have a libc++ in /usr/lib \
+                        and have port:cmake installed.
+    replaced_by         libcxx
+    PortGroup           obsolete 1.0
+    return
 } else {
     name                libcxx
 }
+
+PortGroup           cmake 1.1
+
+variant replacemnt_libcxx description {EXPERTS ONLY: Build a replacement libcxxabi and libcxx even if it is already part of the base OS.} {}
+variant macports_libcxx description "EXPERTS ONLY: Install the libcxx library so that MacPorts build will link against it" {}
+
+# if {${os.major} >= 11 && ![variant_isset replacemnt_libcxx] && ![variant_isset macports_libcxx]} {
+#     # nothing to be done in this case, we're a stub port
+#     set is_stub         yes
+# }
 
 epoch                   1
 # FUTURE WARNING:
@@ -34,6 +66,10 @@ set clangversion        9.0
 if {[variant_isset macports_libcxx]} {
     revision            5
 }
+# for version4macports:
+# for the pre-upgrade overhaul and 20230729 fix of the non-variant behaviour:
+revision                [expr ${revision} + 2]
+
 # some kind of version that should be larger than the current_version Apple gave to this libc++ version
 # could also simply be a version that is based on Apple's libc++ version on the OS version we are building for.
 set version4macports    900.99.1
@@ -61,37 +97,6 @@ dist_subdir             llvm
 
 use_xz                  yes
 
-variant replacemnt_libcxx description {EXPERTS ONLY: Build a replacement libcxxabi and libcxx even if it is already part of the base OS.} {}
-variant macports_libcxx description "EXPERTS ONLY: Install the libcxx library so that MacPorts build will link against it" {}
-
-# cmake requires C++11 and thus libc++. Avoid circular dependencies and allow
-# building using the cmake build system only when the system has already has libc++
-# installed, either natively or because the libc++ conversion has been bootstrapped.
-# Also require cmake to be present.
-# check the presence of cmake by checking the registry for the activated port as
-# ${prefix} will be set to "${prefix}" during portindex'ing ...
-set use_cmake           [expr [file exists /usr/lib/libc++.dylib] && [lindex [lindex [registry_active cmake] 0] 2]]
-if {${os.major} >= 11 && ![variant_isset replacemnt_libcxx] && ![variant_isset macports_libcxx]} {
-    # nothing to be done in this case, we're a stub port
-    set is_stub         yes
-}
-
-if {![tbool use_cmake]} {
-    ui_debug "/usr/lib/libc++.dylib and/or ${prefix}/bin/cmake are missing"
-    # force a bootstrap using the mainstream port:libcxx
-    ## NB ##
-    # We could also embed the bootstrap version, maintaining the 2 different build methods
-    # like we long did, except clamping the bootstart libc++ version to 5.0.1
-    name                libcxx_from_macstrop
-    ui_msg "${name}@${version}"
-    long_description    ${description} \n\
-                        This port can only been installed if you already have a libc++ in /usr/lib \
-                        and have port:cmake installed.
-    replaced_by         libcxx
-    PortGroup           obsolete 1.0
-    return
-}
-
 set libcxxabi_distname  libcxxabi-${version}.src
 set libcxx_distname     libcxx-${version}.src
 
@@ -111,102 +116,88 @@ if {${name} eq "libcxx"} {
 }
 
 if {![is_mainport]} {
-    if {![tbool use_cmake] || [tbool is_stub]} {
-        long_description-append \n>>> This is a stub port unless you set +macports_libcxx
-        pre-destroot {
-            ui_error "This port only exists when port:libcxx is installed +macports_libcxx"
-            return -code error "invalid configuration"
-        }
-    }
+#     if {[tbool is_stub]} {
+#         long_description-append \n>>> This is a stub port unless you set +macports_libcxx
+#         pre-destroot {
+#             ui_error "This port only exists when port:libcxx is installed +macports_libcxx"
+#             return -code error "invalid configuration"
+#         }
+#     }
     # nothing else to be done
     return
 }
-# for version4macports:
-revision                [expr ${revision} + 1]
 
-if {[tbool use_cmake]} {
-    PortGroup           cmake 1.1
-    distfiles-append    llvm-${version}.src${extract.suffix}
-    worksrcdir          llvm-${version}.src
-    checksums-append    llvm-${version}.src${extract.suffix} \
-                        rmd160  151c137ac3a514b6d32aaee5bb77dd32eb7d1f19 \
-                        sha256  00a1ee1f389f81e9979f3a640a01c431b3021de0d42278f6508391a2f0b81c9a
-    installs_libs       yes
+distfiles-append    llvm-${version}.src${extract.suffix}
+worksrcdir          llvm-${version}.src
+checksums-append    llvm-${version}.src${extract.suffix} \
+                    rmd160  151c137ac3a514b6d32aaee5bb77dd32eb7d1f19 \
+                    sha256  00a1ee1f389f81e9979f3a640a01c431b3021de0d42278f6508391a2f0b81c9a
+installs_libs       yes
 
-    # these are used during the build but not linked to by the resulting libraries
-    depends_build-append \
-                        port:libedit \
-                        port:libffi \
-                        port:ncurses \
-                        port:libxml2 \
-                        port:zlib
+# these are used during the build but not linked to by the resulting libraries
+depends_build-append \
+                    port:libedit \
+                    port:libffi \
+                    port:ncurses \
+                    port:libxml2 \
+                    port:zlib \
+                    port:git
 
-    patch.pre_args      -Np1
-    patchfiles-append   3002-Fix-missing-long-long-math-prototypes-when-using-the.patch \
-                        patch-accept-build_types.diff \
-                        patch-install_location_version_and_name.diff
-    # don't selectively hide symbols (new in 9.0.x); see patch-prune-exported-cxxabi-symbols.diff
-    # for a list of symbols not known on OS X 10.9.
-    patchfiles-append   patch-dont-selectively-export-cxxabi-symbols.diff
-    # allow the tests to build
-    patchfiles-append   patch-fix-test-empty-SDKROOT.diff
-    # make the benchmarks build
+depends_skip_archcheck-append git
 
-    if {[variant_isset macports_libcxx]} {
-        # we don't have a build dependency on port:clang-${clangversion}
-        patchfiles-append \
-            patch-config-availability+ABIhiding.diff
-    }
+patch.pre_args      -Np1
+patchfiles-append   9/3002-Fix-missing-long-long-math-prototypes-when-using-the.patch \
+                    9/patch-accept-build_types.diff \
+                    9/patch-install_location_version_and_name.diff
+# don't selectively hide symbols (new in 9.0.x); see 9/patch-prune-exported-cxxabi-symbols.diff
+# for a list of symbols not known on OS X 10.9.
+patchfiles-append   9/patch-dont-selectively-export-cxxabi-symbols.diff
+# allow the tests to build
+patchfiles-append   9/patch-fix-test-empty-SDKROOT.diff
+# make the benchmarks build
+patchfiles-append   9/patch-benchmarks-not-universal.diff
 
-    post-patch {
-        reinplace "s|@PREFIX@|${prefix}|g" ${worksrcpath}/projects/libcxx/benchmarks/CMakeLists.txt
-    }
+if {[variant_isset macports_libcxx]} {
+    # we don't have a build dependency on port:clang-${clangversion}
+    patchfiles-append \
+                    9/patch-config-availability+ABIhiding.diff
+}
 
-    configure.args-append \
-                        -DLLVM_PATH=${worksrcpath} \
-                        -DLIBCXX_ENABLE_ASSERTIONS=OFF \
-                        -DLIBCXXABI_ENABLE_STATIC=OFF \
-                        -DLIBCXX_ENABLE_STATIC=OFF \
-                        -DLIBCXX_BENCHMARK_NATIVE_STDLIB=libc++
-    if {${os.major} >= 18} {
-        configure.args-append -DLLVM_TARGETS_TO_BUILD="X86\;PowerPC\;AMDGPU\;arm64"
-    } else {
-        configure.args-append -DLLVM_TARGETS_TO_BUILD="X86\;PowerPC\;AMDGPU"
-    }
-    # Testing:
-    configure.args-append \
-                        -DVERSION_ACCORDING_TO_MACPORTS=${version4macports}
+post-patch {
+    reinplace "s|@PREFIX@|${prefix}|g" ${worksrcpath}/projects/libcxx/benchmarks/CMakeLists.txt
+}
 
-    if {[info proc cmake.save_configure_cmd] ne ""} {
-        cmake.save_configure_cmd "log too"
-    }
+configure.args-append \
+                    -DLLVM_PATH=${worksrcpath} \
+                    -DLIBCXX_ENABLE_ASSERTIONS=OFF \
+                    -DLIBCXXABI_ENABLE_STATIC=OFF \
+                    -DLIBCXX_ENABLE_STATIC=OFF \
+                    -DLIBCXX_BENCHMARK_NATIVE_STDLIB=libc++
+if {${os.major} >= 18} {
+    configure.args-append -DLLVM_TARGETS_TO_BUILD="X86\;PowerPC\;AMDGPU\;arm64"
+} else {
+    configure.args-append -DLLVM_TARGETS_TO_BUILD="X86\;PowerPC\;AMDGPU"
+}
+# Testing:
+configure.args-append \
+                    -DVERSION_ACCORDING_TO_MACPORTS=${version4macports}
 
-    set libcxxabi_worksrcpath \
-                        ${build.dir}
-    set libcxx_worksrcpath \
-                        ${build.dir}
+if {[info proc cmake.save_configure_cmd] ne ""} {
+    cmake.save_configure_cmd "install log"
+}
 
-    build.target        cxx
+set libcxxabi_worksrcpath \
+                    ${build.dir}
+set libcxx_worksrcpath \
+                    ${build.dir}
 
-    test.run            yes
-    test.dir            ${build.dir}
-    test.target         check-cxxabi check-cxx check-cxx-benchmarks
-    test.post_args-append -wk
-    pre-test {
-        # this doesn't seem to have any effect?!"
-        test.env-append "SDKROOT=macosx${macosx_deployment_target}"
-        set SDKPATH [exec xcrun -sdk macosx${macosx_deployment_target} --show-sdk-path]
-        test.env-append "SDKPATH=${SDKPATH}"
-        # don't set LIBRARY_PATH (we don't want unexpected linking to $prefix/lib/libc++)!
-        test.env-append "LIBRARY_PATH="
-    }
+build.target        cxx
 
-    post-build {
-        file delete -force ${libcxxabi_worksrcpath}/lib/libc++abi.dylib ${libcxxabi_worksrcpath}/lib/libc++abi.1.dylib
-        file rename ${libcxxabi_worksrcpath}/lib/libc++abi.${version4macports}.dylib ${libcxxabi_worksrcpath}/lib/libc++abi.dylib
-        file delete -force ${libcxx_worksrcpath}/lib/libc++.dylib ${libcxx_worksrcpath}/lib/libc++.1.dylib
-        file rename ${libcxx_worksrcpath}/lib/libc++.${version4macports}.dylib ${libcxx_worksrcpath}/lib/libc++.1.dylib
-    }
+post-build {
+    file delete -force ${libcxxabi_worksrcpath}/lib/libc++abi.dylib ${libcxxabi_worksrcpath}/lib/libc++abi.1.dylib
+    file rename ${libcxxabi_worksrcpath}/lib/libc++abi.${version4macports}.dylib ${libcxxabi_worksrcpath}/lib/libc++abi.dylib
+    file delete -force ${libcxx_worksrcpath}/lib/libc++.dylib ${libcxx_worksrcpath}/lib/libc++.1.dylib
+    file rename ${libcxx_worksrcpath}/lib/libc++.${version4macports}.dylib ${libcxx_worksrcpath}/lib/libc++.1.dylib
 }
 
 variant universal {}
@@ -215,31 +206,10 @@ default_variants +universal
 set roots_path ${prefix}/var/system_roots/
 set root_name  ${name}-${version}-${revision}
 
-platform darwin {
-    if {${os.major} < 9} {
-        pre-fetch {
-            ui_error "${name} is not supported on Tiger or earlier."
-            error "unsupported platform"
-        }
-    }
-
-    if {${os.major} < 11} {
-        post-activate {
-            set dirs /
-            if {${os.subplatform} eq "macosx"} {
-                lappend dirs ${developer_dir}/SDKs/MacOSX[join [lrange [split ${macosx_version} .] 0 1] .].sdk
-            }
-            foreach d ${dirs} {
-                system -W ${d} "tar xzf ${roots_path}/${root_name}.tgz"
-            }
-        }
-    }
-}
-
-variant runtime description "EXPERTS ONLY: Install the libcxx library so that it can be used with DYLD_INSERT_LIBRARIES (obsolete: use +macports_libcxx)" {
-    ui_warn "The +runtime variant is obsolete, please use +macports_libcxx"
-    default_variants-append +macports_libcxx
-}
+# variant runtime description "EXPERTS ONLY: Install the libcxx library so that it can be used with DYLD_INSERT_LIBRARIES (obsolete: use +macports_libcxx)" {
+#     ui_warn "The +runtime variant is obsolete, please use +macports_libcxx"
+#     default_variants-append +macports_libcxx
+# }
 if {[variant_isset macports_libcxx]} {
     depends_build-append \
                         port:cctools
@@ -256,7 +226,7 @@ if {[variant_isset macports_libcxx]} {
 }
 
 
-if {![tbool is_stub]} {
+# if {![tbool is_stub]} {
     supported_archs i386 x86_64 ppc
 
     post-extract {
@@ -292,51 +262,80 @@ if {![tbool is_stub]} {
             system -W ${destroot}${roots_path}/${root_name} "tar czf ../${root_name}.tgz ."
             delete ${destroot}${roots_path}/${root_name}
         }
-        if {[variant_isset macports_libcxx]} {
-            # contrary to port:macports-libcxx we build the libraries from source so
-            # we can just install the headers using the corresponding command rather
-            # than copying them from the corresponding port:clang-${clangversion} install.
-            ui_debug "-->  installing libc++ headers to destroot"
-            system -W ${build.dir} "${build.cmd} ${build.pre_args} install-cxx-headers/fast ${build.post_args} ${destroot.destdir}"
-            file rename ${destroot}${prefix}/include/c++ ${destroot}${prefix}/include/libcxx
 
-            xinstall -m 755 ${libcxxabi_worksrcpath}/lib/libc++abi.dylib ${destroot}${prefix}/lib/libc++abi.1.dylib
-            xinstall -m 755 ${libcxx_worksrcpath}/lib/libc++.1.dylib ${destroot}${prefix}/lib/
-            ln -s libc++abi.1.dylib  ${destroot}${prefix}/lib/libc++abi.dylib
-            ln -s libc++.1.dylib  ${destroot}${prefix}/lib/libc++.dylib
-            xinstall -m 755 -d ${destroot}${prefix}/lib/libcxx
-            foreach l {libc++ libc++abi} {
-                # make copies that are interchangeable with the ones from port:macports-libcxx (version aside)
-                xinstall -m 755 ${destroot}${prefix}/lib/${l}.1.dylib ${destroot}${prefix}/lib/libcxx/
-                system "install_name_tool -id ${prefix}/lib/libcxx/${l}.1.dylib ${destroot}${prefix}/lib/libcxx/${l}.1.dylib"
-                system "install_name_tool -change \
-                    ${prefix}/lib/libc++abi.1.dylib ${prefix}/lib/libcxx/libc++abi.1.dylib \
-                    ${destroot}${prefix}/lib/libcxx/${l}.1.dylib"
-                ln -s ${l}.1.dylib ${destroot}${prefix}/lib/libcxx/${l}.dylib
+        ## 20230729 : our default behaviour should already have been to install like port:macports_libcxx, i.e.
+        ## install the headers and the libraries into $prefix/lib/libcxx!
+        ## We keep the macports_libcxx VARIANT to install into $prefix/lib too, as before.
+
+        # contrary to port:macports-libcxx we build the libraries from source so
+        # we can just install the headers using the corresponding command rather
+        # than copying them from the corresponding port:clang-${clangversion} install.
+        ui_debug "-->  installing libc++ headers to destroot"
+        system -W ${build.dir} "${build.cmd} ${build.pre_args} install-cxx-headers/fast ${build.post_args} ${destroot.destdir}"
+        file rename ${destroot}${prefix}/include/c++ ${destroot}${prefix}/include/libcxx
+        xinstall -m 755 -d ${destroot}${prefix}/lib/libcxx
+
+        # first install possibly temporary copies into a temp dir
+        xinstall -m 755 -d ${destroot}${prefix}/libtemp
+        xinstall -m 755 ${libcxxabi_worksrcpath}/lib/libc++abi.dylib ${destroot}${prefix}/libtemp/libc++abi.1.dylib
+        xinstall -m 755 ${libcxx_worksrcpath}/lib/libc++.1.dylib ${destroot}${prefix}/libtemp/
+        ln -s libc++abi.1.dylib  ${destroot}${prefix}/libtemp/libc++abi.dylib
+        ln -s libc++.1.dylib  ${destroot}${prefix}/libtemp/libc++.dylib
+        foreach l {libc++ libc++abi} {
+            # make copies that are interchangeable with the ones from port:macports-libcxx (version aside)
+            xinstall -m 755 ${destroot}${prefix}/libtemp/${l}.1.dylib ${destroot}${prefix}/lib/libcxx/
+            system "install_name_tool -id ${prefix}/lib/libcxx/${l}.1.dylib ${destroot}${prefix}/lib/libcxx/${l}.1.dylib"
+            system "install_name_tool -change \
+                ${prefix}/lib/libc++abi.1.dylib ${prefix}/lib/libcxx/libc++abi.1.dylib \
+                ${destroot}${prefix}/lib/libcxx/${l}.1.dylib"
+            ln -s ${l}.1.dylib ${destroot}${prefix}/lib/libcxx/${l}.dylib
+        }
+
+        if {[variant_isset macports_libcxx]} {
+#             xinstall -m 755 ${libcxxabi_worksrcpath}/lib/libc++abi.dylib ${destroot}${prefix}/lib/libc++abi.1.dylib
+#             xinstall -m 755 ${libcxx_worksrcpath}/lib/libc++.1.dylib ${destroot}${prefix}/lib/
+#             ln -s libc++abi.1.dylib  ${destroot}${prefix}/lib/libc++abi.dylib
+#             ln -s libc++.1.dylib  ${destroot}${prefix}/lib/libc++.dylib
+            # move the files from libtemp
+            foreach l [glob ${destroot}${prefix}/libtemp/*] {
+                file rename ${l} ${destroot}${prefix}/lib/[file tail ${l}]
             }
             xinstall -m 755 ${filespath}/optlibs.sh ${destroot}${prefix}/bin/optlibs
             reinplace "s|@PREFIX@|${prefix}|g" ${destroot}${prefix}/bin/optlibs
+        } else {
+            file delete -force ${destroot}${prefix}/libtemp
         }
     }
-    if {[variant_isset macports_libcxx]} {
-        post-destroot {
-            register_devport_standard_content
-            append_to_devport_standard_content ${prefix}/lib/libcxx/libc++.dylib
-            append_to_devport_standard_content ${prefix}/lib/libcxx/libc++abi.dylib
-            create_devport_content_archive
-        }
+    post-destroot {
+        register_devport_standard_content
+        append_to_devport_standard_content ${prefix}/lib/libcxx/libc++.dylib
+        append_to_devport_standard_content ${prefix}/lib/libcxx/libc++abi.dylib
+        create_devport_content_archive
     }
-} else {
-    long_description-append \n>>> This is a stub port unless you set +replacemnt_libcxx or +macports_libcxx
-    distfiles
-    patchfiles
-    fetch {}
-    configure {}
-    build {}
-    destroot {
-        xinstall -d ${destroot}${prefix}/share/doc/${name}
-        system "echo ${name} is an empty port on this OS version because the functionality is already provided by the OS. > ${destroot}${prefix}/share/doc/${name}/README.txt"
+
+    test.run        yes
+    test.dir        ${build.dir}
+    test.target     check-cxxabi check-cxx check-cxx-benchmarks
+    test.post_args-append -wk
+    pre-test {
+        # this doesn't seem to have any effect?!"
+        test.env-append "SDKROOT=macosx${macosx_deployment_target}"
+        set SDKPATH [exec xcrun -sdk macosx${macosx_deployment_target} --show-sdk-path]
+        test.env-append "SDKPATH=${SDKPATH}"
+        # don't set LIBRARY_PATH (we don't want unexpected linking to $prefix/lib/libc++)!
+        test.env-append "LIBRARY_PATH="
     }
-}
+# } else {
+#     long_description-append \n>>> This is a stub port unless you set +replacemnt_libcxx or +macports_libcxx
+#     distfiles
+#     patchfiles
+#     fetch {}
+#     configure {}
+#     build {}
+#     destroot {
+#         xinstall -d ${destroot}${prefix}/share/doc/${name}
+#         system "echo ${name} is an empty port on this OS version because the functionality is already provided by the OS. > ${destroot}${prefix}/share/doc/${name}/README.txt"
+#     }
+# }
 
 livecheck.type none
