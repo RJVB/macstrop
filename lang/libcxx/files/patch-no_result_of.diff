@@ -1,0 +1,1270 @@
+From d01d91d1aec9cca8dc7259009a6b3db0900e8623 Mon Sep 17 00:00:00 2001
+From: Ruslan Arutyunyan <ruslan.arutyunyan@intel.com>
+Date: Mon, 31 Jan 2022 21:40:16 +0300
+Subject: [PATCH] [libc++][pstl][NFC] Remove usage of std::result_of from
+ Parallel STL
+
+std::result_of creates problems when building with C++20 because it's
+deprecated there.
+
+The solution is to remove it and get return value type for a function
+with decltype.
+
+Substitute std::invoke_result for std::result_of is unnecessary because
+we don't have std::invoke semantics within the function - we don't work
+with pointer-to-member's.
+
+Reviewed by: ldionne, MikeDvorskiy, #libc
+
+Differential Revision: https://reviews.llvm.org/D118457
+
+From 6069a6a5049497a32a50a49661c2f4169078bdba Mon Sep 17 00:00:00 2001
+From: Mikhail Dvorskiy <mikhail.dvorskiy@intel.com>
+Date: Fri, 15 Oct 2021 15:36:07 +0300
+Subject: [PATCH] [pstl] Initial implementation of OpenMP backend, on behalf of
+ Christopher Nelson nadiasvertex@gmail.com
+
+Phabricator Review:
+https://reviews.llvm.org/D99836
+
+A couple of parallel patterns still remains serial - "Parallel partial sort", and "Parallel transform scan" - there are //TODOs in the code.
+
+From f824bb0e36fc7099923f583e4eea4aaa7d296957 Mon Sep 17 00:00:00 2001
+From: Ruslan Arutyunyan <ruslan.arutyunyan@intel.com>
+Date: Fri, 26 Nov 2021 16:37:31 +0300
+Subject: [PATCH] [pstl] Fix incorrect usage of std::invoke_result
+
+std::invoke_result takes function object type and arguments separately
+(unlike std::result_of) so, std::invoke_result_t<F()> usage is
+incorrect.
+
+On the other hand, we don't need std::invoke() semantics here at all. So
+just simplifying the code without extra dependency and use trailing
+return type as the fix.
+
+Reviewed By: MikeDvorskiy
+
+Differential Revision: https://reviews.llvm.org/D114624
+
+
+====
+
+diff --git a/libcxx/cmake/Modules/DefineLinkerScript.cmake b/libcxx/cmake/Modules/DefineLinkerScript.cmake
+index be7f026..71a4308 100644
+--- a/libcxx/cmake/Modules/DefineLinkerScript.cmake
++++ b/libcxx/cmake/Modules/DefineLinkerScript.cmake
+@@ -31,7 +31,7 @@ function(define_linker_script target)
+   set(link_libraries)
+   if (interface_libs)
+     foreach(lib IN LISTS interface_libs)
+-      if ("${lib}" STREQUAL "cxx-headers")
++      if ("${lib}" MATCHES "cxx-headers|ParallelSTL")
+         continue()
+       endif()
+       # If ${lib} is not a target, we use a dummy target which we know will
+diff --git a/pstl/CMakeLists.txt b/pstl/CMakeLists.txt
+index 8bea884..181f116 100644
+--- a/pstl/CMakeLists.txt
++++ b/pstl/CMakeLists.txt
+@@ -16,7 +16,7 @@ math(EXPR VERSION_PATCH "(${PARALLELSTL_VERSION_SOURCE} % 10)")
+ 
+ project(ParallelSTL VERSION ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH} LANGUAGES CXX)
+ 
+-set(PSTL_PARALLEL_BACKEND "serial" CACHE STRING "Threading backend to use. Valid choices are 'serial' and 'tbb'. The default is 'serial'.")
++set(PSTL_PARALLEL_BACKEND "serial" CACHE STRING "Threading backend to use. Valid choices are 'serial', 'omp', and 'tbb'. The default is 'serial'.")
+ set(PSTL_HIDE_FROM_ABI_PER_TU OFF CACHE BOOL "Whether to constrain ABI-unstable symbols to each translation unit (basically, mark them with C's static keyword).")
+ set(_PSTL_HIDE_FROM_ABI_PER_TU ${PSTL_HIDE_FROM_ABI_PER_TU}) # For __pstl_config_site
+ 
+@@ -43,6 +43,10 @@ elseif (PSTL_PARALLEL_BACKEND STREQUAL "tbb")
+     message(STATUS "Parallel STL uses TBB ${TBB_VERSION} (interface version: ${TBB_INTERFACE_VERSION})")
+     target_link_libraries(ParallelSTL INTERFACE TBB::tbb)
+     set(_PSTL_PAR_BACKEND_TBB ON)
++elseif (PSTL_PARALLEL_BACKEND STREQUAL "omp")
++    message(STATUS "Parallel STL uses the omp backend")
++    target_compile_options(ParallelSTL INTERFACE "-fopenmp=libomp")
++    set(_PSTL_PAR_BACKEND_OPENMP ON)
+ else()
+     message(FATAL_ERROR "Requested unknown Parallel STL backend '${PSTL_PARALLEL_BACKEND}'.")
+ endif()
+diff --git a/pstl/include/pstl/internal/omp/parallel_for.h b/pstl/include/pstl/internal/omp/parallel_for.h
+new file mode 100644
+index 0000000..171b841
+--- /dev/null
++++ b/pstl/include/pstl/internal/omp/parallel_for.h
+@@ -0,0 +1,64 @@
++// -*- C++ -*-
++// -*-===----------------------------------------------------------------------===//
++//
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef _PSTL_INTERNAL_OMP_PARALLEL_FOR_H
++#define _PSTL_INTERNAL_OMP_PARALLEL_FOR_H
++
++#include <cstddef>
++
++#include "util.h"
++
++namespace __pstl
++{
++namespace __omp_backend
++{
++
++template <class _Index, class _Fp>
++void
++__parallel_for_body(_Index __first, _Index __last, _Fp __f)
++{
++    // initial partition of the iteration space into chunks
++    auto __policy = __omp_backend::__chunk_partitioner(__first, __last);
++
++    // To avoid over-subscription we use taskloop for the nested parallelism
++    _PSTL_PRAGMA(omp taskloop untied mergeable)
++    for (std::size_t __chunk = 0; __chunk < __policy.__n_chunks; ++__chunk)
++    {
++        __omp_backend::__process_chunk(__policy, __first, __chunk, __f);
++    }
++}
++
++//------------------------------------------------------------------------
++// Notation:
++// Evaluation of brick f[i,j) for each subrange [i,j) of [first, last)
++//------------------------------------------------------------------------
++
++template <class _ExecutionPolicy, class _Index, class _Fp>
++void
++__parallel_for(_ExecutionPolicy&&, _Index __first, _Index __last, _Fp __f)
++{
++    if (omp_in_parallel())
++    {
++        // we don't create a nested parallel region in an existing parallel
++        // region: just create tasks
++        __pstl::__omp_backend::__parallel_for_body(__first, __last, __f);
++    }
++    else
++    {
++        // in any case (nested or non-nested) one parallel region is created and
++        // only one thread creates a set of tasks
++        _PSTL_PRAGMA(omp parallel)
++        _PSTL_PRAGMA(omp single nowait) { __pstl::__omp_backend::__parallel_for_body(__first, __last, __f); }
++    }
++}
++
++} // namespace __omp_backend
++} // namespace __pstl
++#endif // _PSTL_INTERNAL_OMP_PARALLEL_FOR_H
+diff --git a/pstl/include/pstl/internal/omp/parallel_for_each.h b/pstl/include/pstl/internal/omp/parallel_for_each.h
+new file mode 100644
+index 0000000..b9bfb05
+--- /dev/null
++++ b/pstl/include/pstl/internal/omp/parallel_for_each.h
+@@ -0,0 +1,59 @@
++// -*- C++ -*-
++// -*-===----------------------------------------------------------------------===//
++//
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef _PSTL_INTERNAL_OMP_PARALLEL_FOR_EACH_H
++#define _PSTL_INTERNAL_OMP_PARALLEL_FOR_EACH_H
++
++#include "util.h"
++
++namespace __pstl
++{
++namespace __omp_backend
++{
++
++template <class _ForwardIterator, class _Fp>
++void
++__parallel_for_each_body(_ForwardIterator __first, _ForwardIterator __last, _Fp __f)
++{
++    using DifferenceType = typename std::iterator_traits<_ForwardIterator>::difference_type;
++    // TODO: Think of an approach to remove the std::distance call
++    auto __size = std::distance(__first, __last);
++
++    _PSTL_PRAGMA(omp taskloop untied mergeable)
++    for (DifferenceType __index = 0; __index < __size; ++__index)
++    {
++        // TODO: Think of an approach to remove the increment here each time.
++        auto __iter = std::next(__first, __index);
++        __f(*__iter);
++    }
++}
++
++template <class _ExecutionPolicy, class _ForwardIterator, class _Fp>
++void
++__parallel_for_each(_ExecutionPolicy&&, _ForwardIterator __first, _ForwardIterator __last, _Fp __f)
++{
++    if (omp_in_parallel())
++    {
++        // we don't create a nested parallel region in an existing parallel
++        // region: just create tasks
++        __pstl::__omp_backend::__parallel_for_each_body(__first, __last, __f);
++    }
++    else
++    {
++        // in any case (nested or non-nested) one parallel region is created and
++        // only one thread creates a set of tasks
++        _PSTL_PRAGMA(omp parallel)
++        _PSTL_PRAGMA(omp single nowait) { __pstl::__omp_backend::__parallel_for_each_body(__first, __last, __f); }
++    }
++}
++
++} // namespace __omp_backend
++} // namespace __pstl
++#endif // _PSTL_INTERNAL_OMP_PARALLEL_FOR_EACH_H
+diff --git a/pstl/include/pstl/internal/omp/parallel_invoke.h b/pstl/include/pstl/internal/omp/parallel_invoke.h
+new file mode 100644
+index 0000000..f9afe13
+--- /dev/null
++++ b/pstl/include/pstl/internal/omp/parallel_invoke.h
+@@ -0,0 +1,50 @@
++// -*- C++ -*-
++// -*-===----------------------------------------------------------------------===//
++//
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef _PSTL_INTERNAL_OMP_PARALLEL_INVOKE_H
++#define _PSTL_INTERNAL_OMP_PARALLEL_INVOKE_H
++
++#include "util.h"
++
++namespace __pstl
++{
++namespace __omp_backend
++{
++
++template <typename _F1, typename _F2>
++void
++__parallel_invoke_body(_F1&& __f1, _F2&& __f2)
++{
++    _PSTL_PRAGMA(omp taskgroup)
++    {
++        _PSTL_PRAGMA(omp task untied mergeable) { std::forward<_F1>(__f1)(); }
++        _PSTL_PRAGMA(omp task untied mergeable) { std::forward<_F2>(__f2)(); }
++    }
++}
++
++template <class _ExecutionPolicy, typename _F1, typename _F2>
++void
++__parallel_invoke(_ExecutionPolicy&&, _F1&& __f1, _F2&& __f2)
++{
++    if (omp_in_parallel())
++    {
++        __parallel_invoke_body(std::forward<_F1>(__f1), std::forward<_F2>(__f2));
++    }
++    else
++    {
++        _PSTL_PRAGMA(omp parallel)
++        _PSTL_PRAGMA(omp single nowait)
++        __parallel_invoke_body(std::forward<_F1>(__f1), std::forward<_F2>(__f2));
++    }
++}
++
++} // namespace __omp_backend
++} // namespace __pstl
++#endif // _PSTL_INTERNAL_OMP_PARALLEL_INVOKE_H
+diff --git a/pstl/include/pstl/internal/omp/parallel_merge.h b/pstl/include/pstl/internal/omp/parallel_merge.h
+new file mode 100644
+index 0000000..869b7c9
+--- /dev/null
++++ b/pstl/include/pstl/internal/omp/parallel_merge.h
+@@ -0,0 +1,94 @@
++// -*- C++ -*-
++// -*-===----------------------------------------------------------------------===//
++//
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef _PSTL_INTERNAL_OMP_PARALLEL_MERGE_H
++#define _PSTL_INTERNAL_OMP_PARALLEL_MERGE_H
++
++#include "util.h"
++
++namespace __pstl
++{
++namespace __omp_backend
++{
++
++template <typename _RandomAccessIterator1, typename _RandomAccessIterator2, typename _RandomAccessIterator3,
++          typename _Compare, typename _LeafMerge>
++void
++__parallel_merge_body(std::size_t __size_x, std::size_t __size_y, _RandomAccessIterator1 __xs,
++                      _RandomAccessIterator1 __xe, _RandomAccessIterator2 __ys, _RandomAccessIterator2 __ye,
++                      _RandomAccessIterator3 __zs, _Compare __comp, _LeafMerge __leaf_merge)
++{
++
++    if (__size_x + __size_y <= __omp_backend::__default_chunk_size)
++    {
++        __leaf_merge(__xs, __xe, __ys, __ye, __zs, __comp);
++        return;
++    }
++
++    _RandomAccessIterator1 __xm;
++    _RandomAccessIterator2 __ym;
++
++    if (__size_x < __size_y)
++    {
++        __ym = __ys + (__size_y / 2);
++        __xm = std::upper_bound(__xs, __xe, *__ym, __comp);
++    }
++    else
++    {
++        __xm = __xs + (__size_x / 2);
++        __ym = std::lower_bound(__ys, __ye, *__xm, __comp);
++    }
++
++    auto __zm = __zs + (__xm - __xs) + (__ym - __ys);
++
++    _PSTL_PRAGMA(omp task untied mergeable default(none)
++                     firstprivate(__xs, __xm, __ys, __ym, __zs, __comp, __leaf_merge))
++    __parallel_merge_body(__xm - __xs, __ym - __ys, __xs, __xm, __ys, __ym, __zs, __comp, __leaf_merge);
++
++    _PSTL_PRAGMA(omp task untied mergeable default(none)
++                     firstprivate(__xm, __xe, __ym, __ye, __zm, __comp, __leaf_merge))
++    __parallel_merge_body(__xe - __xm, __ye - __ym, __xm, __xe, __ym, __ye, __zm, __comp, __leaf_merge);
++
++    _PSTL_PRAGMA(omp taskwait)
++}
++
++template <class _ExecutionPolicy, typename _RandomAccessIterator1, typename _RandomAccessIterator2,
++          typename _RandomAccessIterator3, typename _Compare, typename _LeafMerge>
++void
++__parallel_merge(_ExecutionPolicy&& /*__exec*/, _RandomAccessIterator1 __xs, _RandomAccessIterator1 __xe,
++                 _RandomAccessIterator2 __ys, _RandomAccessIterator2 __ye, _RandomAccessIterator3 __zs, _Compare __comp,
++                 _LeafMerge __leaf_merge)
++
++{
++    std::size_t __size_x = __xe - __xs;
++    std::size_t __size_y = __ye - __ys;
++
++    /*
++     * Run the merge in parallel by chunking it up. Use the smaller range (if any) as the iteration range, and the
++     * larger range as the search range.
++     */
++
++    if (omp_in_parallel())
++    {
++        __parallel_merge_body(__size_x, __size_y, __xs, __xe, __ys, __ye, __zs, __comp, __leaf_merge);
++    }
++    else
++    {
++        _PSTL_PRAGMA(omp parallel)
++        {
++            _PSTL_PRAGMA(omp single nowait)
++            __parallel_merge_body(__size_x, __size_y, __xs, __xe, __ys, __ye, __zs, __comp, __leaf_merge);
++        }
++    }
++}
++
++} // namespace __omp_backend
++} // namespace __pstl
++#endif // _PSTL_INTERNAL_OMP_PARALLEL_MERGE_H
+diff --git a/pstl/include/pstl/internal/omp/parallel_reduce.h b/pstl/include/pstl/internal/omp/parallel_reduce.h
+new file mode 100644
+index 0000000..71fc8a2
+--- /dev/null
++++ b/pstl/include/pstl/internal/omp/parallel_reduce.h
+@@ -0,0 +1,68 @@
++// -*- C++ -*-
++// -*-===----------------------------------------------------------------------===//
++//
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef _PSTL_INTERNAL_OMP_PARALLEL_REDUCE_H
++#define _PSTL_INTERNAL_OMP_PARALLEL_REDUCE_H
++
++#include "util.h"
++
++namespace __pstl
++{
++namespace __omp_backend
++{
++
++template <class _RandomAccessIterator, class _Value, typename _RealBody, typename _Reduction>
++_Value
++__parallel_reduce_body(_RandomAccessIterator __first, _RandomAccessIterator __last, _Value __identity,
++                       _RealBody __real_body, _Reduction __reduce)
++{
++    auto __middle = __first + ((__last - __first) / 2);
++    _Value __v1(__identity), __v2(__identity);
++    __parallel_invoke_body(
++        [&]() { __v1 = __parallel_reduce_body(__first, __middle, __identity, __real_body, __reduce); },
++        [&]() { __v2 = __parallel_reduce_body(__middle, __last, __identity, __real_body, __reduce); });
++
++    return __reduce(__v1, __v2);
++}
++
++//------------------------------------------------------------------------
++// Notation:
++//      r(i,j,init) returns reduction of init with reduction over [i,j)
++//      c(x,y) combines values x and y that were the result of r
++//------------------------------------------------------------------------
++
++template <class _ExecutionPolicy, class _RandomAccessIterator, class _Value, typename _RealBody, typename _Reduction>
++_Value
++__parallel_reduce(_ExecutionPolicy&&, _RandomAccessIterator __first, _RandomAccessIterator __last, _Value __identity,
++                  _RealBody __real_body, _Reduction __reduction)
++{
++    // We don't create a nested parallel region in an existing parallel region:
++    // just create tasks.
++    if (omp_in_parallel())
++    {
++        return __pstl::__omp_backend::__parallel_reduce_body(__first, __last, __identity, __real_body, __reduction);
++    }
++
++    // In any case (nested or non-nested) one parallel region is created and only
++    // one thread creates a set of tasks.
++    _Value __res = __identity;
++
++    _PSTL_PRAGMA(omp parallel)
++    _PSTL_PRAGMA(omp single nowait)
++    {
++        __res = __pstl::__omp_backend::__parallel_reduce_body(__first, __last, __identity, __real_body, __reduction);
++    }
++
++    return __res;
++}
++
++} // namespace __omp_backend
++} // namespace __pstl
++#endif // _PSTL_INTERNAL_OMP_PARALLEL_REDUCE_H
+diff --git a/pstl/include/pstl/internal/omp/parallel_scan.h b/pstl/include/pstl/internal/omp/parallel_scan.h
+new file mode 100644
+index 0000000..a358a9b
+--- /dev/null
++++ b/pstl/include/pstl/internal/omp/parallel_scan.h
+@@ -0,0 +1,136 @@
++// -*- C++ -*-
++// -*-===----------------------------------------------------------------------===//
++//
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef _PSTL_INTERNAL_OMP_PARALLEL_SCAN_H
++#define _PSTL_INTERNAL_OMP_PARALLEL_SCAN_H
++
++#include "parallel_invoke.h"
++
++namespace __pstl
++{
++namespace __omp_backend
++{
++
++template <typename _Index>
++_Index
++__split(_Index __m)
++{
++    _Index __k = 1;
++    while (2 * __k < __m)
++        __k *= 2;
++    return __k;
++}
++
++template <typename _Index, typename _Tp, typename _Rp, typename _Cp>
++void
++__upsweep(_Index __i, _Index __m, _Index __tilesize, _Tp* __r, _Index __lastsize, _Rp __reduce, _Cp __combine)
++{
++    if (__m == 1)
++        __r[0] = __reduce(__i * __tilesize, __lastsize);
++    else
++    {
++        _Index __k = __split(__m);
++        __omp_backend::__parallel_invoke_body(
++            [=] { __omp_backend::__upsweep(__i, __k, __tilesize, __r, __tilesize, __reduce, __combine); },
++            [=] {
++                __omp_backend::__upsweep(__i + __k, __m - __k, __tilesize, __r + __k, __lastsize, __reduce, __combine);
++            });
++        if (__m == 2 * __k)
++            __r[__m - 1] = __combine(__r[__k - 1], __r[__m - 1]);
++    }
++}
++
++template <typename _Index, typename _Tp, typename _Cp, typename _Sp>
++void
++__downsweep(_Index __i, _Index __m, _Index __tilesize, _Tp* __r, _Index __lastsize, _Tp __initial, _Cp __combine,
++            _Sp __scan)
++{
++    if (__m == 1)
++        __scan(__i * __tilesize, __lastsize, __initial);
++    else
++    {
++        const _Index __k = __split(__m);
++        __omp_backend::__parallel_invoke_body(
++            [=] { __omp_backend::__downsweep(__i, __k, __tilesize, __r, __tilesize, __initial, __combine, __scan); },
++            // Assumes that __combine never throws.
++            // TODO: Consider adding a requirement for user functors to be constant.
++            [=, &__combine]
++            {
++                __omp_backend::__downsweep(__i + __k, __m - __k, __tilesize, __r + __k, __lastsize,
++                                           __combine(__initial, __r[__k - 1]), __combine, __scan);
++            });
++    }
++}
++
++template <typename _ExecutionPolicy, typename _Index, typename _Tp, typename _Rp, typename _Cp, typename _Sp,
++          typename _Ap>
++void
++__parallel_strict_scan_body(_Index __n, _Tp __initial, _Rp __reduce, _Cp __combine, _Sp __scan, _Ap __apex)
++{
++    _Index __p = omp_get_num_threads();
++    const _Index __slack = 4;
++    _Index __tilesize = (__n - 1) / (__slack * __p) + 1;
++    _Index __m = (__n - 1) / __tilesize;
++    __buffer<_Tp> __buf(__m + 1);
++    _Tp* __r = __buf.get();
++
++    __omp_backend::__upsweep(_Index(0), _Index(__m + 1), __tilesize, __r, __n - __m * __tilesize, __reduce, __combine);
++
++    std::size_t __k = __m + 1;
++    _Tp __t = __r[__k - 1];
++    while ((__k &= __k - 1))
++    {
++        __t = __combine(__r[__k - 1], __t);
++    }
++
++    __apex(__combine(__initial, __t));
++    __omp_backend::__downsweep(_Index(0), _Index(__m + 1), __tilesize, __r, __n - __m * __tilesize, __initial,
++                               __combine, __scan);
++}
++
++template <class _ExecutionPolicy, typename _Index, typename _Tp, typename _Rp, typename _Cp, typename _Sp, typename _Ap>
++void
++__parallel_strict_scan(_ExecutionPolicy&&, _Index __n, _Tp __initial, _Rp __reduce, _Cp __combine, _Sp __scan,
++                       _Ap __apex)
++{
++    if (__n <= __default_chunk_size)
++    {
++        _Tp __sum = __initial;
++        if (__n)
++        {
++            __sum = __combine(__sum, __reduce(_Index(0), __n));
++        }
++        __apex(__sum);
++        if (__n)
++        {
++            __scan(_Index(0), __n, __initial);
++        }
++        return;
++    }
++
++    if (omp_in_parallel())
++    {
++        __pstl::__omp_backend::__parallel_strict_scan_body<_ExecutionPolicy>(__n, __initial, __reduce, __combine,
++                                                                             __scan, __apex);
++    }
++    else
++    {
++        _PSTL_PRAGMA(omp parallel)
++        _PSTL_PRAGMA(omp single nowait)
++        {
++            __pstl::__omp_backend::__parallel_strict_scan_body<_ExecutionPolicy>(__n, __initial, __reduce, __combine,
++                                                                                 __scan, __apex);
++        }
++    }
++}
++
++} // namespace __omp_backend
++} // namespace __pstl
++#endif // _PSTL_INTERNAL_OMP_PARALLEL_SCAN_H
+diff --git a/pstl/include/pstl/internal/omp/parallel_stable_partial_sort.h b/pstl/include/pstl/internal/omp/parallel_stable_partial_sort.h
+new file mode 100644
+index 0000000..d4ae512
+--- /dev/null
++++ b/pstl/include/pstl/internal/omp/parallel_stable_partial_sort.h
+@@ -0,0 +1,32 @@
++// -*- C++ -*-
++// -*-===----------------------------------------------------------------------===//
++//
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef _PSTL_INTERNAL_OMP_PARALLEL_STABLE_PARTIAL_SORT_H
++#define _PSTL_INTERNAL_OMP_PARALLEL_STABLE_PARTIAL_SORT_H
++
++#include "util.h"
++
++namespace __pstl
++{
++namespace __omp_backend
++{
++
++template <typename _RandomAccessIterator, typename _Compare, typename _LeafSort>
++void
++__parallel_stable_partial_sort(_RandomAccessIterator __xs, _RandomAccessIterator __xe, _Compare __comp,
++                               _LeafSort __leaf_sort, std::size_t /* __nsort */)
++{
++    // TODO: "Parallel partial sort needs to be implemented.");
++    __leaf_sort(__xs, __xe, __comp);
++}
++
++} // namespace __omp_backend
++} // namespace __pstl
++#endif // _PSTL_INTERNAL_OMP_PARALLEL_STABLE_PARTIAL_SORT_H
+diff --git a/pstl/include/pstl/internal/omp/parallel_stable_sort.h b/pstl/include/pstl/internal/omp/parallel_stable_sort.h
+new file mode 100644
+index 0000000..cda9d23
+--- /dev/null
++++ b/pstl/include/pstl/internal/omp/parallel_stable_sort.h
+@@ -0,0 +1,157 @@
++// -*- C++ -*-
++// -*-===----------------------------------------------------------------------===//
++//
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef _PSTL_INTERNAL_OMP_PARALLEL_STABLE_SORT_H
++#define _PSTL_INTERNAL_OMP_PARALLEL_STABLE_SORT_H
++
++#include "util.h"
++
++namespace __pstl
++{
++namespace __omp_backend
++{
++
++namespace __sort_details
++{
++struct __move_value
++{
++    template <typename _Iterator, typename _OutputIterator>
++    void
++    operator()(_Iterator __x, _OutputIterator __z) const
++    {
++        *__z = std::move(*__x);
++    }
++};
++
++template <typename _RandomAccessIterator, typename _OutputIterator>
++_OutputIterator
++__parallel_move_range(_RandomAccessIterator __first1, _RandomAccessIterator __last1, _OutputIterator __d_first)
++{
++    std::size_t __size = __last1 - __first1;
++
++    // Perform serial moving of small chunks
++
++    if (__size <= __default_chunk_size)
++    {
++        return std::move(__first1, __last1, __d_first);
++    }
++
++    // Perform parallel moving of larger chunks
++    auto __policy = __omp_backend::__chunk_partitioner(__first1, __last1);
++
++    _PSTL_PRAGMA(omp taskloop)
++    for (std::size_t __chunk = 0; __chunk < __policy.__n_chunks; ++__chunk)
++    {
++        __omp_backend::__process_chunk(__policy, __first1, __chunk,
++                                       [&](auto __chunk_first, auto __chunk_last)
++                                       {
++                                           auto __chunk_offset = __chunk_first - __first1;
++                                           auto __output_it = __d_first + __chunk_offset;
++                                           std::move(__chunk_first, __chunk_last, __output_it);
++                                       });
++    }
++
++    return __d_first + __size;
++}
++
++struct __move_range
++{
++    template <typename _RandomAccessIterator, typename _OutputIterator>
++    _OutputIterator
++    operator()(_RandomAccessIterator __first1, _RandomAccessIterator __last1, _OutputIterator __d_first) const
++    {
++        return __parallel_move_range(__first1, __last1, __d_first);
++    }
++};
++} // namespace __sort_details
++
++template <typename _RandomAccessIterator, typename _Compare, typename _LeafSort>
++void
++__parallel_stable_sort_body(_RandomAccessIterator __xs, _RandomAccessIterator __xe, _Compare __comp,
++                            _LeafSort __leaf_sort)
++{
++    using _ValueType = typename std::iterator_traits<_RandomAccessIterator>::value_type;
++    using _VecType = typename std::vector<_ValueType>;
++    using _OutputIterator = typename _VecType::iterator;
++    using _MoveValue = typename __omp_backend::__sort_details::__move_value;
++    using _MoveRange = __omp_backend::__sort_details::__move_range;
++
++    if (__should_run_serial(__xs, __xe))
++    {
++        __leaf_sort(__xs, __xe, __comp);
++    }
++    else
++    {
++        std::size_t __size = __xe - __xs;
++        auto __mid = __xs + (__size / 2);
++        __parallel_invoke_body([&]() { __parallel_stable_sort_body(__xs, __mid, __comp, __leaf_sort); },
++                               [&]() { __parallel_stable_sort_body(__mid, __xe, __comp, __leaf_sort); });
++
++        // Perform a parallel merge of the sorted ranges into __output_data.
++        _VecType __output_data(__size);
++        _MoveValue __move_value;
++        _MoveRange __move_range;
++        __utils::__serial_move_merge __merge(__size);
++        __parallel_merge_body(
++            __mid - __xs, __xe - __mid, __xs, __mid, __mid, __xe, __output_data.begin(), __comp,
++            [&__merge, &__move_value, &__move_range](_RandomAccessIterator __as, _RandomAccessIterator __ae,
++                                                     _RandomAccessIterator __bs, _RandomAccessIterator __be,
++                                                     _OutputIterator __cs, _Compare __comp)
++            { __merge(__as, __ae, __bs, __be, __cs, __comp, __move_value, __move_value, __move_range, __move_range); });
++
++        // Move the values from __output_data back in the original source range.
++        __omp_backend::__sort_details::__parallel_move_range(__output_data.begin(), __output_data.end(), __xs);
++    }
++}
++
++template <class _ExecutionPolicy, typename _RandomAccessIterator, typename _Compare, typename _LeafSort>
++void
++__parallel_stable_sort(_ExecutionPolicy&& /*__exec*/, _RandomAccessIterator __xs, _RandomAccessIterator __xe,
++                       _Compare __comp, _LeafSort __leaf_sort, std::size_t __nsort = 0)
++{
++    auto __count = static_cast<std::size_t>(__xe - __xs);
++    if (__count <= __default_chunk_size || __nsort < __count)
++    {
++        __leaf_sort(__xs, __xe, __comp);
++        return;
++    }
++
++    // TODO: the partial sort implementation should
++    // be shared with the other backends.
++
++    if (omp_in_parallel())
++    {
++        if (__count <= __nsort)
++        {
++            __parallel_stable_sort_body(__xs, __xe, __comp, __leaf_sort);
++        }
++        else
++        {
++            __parallel_stable_partial_sort(__xs, __xe, __comp, __leaf_sort, __nsort);
++        }
++    }
++    else
++    {
++        _PSTL_PRAGMA(omp parallel)
++        _PSTL_PRAGMA(omp single nowait)
++        if (__count <= __nsort)
++        {
++            __parallel_stable_sort_body(__xs, __xe, __comp, __leaf_sort);
++        }
++        else
++        {
++            __parallel_stable_partial_sort(__xs, __xe, __comp, __leaf_sort, __nsort);
++        }
++    }
++}
++
++} // namespace __omp_backend
++} // namespace __pstl
++#endif // _PSTL_INTERNAL_OMP_PARALLEL_STABLE_SORT_H
+diff --git a/pstl/include/pstl/internal/omp/parallel_transform_reduce.h b/pstl/include/pstl/internal/omp/parallel_transform_reduce.h
+new file mode 100644
+index 0000000..72ea37f
+--- /dev/null
++++ b/pstl/include/pstl/internal/omp/parallel_transform_reduce.h
+@@ -0,0 +1,112 @@
++// -*- C++ -*-
++// -*-===----------------------------------------------------------------------===//
++//
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef _PSTL_INTERNAL_OMP_PARALLEL_TRANSFORM_REDUCE_H
++#define _PSTL_INTERNAL_OMP_PARALLEL_TRANSFORM_REDUCE_H
++
++#include "util.h"
++
++namespace __pstl
++{
++namespace __omp_backend
++{
++
++//------------------------------------------------------------------------
++// parallel_transform_reduce
++//
++// Notation:
++//      r(i,j,init) returns reduction of init with reduction over [i,j)
++//      u(i) returns f(i,i+1,identity) for a hypothetical left identity element
++//      of r c(x,y) combines values x and y that were the result of r or u
++//------------------------------------------------------------------------
++
++template <class _RandomAccessIterator, class _UnaryOp, class _Value, class _Combiner, class _Reduction>
++auto
++__transform_reduce_body(_RandomAccessIterator __first, _RandomAccessIterator __last, _UnaryOp __unary_op, _Value __init,
++                        _Combiner __combiner, _Reduction __reduction)
++{
++    const std::size_t __num_threads = omp_get_num_threads();
++    const std::size_t __size = __last - __first;
++
++    // Initial partition of the iteration space into chunks. If the range is too small,
++    // this will result in a nonsense policy, so we check on the size as well below.
++    auto __policy = __omp_backend::__chunk_partitioner(__first + __num_threads, __last);
++
++    if (__size <= __num_threads || __policy.__n_chunks < 2)
++    {
++        return __reduction(__first, __last, __init);
++    }
++
++    // Here, we cannot use OpenMP UDR because we must store the init value in
++    // the combiner and it will be used several times. Although there should be
++    // the only one; we manually generate the identity elements for each thread.
++    std::vector<_Value> __accums;
++    __accums.reserve(__num_threads);
++
++    // initialize accumulators for all threads
++    for (std::size_t __i = 0; __i < __num_threads; ++__i)
++    {
++        __accums.emplace_back(__unary_op(__first + __i));
++    }
++
++    // main loop
++    _PSTL_PRAGMA(omp taskloop shared(__accums))
++    for (std::size_t __chunk = 0; __chunk < __policy.__n_chunks; ++__chunk)
++    {
++        __omp_backend::__process_chunk(__policy, __first + __num_threads, __chunk,
++                                       [&](auto __chunk_first, auto __chunk_last)
++                                       {
++                                           auto __thread_num = omp_get_thread_num();
++                                           __accums[__thread_num] =
++                                               __reduction(__chunk_first, __chunk_last, __accums[__thread_num]);
++                                       });
++    }
++
++    // combine by accumulators
++    for (std::size_t __i = 0; __i < __num_threads; ++__i)
++    {
++        __init = __combiner(__init, __accums[__i]);
++    }
++
++    return __init;
++}
++
++template <class _ExecutionPolicy, class _RandomAccessIterator, class _UnaryOp, class _Value, class _Combiner,
++          class _Reduction>
++_Value
++__parallel_transform_reduce(_ExecutionPolicy&&, _RandomAccessIterator __first, _RandomAccessIterator __last,
++                            _UnaryOp __unary_op, _Value __init, _Combiner __combiner, _Reduction __reduction)
++{
++    _Value __result = __init;
++    if (omp_in_parallel())
++    {
++        // We don't create a nested parallel region in an existing parallel
++        // region: just create tasks
++        __result = __pstl::__omp_backend::__transform_reduce_body(__first, __last, __unary_op, __init, __combiner,
++                                                                  __reduction);
++    }
++    else
++    {
++        // Create a parallel region, and a single thread will create tasks
++        // for the region.
++        _PSTL_PRAGMA(omp parallel)
++        _PSTL_PRAGMA(omp single nowait)
++        {
++            __result = __pstl::__omp_backend::__transform_reduce_body(__first, __last, __unary_op, __init, __combiner,
++                                                                      __reduction);
++        }
++    }
++
++    return __result;
++}
++
++} // namespace __omp_backend
++} // namespace __pstl
++#endif // _PSTL_INTERNAL_OMP_PARALLEL_TRANSFORM_REDUCE_H
+diff --git a/pstl/include/pstl/internal/omp/parallel_transform_scan.h b/pstl/include/pstl/internal/omp/parallel_transform_scan.h
+new file mode 100644
+index 0000000..f206212
+--- /dev/null
++++ b/pstl/include/pstl/internal/omp/parallel_transform_scan.h
+@@ -0,0 +1,32 @@
++// -*- C++ -*-
++// -*-===----------------------------------------------------------------------===//
++//
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef _PSTL_INTERNAL_OMP_PARALLEL_TRANSFORM_SCAN_H
++#define _PSTL_INTERNAL_OMP_PARALLEL_TRANSFORM_SCAN_H
++
++#include "util.h"
++
++namespace __pstl
++{
++namespace __omp_backend
++{
++
++template <class _ExecutionPolicy, class _Index, class _Up, class _Tp, class _Cp, class _Rp, class _Sp>
++_Tp
++__parallel_transform_scan(_ExecutionPolicy&&, _Index __n, _Up /* __u */, _Tp __init, _Cp /* __combine */,
++                          _Rp /* __brick_reduce */, _Sp __scan)
++{
++    // TODO: parallelize this function.
++    return __scan(_Index(0), __n, __init);
++}
++
++} // namespace __omp_backend
++} // namespace __pstl
++#endif // _PSTL_INTERNAL_OMP_PARALLEL_TRANSFORM_SCAN_H
+diff --git a/pstl/include/pstl/internal/omp/util.h b/pstl/include/pstl/internal/omp/util.h
+new file mode 100644
+index 0000000..c88d980
+--- /dev/null
++++ b/pstl/include/pstl/internal/omp/util.h
+@@ -0,0 +1,173 @@
++// -*- C++ -*-
++// -*-===----------------------------------------------------------------------===//
++//
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef _PSTL_INTERNAL_OMP_UTIL_H
++#define _PSTL_INTERNAL_OMP_UTIL_H
++
++#include <algorithm>
++#include <atomic>
++#include <iterator>
++#include <cstddef>
++#include <cstdio>
++#include <memory>
++#include <vector>
++#include <omp.h>
++
++#include "../parallel_backend_utils.h"
++#include "../unseq_backend_simd.h"
++#include "../utils.h"
++
++// Portability "#pragma" definition
++#ifdef _MSC_VER
++#    define _PSTL_PRAGMA(x) __pragma(x)
++#else
++#    define _PSTL_PRAGMA(x) _Pragma(#    x)
++#endif
++
++_PSTL_HIDE_FROM_ABI_PUSH
++
++namespace __pstl
++{
++namespace __omp_backend
++{
++
++//------------------------------------------------------------------------
++// use to cancel execution
++//------------------------------------------------------------------------
++inline void
++__cancel_execution()
++{
++    // TODO: Figure out how to make cancelation work.
++}
++
++//------------------------------------------------------------------------
++// raw buffer
++//------------------------------------------------------------------------
++
++template <typename _Tp>
++class __buffer
++{
++    std::allocator<_Tp> __allocator_;
++    _Tp* __ptr_;
++    const std::size_t __buf_size_;
++    __buffer(const __buffer&) = delete;
++    void
++    operator=(const __buffer&) = delete;
++
++  public:
++    __buffer(std::size_t __n) : __allocator_(), __ptr_(__allocator_.allocate(__n)), __buf_size_(__n) {}
++
++    operator bool() const { return __ptr_ != nullptr; }
++
++    _Tp*
++    get() const
++    {
++        return __ptr_;
++    }
++    ~__buffer() { __allocator_.deallocate(__ptr_, __buf_size_); }
++};
++
++// Preliminary size of each chunk: requires further discussion
++inline constexpr std::size_t __default_chunk_size = 2048;
++
++// Convenience function to determine when we should run serial.
++template <typename _Iterator, std::enable_if_t<!std::is_integral<_Iterator>::value, bool> = true>
++constexpr auto
++__should_run_serial(_Iterator __first, _Iterator __last) -> bool
++{
++    using _difference_type = typename std::iterator_traits<_Iterator>::difference_type;
++    auto __size = std::distance(__first, __last);
++    return __size <= static_cast<_difference_type>(__default_chunk_size);
++}
++
++template <typename _Index, std::enable_if_t<std::is_integral<_Index>::value, bool> = true>
++constexpr auto
++__should_run_serial(_Index __first, _Index __last) -> bool
++{
++    using _difference_type = _Index;
++    auto __size = __last - __first;
++    return __size <= static_cast<_difference_type>(__default_chunk_size);
++}
++
++struct __chunk_metrics
++{
++    std::size_t __n_chunks;
++    std::size_t __chunk_size;
++    std::size_t __first_chunk_size;
++};
++
++// The iteration space partitioner according to __requested_chunk_size
++template <class _RandomAccessIterator, class _Size = std::size_t>
++auto
++__chunk_partitioner(_RandomAccessIterator __first, _RandomAccessIterator __last,
++                    _Size __requested_chunk_size = __default_chunk_size) -> __chunk_metrics
++{
++    /*
++     * This algorithm improves distribution of elements in chunks by avoiding
++     * small tail chunks. The leftover elements that do not fit neatly into
++     * the chunk size are redistributed to early chunks. This improves
++     * utilization of the processor's prefetch and reduces the number of
++     * tasks needed by 1.
++     */
++
++    const _Size __n = __last - __first;
++    _Size __n_chunks = 0;
++    _Size __chunk_size = 0;
++    _Size __first_chunk_size = 0;
++    if (__n < __requested_chunk_size)
++    {
++        __chunk_size = __n;
++        __first_chunk_size = __n;
++        __n_chunks = 1;
++        return __chunk_metrics{__n_chunks, __chunk_size, __first_chunk_size};
++    }
++
++    __n_chunks = (__n / __requested_chunk_size) + 1;
++    __chunk_size = __n / __n_chunks;
++    __first_chunk_size = __chunk_size;
++    const _Size __n_leftover_items = __n - (__n_chunks * __chunk_size);
++
++    if (__n_leftover_items == __chunk_size)
++    {
++        __n_chunks += 1;
++        return __chunk_metrics{__n_chunks, __chunk_size, __first_chunk_size};
++    }
++    else if (__n_leftover_items == 0)
++    {
++        __first_chunk_size = __chunk_size;
++        return __chunk_metrics{__n_chunks, __chunk_size, __first_chunk_size};
++    }
++
++    const _Size __n_extra_items_per_chunk = __n_leftover_items / __n_chunks;
++    const _Size __n_final_leftover_items = __n_leftover_items - (__n_extra_items_per_chunk * __n_chunks);
++
++    __chunk_size += __n_extra_items_per_chunk;
++    __first_chunk_size = __chunk_size + __n_final_leftover_items;
++
++    return __chunk_metrics{__n_chunks, __chunk_size, __first_chunk_size};
++}
++
++template <typename _Iterator, typename _Index, typename _Func>
++void
++__process_chunk(const __chunk_metrics& __metrics, _Iterator __base, _Index __chunk_index, _Func __f)
++{
++    auto __this_chunk_size = __chunk_index == 0 ? __metrics.__first_chunk_size : __metrics.__chunk_size;
++    auto __index = __chunk_index == 0 ? 0
++                                      : (__chunk_index * __metrics.__chunk_size) +
++                                            (__metrics.__first_chunk_size - __metrics.__chunk_size);
++    auto __first = __base + __index;
++    auto __last = __first + __this_chunk_size;
++    __f(__first, __last);
++}
++
++} // namespace __omp_backend
++} // namespace __pstl
++
++#endif // _PSTL_INTERNAL_OMP_UTIL_H
+diff --git a/pstl/include/pstl/internal/parallel_backend.h b/pstl/include/pstl/internal/parallel_backend.h
+index 134ec50..4da871b 100644
+--- a/pstl/include/pstl/internal/parallel_backend.h
++++ b/pstl/include/pstl/internal/parallel_backend.h
+@@ -24,6 +24,12 @@ namespace __pstl
+ {
+ namespace __par_backend = __tbb_backend;
+ }
++#elif defined(_PSTL_PAR_BACKEND_OPENMP)
++#    include "parallel_backend_omp.h"
++namespace __pstl
++{
++namespace __par_backend = __omp_backend;
++}
+ #else
+ _PSTL_PRAGMA_MESSAGE("Parallel backend was not specified");
+ #endif
+diff --git a/pstl/include/pstl/internal/parallel_backend_omp.h b/pstl/include/pstl/internal/parallel_backend_omp.h
+new file mode 100644
+index 0000000..7398cfe
+--- /dev/null
++++ b/pstl/include/pstl/internal/parallel_backend_omp.h
+@@ -0,0 +1,58 @@
++// -*- C++ -*-
++// -*-===----------------------------------------------------------------------===//
++//
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef _PSTL_PARALLEL_BACKEND_OMP_H
++#define _PSTL_PARALLEL_BACKEND_OMP_H
++
++//------------------------------------------------------------------------
++// parallel_invoke
++//------------------------------------------------------------------------
++
++#include "./omp/parallel_invoke.h"
++
++//------------------------------------------------------------------------
++// parallel_for
++//------------------------------------------------------------------------
++
++#include "./omp/parallel_for.h"
++
++//------------------------------------------------------------------------
++// parallel_for_each
++//------------------------------------------------------------------------
++
++#include "./omp/parallel_for_each.h"
++
++//------------------------------------------------------------------------
++// parallel_reduce
++//------------------------------------------------------------------------
++
++#include "./omp/parallel_reduce.h"
++#include "./omp/parallel_transform_reduce.h"
++
++//------------------------------------------------------------------------
++// parallel_scan
++//------------------------------------------------------------------------
++
++#include "./omp/parallel_scan.h"
++#include "./omp/parallel_transform_scan.h"
++
++//------------------------------------------------------------------------
++// parallel_stable_sort
++//------------------------------------------------------------------------
++
++#include "./omp/parallel_stable_partial_sort.h"
++#include "./omp/parallel_stable_sort.h"
++
++//------------------------------------------------------------------------
++// parallel_merge
++//------------------------------------------------------------------------
++#include "./omp/parallel_merge.h"
++
++#endif //_PSTL_PARALLEL_BACKEND_OMP_H
+diff --git a/pstl/include/pstl/internal/pstl_config.h b/pstl/include/pstl/internal/pstl_config.h
+index 2c68d28..3219575 100644
+--- a/pstl/include/pstl/internal/pstl_config.h
++++ b/pstl/include/pstl/internal/pstl_config.h
+@@ -18,7 +18,7 @@
+ #define _PSTL_VERSION_MINOR ((_PSTL_VERSION % 1000) / 10)
+ #define _PSTL_VERSION_PATCH (_PSTL_VERSION % 10)
+ 
+-#if !defined(_PSTL_PAR_BACKEND_SERIAL) && !defined(_PSTL_PAR_BACKEND_TBB)
++#if !defined(_PSTL_PAR_BACKEND_SERIAL) && !defined(_PSTL_PAR_BACKEND_TBB) && !defined(_PSTL_PAR_BACKEND_OPENMP)
+ #    error "A parallel backend must be specified"
+ #endif
+ 
+@@ -96,7 +96,8 @@
+ #endif
+ 
+ // Should be defined to 1 for environments with a vendor implementation of C++17 execution policies
+-#define _PSTL_CPP17_EXECUTION_POLICIES_PRESENT (_MSC_VER >= 1912)
++#define _PSTL_CPP17_EXECUTION_POLICIES_PRESENT (_MSC_VER >= 1912 && _MSVC_LANG >= 201703L) ||                          \
++    (_GLIBCXX_RELEASE >= 9 && __GLIBCXX__ >= 20190503 && __cplusplus >= 201703L)
+ 
+ #if (defined(_MSC_VER) && _MSC_VER >= 1900) || \
+     __cplusplus >= 201300L || \
+diff --git a/pstl/include/pstl/internal/utils.h b/pstl/include/pstl/internal/utils.h
+index 4911165..ec9d467 100644
+--- a/pstl/include/pstl/internal/utils.h
++++ b/pstl/include/pstl/internal/utils.h
+@@ -21,8 +21,8 @@ namespace __internal
+ {
+ 
+ template <typename _Fp>
+-typename std::result_of<_Fp()>::type
+-__except_handler(_Fp __f)
++auto
++__except_handler(_Fp __f) -> decltype(__f())
+ {
+     try
+     {
+@@ -63,15 +63,15 @@ void __invoke_if_not(std::true_type, _Fp)
+ }
+ 
+ template <typename _F1, typename _F2>
+-typename std::result_of<_F1()>::type
+-__invoke_if_else(std::true_type, _F1 __f1, _F2)
++auto
++__invoke_if_else(std::true_type, _F1 __f1, _F2) -> decltype(__f1())
+ {
+     return __f1();
+ }
+ 
+ template <typename _F1, typename _F2>
+-typename std::result_of<_F2()>::type
+-__invoke_if_else(std::false_type, _F1, _F2 __f2)
++auto
++__invoke_if_else(std::false_type, _F1, _F2 __f2) -> decltype(__f2())
+ {
+     return __f2();
+ }
