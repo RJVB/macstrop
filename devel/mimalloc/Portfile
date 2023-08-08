@@ -6,39 +6,172 @@ PortGroup           cmake 1.1
 set LTO.allow_ThinLTO no
 PortGroup           LTO 1.0
 
+
 # github.setup        microsoft mimalloc 2.1.2 v
 # github.tarball_from archive
 github.setup        microsoft mimalloc 4e50d6714d471b72b2285e25a3df6c92db944593
 fetch.type          git
-distname            ${name}-git
-version             2.1.2.14
+
+subport ${name}-bench {}
 
 categories          devel
 license             MIT
-maintainers         {outlook.com:mohd.akram @mohd-akram} openmaintainer
 
-description         mimalloc is a compact general purpose allocator with \
+if {${subport} eq ${name}} {
+    distname        ${subport}-git
+    version         2.1.2.14
+    maintainers     {outlook.com:mohd.akram @mohd-akram} openmaintainer
+
+    description     mimalloc is a compact general purpose allocator with \
                     excellent performance
 
-long_description    mimalloc is a general purpose allocator with excellent \
+    long_description \
+                    mimalloc is a general purpose allocator with excellent \
                     performance characteristics.
 
-checksums           rmd160  362b6ba6270889af10af46e41e469847a42b99a0 \
+    checksums       rmd160  362b6ba6270889af10af46e41e469847a42b99a0 \
                     sha256  2b1bff6f717f9725c70bf8d79e4786da13de8a270059e4ba0bdd262ae7be46eb
-#                     size    1163868
+#                 size    1163868
 
-patch.pre_args      -Np1
-patchfiles          patch-cmake.diff
+    patch.pre_args  -Np1
+    patchfiles      patch-cmake.diff
 
-cmake.save_configure_cmd "install log"
+    cmake.save_configure_cmd "install log"
 
-post-destroot {
-    if {${os.platform} eq "darwin"} {
-        xinstall -m 755 ${filespath}/mimalloc-darwin.sh ${destroot}${prefix}/bin/mimalloc.sh
-    } else {
-        xinstall -m 755 ${filespath}/mimalloc.sh ${destroot}${prefix}/bin
+    post-destroot {
+        if {${os.platform} eq "darwin"} {
+            xinstall -m 755 ${filespath}/mimalloc-darwin.sh ${destroot}${prefix}/bin/mimalloc.sh
+        } else {
+            xinstall -m 755 ${filespath}/mimalloc.sh ${destroot}${prefix}/bin
+        }
+        reinplace "s|@PREFIX@|${prefix}|g" ${destroot}${prefix}/bin/mimalloc.sh
     }
-    reinplace "s|@PREFIX@|${prefix}|g" ${destroot}${prefix}/bin/mimalloc.sh
-}
 
-test.run            yes
+    test.run        yes
+} else {
+    platform darwin {
+        PortGroup   legacysupport 1.1 
+        legacysupport.newest_darwin_requires_legacy 15
+    }
+
+    github.setup    daanx mimalloc-bench 6e4bbc7feaf51e3e94aa7a470a535a22e16e1d02
+    distname        ${subport}-git
+    version         1.0.0.318
+
+    description     benchmarks for port:mimalloc
+    long_description \
+                    This port contains a benchmark suite for port:mimalloc, comparing \
+                    its performance to the system allocator and potentially to the \
+                    allocators provided by port:jemalloc, port:hoard and port:onetbb \
+                    Timing is obtained through port:gtime . \n\
+                    NB: this port is not supposed to be installed\; run the benchmarks \
+                    via `port -v test ${subport}`. This will raise a bogus error in case \
+                    of succesfull completion\; this is so the test phase can be executed \
+                    multiple times.
+    cmake.source_dir \
+                    ${worksrcpath}/bench
+    depends_lib     port:mimalloc \
+                    port:gtime
+    test.run        yes
+
+    set pdfdoc      large.pdf
+
+    variant gs description {run a benchmark using port:ghostscript} {
+        depends_lib-append \
+                    port:ghostscript
+    }
+
+    variant jemalloc description {compare with the jemalloc allocator} {
+        depends_lib-append \
+                    port:jemalloc
+    }
+
+    variant tbbmalloc description {compare with the tbbmalloc allocator} {
+        depends_lib-append \
+                    port:onetbb
+    }
+
+    variant hoard description {compare with the hoard allocator} {
+        depends_lib-append \
+                    port:hoard
+    }
+
+    if {${os.platform} eq "darwin"} {
+        set INSERT DYLD_INSERT_LIBRARIES
+        set lext "dylib"
+    } else {
+        set INSERT LD_PRELOAD
+        set lext "so"
+    }
+
+    proc output {{allocator "malloc"}} {
+        return "-v -o ${allocator}.log -a"
+    }
+
+    proc bench {command} {
+        global build.dir prefix os.platform INSERT lext
+        ui_msg "--->   Timing command: gtime ${command}"
+        # set bname [file tail [lindex [split ${command}] 0]]
+        # set output "-v -o ${bname}.log"
+        system -W ${build.dir} "gtime [output malloc] ${command} | tee -a malloc.log"
+        ui_msg "--->   Timing command using mimalloc: gtime env ${INSERT}=${prefix}/lib/libmimalloc.${lext} ${command}"
+        system -W ${build.dir} "gtime [output mimalloc] env ${INSERT}=${prefix}/lib/libmimalloc.${lext} ${command} | tee -a mimalloc.log"
+
+        if {[variant_isset jemalloc]} {
+            ui_msg "--->   Timing command using jemalloc: gtime env ${INSERT}=${prefix}/lib/libjemalloc.${lext} ${command}"
+            system -W ${build.dir} "gtime [output jemalloc] env ${INSERT}=${prefix}/lib/libjemalloc.${lext} ${command}| tee -a jemalloc.log"
+        }
+
+        if {[variant_isset tbbmalloc]} {
+            ui_msg "--->   Timing command using tbbmalloc: gtime env ${INSERT}=${prefix}/libexec/onetbb/lib/libtbbmalloc.${lext} ${command}"
+            system -W ${build.dir} "gtime [output tbbmalloc] env ${INSERT}=${prefix}/libexec/onetbb/lib/libtbbmalloc.${lext} ${command} | tee -a tbbmalloc.log"
+        }
+
+        if {[variant_isset hoard]} {
+            ui_msg "--->   Timing command using hoard: gtime env ${INSERT}=${prefix}/lib/libhoard.${lext} ${command}"
+            system -W ${build.dir} "gtime [output hoard] env ${INSERT}=${prefix}/lib/libhoard.${lext} ${command} | tee -a hoard.log"
+        }
+
+        # puts "------------------- ${bname}.log ----------------------"
+        # system -W ${build.dir} "cat ${bname}.log"
+        puts "-------------------------------------------------------"
+    }
+
+    pre-test {
+        if {[variant_isset gs] && ![file exists ${build.dir}/${pdfdoc}]} {
+            curl fetch --remote-time --progress ui_progress_download \
+                "https://raw.githubusercontent.com/geekaaron/Resources/master/resources/Writing_a_Simple_Operating_System--from_Scratch.pdf" \
+                ${build.dir}/${pdfdoc}
+        }
+    }
+    test {
+        file delete -force ${build.dir}/malloc.log
+        file delete -force ${build.dir}/mimalloc.log
+        foreach J {jemalloc tbbmalloc hoard} {
+            if {[variant_isset ${J}]} {
+                file delete -force ${build.dir}/${J}.log
+            } elseif {[file exists ${build.dir}/${J}.log]} {
+                ui_warn "Variant ${J} not set; preserving ${J}.log"
+            }
+        }
+
+        bench "./glibc-simple 16"
+        bench "./glibc-thread 512"
+        if {[variant_isset gs]} {
+            bench "${prefix}/bin/gs -q -dBATCH -dNODISPLAY ${pdfdoc} ${pdfdoc} ${pdfdoc}"
+        }
+
+        foreach J {malloc mimalloc jemalloc tbbmalloc hoard} {
+            if {[file exists ${build.dir}/${J}.log]} {
+                puts "------------------- ${J}.log ----------------------"
+                system -W ${build.dir} "cat ${J}.log"
+                puts "-------------------------------------------------------"
+            }
+        }
+
+    }
+    post-test {
+        ui_error "No error occurred!"
+        return -code error "The error return is just so you can launch the benchmark as often as you wish"
+    }
+}
