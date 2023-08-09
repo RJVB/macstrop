@@ -54,9 +54,9 @@ if {${subport} eq ${name}} {
         legacysupport.newest_darwin_requires_legacy 15
     }
 
-    github.setup    daanx mimalloc-bench 6e4bbc7feaf51e3e94aa7a470a535a22e16e1d02
+    github.setup    daanx mimalloc-bench 4efabd07da55e21ff336b0031fe531a34d05d0ff
     distname        ${subport}-git
-    version         1.0.0.318
+    version         1.0.0.320
 
     description     benchmarks for port:mimalloc
     long_description \
@@ -137,29 +137,59 @@ if {${subport} eq ${name}} {
         puts "-------------------------------------------------------"
     }
 
+    set tclinterp_mp [lindex [glob ${prefix}/libexec/macports/bin/tclsh*] 0]
+
     pre-test {
         if {[variant_isset gs] && ![file exists ${build.dir}/${pdfdoc}]} {
             curl fetch --remote-time --progress ui_progress_download \
                 "https://raw.githubusercontent.com/geekaaron/Resources/master/resources/Writing_a_Simple_Operating_System--from_Scratch.pdf" \
                 ${build.dir}/${pdfdoc}
         }
-    }
-    test {
-        file delete -force ${build.dir}/malloc.log
-        file delete -force ${build.dir}/mimalloc.log
-        foreach J {jemalloc tbbmalloc hoard} {
-            if {[variant_isset ${J}]} {
-                file delete -force ${build.dir}/${J}.log
-            } elseif {[file exists ${build.dir}/${J}.log]} {
-                ui_warn "Variant ${J} not set; preserving ${J}.log"
-            }
-        }
+       ui_msg "Pre-heating the rev-upgrade benchmark"
+       system -W ${build.dir} "${filespath}/bench/port-silent.sh rev-upgrade"
+       ui_msg "Pre-heating git benchmark"
+       system -W ${worksrcpath} "${prefix}/bin/git gc --aggressive --prune=now"
 
+       file delete -force ${build.dir}/malloc.log
+       file delete -force ${build.dir}/mimalloc.log
+       ui_msg "Timing results will be available in malloc.log and mimalloc.log"
+       foreach J {jemalloc tbbmalloc hoard} {
+           if {[variant_isset ${J}]} {
+               file delete -force ${build.dir}/${J}.log
+             ui_msg "Additional timings: ${J}.log"
+           } elseif {[file exists ${build.dir}/${J}.log]} {
+               ui_warn "Variant ${J} not set; preserving ${J}.log"
+           }
+       }
+    }
+
+    test {
         bench "./glibc-simple 16"
         bench "./glibc-thread 512"
+        bench "./cfrac 17545186520507317056371138836327483792789528"
         if {[variant_isset gs]} {
             bench "${prefix}/bin/gs -q -dBATCH -dNODISPLAY ${pdfdoc} ${pdfdoc} ${pdfdoc}"
         }
+        bench "${filespath}/bench/port-silent.sh rev-upgrade"
+        bench "${tclinterp_mp} ${filespath}/bench/tclbench.tcl"
+        bench "${prefix}/bin/git -C ${worksrcpath} gc --quiet --aggressive --prune=now"
+
+        bench "./cache-thrash 1 2000 1 2000000 ${build.jobs}"
+        if {${build.jobs} > 1} {
+            bench "./cache-thrash ${build.jobs} 2000 1 2000000 ${build.jobs}"
+        }
+        bench "./cache-scratch 1 3000 1 2000000 ${build.jobs}"
+        if {${build.jobs} > 1} {
+            bench "./cache-scratch ${build.jobs} 3000 1 2000000 ${build.jobs}"
+        }
+        bench "./espresso ../${distname}/bench/espresso/largest.espresso"
+        bench "./larson 5 8 2000 5000 100 4141 ${build.jobs}"
+        bench "./larson-sized 5 8 2000 5000 100 4141 ${build.jobs}"
+        bench "./xmalloc-test -w ${build.jobs} -t 5 -s 64"
+        bench "./malloc-large"
+        bench "./mleak 50"
+        bench "./rptest ${build.jobs} 0 1 2 500 1000 100 8 16000"
+        bench "./mstress ${build.jobs} 50 100"
 
         foreach J {malloc mimalloc jemalloc tbbmalloc hoard} {
             if {[file exists ${build.dir}/${J}.log]} {
@@ -170,6 +200,7 @@ if {${subport} eq ${name}} {
         }
 
     }
+
     post-test {
         ui_error "No error occurred!"
         return -code error "The error return is just so you can launch the benchmark as often as you wish"
