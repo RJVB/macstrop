@@ -109,6 +109,26 @@ if {${os.platform} eq "darwin"} {
     }
 }
 
+# append the arguments in ${flags} to the option variable(s) in ${vars}
+# LTO.flags_append configure.cflags "a b c"
+# LTO.flags_append {configure.cflags configure.cxxflags} "a b c"
+proc LTO.flags_append {vars flags} {
+    foreach v ${vars} {
+        foreach f ${flags} {
+            ${v}-append ${f}
+        }
+    }
+}
+
+# custom version for configure.*flags option vars
+proc LTO.configure.flags_append {vars flags} {
+    foreach v ${vars} {
+        foreach f ${flags} {
+            configure.${v}-append ${f}
+        }
+    }
+}
+
 # out-of-line implementation so changes are made *now*.
 # Qt5 has its own mechanism to set LTO flags so don't do anything
 # if we end up being loaded for a build of Qt5 itself.
@@ -139,36 +159,34 @@ if {[variant_enabled LTO] && ![info exists building_qt5]} {
         }
         ui_debug "LTO: setting LTO compiler and linker option(s) \"${lto_flags}\""
         if {![variant_isset universal] || [tbool LTO_supports_i386]} {
-            configure.cflags-append         ${lto_flags}
-            configure.cxxflags-append       ${lto_flags}
-            configure.objcflags-append      ${lto_flags}
-            configure.objcxxflags-append    ${lto_flags}
+            LTO.configure.flags_append      {cflags \
+                                            cxxflags \
+                                            objcflags \
+                                            objcxxflags} \
+                                            ${lto_flags}
             # ${configure.optflags} is a list, and that can lead to strange effects
             # in certain situations if we don't treat it as such here.
-            foreach opt ${configure.optflags} {
-                configure.ldflags-append    ${opt}
-            }
-            configure.ldflags-append        ${lto_flags}
+            LTO.configure.flags_append      ldflags "${configure.optflags} ${lto_flags}"
         } elseif {${build_arch} ne "i386"} {
             if {[info exists merger_configure_cflags(x86_64)]} {
-                set merger_configure_cflags(x86_64) "{*}$merger_configure_cflags(x86_64) ${lto_flags}"
+                set merger_configure_cflags(x86_64) "{*}$merger_configure_cflags(x86_64) {*}${lto_flags}"
             } else {
-                set merger_configure_cflags(x86_64) "${lto_flags}"
+                set merger_configure_cflags(x86_64) "{*}${lto_flags}"
             }
             if {[info exists merger_configure_cxxflags(x86_64)]} {
-                set merger_configure_cxxflags(x86_64) "{*}$merger_configure_cxxflags(x86_64) ${lto_flags}"
+                set merger_configure_cxxflags(x86_64) "{*}$merger_configure_cxxflags(x86_64) {*}${lto_flags}"
             } else {
-                set merger_configure_cxxflags(x86_64) "${lto_flags}"
+                set merger_configure_cxxflags(x86_64) "{*}${lto_flags}"
             }
             if {[info exists merger_configure_objcflags(x86_64)]} {
-                set merger_configure_objcflags(x86_64) "{*}$merger_configure_objcflags(x86_64) ${lto_flags}"
+                set merger_configure_objcflags(x86_64) "{*}$merger_configure_objcflags(x86_64) {*}${lto_flags}"
             } else {
-                set merger_configure_objcflags(x86_64) "${lto_flags}"
+                set merger_configure_objcflags(x86_64) "{*}${lto_flags}"
             }
             if {[info exists merger_configure_ldflags(x86_64)]} {
-                set merger_configure_ldflags(x86_64) "{*}$merger_configure_ldflags(x86_64) ${lto_flags}"
+                set merger_configure_ldflags(x86_64) "{*}$merger_configure_ldflags(x86_64) {*}${lto_flags}"
             } else {
-                set merger_configure_ldflags(x86_64) "${lto_flags}"
+                set merger_configure_ldflags(x86_64) "{*}${lto_flags}"
             }
             # ${configure.optflags} is a list, and that can lead to strange effects
             # in certain situations if we don't treat it as such here.
@@ -271,11 +289,12 @@ if {[variant_isset cpucompat]} {
 }
 pre-configure {
     if {[variant_isset cputuned] || [variant_isset cpucompat]} {
-        configure.cflags-append     {*}${LTO.cpuflags}
-        configure.cxxflags-append   {*}${LTO.cpuflags}
-        configure.objcflags-append  {*}${LTO.cpuflags}
-        configure.objcxxflags-append  {*}${LTO.cpuflags}
-        configure.ldflags-append    {*}${LTO.cpuflags}
+        LTO.configure.flags_append  {cflags \
+                                    cxxflags \
+                                    objcflags \
+                                    objcxxflags \
+                                    ldflags} \
+                                    ${LTO.cpuflags}
     }
 }
 
@@ -283,11 +302,13 @@ if {[info exists LTO_needs_pre_build]} {
     pre-build {
         if {[variant_isset cputuned] || [variant_isset cpucompat]} {
 		  ui_debug "LTO: Appending CPU flags to compiler/linker flags: \"${LTO.cpuflags}\""
-            configure.cflags-append     {*}${LTO.cpuflags}
-            configure.cxxflags-append   {*}${LTO.cpuflags}
-            configure.objcflags-append  {*}${LTO.cpuflags}
-            configure.objcxxflags-append  {*}${LTO.cpuflags}
-            configure.ldflags-append    {*}${LTO.cpuflags}
+            LTO.configure.flags_append \
+                                    {cflags \
+                                    cxxflags \
+                                    objcflags \
+                                    objcxxflags \
+                                    ldflags} \
+                                    ${LTO.cpuflags}
         }
     }
 }
