@@ -72,6 +72,11 @@ if {${subport} eq ${name}} {
                     ${worksrcpath}/bench
     depends_lib     port:mimalloc \
                     port:gtime
+    platform darwin {
+        depends_lib-append \
+                    port:afsctool \
+                    port:gzip
+    }
     test.run        yes
 
     set pdfdoc      large.pdf
@@ -110,7 +115,7 @@ if {${subport} eq ${name}} {
     }
 
     proc output {{allocator "malloc"}} {
-        return "-v -o ${allocator}.log -a"
+        return "-v -o ../out/${allocator}.log -a"
     }
 
     proc bench {command} {
@@ -144,28 +149,44 @@ if {${subport} eq ${name}} {
 
     set tclinterp_mp [lindex [glob ${prefix}/libexec/macports/bin/tclsh*] 0]
 
+    set outdir ${build.dir}/../out
+
     pre-test {
+        xinstall -m 755 -d ${outdir}
+
         if {[variant_isset gs] && ![file exists ${build.dir}/${pdfdoc}]} {
             curl fetch --remote-time --progress ui_progress_download \
                 "https://raw.githubusercontent.com/geekaaron/Resources/master/resources/Writing_a_Simple_Operating_System--from_Scratch.pdf" \
                 ${build.dir}/${pdfdoc}
         }
-       ui_msg "Pre-heating the rev-upgrade benchmark"
-       system -W ${build.dir} "${filespath}/bench/port-silent.sh rev-upgrade"
-       ui_msg "Pre-heating git benchmark"
-       system -W ${worksrcpath} "${prefix}/bin/git gc --aggressive --prune=now"
+        ui_msg "Pre-heating the rev-upgrade benchmark"
+        system -W ${build.dir} "${filespath}/bench/port-silent.sh rev-upgrade"
+        ui_msg "Pre-heating git benchmark"
+        system -W ${worksrcpath} "${prefix}/bin/git gc --aggressive --prune=now"
+        platform darwin {
+            if {![file exists ${build.dir}/aclImdb_v1.tar]} {
+                ui_msg "Pre-heating HFS compression benchmark"
+                # get the "IMDB Large Movie Review Dataset"
+                # See http://ai.stanford.edu/~amaas/data/sentiment/ for reference and publication
+                curl fetch --remote-time --progress ui_progress_download \
+                    "http://ai.stanford.edu/~amaas/data/sentiment/aclImdb_v1.tar.gz" \
+                    ${build.dir}/aclImdb_v1.tar.gz
+                system -W ${build.dir} \
+                    "gunzip aclImdb_v1.tar.gz"
+            }
+        }
 
-       file delete -force ${build.dir}/malloc.log
-       file delete -force ${build.dir}/mimalloc.log
-       ui_msg "Timing results will be available in malloc.log and mimalloc.log"
-       foreach J {jemalloc tbbmalloc hoard} {
-           if {[variant_isset ${J}]} {
-               file delete -force ${build.dir}/${J}.log
-             ui_msg "Additional timings: ${J}.log"
-           } elseif {[file exists ${build.dir}/${J}.log]} {
-               ui_warn "Variant ${J} not set; preserving ${J}.log"
-           }
-       }
+        file delete -force ${outdir}/malloc.log
+        file delete -force ${outdir}/mimalloc.log
+        ui_msg "Timing results will be available in malloc.log and mimalloc.log"
+        foreach J {jemalloc tbbmalloc hoard} {
+            if {[variant_isset ${J}]} {
+                file delete -force ${outdir}/${J}.log
+                ui_msg "Additional timings: ${J}.log"
+            } elseif {[file exists ${outdir}/${J}.log]} {
+                ui_warn "Variant ${J} not set; preserving ${J}.log"
+            }
+        }
     }
 
     test {
@@ -179,7 +200,10 @@ if {${subport} eq ${name}} {
         bench "${tclinterp_mp} ${filespath}/bench/tclbench.tcl"
         bench "${prefix}/bin/git -C ${worksrcpath} gc --quiet --aggressive --prune=now"
         if {[variant_isset sqlite]} {
-            bench "python27 -OO ${filespath}/bench/sqlite_benchmarks.py"
+            bench "python2.7 -OO ${filespath}/bench/sqlite_benchmarks.py"
+        }
+        platform darwin {
+            bench "${filespath}/bench/afscompress.sh ${build.jobs}"
         }
 
         bench "./cache-thrash 1 2000 1 2000000 ${build.jobs}"
@@ -200,9 +224,9 @@ if {${subport} eq ${name}} {
         bench "./mstress ${build.jobs} 50 100"
 
         foreach J {malloc mimalloc jemalloc tbbmalloc hoard} {
-            if {[file exists ${build.dir}/${J}.log]} {
+            if {[file exists ${outdir}/${J}.log]} {
                 puts "------------------- ${J}.log ----------------------"
-                system -W ${build.dir} "cat ${J}.log"
+                system -W ${outdir} "cat ${J}.log"
                 puts "-------------------------------------------------------"
             }
         }
