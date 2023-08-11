@@ -28,6 +28,7 @@ proc printUsage {} {
     puts "  -n    list files that are newer (can be combined with -v)"
     puts "  -N    like -n but do an `ls -l` of the compared files (the new file will show up as \".${macports::prefix}/XXX\")"
     puts "  -q    quiet mode"
+    puts "  -t    currently ignored"
     puts "  -T    take datestamp of newer but unchanged headerfiles (under a /include/ directory)"
     puts "        from the installed files (requires -n)"
     puts "  -v    list new files (inVerse mode)"
@@ -43,9 +44,9 @@ proc printUsage {} {
 proc trAccept {path} {
     set ftype [file type ${path}]
     if {![string equal ${ftype} "directory"]} {
-        ui_debug "${path} : accepting ${ftype}"
         return 1
     } else {
+        ui_debug "${path} : skipping ${ftype}"
         return 0
     }
 }
@@ -181,6 +182,24 @@ while {[string index [lindex $::argv 0] 0] == "-" } {
         }
     }
     set ::argv [lrange $::argv 1 end]
+}
+
+# taken from the `port` driver:
+proc url_to_portname {url} {
+    # Save directory and restore the directory, since mportopen changes it
+    set savedir [pwd]
+    set portname ""
+    if {[catch {set ctx [mportopen $url]} result]} {
+        ui_debug "$::errorInfo"
+        ui_error "Can't map the URL '$url' to a port description file (\"${result}\")."
+        ui_msg "Please verify that the directory and portfile syntax are correct."
+    } else {
+        array set portinfo [mportinfo $ctx]
+        set portname $portinfo(name)
+        mportclose $ctx
+    }
+    cd $savedir
+    return $portname
 }
 
 proc port_workdir {portname} {
@@ -332,6 +351,15 @@ proc fileEqual {file1 file2} {
     }
 }
 
+proc chworkdir {portName pWD} {
+    ui_msg "Checking port:${portName}: ${pWD}"
+    if {[file exists "${pWD}/destroot"]} {
+        cd "${pWD}/destroot"
+        return 1
+    }
+    return 0
+}
+
 if {[catch {mportinit ui_options global_options global_variations} result]} {
     puts \$::errorInfo
         fatal "Failed to initialise MacPorts, \$result"
@@ -357,36 +385,45 @@ for {set i 0} {${i} < ${argc}} {incr i} {
     set OK 0
     if {[file exists ${arg}] && [file type ${arg}] eq "directory"} {
         set narg "[lindex $::argv [expr ${i} + 1]]"
-        if {${narg} ne "" && (![file exists ${narg}] || [file type ${narg}] ne "directory")} {
+        if {[file exists ${arg}/Portfile]} {
+            set portDir [file normalize ${arg}]
+            # from what I understand, [mportlookup] should support portDir or file://${portDir}
+            # as well, but that doesn't work in this script?!
+            # Just fall back to [url_to_portname], adapted from the `port` driver itself.
+            set _WD_port [url_to_portname "file://${portDir}"]
+            set portName ${_WD_port}
+            set pWD [macports::getportworkpath_from_portdir ${portDir} ${_WD_port}]
+            set OK [chworkdir ${portName} ${pWD}]
+        } elseif {${narg} ne "" && (![file exists ${narg}] || [file type ${narg}] ne "directory")} {
+            # user provided a name for the (installed) port to compare to
             set portName ${narg}
             set _WD_port ${portName}
             incr i
         } else {
             set portName ""
         }
-        if {!${missing} || ${portName} ne ""} {
-            # we're pointed to a directory
-            set pWD ${arg}
-            cd ${pWD}
-            set OK 1
-            if {${portName} ne ""} {
-                ui_msg "Checking in directory ${pWD}, comparing to port:${portName}"
+        # pWD will be set when ${arg} is a portDir, which we treat as equivalent to a portName
+        if {${pWD} eq ""} {
+            if {!${missing} || ${portName} ne ""} {
+                # we're pointed to a directory
+                set pWD ${arg}
+                cd ${pWD}
+                set OK 1
+                if {${portName} ne ""} {
+                    ui_msg "Checking in directory ${pWD}, comparing to port:${portName}"
+                } else {
+                    ui_msg "Checking in directory ${pWD}"
+                }
             } else {
-                ui_msg "Checking in directory ${pWD}"
+                ui_error "\"Missing\" mode needs a portname, not a destroot directory!"
+                exit 2
             }
-        } else {
-            ui_error "\"Missing\" mode needs a portname, not a destroot directory!"
-            exit 2
         }
     } elseif {${_WD_port} ne ${arg}} {
         set portName ${arg}
         set _WD_port ${portName}
         set pWD [port_workdir ${portName}]
-        ui_msg "Checking port:${portName}: ${pWD}"
-        if {[file exists "${pWD}/destroot"]} {
-            cd "${pWD}/destroot"
-            set OK 1
-        }
+        set OK [chworkdir ${portName} ${pWD}]
     }
     if {${pWD} ne ""} {
         if {${OK}} {
