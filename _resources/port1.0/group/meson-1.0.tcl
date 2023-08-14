@@ -31,8 +31,9 @@ depends_skip_archcheck-append \
                             meson \
                             ninja
 
-# TODO: "--buildtype plain" tells Meson not to add its own flags to the command line. This gives the packager total control on used flags.
+# TODO: --buildtype=plain tells Meson not to add its own flags to the command line. This gives the packager total control on used flags.
 default configure.cmd       {${prefix}/bin/meson}
+default configure.pre_args  {setup --prefix=${prefix}}
 default configure.post_args {[list [option source_dir] "."]}
 # from mcalhoun's commit to make this PG compatible with muniversal:
 ## DO WE NEED THIS?! (or is using `source_dir` good enough?)
@@ -69,13 +70,13 @@ proc meson::get_post_args {} {
     if {[info exists muniversal.build_arch]} {
         # muniversal 1.1 PG is being used
         if {[option muniversal.is_cross.[option muniversal.build_arch]]} {
-            return "${configure.dir} ${build.dir} --cross-file [option muniversal.build_arch]-darwin"
+            return "${configure.dir} ${build.dir} --cross-file=[option muniversal.build_arch]-darwin"
         } else {
             return "${configure.dir} ${build.dir}"
         }
     } elseif {[info exists muniversal.current_arch]} {
         # muniversal 1.0 PG is being used
-        return "${configure.dir} ${build_dir}-${muniversal.current_arch} --cross-file ${muniversal.current_arch}-darwin"
+        return "${configure.dir} ${build_dir}-${muniversal.current_arch} --cross-file=${muniversal.current_arch}-darwin"
     } else {
         return "${configure.dir} ${build_dir}"
     }
