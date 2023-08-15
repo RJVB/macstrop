@@ -2,6 +2,7 @@
 
 PortSystem          1.0
 PortGroup           gitlab 1.0
+PortGroup           muniversal 1.0
 platform darwin {
     PortGroup       legacysupport 1.0
 }
@@ -60,7 +61,58 @@ pre-patch {
 }
 
 if {${os.platform} eq "darwin"} {
+    variant autoconf_libversions description {set the same library versions as the autoconf build system \
+        did in older versions of this port.\
+        Select this variant if you don't want to have to rebuild all variants.} {}
+
     patchfiles      patch-src__polkitbackend__meson.build-define-darwin-c-source.diff
+    # thanks to https://stackoverflow.com/a/71807139/1460868 :
+    patchfiles-append \
+                    patch-mach-process-starttime.diff
+    patchfiles-append \
+                    patch-fix-noconnect-crash.diff
+
+    if {[variant_isset autoconf_libversions]} {
+        depends_build-append \
+                    port:cctools
+        patchfiles-append \
+                    patch-autoconf-libversions.diff
+        post-destroot {
+            # convert the libraries to how the autoconf buildsystem made them:
+            file rename ${destroot}${prefix}/lib/libpolkit-gobject-1.1.dylib \
+                ${destroot}${prefix}/lib/libpolkit-gobject-1.0.dylib
+            file rename ${destroot}${prefix}/lib/libpolkit-agent-1.1.dylib \
+                ${destroot}${prefix}/lib/libpolkit-agent-1.0.dylib
+            ln -s -f libpolkit-gobject-1.0.dylib ${destroot}${prefix}/lib/libpolkit-gobject-1.dylib
+            ln -s -f libpolkit-agent-1.0.dylib ${destroot}${prefix}/lib/libpolkit-agent-1.dylib
+            # also make the library available the way the typelibs would probably expect it:
+            ln -s -f libpolkit-gobject-1.0.dylib ${destroot}${prefix}/lib/libpolkit-gobject-1.1.dylib
+            ln -s -f libpolkit-agent-1.0.dylib ${destroot}${prefix}/lib/libpolkit-agent-1.1.dylib
+            system "install_name_tool -id ${prefix}/lib/libpolkit-gobject-1.0.dylib \
+                ${destroot}${prefix}/lib/libpolkit-gobject-1.0.dylib"
+            system "install_name_tool -id ${prefix}/lib/libpolkit-agent-1.0.dylib \
+                ${destroot}${prefix}/lib/libpolkit-agent-1.0.dylib"
+            system "install_name_tool -change ${prefix}/lib/libpolkit-gobject-1.1.dylib \
+                ${prefix}/lib/libpolkit-gobject-1.0.dylib \
+                ${destroot}${prefix}/lib/libpolkit-agent-1.0.dylib"
+            # convert the executables too
+            foreach b {bin/pkcheck bin/pkaction bin/pkexec bin/pkttyagent lib/polkit-1/polkit-agent-helper-1 lib/polkit-1/polkitd} {
+                system "install_name_tool -change ${prefix}/lib/libpolkit-gobject-1.1.dylib \
+                    ${prefix}/lib/libpolkit-gobject-1.0.dylib \
+                    ${destroot}${prefix}/${b}"
+                system "install_name_tool -change ${prefix}/lib/libpolkit-agent-1.1.dylib \
+                    ${prefix}/lib/libpolkit-agent-1.0.dylib \
+                    ${destroot}${prefix}/${b}"
+            }
+            if {[geteuid] == 0} {
+                # ensure the ownership and (setuid!) permissions on these:
+                file attributes ${destroot}${prefix}/bin/pkexec -owner root
+                file attributes ${destroot}${prefix}/lib/polkit-1/polkit-agent-helper-1 -owner root
+                file attributes ${destroot}${prefix}/bin/pkexec -permissions 04755
+                file attributes ${destroot}${prefix}/lib/polkit-1/polkit-agent-helper-1 -permissions 04755
+            }
+        }
+    }
 
     configure.args-append \
                     -Dpolkitd_user=polkitd \
@@ -71,6 +123,20 @@ if {${os.platform} eq "darwin"} {
                     -Dgtk_doc=false \
                     -Djs_engine=duktape \
                     -Dintrospection=true
+
+    merger_arch_compiler yes
+
+    # gobject-introspection uses g-ir-scanner, which uses $CC and $CFLAGS from env
+    # setting these is the only reliable way to make sure we get a universal version
+    # of this part of the build.
+    if {${universal_possible} && [variant_isset universal]} {
+        foreach arch ${configure.universal_archs} {
+            lappend merger_build_env(${arch})  "CC=${configure.cc}"
+            lappend merger_build_env(${arch})  "CFLAGS=${configure.cflags} -arch ${arch}"
+        }
+    }
+
+    destroot.violate_mtree yes
 } else {
     # align with current Ubuntu 14.04 norms:
     configure.args-append \
