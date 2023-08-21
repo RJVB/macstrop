@@ -1,15 +1,24 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 
 PortSystem          1.0
-PortGroup           muniversal 1.0
+PortGroup           muniversal 1.1
+PortGroup           openssl 1.0
+platform darwin {
+    PortGroup       legacysupport 1.1
+}
 PortGroup           preserve_runtime_libraries 1.0
 PortGroup           LTO 1.0
 
+platform darwin {
+    # botan needs clock_gettime & getentropy which are missing until osx 10.11 (=darwin 15)
+    legacysupport.newest_darwin_requires_legacy 15
+}
+
 name                botan
-version             2.10.0 ; revision 1
+version             2.19.3
 set branch          [join [lrange [split ${version} .] 0 1] .]
 categories          security devel
-platforms           darwin
+platforms           darwin linux
 maintainers         nomaintainer
 license             BSD
 description         cryptographic algorithms and formats library in C++
@@ -21,37 +30,68 @@ long_description    Botan is a C++ library implementing a variety of \
 homepage            https://botan.randombit.net
 master_sites        ${homepage}/releases/
 distname            Botan-${version}
-extract.suffix      .tgz
+use_xz              yes
 
-checksums           rmd160  f3a4c1b963b47d543430f8705d7db87c64e013b9 \
-                    sha256  88481997578c27924724fea76610d43d9f59c99edfe561d41803bbc98871ad31
-#                     size    7240021
+checksums           rmd160  a665f828f4aede202a50c96334c128460625ff0a \
+                    sha256  dae047f399c5a47f087db5d3d9d9e8f11ae4985d14c928d71da1aff801802d55
+#                     size    6105896
 
-depends_build       port:python27
-depends_lib         path:lib/libssl.dylib:openssl port:zlib port:bzip2
+depends_build       port:python39
+depends_lib         port:bzip2 \
+                    port:lzma \
+                    port:sqlite3 \
+                    port:zlib
 
 # respect MacPorts configure values
-patchfiles-append   patch-compiler_flags.diff \
-                    patch-fix-install-with-destdir.diff \
-                    patch-mapanon.diff
+patchfiles-append   patch-compiler_flags.diff
+
 post-patch {
     reinplace -W ${worksrcpath}/src/build-data/cc \
         "s|__MACPORTS_CXX_STDLIB__|${configure.cxx_stdlib}|g" \
         clang.txt
 }
 
-
+compiler.cxx_standard   2011
 # botan uses thread_local, which is not supported in Xcode < 8
-compiler.blacklist-append {clang < 800}
+compiler.thread_local_storage   yes
 
-if {[tbool configureccache]} {
+if {[tbool configure.ccache] || [tbool configureccache]} {
     configure.args-append   --cc-bin="${prefix}/bin/ccache ${configure.cxx}"
 } else {
     configure.args-append   --cc-bin=${configure.cxx}
 }
 
-configure.cmd       ${prefix}/bin/python2.7 ./configure.py
-configure.args-append --docdir=share/doc --with-openssl --with-zlib --with-bzip2
+set python_branch     3.9
+configure.cmd         ${prefix}/bin/python${python_branch} ./configure.py
+configure.args-append --docdir=share/doc \
+                      --system-cert-bundle=${prefix}/share/curl/curl-ca-bundle.crt \
+                      --with-bzip2 \
+                      --with-lzma \
+                      --with-sqlite3 \
+                      --with-zlib
+
+# List of all intrinsics that can be disabled
+set intrinsics {
+    sse2
+    ssse3
+    sse4.1
+    sse4.2
+    avx2
+    bmi2
+    rdrand
+    rdseed
+    aes-ni
+    sha-ni
+    altivec
+    neon
+    armv8crypto
+    powercrypto
+}
+
+# Disable all the intrinsics
+foreach elem $intrinsics {
+    configure.args-append --disable-$elem
+}
 
 if {[string match *clang* ${configure.compiler}]} {
     configure.args-append --cc=clang
@@ -59,46 +99,40 @@ if {[string match *clang* ${configure.compiler}]} {
     configure.args-append --cc=gcc
 }
 
-if {${os.platform} eq "darwin"} {
-    if {${os.major} < 16} {
-        # getentropy() appeared in OSX 10.12
-        configure.args-append --without-os-features=getentropy
-    }
-    if {${os.major} <= 13} {
-        depends_lib-append    port:sqlite3
-        configure.args-append --disable-modules=certstor_system_macos \
-                              --with-sqlite3
-    }
-} else {
-    depends_lib-append    port:sqlite3
-    configure.args-append --with-sqlite3
+# no matching constructor for initialization of 'std::vector<CFStringRef>'
+if {${os.platform} eq "darwin" && ${os.major} <= 14} {
+    configure.args-append --disable-modules=certstor_system_macos
 }
 
-# Use the upstream default for both GCC and Clang (unless the user overrides it)
-configure.optflags
+# Upstream default for both GCC and Clang
+configure.optflags  -O3
+ui_msg ${configure.optflags}
 
 platform darwin { configure.args-append --os=darwin }
 
-# botan way of setting cpu type in build phase
-array set merger_configure_args {
-    ppc     --cpu=ppc
-    i386    --cpu=ia32
-    ppc64   --cpu=ppc64
-    x86_64  --cpu=amd64
+# Variant to re-enable use of intrinsics
+variant native description {Enable all intrinsics} {
+    foreach elem $intrinsics {
+        configure.args-delete --disable-$elem
+    }
 }
 
-if {![variant_isset universal]} {
-    configure.args-append $merger_configure_args(${build_arch})
-}
+configure.args.ppc     "--cpu=ppc   --cc-abi-flags='-arch ppc'"
+configure.args.i386    "--cpu=ia32  --cc-abi-flags='-arch i386'"
+configure.args.ppc64   "--cpu=ppc64 --cc-abi-flags='-arch ppc64'"
+configure.args.x86_64  "--cpu=amd64 --cc-abi-flags='-arch x86_64'"
+configure.args.arm64   "--cpu=arm64 --cc-abi-flags='-arch arm64'"
 
-# configure.py rejects this argument
-configure.universal_args-delete --disable-dependency-tracking
+# configure.py rejects --host
+triplet.add_host    {none}
 
 build.post_args-append -wk
+livecheck.regex     Botan-(${branch}\\.\[0-9.\]+)${extract.suffix}
 
 post-destroot {
+    xinstall -d ${destroot}${frameworks_dir}/Python.framework/Versions/${python_branch}/lib
+    move ${destroot}${prefix}/lib/python${python_branch} ${destroot}${frameworks_dir}/Python.framework/Versions/${python_branch}/lib/python${python_branch}
     # sic, "libbotan-1.10.dylib.*"!
-    preserve_libraries ${prefix}/lib "libbotan-1.10.*.dylib libbotan-1.10.dylib.* libbotan-1.10.so.* libbotan-2.10.*.dylib libbotan-2.10.so.*"
+    preserve_libraries ${prefix}/lib "libbotan-1.10.*.dylib libbotan-1.10.dylib.* libbotan-1.10.so.* \
+        libbotan-2.*.dylib libbotan-2.so.*"
 }
-
-livecheck.regex     Botan-(${branch}\\.\[0-9.\]+)${extract.suffix}
