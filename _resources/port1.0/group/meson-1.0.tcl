@@ -124,6 +124,18 @@ pre-configure {
     # no guarantee it won't ever if we do use the override trick).
     configure.pre_args-append \
                             --buildtype ${meson.build_type}
+    # the proper way to pass compiler/linker arguments, which we prefer not to use
+    # in universal mode as it is not (?!) possible to know what arch we're building
+    # for here in a pre-configure block.
+    if {!${universal_possible} || ![variant_isset universal]} {
+        configure.pre_args-append \
+                            "-Dc_args=\"${configure.cflags}" \
+                            "-Dcpp_args=\"${configure.cxxflags}\"" \
+                            "-Dobjc_args=\"${configure.objcflags}\"" \
+                            "-Dobjcpp_args=\"${configure.objcxxflags}\"" \
+                            "-Dc_link_args=\"${configure.ldflags}\"" \
+                            "-Dcpp_link_args=\"${configure.ldflags}\""
+    }
 }
 
 proc meson.save_configure_cmd {{save_log_too ""}} {
