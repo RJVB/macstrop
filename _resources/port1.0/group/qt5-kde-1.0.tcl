@@ -512,7 +512,7 @@ proc qt5.active_branch {{install_branch 5}} {
 ## a stubport to a (sub)port!
 set qt5.kde_stubports \
             {qtbase qtdeclarative qtserialbus qtserialport qtsensors \
-            qtquick1 qtwebchannel qtimageformats qtsvg qtmacextras \
+            qtquick1 qtwebchannel qtimageformats qtsvg qtmacextras qtx11extras \
             qtlocation qtxmlpatterns qtcanvas3d qtgraphicaleffects qtmultimedia \
             qtscript qt3d qtconnectivity qttools qtquickcontrols qtquickcontrols2 \
             qtenginio qtwebkit-examples qtwebsockets qttranslations mysql-plugin \

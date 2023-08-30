@@ -636,6 +636,14 @@ namespace eval qt5pg {
     #
     # qtwebkit: official support dropped in 5.6.0
     #           as of 5.9, still maintained by community
+    if {${os.platform} ne "darwin"} {
+        set qt5_component_lib(qtx11extras) {
+            5.2
+            6.0
+            lib/pkgconfig/Qt5X11Extras.pc
+            ""
+        }
+    }
 }
 
 ###########################################################################################
