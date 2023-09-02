@@ -129,12 +129,12 @@ pre-configure {
     # for here in a pre-configure block.
     if {!${universal_possible} || ![variant_isset universal]} {
         configure.pre_args-append \
-                            "-Dc_args=\"${configure.cflags}" \
-                            "-Dcpp_args=\"${configure.cxxflags}\"" \
-                            "-Dobjc_args=\"${configure.objcflags}\"" \
-                            "-Dobjcpp_args=\"${configure.objcxxflags}\"" \
-                            "-Dc_link_args=\"${configure.ldflags}\"" \
-                            "-Dcpp_link_args=\"${configure.ldflags}\""
+                            "-Dc_args=\"[join [split ${configure.cflags}] ,]\"" \
+                            "-Dcpp_args=\"[join [split ${configure.cxxflags}] ,]\"" \
+                            "-Dobjc_args=\"[join [split ${configure.objcflags}] ,]\"" \
+                            "-Dobjcpp_args=\"[join [split ${configure.objcxxflags}] ,]\"" \
+                            "-Dc_link_args=\"[join [split ${configure.ldflags}] ,]\"" \
+                            "-Dcpp_link_args=\"[join [split ${configure.ldflags}] ,]\""
     }
 }
 
