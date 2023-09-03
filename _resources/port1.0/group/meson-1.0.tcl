@@ -133,8 +133,6 @@ pre-configure {
                             "-Dcpp_args=\"[join [split ${configure.cxxflags}] ,]\"" \
                             "-Dobjc_args=\"[join [split ${configure.objcflags}] ,]\"" \
                             "-Dobjcpp_args=\"[join [split ${configure.objcxxflags}] ,]\"" \
-                            "-Dc_link_args=\"[join [split ${configure.ldflags}] ,]\"" \
-                            "-Dcpp_link_args=\"[join [split ${configure.ldflags}] ,]\""
     }
 }
 
