@@ -1033,7 +1033,7 @@ if {${kf5::includecounter} == 0} {
 
     # create a .macports-$subport-configure.cmd file containing the cmake invocation details
     if {![tbool kf5.no_configure_log]} {
-        cmake.save_configure_cmd "log too"
+        cmake.save_configure_cmd "install log"
     } else {
         cmake.save_configure_cmd
     }
