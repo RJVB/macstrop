@@ -180,6 +180,13 @@ proc cmake::build_dir {} {
     return [option cmake.source_dir]
 }
 
+option_proc cmake.build_type cmake::handle_build_type
+proc cmake::handle_build_type {option action args} {
+    if {${action} eq "set"} {
+	   ui_debug "Setting cmake.build_type to \"${args}\""
+    }
+}
+
 option_proc cmake.generator cmake::handle_generator
 proc cmake::handle_generator {option action args} {
     global cmake.generator destroot destroot.target build.cmd build.post_args
