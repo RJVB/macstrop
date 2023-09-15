@@ -1,10 +1,12 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
 PortSystem      1.0
 PortGroup       github 1.0
 set LTO.allow_ThinLTO no
 PortGroup       LTO 1.0
 
 github.setup    Ocl-dev ocl-icd fdde6677b21329432db8b481e2637cd10f7d3cb2
-version         2.2.3.112 ; revision 1
+version         2.2.3.112 ; revision 2 ;## NB changed below too!
 distname        ${name}-git
 
 fetch.type      git
@@ -19,9 +21,18 @@ long_description \
 
 depends_build-append \
                 port:autoconf port:automake port:libtool
+
 platform darwin {
+    revision    [expr ${revision} +1]
     depends_build-append \
-                port:xmlto
+                port:xmlto \
+                port:cctools
+    # This project builds libOpenCL.1.dylib but since it uses libtool that library
+    # will have the current&compatibility versions set to 2.0.0 . That cannot be
+    # fixed post-hoc so we need to decrease the version in the Makefile and then
+    # fix the filename and ID of the generated library in the post-destroot .
+    patchfiles-append \
+                patch-fix-library-cversions.diff
 }
 
 pre-configure {
@@ -33,14 +44,46 @@ pre-configure {
 configure.args-append \
                 --disable-silent-rules \
                 --enable-pthread-once \
-			 --enable-official-khronos-headers \
-			 --enable-custom-vendordir=${prefix}/etc/OpenCL/vendors \
-			 --enable-custom-layerdir=${prefix}/etc/OpenCL/layers \
-			 --disable-update-database
+                --enable-official-khronos-headers \
+                --enable-custom-vendordir=${prefix}/etc/OpenCL/vendors \
+                --enable-custom-layerdir=${prefix}/etc/OpenCL/layers \
+                --disable-update-database
 
 destroot.keepdirs \
                 ${destroot}${prefix}/etc/OpenCL/vendors \
                 ${destroot}${prefix}/etc/OpenCL/layers
+
+post-destroot {
+    # install our copy of the headers:
+    # (This could become a variant...)
+    file copy ${worksrcpath}/khronos-headers/CL ${destroot}${prefix}/include/
+    reinplace "s|Requires:|#Requires:|g" ${destroot}${prefix}/lib/pkgconfig/ocl-icd.pc
+
+    platform darwin {
+        # we changed the libtool library versioning, correct the side-effects of that:
+        file rename ${destroot}${prefix}/lib/libOpenCL.0.dylib ${destroot}${prefix}/lib/libOpenCL.1.dylib
+        system "install_name_tool -id ${prefix}/lib/libOpenCL.1.dylib ${destroot}${prefix}/lib/libOpenCL.1.dylib"
+        ln -sf libOpenCL.1.dylib ${destroot}${prefix}/lib/libOpenCL.dylib
+        # construct an OpenCL framework:
+        set fwdir ${prefix}/Library/Frameworks/OpenCL.framework
+        set Dfwdir ${destroot}${fwdir}
+        # we want to be as similar as possible to Apple's OpenCL framework so
+        # we don't do `set V [lindex [split ${version} .] 0]`
+        set V "A"
+        xinstall -m 755 -d ${Dfwdir}/Versions/${V}/Resources
+        ln -s ${V} ${Dfwdir}/Versions/Current
+        ln -s Versions/Current/Headers ${Dfwdir}/Headers
+        ln -s Versions/Current/Resources ${Dfwdir}/Resources
+        ln -s Versions/Current/OpenCL ${Dfwdir}/
+        file copy ${worksrcpath}/khronos-headers/CL ${Dfwdir}/Versions/${V}/Headers
+        file copy ${destroot}${prefix}/lib/libOpenCL.1.dylib ${Dfwdir}/Versions/${V}/OpenCL
+        system "install_name_tool -id ${fwdir}/Versions/${V}/OpenCL ${Dfwdir}/Versions/${V}/OpenCL"
+        xinstall -m 755 ${filespath}/Info.plist.in ${Dfwdir}/Versions/${V}/Resources/Info.plist
+        reinplace "s|@VERSION@|${version}|g" ${Dfwdir}/Versions/${V}/Resources/Info.plist
+        reinplace "s|@SHORTVERSION@|[join [lrange [split ${version} .] 0 1] .]|g" ${Dfwdir}/Versions/${V}/Resources/Info.plist
+        reinplace "s|@SUBPORT@|${subport}|g" ${Dfwdir}/Versions/${V}/Resources/Info.plist
+    }
+}
 
 post-activate {
     foreach i [glob -nocomplain /etc/OpenCL/vendors/*.icd] {
