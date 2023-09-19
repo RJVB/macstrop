@@ -113,10 +113,13 @@ pre-configure {
     # set a reasonable value for the requested optimisation level:
     if {[string match *-Ofast* "${configure.cflags} ${configure.cxxflags} ${configure.optflags}"]
         || [string match *-O3* "${configure.cflags} ${configure.cxxflags} ${configure.optflags}"]} {
+        ui_debug "Found -Ofast or -O3 in compiler flags -> meson optim level 3"
         configure.pre_args-append -Doptimization=3
     } elseif {[string match *-O2* "${configure.cflags} ${configure.cxxflags} ${configure.optflags}"]} {
+        ui_debug "Found -O2 in compiler flags -> meson optim level 2"
         configure.pre_args-append -Doptimization=2
-    } elseif {[string match *-O2* "${configure.cflags} ${configure.cxxflags} ${configure.optflags}"]} {
+    } elseif {[string match *-Os* "${configure.cflags} ${configure.cxxflags} ${configure.optflags}"]} {
+        ui_debug "Found -Os in compiler flags -> meson optim level s"
         configure.pre_args-append -Doptimization=s
     }
     # override the optimisation setting by setting the build type to plain (not custom). Not using the override
