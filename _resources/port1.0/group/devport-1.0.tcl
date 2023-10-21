@@ -69,6 +69,11 @@ proc create_devport_content_archive {} {
         foreach a ${args} {
             file delete -force ${destroot}/${a}
         }
+        ### TODO
+        # here we could create the devport's destroot dir, unpack the archive there
+        # and then delete that archive. The most annoying thing to do would probably
+        # be to register the destroot phase as finished in the state file.
+        # Also, we'd have to stop doing `port clean ${devport}` in the main port's post-activate!
     }
 
 }
@@ -131,8 +136,9 @@ proc restore_devport_tarball {baseport} {
     global dev::archdir dev::archname
     if {[file exists ${dev::archdir}/${dev::archname}]
         && [file size ${dev::archdir}/${dev::archname}] > 0} {
-        return
+        return 1
     }
+    set ret 1
     if {![catch {set installed [lindex [registry_active ${baseport}] 0]}]} {
         set cVersion [lindex $installed 1]
         set cRevision [lindex $installed 2]
@@ -142,10 +148,12 @@ proc restore_devport_tarball {baseport} {
         if {[file exists ${portimage}]} {
             if {[catch {system -W ${dev::archdir} "bsdtar -xOf ${portimage} .${dev::archdir}/${dev::archname} > ${dev::archname}"} err]} {
                 ui_warn "Failure restoring ${dev::archdir}/${dev::archname}: ${err}"
+                set ret 0
             } elseif {![file exists ${dev::archdir}/${dev::archname}]
                 || [file size ${dev::archdir}/${dev::archname}] == 0} {
                 ui_warn "Failure restoring ${dev::archdir}/${dev::archname} - did you use sudo?"
                 system "ls -l ${dev::archdir}/${dev::archname}*"
+                set ret 0
             }
 
         } else {
@@ -154,11 +162,13 @@ proc restore_devport_tarball {baseport} {
                 ui_warn "Image directory content:"
                 system "ls -1 ${portdbpath}/software/${baseport}"
             }
+            set ret 0
         }
     } else {
         ui_warn "Cannot determine installed image name for ${baseport}"
+        set ret 0
     }
-    return 0
+    return ${ret}
 }
 
 proc unpack_devport_content {} {
@@ -202,8 +212,14 @@ proc create_devport {dependency} {
         patchfiles
         build           {}
         destroot {
-            restore_devport_tarball ${baseport}
-            unpack_devport_content
+            if {[restore_devport_tarball ${baseport}]} {
+                unpack_devport_content
+            } else {
+                # edit these after we moved the implementation to a direct
+                # move from the mainport's into the devport's destroot dir!
+                ui_error "This port cannot be installed manually"
+                return -code error "restore_devport_tarball failed!"
+            }
         }
         pre-activate {
             if {[file exists ${dev::archdir}/${dev::archname}]} {
@@ -232,7 +248,11 @@ proc create_devport {dependency} {
                 if {${dev::mainport_installed} eq yes} {
                     ui_msg "---->  Programming the installation of the dev port \"${devport_name} ${cVariants}\""
                     catch {
-                        system "port -v clean ${devport_name}"
+                        if {[file exists ${dev::archdir}/${dev::archname}]
+                            && [file size ${dev::archdir}/${dev::archname}] > 0} {
+                                ui_msg "Cleaning ${devport_name}"
+                                system "port -v clean ${devport_name}"
+                        }
                         # we need to spawn/fork the actual install or else we'll be waiting
                         # indefinitely to obtain a lock on the registry!
                         exec port -n install ${devport_name} ${cVariants} &
