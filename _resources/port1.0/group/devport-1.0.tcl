@@ -46,6 +46,8 @@ default devport_long_description    {"${long_description}\nThis installs the dev
     default dev::archname    {${mainport_name}@${version}-dev.tar.bz2}
     # this could go into the software images directory
     default dev::archdir     {${prefix}/var/devcontent}
+
+    set dev::mainport_installed no
 # }
 
 # create the online devport content archive
@@ -74,7 +76,7 @@ proc create_devport_content_archive {} {
 proc register_devport_standard_content {} {
     global subport destroot prefix mainport_name devport_name
     if {${subport} eq "${mainport_name}"} {
-        ui_msg "--->  Transferring developer content to ${devport_name}"
+        ui_msg "---->  Transferring developer content to ${devport_name}"
         ui_debug "Finding and registering standard content for the devport"
         foreach h [glob -nocomplain ${destroot}${prefix}/include/*] {
             ui_debug "\theader: ${h}"
@@ -173,8 +175,13 @@ proc unpack_devport_content {} {
     }
 }
 
+# Define (more so than create!) the devport
+# and (231021) add post-installation logic to install/upgrade it after installing/upgrading
+# the main port. See comments in the post-activate procedure for when we do and when we don't.
 proc create_devport {dependency} {
-    global mainport_name devport_name devport_description devport_long_description baseport dev::archdir dev::archname
+    global subport mainport_name devport_name devport_description devport_long_description baseport \
+            dev::archdir dev::archname \
+            dev::mainport_installed
     # just so we're clear that what port we're talking about (the main port):
     set baseport ${mainport_name}
     subport ${devport_name} {
@@ -208,6 +215,42 @@ proc create_devport {dependency} {
             }
         }
     }
+    if {${subport} eq ${baseport}} {
+        post-install {
+            # register that we just have installed the main port
+            set dev::mainport_installed yes
+        }
+        post-activate {
+            # we activated a version/variant of the mainport; try to auto-install the corresponding
+            # version/variant of the devport if the activation followed an install. We just remind
+            # the user to do this manually if we only activated an already installed version/variant
+            # (because the user might have deactivated the devport on purpose).
+            if {![catch {set installed [lindex [registry_active ${baseport}] 0]}]} {
+                set cVersion [lindex $installed 1]
+                set cRevision [lindex $installed 2]
+                set cVariants [lindex $installed 3]
+                if {${dev::mainport_installed} eq yes} {
+                    ui_msg "---->  Programming the installation of the dev port \"${devport_name} ${cVariants}\""
+                    catch {
+                        system "port -v clean ${devport_name}"
+                        # we need to spawn/fork the actual install or else we'll be waiting
+                        # indefinitely to obtain a lock on the registry!
+                        exec port -n install ${devport_name} ${cVariants} &
+                    }
+                } else {
+                    ui_msg "${baseport}@${cVersion}_${cRevision}${cVariants} activated, please activate the corresponding port:${devport_name}!"
+                }
+            } else {
+                if {${dev::mainport_installed} eq yes} {
+                    set action "install"
+                } else {
+                    set action "activate"
+                }
+                ui_warning "---->  Couldn't obtain the required information to auto-${action} the devport!"
+                ui_msg     "       Please ${action} port:${devport_name} with the same variants as the active port:${baseport}!"
+            }
+        }
+    }
 }
 
 proc is_devport {} {
@@ -220,6 +263,6 @@ proc is_mainport {} {
     return [expr {${subport} eq "${mainport_name}"}]
 }
 
-if {[is_mainport] && [file exists ${destroot}${dev::archdir}/${dev::archname}]} {
-    notes-append "Don't forget to upgrade port:${devport_name} after upgrading port:${mainport_name}"
-}
+# if {[is_mainport] && [file exists ${destroot}${dev::archdir}/${dev::archname}]} {
+#     notes-append "Don't forget to upgrade port:${devport_name} after upgrading port:${mainport_name}"
+# }
