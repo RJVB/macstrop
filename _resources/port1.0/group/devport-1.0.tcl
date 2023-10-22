@@ -104,7 +104,7 @@ proc create_devport_content_archive {} {
 proc register_devport_standard_content {} {
     global subport destroot prefix mainport_name devport_name
     if {${subport} eq "${mainport_name}"} {
-        ui_msg "---->  Transferring developer content to ${devport_name}"
+        ui_msg "---->  Transferring developer content to port:${devport_name}"
         ui_debug "Finding and registering standard content for the devport"
         foreach h [glob -nocomplain ${destroot}${prefix}/include/*] {
             ui_debug "\theader: ${h}"
