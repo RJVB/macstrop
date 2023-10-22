@@ -50,6 +50,19 @@ default devport_long_description    {"${long_description}\nThis installs the dev
     set dev::mainport_installed no
 # }
 
+proc dev::port_variants {} {
+    global PortInfo
+    set variants ""
+    if {[info exists PortInfo(variants)]} {
+        foreach v $PortInfo(variants) {
+            if {[variant_isset ${v}]} {
+                set variants "${variants}+${v}"
+            }
+        }
+    }
+    return ${variants}
+}
+
 # create the online devport content archive
 proc create_devport_content_archive {} {
     global destroot prefix mainport_name devport_name dev::archdir dev::archname
@@ -69,11 +82,21 @@ proc create_devport_content_archive {} {
         foreach a ${args} {
             file delete -force ${destroot}/${a}
         }
-        ### TODO
-        # here we could create the devport's destroot dir, unpack the archive there
-        # and then delete that archive. The most annoying thing to do would probably
-        # be to register the destroot phase as finished in the state file.
-        # Also, we'd have to stop doing `port clean ${devport}` in the main port's post-activate!
+        # New: we create the devport's destroot dir here, unpack the archive there
+        # and then delete that archive. We still go through the archive because it's
+        # a tested and foolproof way to preserve all permissions as well as the layout.
+        set cVariants [dev::port_variants]
+        ui_debug "Cleaning ${devport_name}"
+        system "port -v clean ${devport_name}"
+        ui_debug "port -nok -v build ${devport_name} ${cVariants}"
+        system "port -nok -v build ${devport_name} ${cVariants}"
+        set devdestdir "[exec port work ${devport_name}]/destroot"
+        xinstall -m 755 -d ${devdestdir}
+        ui_debug "unpacking the devport archive into ${devdestdir}"
+        unpack_devtarball_from_to_for ${destroot} ${devdestdir} ${devport_name}
+        system -W ${devdestdir} "echo \"target: org.macports.destroot\" >> ../.macports.${devport_name}.state"
+        ui_debug "Deleting the devport archive"
+        file delete ${destroot}${dev::archdir}/${dev::archname}
     }
 
 }
@@ -171,18 +194,23 @@ proc restore_devport_tarball {baseport} {
     return ${ret}
 }
 
-proc unpack_devport_content {} {
-    global destroot prefix mainport_name devport_name subport dev::archdir dev::archname
-    if {[file exists ${dev::archdir}/${dev::archname}]
-        && [file size ${dev::archdir}/${dev::archname}] > 0} {
-        ui_debug "Unpacking \"${dev::archdir}/${dev::archname}\" for ${subport}"
-        if {[catch {system -W ${destroot} "bsdtar -xvf ${dev::archdir}/${dev::archname}"} err]} {
-            ui_error "Failure unpacking ${dev::archdir}/${dev::archname}: ${err}"
+proc unpack_devtarball_from_to_for {srcdir destdir portname} {
+    global subport dev::archdir dev::archname mainport_name
+    if {[file exists ${srcdir}${dev::archdir}/${dev::archname}]
+        && [file size ${srcdir}${dev::archdir}/${dev::archname}] > 0} {
+        ui_debug "Unpacking \"${srcdir}${dev::archdir}/${dev::archname}\" for ${portname}"
+        if {[catch {system -W ${destdir} "bsdtar -xvf ${srcdir}${dev::archdir}/${dev::archname}"} err]} {
+            ui_error "Failure unpacking ${srcdir}${dev::archdir}/${dev::archname}: ${err}"
         }
     } else {
-        ui_error "The port's content archive doesn't exists or is empty (${dev::archdir}/${dev::archname})!"
+        ui_error "The port's content archive doesn't exists or is empty (${srcdir}${dev::archdir}/${dev::archname})!"
         return -code error "Missing or invalid content archive; try re-activating or reinstalling port:${mainport_name}"
     }
+}
+
+proc unpack_devport_content {} {
+    global destroot subport
+    unpack_devtarball_from_to_for "" ${destroot} ${subport}
 }
 
 # Define (more so than create!) the devport
@@ -215,10 +243,11 @@ proc create_devport {dependency} {
             if {[restore_devport_tarball ${baseport}]} {
                 unpack_devport_content
             } else {
-                # edit these after we moved the implementation to a direct
-                # move from the mainport's into the devport's destroot dir!
-                ui_error "This port cannot be installed manually"
-                return -code error "restore_devport_tarball failed!"
+                ui_error "The destroot phase of this port is handled by the main port (${mainport_name})!"
+                ui_debug "###"
+                ui_debug "### You will need to do (or 'rewind' and redo) the main port's destroot phase"
+                ui_debug "###"
+                return -code error "Please (re)invoke at least `port -n destroot ${mainport_name}` !"
             }
         }
         pre-activate {
@@ -248,6 +277,9 @@ proc create_devport {dependency} {
                 if {${dev::mainport_installed} eq yes} {
                     ui_msg "---->  Programming the installation of the dev port \"${devport_name} ${cVariants}\""
                     catch {
+                        # check if our (new!) devport archive exists, which means we're
+                        # dealing with an older build for which we need to fall back to
+                        # cleaning the devport workdir before attempting an install.
                         if {[file exists ${dev::archdir}/${dev::archname}]
                             && [file size ${dev::archdir}/${dev::archname}] > 0} {
                                 ui_msg "Cleaning ${devport_name}"
@@ -255,7 +287,14 @@ proc create_devport {dependency} {
                         }
                         # we need to spawn/fork the actual install or else we'll be waiting
                         # indefinitely to obtain a lock on the registry!
-                        exec port -n install ${devport_name} ${cVariants} &
+                        if {![catch {registry_active ${devport_name}}]} {
+                            # the devport is
+                            set dpinstmode install
+                        } else {
+                            set dpinstmode archive
+                            notes-append "port:${devport_name}@${cVersion}_${cRevision}${cVariants} has been installed but not activated; you can do this manually if/when required"
+                        }
+                        exec port -n ${dpinstmode} ${devport_name} ${cVariants} &
                     }
                 } else {
                     ui_msg "${baseport}@${cVersion}_${cRevision}${cVariants} activated, please activate the corresponding port:${devport_name}!"
@@ -274,8 +313,8 @@ proc create_devport {dependency} {
 }
 
 proc is_devport {} {
-    global subport mainport_name
-    return [eval {${subport} eq "${devport_name}"}]
+    global subport devport_name
+    return [eval {"${subport}" eq "${devport_name}"}]
 }
 
 proc is_mainport {} {
