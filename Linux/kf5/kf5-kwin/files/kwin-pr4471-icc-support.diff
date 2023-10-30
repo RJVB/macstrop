@@ -1,0 +1,2221 @@
+diff --git a/autotests/drm/CMakeLists.txt b/autotests/drm/CMakeLists.txt
+index 590d10bcbebd8fd98091a88589963b7a9d6976bc..1772fa3b55ab37dc226e5c3579b7696ea27df2aa 100644
+--- a/autotests/drm/CMakeLists.txt
++++ b/autotests/drm/CMakeLists.txt
+@@ -26,6 +26,7 @@ set(mockDRM_SRCS
+     ../../src/backends/drm/drm_qpainter_layer.cpp
+     ../../src/backends/drm/drm_virtual_egl_layer.cpp
+     ../../src/backends/drm/drm_virtual_output.cpp
++    ../../src/backends/drm/icc_shader.cpp
+ )
+ 
+ include_directories(${Libdrm_INCLUDE_DIRS})
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 52e9eb1c87d2b6e67c38e6c2b7fe08f646569611..84f61445dee6994d108b462a89e908bd292851cc 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -43,12 +43,14 @@ target_sources(kwin PRIVATE
+     compositor_wayland.cpp
+     compositor_x11.cpp
+     core/colorlut.cpp
++    core/colorlut3d.cpp
+     core/colorpipelinestage.cpp
+     core/colortransformation.cpp
+     core/gbmgraphicsbufferallocator.cpp
+     core/graphicsbuffer.cpp
+     core/graphicsbufferallocator.cpp
+     core/graphicsbufferview.cpp
++    core/iccprofile.cpp
+     core/inputbackend.cpp
+     core/inputdevice.cpp
+     core/output.cpp
+@@ -107,6 +109,8 @@ target_sources(kwin PRIVATE
+     libkwineffects/colorspace.cpp
+     libkwineffects/effecttogglablestate.cpp
+     libkwineffects/glframebuffer.cpp
++    libkwineffects/gllut.cpp
++    libkwineffects/gllut3D.cpp
+     libkwineffects/glplatform.cpp
+     libkwineffects/glshader.cpp
+     libkwineffects/glshadermanager.cpp
+@@ -120,11 +124,8 @@ target_sources(kwin PRIVATE
+     libkwineffects/kwinoffscreenquickview.cpp
+     libkwineffects/kwinquickeffect.cpp
+     libkwineffects/logging.cpp
+-    libkwineffects/logging.cpp
+     libkwineffects/openglcontext.cpp
+     libkwineffects/rendertarget.cpp
+-    libkwineffects/rendertarget.cpp
+-    libkwineffects/renderviewport.cpp
+     libkwineffects/renderviewport.cpp
+     libkwineffects/version.cpp
+     lidswitchtracker.cpp
+@@ -431,6 +432,8 @@ install(FILES
+ install(FILES
+     libkwineffects/colorspace.h
+     libkwineffects/glframebuffer.h
++    libkwineffects/gllut.h
++    libkwineffects/gllut3D.h
+     libkwineffects/glplatform.h
+     libkwineffects/glshader.h
+     libkwineffects/glshadermanager.h
+diff --git a/src/backends/drm/CMakeLists.txt b/src/backends/drm/CMakeLists.txt
+index ea497ab7e6bd687586f32548e72625ecf7c56f82..1cf281a3819bc81c547ba8f59f5ea7a57a950bfe 100644
+--- a/src/backends/drm/CMakeLists.txt
++++ b/src/backends/drm/CMakeLists.txt
+@@ -25,6 +25,8 @@ target_sources(kwin PRIVATE
+     drm_qpainter_layer.cpp
+     drm_virtual_egl_layer.cpp
+     drm_virtual_output.cpp
++    icc.qrc
++    icc_shader.cpp
+ )
+ 
+ target_link_libraries(kwin PRIVATE Libdrm::Libdrm gbm::gbm PkgConfig::Libxcvt)
+diff --git a/src/backends/drm/drm_egl_cursor_layer.cpp b/src/backends/drm/drm_egl_cursor_layer.cpp
+index 1bb580877ab6e544b8700d45a5cf91eb6e02c6b5..3d8e4ed7187c4a61c7a2257278ef8ce4b8654c7d 100644
+--- a/src/backends/drm/drm_egl_cursor_layer.cpp
++++ b/src/backends/drm/drm_egl_cursor_layer.cpp
+@@ -7,6 +7,7 @@
+     SPDX-License-Identifier: GPL-2.0-or-later
+ */
+ #include "drm_egl_cursor_layer.h"
++#include "core/iccprofile.h"
+ #include "drm_buffer.h"
+ #include "drm_egl_backend.h"
+ #include "drm_gpu.h"
+@@ -51,7 +52,7 @@ std::optional<OutputLayerBeginFrameInfo> EglGbmCursorLayer::beginFrame()
+         // TODO for hardware cursors to work with color management, KWin needs to offload post-blending color management steps to KMS
+         return std::nullopt;
+     }
+-    return m_surface.startRendering(m_pipeline->gpu()->cursorSize(), drmToTextureRotation(m_pipeline) | TextureTransform::MirrorY, m_pipeline->cursorFormats(), m_pipeline->colorDescription(), m_pipeline->output()->channelFactors(), m_pipeline->output()->needsColormanagement());
++    return m_surface.startRendering(m_pipeline->gpu()->cursorSize(), drmToTextureRotation(m_pipeline) | TextureTransform::MirrorY, m_pipeline->cursorFormats(), m_pipeline->colorDescription(), m_pipeline->output()->channelFactors(), m_pipeline->iccProfile(), m_pipeline->output()->needsColormanagement());
+ }
+ 
+ bool EglGbmCursorLayer::endFrame(const QRegion &renderedRegion, const QRegion &damagedRegion)
+diff --git a/src/backends/drm/drm_egl_layer.cpp b/src/backends/drm/drm_egl_layer.cpp
+index 10a9264fbb07cf7b3716f8d51950230e2c49d7c3..08b852d712dfe550658c755926d55dfdf363a449 100644
+--- a/src/backends/drm/drm_egl_layer.cpp
++++ b/src/backends/drm/drm_egl_layer.cpp
+@@ -7,6 +7,7 @@
+     SPDX-License-Identifier: GPL-2.0-or-later
+ */
+ #include "drm_egl_layer.h"
++#include "core/iccprofile.h"
+ #include "drm_backend.h"
+ #include "drm_buffer.h"
+ #include "drm_egl_backend.h"
+@@ -58,7 +59,7 @@ std::optional<OutputLayerBeginFrameInfo> EglGbmLayer::beginFrame()
+     m_scanoutBuffer.reset();
+     m_dmabufFeedback.renderingSurface();
+ 
+-    return m_surface.startRendering(m_pipeline->mode()->size(), drmToTextureRotation(m_pipeline) | TextureTransform::MirrorY, m_pipeline->formats(), m_pipeline->colorDescription(), m_pipeline->output()->channelFactors(), m_pipeline->output()->needsColormanagement());
++    return m_surface.startRendering(m_pipeline->mode()->size(), drmToTextureRotation(m_pipeline) | TextureTransform::MirrorY, m_pipeline->formats(), m_pipeline->colorDescription(), m_pipeline->output()->channelFactors(), m_pipeline->iccProfile(), m_pipeline->output()->needsColormanagement());
+ }
+ 
+ bool EglGbmLayer::endFrame(const QRegion &renderedRegion, const QRegion &damagedRegion)
+@@ -104,7 +105,7 @@ bool EglGbmLayer::scanout(SurfaceItem *surfaceItem)
+         return false;
+     }
+     // TODO use GAMMA_LUT, CTM and DEGAMMA_LUT to allow direct scanout with HDR
+-    if (m_pipeline->colorimetry() != NamedColorimetry::BT709 || m_pipeline->transferFunction() != NamedTransferFunction::sRGB) {
++    if (m_pipeline->output()->needsColormanagement()) {
+         return false;
+     }
+ 
+diff --git a/src/backends/drm/drm_egl_layer_surface.cpp b/src/backends/drm/drm_egl_layer_surface.cpp
+index 171d30b1b88035dbe64629adb7f1f1ab821a5144..13287fc838f1d8b6834d49b2b7b2759d3447fccb 100644
+--- a/src/backends/drm/drm_egl_layer_surface.cpp
++++ b/src/backends/drm/drm_egl_layer_surface.cpp
+@@ -9,10 +9,14 @@
+ #include "drm_egl_layer_surface.h"
+ 
+ #include "config-kwin.h"
++#include "core/colortransformation.h"
+ #include "core/graphicsbufferview.h"
++#include "core/iccprofile.h"
+ #include "drm_egl_backend.h"
+ #include "drm_gpu.h"
+ #include "drm_logging.h"
++#include "icc_shader.h"
++#include "libkwineffects/gllut.h"
+ #include "platformsupport/scenes/opengl/eglnativefence.h"
+ #include "platformsupport/scenes/opengl/eglswapchain.h"
+ #include "platformsupport/scenes/opengl/glrendertimequery.h"
+@@ -69,7 +73,7 @@ void EglGbmLayerSurface::destroyResources()
+     m_oldSurface = {};
+ }
+ 
+-std::optional<OutputLayerBeginFrameInfo> EglGbmLayerSurface::startRendering(const QSize &bufferSize, TextureTransforms transformation, const QMap<uint32_t, QList<uint64_t>> &formats, const ColorDescription &colorDescription, const QVector3D &channelFactors, bool enableColormanagement)
++std::optional<OutputLayerBeginFrameInfo> EglGbmLayerSurface::startRendering(const QSize &bufferSize, TextureTransforms transformation, const QMap<uint32_t, QList<uint64_t>> &formats, const ColorDescription &colorDescription, const QVector3D &channelFactors, const std::shared_ptr<IccProfile> &iccProfile, bool enableColormanagement)
+ {
+     if (!checkSurface(bufferSize, formats)) {
+         return std::nullopt;
+@@ -90,11 +94,20 @@ std::optional<OutputLayerBeginFrameInfo> EglGbmLayerSurface::startRendering(cons
+     slot->framebuffer()->colorAttachment()->setContentTransform(transformation);
+     m_surface->currentSlot = slot;
+ 
+-    if (m_surface->targetColorDescription != colorDescription || m_surface->channelFactors != channelFactors || m_surface->colormanagementEnabled != enableColormanagement) {
++    if (m_surface->targetColorDescription != colorDescription || m_surface->channelFactors != channelFactors
++        || m_surface->colormanagementEnabled != enableColormanagement || m_surface->iccProfile != iccProfile) {
+         m_surface->damageJournal.clear();
+         m_surface->colormanagementEnabled = enableColormanagement;
+         m_surface->targetColorDescription = colorDescription;
+         m_surface->channelFactors = channelFactors;
++        m_surface->iccProfile = iccProfile;
++        if (iccProfile) {
++            if (!m_surface->iccShader) {
++                m_surface->iccShader = std::make_unique<IccShader>();
++            }
++        } else {
++            m_surface->iccShader.reset();
++        }
+         if (enableColormanagement) {
+             m_surface->intermediaryColorDescription = ColorDescription(colorDescription.colorimetry(), NamedTransferFunction::linear,
+                                                                        colorDescription.sdrBrightness(), colorDescription.minHdrBrightness(),
+@@ -135,19 +148,25 @@ bool EglGbmLayerSurface::endRendering(const QRegion &damagedRegion)
+ {
+     if (m_surface->colormanagementEnabled) {
+         GLFramebuffer *fbo = m_surface->currentSlot->framebuffer();
+-        GLTexture *texture = fbo->colorAttachment();
+         GLFramebuffer::pushFramebuffer(fbo);
+-        ShaderBinder binder(ShaderTrait::MapTexture | ShaderTrait::TransformColorspace);
+-        QMatrix4x4 mat = texture->contentTransformMatrix();
++        ShaderBinder binder = m_surface->iccShader ? ShaderBinder(m_surface->iccShader->shader()) : ShaderBinder(ShaderTrait::MapTexture | ShaderTrait::TransformColorspace);
++        if (m_surface->iccShader) {
++            m_surface->iccShader->setUniforms(m_surface->iccProfile, m_surface->intermediaryColorDescription.sdrBrightness());
++        } else {
++            QMatrix3x3 ctm;
++            ctm(0, 0) = m_surface->channelFactors.x();
++            ctm(1, 1) = m_surface->channelFactors.y();
++            ctm(2, 2) = m_surface->channelFactors.z();
++            binder.shader()->setUniform(GLShader::MatrixUniform::ColorimetryTransformation, ctm);
++            binder.shader()->setUniform(GLShader::IntUniform::SourceNamedTransferFunction, int(m_surface->intermediaryColorDescription.transferFunction()));
++            binder.shader()->setUniform(GLShader::IntUniform::DestinationNamedTransferFunction, int(m_surface->targetColorDescription.transferFunction()));
++            binder.shader()->setUniform(GLShader::IntUniform::SdrBrightness, m_surface->intermediaryColorDescription.sdrBrightness());
++            binder.shader()->setUniform(GLShader::FloatUniform::MaxHdrBrightness, m_surface->intermediaryColorDescription.maxHdrHighlightBrightness());
++        }
++        QMatrix4x4 mat = fbo->colorAttachment()->contentTransformMatrix();
+         mat.ortho(QRectF(QPointF(), fbo->size()));
+         binder.shader()->setUniform(GLShader::MatrixUniform::ModelViewProjectionMatrix, mat);
+-        QMatrix3x3 ctm;
+-        ctm(0, 0) = m_surface->channelFactors.x();
+-        ctm(1, 1) = m_surface->channelFactors.y();
+-        ctm(2, 2) = m_surface->channelFactors.z();
+-        binder.shader()->setUniform(GLShader::MatrixUniform::ColorimetryTransformation, ctm);
+-        binder.shader()->setUniform(GLShader::IntUniform::SourceNamedTransferFunction, int(m_surface->intermediaryColorDescription.transferFunction()));
+-        binder.shader()->setUniform(GLShader::IntUniform::DestinationNamedTransferFunction, int(m_surface->targetColorDescription.transferFunction()));
++        glDisable(GL_BLEND);
+         m_surface->shadowTexture->render(m_surface->gbmSwapchain->size(), 1);
+         GLFramebuffer::popFramebuffer();
+     }
+diff --git a/src/backends/drm/drm_egl_layer_surface.h b/src/backends/drm/drm_egl_layer_surface.h
+index d316e07719e7c4ba347509f11e571e761b6d5148..984456554f082f11a8339baebd35708277ccc04e 100644
+--- a/src/backends/drm/drm_egl_layer_surface.h
++++ b/src/backends/drm/drm_egl_layer_surface.h
+@@ -36,6 +36,10 @@ class GraphicsBuffer;
+ class SurfaceItem;
+ class GLTexture;
+ class GLRenderTimeQuery;
++class ColorTransformation;
++class GlLookUpTable;
++class IccProfile;
++class IccShader;
+ 
+ class EglGbmLayerSurface : public QObject
+ {
+@@ -53,7 +57,7 @@ public:
+     EglGbmLayerSurface(DrmGpu *gpu, EglGbmBackend *eglBackend, BufferTarget target = BufferTarget::Normal, FormatOption formatOption = FormatOption::PreferAlpha);
+     ~EglGbmLayerSurface();
+ 
+-    std::optional<OutputLayerBeginFrameInfo> startRendering(const QSize &bufferSize, TextureTransforms transformation, const QMap<uint32_t, QList<uint64_t>> &formats, const ColorDescription &colorDescription, const QVector3D &channelFactors, bool enableColormanagement);
++    std::optional<OutputLayerBeginFrameInfo> startRendering(const QSize &bufferSize, TextureTransforms transformation, const QMap<uint32_t, QList<uint64_t>> &formats, const ColorDescription &colorDescription, const QVector3D &channelFactors, const std::shared_ptr<IccProfile> &iccProfile, bool enableColormanagement);
+     bool endRendering(const QRegion &damagedRegion);
+     std::chrono::nanoseconds queryRenderTime() const;
+ 
+@@ -79,12 +83,6 @@ private:
+         ~Surface();
+ 
+         std::shared_ptr<EglContext> context;
+-        bool colormanagementEnabled = false;
+-        std::shared_ptr<GLTexture> shadowTexture;
+-        std::unique_ptr<GLFramebuffer> shadowBuffer;
+-        ColorDescription targetColorDescription = ColorDescription::sRGB;
+-        ColorDescription intermediaryColorDescription = ColorDescription::sRGB;
+-        QVector3D channelFactors = {1, 1, 1};
+         std::shared_ptr<EglSwapchain> gbmSwapchain;
+         std::shared_ptr<EglSwapchainSlot> currentSlot;
+         DamageJournal damageJournal;
+@@ -97,6 +95,16 @@ private:
+         std::shared_ptr<DrmFramebuffer> currentFramebuffer;
+         bool forceLinear = false;
+ 
++        // for color management
++        bool colormanagementEnabled = false;
++        std::shared_ptr<GLTexture> shadowTexture;
++        std::unique_ptr<GLFramebuffer> shadowBuffer;
++        ColorDescription targetColorDescription = ColorDescription::sRGB;
++        ColorDescription intermediaryColorDescription = ColorDescription::sRGB;
++        QVector3D channelFactors = {1, 1, 1};
++        std::unique_ptr<IccShader> iccShader;
++        std::shared_ptr<IccProfile> iccProfile;
++
+         // for render timing
+         std::unique_ptr<GLRenderTimeQuery> timeQuery;
+         std::unique_ptr<GLRenderTimeQuery> importTimeQuery;
+diff --git a/src/backends/drm/drm_output.cpp b/src/backends/drm/drm_output.cpp
+index b32f0d328bca6c9f867c67ebd63625071800980b..bb3690eab6d0a20729adde49b16ccd9926145fc9 100644
+--- a/src/backends/drm/drm_output.cpp
++++ b/src/backends/drm/drm_output.cpp
+@@ -13,6 +13,8 @@
+ #include "drm_gpu.h"
+ #include "drm_pipeline.h"
+ 
++#include "core/colortransformation.h"
++#include "core/iccprofile.h"
+ #include "core/outputconfiguration.h"
+ #include "core/renderloop.h"
+ #include "core/renderloop_p.h"
+@@ -316,7 +318,7 @@ bool DrmOutput::queueChanges(const std::shared_ptr<OutputChangeSet> &props)
+     m_pipeline->setRgbRange(props->rgbRange.value_or(m_pipeline->rgbRange()));
+     m_pipeline->setRenderOrientation(outputToPlaneTransform(props->transform.value_or(transform())));
+     m_pipeline->setEnable(props->enabled.value_or(m_pipeline->enabled()));
+-    m_pipeline->setColorimetry(props->wideColorGamut.value_or(m_state.wideColorGamut) ? NamedColorimetry::BT2020 : NamedColorimetry::BT709);
++    m_pipeline->setBT2020(props->wideColorGamut.value_or(m_state.wideColorGamut));
+     m_pipeline->setNamedTransferFunction(props->highDynamicRange.value_or(m_state.highDynamicRange) ? NamedTransferFunction::PerceptualQuantizer : NamedTransferFunction::sRGB);
+     m_pipeline->setSdrBrightness(props->sdrBrightness.value_or(m_state.sdrBrightness));
+     return true;
+@@ -343,7 +345,11 @@ void DrmOutput::applyQueuedChanges(const std::shared_ptr<OutputChangeSet> &props
+     next.sdrBrightness = props->sdrBrightness.value_or(m_state.sdrBrightness);
+     next.wideColorGamut = props->wideColorGamut.value_or(m_state.wideColorGamut);
+     next.autoRotatePolicy = props->autoRotationPolicy.value_or(m_state.autoRotatePolicy);
+-    if (m_state.highDynamicRange != next.highDynamicRange || m_state.sdrBrightness != next.sdrBrightness || m_state.wideColorGamut != next.wideColorGamut) {
++    if (props->iccProfilePath) {
++        next.iccProfile = IccProfile::load(*props->iccProfilePath);
++        m_pipeline->setIccProfile(next.iccProfile);
++    }
++    if (m_state.highDynamicRange != next.highDynamicRange || m_state.sdrBrightness != next.sdrBrightness || m_state.wideColorGamut != next.wideColorGamut || m_state.iccProfile != next.iccProfile) {
+         m_renderLoop->scheduleRepaint();
+     }
+ 
+@@ -428,7 +434,7 @@ QVector3D DrmOutput::channelFactors() const
+ 
+ bool DrmOutput::needsColormanagement() const
+ {
+-    return m_pipeline->colorimetry() != NamedColorimetry::BT709 || m_pipeline->transferFunction() != NamedTransferFunction::sRGB || m_gpu->isNVidia();
++    return m_state.wideColorGamut || m_state.highDynamicRange || m_state.iccProfile || m_gpu->isNVidia();
+ }
+ }
+ 
+diff --git a/src/backends/drm/drm_pipeline.cpp b/src/backends/drm/drm_pipeline.cpp
+index dedce9522e475d20bd27da35e814a1f11100d10c..4a8223fa746c8527504f4cb34af7922931e3d081 100644
+--- a/src/backends/drm/drm_pipeline.cpp
++++ b/src/backends/drm/drm_pipeline.cpp
+@@ -11,6 +11,7 @@
+ 
+ #include <errno.h>
+ 
++#include "core/iccprofile.h"
+ #include "core/session.h"
+ #include "drm_backend.h"
+ #include "drm_buffer.h"
+@@ -289,10 +290,13 @@ bool DrmPipeline::prepareAtomicModeset(DrmAtomicCommit *commit)
+     } else if (m_pending.transferFunction != NamedTransferFunction::sRGB) {
+         return false;
+     }
+-    if (m_connector->colorspace.isValid() && m_connector->colorspace.hasEnum(DrmConnector::Colorspace::BT2020_RGB)) {
+-        commit->addEnum(m_connector->colorspace, m_pending.colorimetry == NamedColorimetry::BT2020 ? DrmConnector::Colorspace::BT2020_RGB : DrmConnector::Colorspace::Default);
+-    } else if (m_pending.colorimetry != NamedColorimetry::BT709) {
+-        return false;
++    if (m_pending.BT2020) {
++        if (!m_connector->colorspace.isValid() || !m_connector->colorspace.hasEnum(DrmConnector::Colorspace::BT2020_RGB)) {
++            return false;
++        }
++        commit->addEnum(m_connector->colorspace, DrmConnector::Colorspace::BT2020_RGB);
++    } else if (m_connector->colorspace.isValid()) {
++        commit->addEnum(m_connector->colorspace, DrmConnector::Colorspace::Default);
+     }
+     if (m_connector->scalingMode.isValid() && m_connector->scalingMode.hasEnum(DrmConnector::ScalingMode::None)) {
+         commit->addEnum(m_connector->scalingMode, DrmConnector::ScalingMode::None);
+@@ -577,19 +581,14 @@ DrmConnector::DrmContentType DrmPipeline::contentType() const
+     return m_pending.contentType;
+ }
+ 
+-NamedColorimetry DrmPipeline::colorimetry() const
++const ColorDescription &DrmPipeline::colorDescription() const
+ {
+-    return m_pending.colorimetry;
++    return m_pending.colorDescription;
+ }
+ 
+-NamedTransferFunction DrmPipeline::transferFunction() const
++const std::shared_ptr<IccProfile> &DrmPipeline::iccProfile() const
+ {
+-    return m_pending.transferFunction;
+-}
+-
+-const ColorDescription &DrmPipeline::colorDescription() const
+-{
+-    return m_pending.colorDescription;
++    return m_pending.iccProfile;
+ }
+ 
+ void DrmPipeline::setCrtc(DrmCrtc *crtc)
+@@ -682,10 +681,10 @@ void DrmPipeline::setContentType(DrmConnector::DrmContentType type)
+     m_pending.contentType = type;
+ }
+ 
+-void DrmPipeline::setColorimetry(NamedColorimetry name)
++void DrmPipeline::setBT2020(bool useBT2020)
+ {
+-    if (m_pending.colorimetry != name) {
+-        m_pending.colorimetry = name;
++    if (m_pending.BT2020 != useBT2020) {
++        m_pending.BT2020 = useBT2020;
+         m_pending.colorDescription = createColorDescription();
+     }
+ }
+@@ -706,14 +705,25 @@ void DrmPipeline::setSdrBrightness(double sdrBrightness)
+     }
+ }
+ 
++void DrmPipeline::setIccProfile(const std::shared_ptr<IccProfile> &profile)
++{
++    if (m_pending.iccProfile != profile) {
++        m_pending.iccProfile = profile;
++        m_pending.colorDescription = createColorDescription();
++    }
++}
++
+ ColorDescription DrmPipeline::createColorDescription() const
+ {
+-    if (m_connector->edid() && (m_pending.colorimetry != NamedColorimetry::BT709 || m_pending.transferFunction != NamedTransferFunction::sRGB)) {
++    if (m_pending.transferFunction == NamedTransferFunction::PerceptualQuantizer && m_connector->edid()) {
++        const auto colorimetry = m_pending.BT2020 ? NamedColorimetry::BT2020 : NamedColorimetry::BT709;
+         if (const auto hdr = m_connector->edid()->hdrMetadata(); hdr && hdr->hasValidBrightnessValues) {
+-            return ColorDescription(m_pending.colorimetry, m_pending.transferFunction, m_pending.sdrBrightness, hdr->desiredContentMinLuminance, hdr->desiredMaxFrameAverageLuminance, hdr->desiredContentMaxLuminance);
++            return ColorDescription(colorimetry, m_pending.transferFunction, m_pending.sdrBrightness, hdr->desiredContentMinLuminance, hdr->desiredMaxFrameAverageLuminance, hdr->desiredContentMaxLuminance);
+         } else {
+-            return ColorDescription(m_pending.colorimetry, m_pending.transferFunction, m_pending.sdrBrightness, 0, m_pending.sdrBrightness, m_pending.sdrBrightness);
++            return ColorDescription(colorimetry, m_pending.transferFunction, m_pending.sdrBrightness, 0, m_pending.sdrBrightness, m_pending.sdrBrightness);
+         }
++    } else if (m_pending.iccProfile) {
++        return ColorDescription(m_pending.iccProfile->colorimetry(), NamedTransferFunction::sRGB, 200, 0, 200, 200);
+     } else {
+         return ColorDescription::sRGB;
+     }
+diff --git a/src/backends/drm/drm_pipeline.h b/src/backends/drm/drm_pipeline.h
+index 4811398f969230100df3ec7be5b9314720c029db..ec843a01b4f054163eef21585eeca26d245d8565 100644
+--- a/src/backends/drm/drm_pipeline.h
++++ b/src/backends/drm/drm_pipeline.h
+@@ -114,9 +114,8 @@ public:
+     uint32_t overscan() const;
+     Output::RgbRange rgbRange() const;
+     DrmConnector::DrmContentType contentType() const;
+-    NamedColorimetry colorimetry() const;
+-    NamedTransferFunction transferFunction() const;
+     const ColorDescription &colorDescription() const;
++    const std::shared_ptr<IccProfile> &iccProfile() const;
+ 
+     void setCrtc(DrmCrtc *crtc);
+     void setMode(const std::shared_ptr<DrmConnectorMode> &mode);
+@@ -129,8 +128,9 @@ public:
+     void setGammaRamp(const std::shared_ptr<ColorTransformation> &transformation);
+     void setCTM(const QMatrix3x3 &ctm);
+     void setContentType(DrmConnector::DrmContentType type);
+-    void setColorimetry(NamedColorimetry name);
++    void setBT2020(bool useBT2020);
+     void setNamedTransferFunction(NamedTransferFunction tf);
++    void setIccProfile(const std::shared_ptr<IccProfile> &profile);
+     void setSdrBrightness(double sdrBrightness);
+ 
+     enum class CommitMode {
+@@ -185,9 +185,10 @@ private:
+         std::shared_ptr<DrmBlob> ctm;
+         DrmConnector::DrmContentType contentType = DrmConnector::DrmContentType::Graphics;
+ 
+-        NamedColorimetry colorimetry = NamedColorimetry::BT709;
++        bool BT2020 = false;
+         NamedTransferFunction transferFunction = NamedTransferFunction::sRGB;
+         double sdrBrightness = 200;
++        std::shared_ptr<IccProfile> iccProfile;
+         ColorDescription colorDescription = ColorDescription::sRGB;
+ 
+         // the transformation that buffers submitted to the pipeline should have
+diff --git a/src/backends/drm/icc.frag b/src/backends/drm/icc.frag
+new file mode 100644
+index 0000000000000000000000000000000000000000..8cdc892698e84edb1bd368a61cc39bd1215e9cc3
+--- /dev/null
++++ b/src/backends/drm/icc.frag
+@@ -0,0 +1,56 @@
++// SPDX-FileCopyrightText: 2023 Xaver Hugl <xaver.hugl@gmail.com>
++// SPDX-License-Identifier: GPL-2.0-or-later
++precision highp float;
++
++in vec2 texcoord0;
++
++uniform sampler2D src;
++uniform float sdrBrightness;
++
++uniform mat3 matrix1;
++
++uniform int Bsize;
++uniform sampler1D Bsampler;
++
++uniform mat4 matrix2;
++
++uniform int Msize;
++uniform sampler1D Msamplrt;
++
++uniform ivec3 Csize;
++uniform sampler3D Csampler;
++
++uniform int Asize;
++uniform sampler1D Asampler;
++
++vec3 sample1DLut(vec3 input, sampler1D lut, int lutSize) {
++    float lutOffset = 0.5 / lutSize;
++    float lutScale = 1 - lutOffset * 2;
++    float lutR = texture1D(lut, lutOffset + input.r * lutScale).r;
++    float lutG = texture1D(lut, lutOffset + input.g * lutScale).g;
++    float lutB = texture1D(lut, lutOffset + input.b * lutScale).b;
++    return vec3(lutR, lutG, lutB);
++}
++
++void main()
++{
++    vec4 tex = texture2D(src, texcoord0);
++    tex.rgb /= sdrBrightness;
++    tex.rgb = matrix1 * tex.rgb;
++    if (Bsize > 0) {
++        tex.rgb = sample1DLut(tex.rgb, Bsampler, Bsize);
++    }
++    tex.rgb = (matrix2 * vec4(tex.rgb, 1.0)).rgb;
++    if (Msize > 0) {
++        tex.rgb = sample1DLut(tex.rgb, Msampler, Msize);
++    }
++    if (Csize > 0) {
++        vec3 lutOffset = vec3(0.5) / Csize;
++        vec3 lutScale = vec3(1) - lutOffset * 2;
++        tex.rgb = texture3D(Csampler, lutOffset + tex.rgb * lutScale).rgb;
++    }
++    if (Asize > 0) {
++        tex.rgb = sample1DLut(tex.rgb, Asampler, Asize);
++    }
++    gl_FragColor = tex;
++}
+diff --git a/src/backends/drm/icc.qrc b/src/backends/drm/icc.qrc
+new file mode 100644
+index 0000000000000000000000000000000000000000..ef6d4589ef2badfbdb70d64b8046eee10267f708
+--- /dev/null
++++ b/src/backends/drm/icc.qrc
+@@ -0,0 +1,6 @@
++<!DOCTYPE RCC><RCC version="1.0">
++    <qresource prefix="/backends/drm/">
++        <file>icc.frag</file>
++        <file>icc_core.frag</file>
++    </qresource>
++</RCC>
+diff --git a/src/backends/drm/icc_core.frag b/src/backends/drm/icc_core.frag
+new file mode 100644
+index 0000000000000000000000000000000000000000..3c9ffeea2aa8132096c2c052b3eb9930650def4e
+--- /dev/null
++++ b/src/backends/drm/icc_core.frag
+@@ -0,0 +1,59 @@
++#version 140
++// SPDX-FileCopyrightText: 2023 Xaver Hugl <xaver.hugl@gmail.com>
++// SPDX-License-Identifier: GPL-2.0-or-later
++precision highp float;
++
++in vec2 texcoord0;
++
++out vec4 fragColor;
++
++uniform sampler2D src;
++uniform float sdrBrightness;
++
++uniform mat3 matrix1;
++
++uniform int Bsize;
++uniform sampler1D Bsampler;
++
++uniform mat4 matrix2;
++
++uniform int Msize;
++uniform sampler1D Msampler;
++
++uniform ivec3 Csize;
++uniform sampler3D Csampler;
++
++uniform int Asize;
++uniform sampler1D Asampler;
++
++vec3 sample1DLut(in vec3 srcColor, in sampler1D lut, in int lutSize) {
++    float lutOffset = 0.5 / lutSize;
++    float lutScale = 1 - lutOffset * 2;
++    float lutR = texture(lut, lutOffset + srcColor.r * lutScale).r;
++    float lutG = texture(lut, lutOffset + srcColor.g * lutScale).g;
++    float lutB = texture(lut, lutOffset + srcColor.b * lutScale).b;
++    return vec3(lutR, lutG, lutB);
++}
++
++void main()
++{
++    vec4 tex = texture(src, texcoord0);
++    tex.rgb /= sdrBrightness;
++    tex.rgb = matrix1 * tex.rgb;
++    if (Bsize > 0) {
++        tex.rgb = sample1DLut(tex.rgb, Bsampler, Bsize);
++    }
++    tex.rgb = (matrix2 * vec4(tex.rgb, 1.0)).rgb;
++    if (Msize > 0) {
++        tex.rgb = sample1DLut(tex.rgb, Msampler, Msize);
++    }
++    if (Csize.x > 0) {
++        vec3 lutOffset = vec3(0.5) / Csize;
++        vec3 lutScale = vec3(1) - lutOffset * 2;
++        tex.rgb = texture(Csampler, lutOffset + tex.rgb * lutScale).rgb;
++    }
++    if (Asize > 0) {
++        tex.rgb = sample1DLut(tex.rgb, Asampler, Asize);
++    }
++    fragColor = tex;
++}
+diff --git a/src/backends/drm/icc_shader.cpp b/src/backends/drm/icc_shader.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..0f104b22e470c18fd9344009cc53cb5d043c55d0
+--- /dev/null
++++ b/src/backends/drm/icc_shader.cpp
+@@ -0,0 +1,207 @@
++/*
++    SPDX-FileCopyrightText: 2023 Xaver Hugl <xaver.hugl@gmail.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#include "icc_shader.h"
++#include "core/colorlut3d.h"
++#include "core/colortransformation.h"
++#include "core/iccprofile.h"
++#include "libkwineffects/gllut.h"
++#include "libkwineffects/gllut3D.h"
++#include "libkwineffects/glshader.h"
++#include "libkwineffects/glshadermanager.h"
++#include "libkwineffects/gltexture.h"
++
++namespace KWin
++{
++
++static constexpr size_t lutSize = 1 << 12;
++
++IccShader::IccShader()
++    : m_shader(ShaderManager::instance()->generateShaderFromFile(ShaderTrait::MapTexture, QString(), QStringLiteral(":/backends/drm/icc.frag")))
++{
++    m_locations = {
++        .src = m_shader->uniformLocation("src"),
++        .sdrBrightness = m_shader->uniformLocation("sdrBrightness"),
++        .matrix1 = m_shader->uniformLocation("matrix1"),
++        .bsize = m_shader->uniformLocation("Bsize"),
++        .bsampler = m_shader->uniformLocation("Bsampler"),
++        .matrix2 = m_shader->uniformLocation("matrix2"),
++        .msize = m_shader->uniformLocation("Msize"),
++        .msampler = m_shader->uniformLocation("Msampler"),
++        .csize = m_shader->uniformLocation("Csize"),
++        .csampler = m_shader->uniformLocation("Csampler"),
++        .asize = m_shader->uniformLocation("Asize"),
++        .asampler = m_shader->uniformLocation("Asampler"),
++    };
++}
++
++IccShader::~IccShader()
++{
++}
++
++static const QVector2D D50 = Colorimetry::xyzToXY(QVector3D(0.9642, 1.0, 0.8249));
++
++bool IccShader::setProfile(const std::shared_ptr<IccProfile> &profile)
++{
++    if (!profile) {
++        m_matrix1.setToIdentity();
++        m_B.reset();
++        m_matrix2.setToIdentity();
++        m_M.reset();
++        m_C.reset();
++        m_A.reset();
++        return false;
++    }
++    if (m_profile != profile) {
++        const auto vcgt = profile->vcgt();
++        QMatrix3x3 matrix1;
++        std::unique_ptr<GlLookUpTable> B;
++        QMatrix4x4 matrix2;
++        std::unique_ptr<GlLookUpTable> M;
++        std::unique_ptr<GlLookUpTable3D> C;
++        std::unique_ptr<GlLookUpTable> A;
++        if (const IccProfile::BToATagData *tag = profile->BtToATag()) {
++            matrix1 = Colorimetry::chromaticAdaptationMatrix(profile->colorimetry().white, D50) * profile->colorimetry().toXYZ();
++            if (tag->B) {
++                const auto sample = [&tag](size_t x) {
++                    const float relativeX = x / double(lutSize - 1);
++                    return tag->B->transform(QVector3D(relativeX, relativeX, relativeX));
++                };
++                B = GlLookUpTable::create(sample, lutSize);
++                if (!B) {
++                    return false;
++                }
++            }
++            matrix2 = tag->matrix.value_or(QMatrix4x4());
++            if (tag->M) {
++                const auto sample = [&tag](size_t x) {
++                    const float relativeX = x / double(lutSize - 1);
++                    return tag->M->transform(QVector3D(relativeX, relativeX, relativeX));
++                };
++                M = GlLookUpTable::create(sample, lutSize);
++                if (!M) {
++                    return false;
++                }
++            }
++            if (tag->CLut) {
++                const auto sample = [&tag](size_t x, size_t y, size_t z) {
++                    return tag->CLut->sample(x, y, z);
++                };
++                C = GlLookUpTable3D::create(sample, tag->CLut->xSize(), tag->CLut->ySize(), tag->CLut->zSize());
++                if (!C) {
++                    return false;
++                }
++            }
++            if (tag->A) {
++                const auto sample = [&tag, vcgt](size_t x) {
++                    const float relativeX = x / double(lutSize - 1);
++                    QVector3D ret = tag->A->transform(QVector3D(relativeX, relativeX, relativeX));
++                    if (vcgt) {
++                        ret = vcgt->transform(ret);
++                    }
++                    return ret;
++                };
++                A = GlLookUpTable::create(sample, lutSize);
++                if (!A) {
++                    return false;
++                }
++            } else if (vcgt) {
++                const auto sample = [&vcgt](size_t x) {
++                    const float relativeX = x / double(lutSize - 1);
++                    return vcgt->transform(QVector3D(relativeX, relativeX, relativeX));
++                };
++                A = GlLookUpTable::create(sample, lutSize);
++            }
++        } else {
++            const auto inverseEOTF = profile->inverseEOTF();
++            const auto sample = [inverseEOTF, vcgt](size_t x) {
++                const float relativeX = x / double(lutSize - 1);
++                QVector3D ret(relativeX, relativeX, relativeX);
++                ret = inverseEOTF->transform(ret);
++                if (vcgt) {
++                    ret = vcgt->transform(ret);
++                }
++                return ret;
++            };
++            A = GlLookUpTable::create(sample, lutSize);
++            if (!A) {
++                return false;
++            }
++        }
++        m_matrix1 = matrix1;
++        m_B = std::move(B);
++        m_matrix2 = matrix2;
++        m_M = std::move(M);
++        m_C = std::move(C);
++        m_A = std::move(A);
++        m_profile = profile;
++    }
++    return true;
++}
++
++GLShader *IccShader::shader() const
++{
++    return m_shader.get();
++}
++
++void IccShader::setUniforms(const std::shared_ptr<IccProfile> &profile, float sdrBrightness)
++{
++    // this failing can be silently ignored, it should only happen with GPU resets and gets corrected later
++    setProfile(profile);
++
++    m_shader->setUniform(m_locations.sdrBrightness, sdrBrightness);
++    m_shader->setUniform(m_locations.matrix1, m_matrix1);
++
++    glActiveTexture(GL_TEXTURE1);
++    if (m_B) {
++        m_shader->setUniform(m_locations.bsize, int(m_B->size()));
++        m_shader->setUniform(m_locations.bsampler, 1);
++        m_B->bind();
++    } else {
++        m_shader->setUniform(m_locations.bsize, 0);
++        m_shader->setUniform(m_locations.bsampler, 1);
++        glBindTexture(GL_TEXTURE_1D, 0);
++    }
++
++    m_shader->setUniform(m_locations.matrix2, m_matrix2);
++
++    glActiveTexture(GL_TEXTURE2);
++    if (m_M) {
++        m_shader->setUniform(m_locations.msize, int(m_M->size()));
++        m_shader->setUniform(m_locations.msampler, 2);
++        m_M->bind();
++    } else {
++        m_shader->setUniform(m_locations.msize, 0);
++        m_shader->setUniform(m_locations.msampler, 1);
++        glBindTexture(GL_TEXTURE_1D, 0);
++    }
++
++    glActiveTexture(GL_TEXTURE3);
++    if (m_C) {
++        m_shader->setUniform(m_locations.csize, m_C->xSize(), m_C->ySize(), m_C->zSize());
++        m_shader->setUniform(m_locations.csampler, 3);
++        m_C->bind();
++    } else {
++        m_shader->setUniform(m_locations.csize, 0, 0, 0);
++        m_shader->setUniform(m_locations.csampler, 3);
++        glBindTexture(GL_TEXTURE_3D, 0);
++    }
++
++    glActiveTexture(GL_TEXTURE4);
++    if (m_A) {
++        m_shader->setUniform(m_locations.asize, int(m_A->size()));
++        m_shader->setUniform(m_locations.asampler, 4);
++        m_A->bind();
++    } else {
++        m_shader->setUniform(m_locations.asize, 0);
++        m_shader->setUniform(m_locations.asampler, 4);
++        glBindTexture(GL_TEXTURE_1D, 0);
++    }
++
++    glActiveTexture(GL_TEXTURE0);
++    m_shader->setUniform(m_locations.src, 0);
++}
++
++}
+diff --git a/src/backends/drm/icc_shader.h b/src/backends/drm/icc_shader.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..dccd56776fe6bb16555196399dc236f6bbeaf954
+--- /dev/null
++++ b/src/backends/drm/icc_shader.h
+@@ -0,0 +1,60 @@
++/*
++    SPDX-FileCopyrightText: 2023 Xaver Hugl <xaver.hugl@gmail.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#pragma once
++
++#include <QMatrix4x4>
++#include <QSizeF>
++#include <memory>
++
++namespace KWin
++{
++
++class IccProfile;
++class GLShader;
++class GlLookUpTable;
++class GlLookUpTable3D;
++class GLTexture;
++
++class IccShader
++{
++public:
++    explicit IccShader();
++    ~IccShader();
++
++    GLShader *shader() const;
++    void setUniforms(const std::shared_ptr<IccProfile> &profile, float sdrBrightness);
++
++private:
++    bool setProfile(const std::shared_ptr<IccProfile> &profile);
++
++    std::unique_ptr<GLShader> m_shader;
++    std::shared_ptr<IccProfile> m_profile;
++
++    QMatrix3x3 m_matrix1;
++    std::unique_ptr<GlLookUpTable> m_B;
++    QMatrix4x4 m_matrix2;
++    std::unique_ptr<GlLookUpTable> m_M;
++    std::unique_ptr<GlLookUpTable3D> m_C;
++    std::unique_ptr<GlLookUpTable> m_A;
++    struct Locations
++    {
++        int src;
++        int sdrBrightness;
++        int matrix1;
++        int bsize;
++        int bsampler;
++        int matrix2;
++        int msize;
++        int msampler;
++        int csize;
++        int csampler;
++        int asize;
++        int asampler;
++    };
++    Locations m_locations;
++};
++
++}
+diff --git a/src/colors/colordevice.cpp b/src/colors/colordevice.cpp
+index 356cd202762f3d56156c4b7338d8bde3ee5223a7..77d66c506f84e86cd376792cdb5e26fec78d6c21 100644
+--- a/src/colors/colordevice.cpp
++++ b/src/colors/colordevice.cpp
+@@ -36,7 +36,6 @@ public:
+     enum DirtyToneCurveBit {
+         DirtyTemperatureToneCurve = 0x1,
+         DirtyBrightnessToneCurve = 0x2,
+-        DirtyCalibrationToneCurve = 0x4,
+     };
+     Q_DECLARE_FLAGS(DirtyToneCurves, DirtyToneCurveBit)
+ 
+@@ -44,12 +43,10 @@ public:
+ 
+     void updateTemperatureToneCurves();
+     void updateBrightnessToneCurves();
+-    void updateCalibrationToneCurves();
+ 
+     Output *output;
+     DirtyToneCurves dirtyCurves;
+     QTimer *updateTimer;
+-    QString profile;
+     uint brightness = 100;
+     uint temperature = 6500;
+ 
+@@ -57,7 +54,6 @@ public:
+     QVector3D temperatureFactors = QVector3D(1, 1, 1);
+     std::unique_ptr<ColorPipelineStage> brightnessStage;
+     QVector3D brightnessFactors = QVector3D(1, 1, 1);
+-    std::unique_ptr<ColorPipelineStage> calibrationStage;
+ 
+     std::shared_ptr<ColorTransformation> transformation;
+     // used if only limited per-channel multiplication is available
+@@ -66,9 +62,6 @@ public:
+ 
+ void ColorDevicePrivate::rebuildPipeline()
+ {
+-    if (dirtyCurves & DirtyCalibrationToneCurve) {
+-        updateCalibrationToneCurves();
+-    }
+     if (dirtyCurves & DirtyBrightnessToneCurve) {
+         updateBrightnessToneCurves();
+     }
+@@ -78,13 +71,6 @@ void ColorDevicePrivate::rebuildPipeline()
+     dirtyCurves = DirtyToneCurves();
+ 
+     std::vector<std::unique_ptr<ColorPipelineStage>> stages;
+-    if (calibrationStage) {
+-        if (auto s = calibrationStage->dup()) {
+-            stages.push_back(std::move(s));
+-        } else {
+-            return;
+-        }
+-    }
+     if (brightnessStage) {
+         if (auto s = brightnessStage->dup()) {
+             stages.push_back(std::move(s));
+@@ -112,11 +98,6 @@ static qreal interpolate(qreal a, qreal b, qreal blendFactor)
+     return (1 - blendFactor) * a + blendFactor * b;
+ }
+ 
+-QString ColorDevice::profile() const
+-{
+-    return d->profile;
+-}
+-
+ void ColorDevicePrivate::updateTemperatureToneCurves()
+ {
+     temperatureStage.reset();
+@@ -208,36 +189,6 @@ void ColorDevicePrivate::updateBrightnessToneCurves()
+     }
+ }
+ 
+-void ColorDevicePrivate::updateCalibrationToneCurves()
+-{
+-    calibrationStage.reset();
+-
+-    if (profile.isNull()) {
+-        return;
+-    }
+-
+-    cmsHPROFILE handle = cmsOpenProfileFromFile(profile.toUtf8(), "r");
+-    if (!handle) {
+-        qCWarning(KWIN_CORE) << "Failed to open color profile file:" << profile;
+-        return;
+-    }
+-
+-    cmsToneCurve **vcgt = static_cast<cmsToneCurve **>(cmsReadTag(handle, cmsSigVcgtTag));
+-    if (!vcgt || !vcgt[0]) {
+-        qCWarning(KWIN_CORE) << "Profile" << profile << "has no VCGT tag";
+-    } else {
+-        // Need to duplicate the VCGT tone curves as they are owned by the profile.
+-        cmsToneCurve *toneCurves[] = {
+-            cmsDupToneCurve(vcgt[0]),
+-            cmsDupToneCurve(vcgt[1]),
+-            cmsDupToneCurve(vcgt[2]),
+-        };
+-        calibrationStage = std::make_unique<ColorPipelineStage>(cmsStageAllocToneCurves(nullptr, 3, toneCurves));
+-    }
+-
+-    cmsCloseProfile(handle);
+-}
+-
+ ColorDevice::ColorDevice(Output *output, QObject *parent)
+     : QObject(parent)
+     , d(new ColorDevicePrivate)
+@@ -304,17 +255,6 @@ void ColorDevice::setTemperature(uint temperature)
+     Q_EMIT temperatureChanged();
+ }
+ 
+-void ColorDevice::setProfile(const QString &profile)
+-{
+-    if (d->profile == profile) {
+-        return;
+-    }
+-    d->profile = profile;
+-    d->dirtyCurves |= ColorDevicePrivate::DirtyCalibrationToneCurve;
+-    scheduleUpdate();
+-    Q_EMIT profileChanged();
+-}
+-
+ void ColorDevice::update()
+ {
+     d->rebuildPipeline();
+diff --git a/src/colors/colordevice.h b/src/colors/colordevice.h
+index 9e78fa42864e39f2f967b805c8cd156bf7c06250..91a6649039f036ecc5ec03dbda1648a7728ba38f 100644
+--- a/src/colors/colordevice.h
++++ b/src/colors/colordevice.h
+@@ -53,16 +53,6 @@ public:
+      */
+     void setTemperature(uint temperature);
+ 
+-    /**
+-     * Returns the color profile for this device.
+-     */
+-    QString profile() const;
+-
+-    /**
+-     * Sets the color profile for this device to @a profile.
+-     */
+-    void setProfile(const QString &profile);
+-
+ public Q_SLOTS:
+     void update();
+     void scheduleUpdate();
+@@ -76,10 +66,6 @@ Q_SIGNALS:
+      * This signal is emitted when the color temperature of this device has changed.
+      */
+     void temperatureChanged();
+-    /**
+-     * This signal is emitted when the color profile of this device has changed.
+-     */
+-    void profileChanged();
+ 
+ private:
+     std::unique_ptr<ColorDevicePrivate> d;
+diff --git a/src/core/colorlut3d.cpp b/src/core/colorlut3d.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..a9988b106a7bb12537f8d5c1f6061f0ec19c40f3
+--- /dev/null
++++ b/src/core/colorlut3d.cpp
+@@ -0,0 +1,45 @@
++/*
++    KWin - the KDE window manager
++    This file is part of the KDE project.
++
++    SPDX-FileCopyrightText: 2023 Xaver Hugl <xaver.hugl@gmail.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#include "colorlut3d.h"
++#include "colortransformation.h"
++
++#include <QVector3D>
++
++namespace KWin
++{
++
++ColorLUT3D::ColorLUT3D(std::unique_ptr<ColorTransformation> &&transformation, size_t xSize, size_t ySize, size_t zSize)
++    : m_transformation(std::move(transformation))
++    , m_xSize(xSize)
++    , m_ySize(ySize)
++    , m_zSize(zSize)
++{
++}
++
++size_t ColorLUT3D::xSize() const
++{
++    return m_xSize;
++}
++
++size_t ColorLUT3D::ySize() const
++{
++    return m_ySize;
++}
++
++size_t ColorLUT3D::zSize() const
++{
++    return m_zSize;
++}
++
++QVector3D ColorLUT3D::sample(size_t x, size_t y, size_t z)
++{
++    return m_transformation->transform(QVector3D(x / double(m_xSize - 1), y / double(m_ySize - 1), z / double(m_zSize - 1)));
++}
++
++}
+diff --git a/src/core/colorlut3d.h b/src/core/colorlut3d.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..98791e3de3e7667d900e40c2cb500d01f6c9f541
+--- /dev/null
++++ b/src/core/colorlut3d.h
+@@ -0,0 +1,41 @@
++/*
++    KWin - the KDE window manager
++    This file is part of the KDE project.
++
++    SPDX-FileCopyrightText: 2023 Xaver Hugl <xaver.hugl@gmail.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#pragma once
++
++#include <QVector>
++#include <memory>
++
++#include "kwin_export.h"
++
++class QVector3D;
++
++namespace KWin
++{
++
++class ColorTransformation;
++
++class KWIN_EXPORT ColorLUT3D
++{
++public:
++    ColorLUT3D(std::unique_ptr<ColorTransformation> &&transformation, size_t xSize, size_t ySize, size_t zSize);
++
++    size_t xSize() const;
++    size_t ySize() const;
++    size_t zSize() const;
++
++    QVector3D sample(size_t x, size_t y, size_t z);
++
++private:
++    const std::unique_ptr<ColorTransformation> m_transformation;
++    const size_t m_xSize;
++    const size_t m_ySize;
++    const size_t m_zSize;
++};
++
++}
+diff --git a/src/core/colortransformation.cpp b/src/core/colortransformation.cpp
+index 2e93d5016e7f8073c295c6f2853f24239bafb8c1..173e7083615260c05e47677d562a7ce0b9245cb2 100644
+--- a/src/core/colortransformation.cpp
++++ b/src/core/colortransformation.cpp
+@@ -45,6 +45,19 @@ ColorTransformation::~ColorTransformation()
+     }
+ }
+ 
++void ColorTransformation::append(ColorTransformation *transformation)
++{
++    for (auto &stage : transformation->m_stages) {
++        auto dup = stage->dup();
++        if (!cmsPipelineInsertStage(m_pipeline, cmsAT_END, dup->stage())) {
++            qCWarning(KWIN_CORE) << "Failed to insert cmsPipeline stage!";
++            m_valid = false;
++            return;
++        }
++        m_stages.push_back(std::move(dup));
++    }
++}
++
+ bool ColorTransformation::valid() const
+ {
+     return m_valid;
+@@ -58,4 +71,10 @@ std::tuple<uint16_t, uint16_t, uint16_t> ColorTransformation::transform(uint16_t
+     return {out[0], out[1], out[2]};
+ }
+ 
++QVector3D ColorTransformation::transform(QVector3D in) const
++{
++    QVector3D ret;
++    cmsPipelineEvalFloat(&in[0], &ret[0], m_pipeline);
++    return ret;
++}
+ }
+diff --git a/src/core/colortransformation.h b/src/core/colortransformation.h
+index 51dd22783af7b41598ca70aa6deff1cba759970c..31d986134e70a95c3a00ef5d2e6190ae524ab09f 100644
+--- a/src/core/colortransformation.h
++++ b/src/core/colortransformation.h
+@@ -16,6 +16,7 @@
+ #include "kwin_export.h"
+ 
+ typedef struct _cmsPipeline_struct cmsPipeline;
++class QVector3D;
+ 
+ namespace KWin
+ {
+@@ -28,13 +29,16 @@ public:
+     ColorTransformation(std::vector<std::unique_ptr<ColorPipelineStage>> &&stages);
+     ~ColorTransformation();
+ 
++    void append(ColorTransformation *transformation);
++
+     bool valid() const;
+ 
+     std::tuple<uint16_t, uint16_t, uint16_t> transform(uint16_t r, uint16_t g, uint16_t b) const;
++    QVector3D transform(QVector3D in) const;
+ 
+ private:
+     cmsPipeline *const m_pipeline;
+-    const std::vector<std::unique_ptr<ColorPipelineStage>> m_stages;
++    std::vector<std::unique_ptr<ColorPipelineStage>> m_stages;
+     bool m_valid = true;
+ };
+ 
+diff --git a/src/core/iccprofile.cpp b/src/core/iccprofile.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..9cec7b21277606354f8b6c846060bb877f27e666
+--- /dev/null
++++ b/src/core/iccprofile.cpp
+@@ -0,0 +1,354 @@
++/*
++    SPDX-FileCopyrightText: 2023 Xaver Hugl <xaver.hugl@gmail.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#include "iccprofile.h"
++#include "colorlut.h"
++#include "colorlut3d.h"
++#include "colorpipelinestage.h"
++#include "colortransformation.h"
++#include "utils/common.h"
++
++#include <lcms2.h>
++#include <span>
++#include <tuple>
++
++namespace KWin
++{
++
++IccProfile::IccProfile(cmsHPROFILE handle, const Colorimetry &colorimetry, BToATagData &&bToATag, const std::shared_ptr<ColorTransformation> &vcgt)
++    : m_handle(handle)
++    , m_colorimetry(colorimetry)
++    , m_bToATag(std::move(bToATag))
++    , m_vcgt(vcgt)
++{
++}
++
++IccProfile::IccProfile(cmsHPROFILE handle, const Colorimetry &colorimetry, const std::shared_ptr<ColorTransformation> &inverseEOTF, const std::shared_ptr<ColorTransformation> &vcgt)
++    : m_handle(handle)
++    , m_colorimetry(colorimetry)
++    , m_inverseEOTF(inverseEOTF)
++    , m_vcgt(vcgt)
++{
++}
++
++IccProfile::~IccProfile()
++{
++    cmsCloseProfile(m_handle);
++}
++
++const Colorimetry &IccProfile::colorimetry() const
++{
++    return m_colorimetry;
++}
++
++std::shared_ptr<ColorTransformation> IccProfile::inverseEOTF() const
++{
++    return m_inverseEOTF;
++}
++
++std::shared_ptr<ColorTransformation> IccProfile::vcgt() const
++{
++    return m_vcgt;
++}
++
++const IccProfile::BToATagData *IccProfile::BtToATag() const
++{
++    return m_bToATag ? &m_bToATag.value() : nullptr;
++}
++
++static std::vector<uint8_t> readTagRaw(cmsHPROFILE profile, cmsTagSignature tag)
++{
++    const auto numBytes = cmsReadRawTag(profile, tag, nullptr, 0);
++    std::vector<uint8_t> data(numBytes);
++    cmsReadRawTag(profile, tag, data.data(), numBytes);
++    return data;
++}
++
++template<typename T>
++static T read(std::span<const uint8_t> data, size_t index)
++{
++    // ICC profile data is big-endian
++    T ret;
++    for (size_t i = 0; i < sizeof(T); i++) {
++        *(reinterpret_cast<uint8_t *>(&ret) + i) = data[index + sizeof(T) - i - 1];
++    }
++    return ret;
++}
++
++static float readS15Fixed16(std::span<const uint8_t> data, size_t index)
++{
++    return read<int32_t>(data, index) / 65536.0;
++}
++
++static std::optional<std::tuple<size_t, size_t, size_t>> parseBToACLUTSize(std::span<const uint8_t> data)
++{
++    const uint32_t tagType = read<uint32_t>(data, 0);
++    const bool isLutTag = tagType == cmsSigLut8Type || tagType == cmsSigLut16Type;
++    if (isLutTag) {
++        const uint8_t size = data[10];
++        return std::make_tuple(size, size, size);
++    } else {
++        const uint32_t clutOffset = read<uint32_t>(data, 24);
++        if (data.size() < clutOffset + 19) {
++            qCWarning(KWIN_CORE, "CLut offset points to invalid position %u", clutOffset);
++            return std::nullopt;
++        }
++        return std::make_tuple(data[clutOffset + 0], data[clutOffset + 1], data[clutOffset + 2]);
++    }
++}
++
++static std::optional<QMatrix4x4> parseMatrix(std::span<const uint8_t> data, bool hasOffset)
++{
++    const size_t matrixSize = hasOffset ? 12 : 9;
++    std::vector<float> floats;
++    floats.reserve(matrixSize);
++    for (size_t i = 0; i < matrixSize; i++) {
++        floats.push_back(readS15Fixed16(data, i * 4));
++    }
++    constexpr double xyzEncodingFactor = 65536.0 / (2 * 65535.0);
++    QMatrix4x4 ret;
++    ret(0, 0) = floats[0] * xyzEncodingFactor;
++    ret(0, 1) = floats[1] * xyzEncodingFactor;
++    ret(0, 2) = floats[2] * xyzEncodingFactor;
++    ret(1, 0) = floats[3] * xyzEncodingFactor;
++    ret(1, 1) = floats[4] * xyzEncodingFactor;
++    ret(1, 2) = floats[5] * xyzEncodingFactor;
++    ret(2, 0) = floats[6] * xyzEncodingFactor;
++    ret(2, 1) = floats[7] * xyzEncodingFactor;
++    ret(2, 2) = floats[8] * xyzEncodingFactor;
++    if (hasOffset) {
++        ret(0, 3) = floats[9] * xyzEncodingFactor;
++        ret(1, 3) = floats[10] * xyzEncodingFactor;
++        ret(2, 3) = floats[11] * xyzEncodingFactor;
++    }
++    return ret;
++}
++
++static std::optional<IccProfile::BToATagData> parseBToATag(cmsHPROFILE profile, cmsTagSignature tag)
++{
++    cmsPipeline *bToAPipeline = static_cast<cmsPipeline *>(cmsReadTag(profile, tag));
++    if (!bToAPipeline) {
++        return std::nullopt;
++    }
++    IccProfile::BToATagData ret;
++    auto data = readTagRaw(profile, tag);
++    const uint32_t tagType = read<uint32_t>(data, 0);
++    switch (tagType) {
++    case cmsSigLut8Type:
++    case cmsSigLut16Type:
++        if (data.size() < 48) {
++            qCWarning(KWIN_CORE) << "ICC profile tag is too small" << data.size();
++            return std::nullopt;
++        }
++        break;
++    case cmsSigLutBtoAType:
++        if (data.size() < 32) {
++            qCWarning(KWIN_CORE) << "ICC profile tag is too small" << data.size();
++            return std::nullopt;
++        }
++        break;
++    default:
++        qCWarning(KWIN_CORE).nospace() << "unknown lut type " << (char)data[0] << (char)data[1] << (char)data[2] << (char)data[3];
++        return std::nullopt;
++    }
++    for (auto stage = cmsPipelineGetPtrToFirstStage(bToAPipeline); stage != nullptr; stage = cmsStageNext(stage)) {
++        switch (const cmsStageSignature stageType = cmsStageType(stage)) {
++        case cmsStageSignature::cmsSigCurveSetElemType: {
++            // TODO read the actual functions and apply them in the shader instead
++            // of using LUTs for more accuracy
++            std::vector<std::unique_ptr<ColorPipelineStage>> stages;
++            stages.push_back(std::make_unique<ColorPipelineStage>(cmsStageDup(stage)));
++            auto transformation = std::make_unique<ColorTransformation>(std::move(stages));
++            // the order of operations is fixed, so just sort the LUTs into the appropriate places
++            // depending on the stages that have already been added
++            if (!ret.matrix) {
++                ret.B = std::move(transformation);
++            } else if (!ret.CLut) {
++                ret.M = std::move(transformation);
++            } else if (!ret.A) {
++                ret.A = std::move(transformation);
++            } else {
++                qCWarning(KWIN_CORE, "unexpected amount of curve elements in BToA tag");
++                return std::nullopt;
++            }
++        } break;
++        case cmsStageSignature::cmsSigMatrixElemType: {
++            const bool isLutTag = tagType == cmsSigLut8Type || tagType == cmsSigLut16Type;
++            const uint32_t matrixOffset = isLutTag ? 12 : read<uint32_t>(data, 16);
++            const uint32_t matrixSize = isLutTag ? 9 : 12;
++            if (data.size() < matrixOffset + matrixSize * 4) {
++                qCWarning(KWIN_CORE, "matrix offset points to invalid position %u", matrixOffset);
++                return std::nullopt;
++            }
++            const auto mat = parseMatrix(std::span(data).subspan(matrixOffset), !isLutTag);
++            if (!mat) {
++                return std::nullopt;
++            }
++            ret.matrix = mat;
++        }; break;
++        case cmsStageSignature::cmsSigCLutElemType: {
++            const auto size = parseBToACLUTSize(data);
++            if (!size) {
++                return std::nullopt;
++            }
++            const auto [x, y, z] = *size;
++            std::vector<std::unique_ptr<ColorPipelineStage>> stages;
++            stages.push_back(std::make_unique<ColorPipelineStage>(cmsStageDup(stage)));
++            ret.CLut = std::make_unique<ColorLUT3D>(std::make_unique<ColorTransformation>(std::move(stages)), x, y, z);
++        } break;
++        default:
++            qCWarning(KWIN_CORE, "unknown stage type %u", stageType);
++            return std::nullopt;
++        }
++    }
++    return ret;
++}
++
++std::unique_ptr<IccProfile> IccProfile::load(const QString &path)
++{
++    if (path.isEmpty()) {
++        return nullptr;
++    }
++    cmsHPROFILE handle = cmsOpenProfileFromFile(path.toUtf8(), "r");
++    if (!handle) {
++        qCWarning(KWIN_CORE) << "Failed to open color profile file:" << path;
++        return nullptr;
++    }
++    if (cmsGetDeviceClass(handle) != cmsSigDisplayClass) {
++        qCWarning(KWIN_CORE) << "Only Display ICC profiles are supported";
++        return nullptr;
++    }
++    if (cmsGetPCS(handle) != cmsColorSpaceSignature::cmsSigXYZData) {
++        qCWarning(KWIN_CORE) << "Only ICC profiles with a XYZ connection space are supported";
++        return nullptr;
++    }
++    if (cmsGetColorSpace(handle) != cmsColorSpaceSignature::cmsSigRgbData) {
++        qCWarning(KWIN_CORE) << "Only ICC profiles with RGB color spaces are supported";
++        return nullptr;
++    }
++
++    std::shared_ptr<ColorTransformation> vcgt;
++    cmsToneCurve **vcgtTag = static_cast<cmsToneCurve **>(cmsReadTag(handle, cmsSigVcgtTag));
++    if (!vcgtTag || !vcgtTag[0]) {
++        qCDebug(KWIN_CORE) << "Profile" << path << "has no VCGT tag";
++    } else {
++        // Need to duplicate the VCGT tone curves as they are owned by the profile.
++        cmsToneCurve *toneCurves[] = {
++            cmsDupToneCurve(vcgtTag[0]),
++            cmsDupToneCurve(vcgtTag[1]),
++            cmsDupToneCurve(vcgtTag[2]),
++        };
++        std::vector<std::unique_ptr<ColorPipelineStage>> stages;
++        stages.push_back(std::make_unique<ColorPipelineStage>(cmsStageAllocToneCurves(nullptr, 3, toneCurves)));
++        vcgt = std::make_shared<ColorTransformation>(std::move(stages));
++    }
++
++    const cmsCIEXYZ *whitepoint = static_cast<cmsCIEXYZ *>(cmsReadTag(handle, cmsSigMediaWhitePointTag));
++    if (!whitepoint) {
++        qCWarning(KWIN_CORE, "profile is missing the wtpt tag");
++        return nullptr;
++    }
++
++    QVector3D red;
++    QVector3D green;
++    QVector3D blue;
++    QVector3D white(whitepoint->X, whitepoint->Y, whitepoint->Z);
++    std::optional<QMatrix4x4> chromaticAdaptationMatrix;
++    if (cmsIsTag(handle, cmsSigChromaticAdaptationTag)) {
++        // the chromatic adaptation tag is a 3x3 matrix that converts from the actual whitepoint to D50
++        const auto data = readTagRaw(handle, cmsSigChromaticAdaptationTag);
++        const auto mat = parseMatrix(std::span(data).subspan(8), false);
++        if (!mat) {
++            qCWarning(KWIN_CORE, "Parsing chromatic adaptation matrix failed");
++            return nullptr;
++        }
++        bool invertable = false;
++        chromaticAdaptationMatrix = mat->inverted(&invertable);
++        if (!invertable) {
++            qCWarning(KWIN_CORE, "Inverting chromatic adaptation matrix failed");
++            return nullptr;
++        }
++        const QVector3D D50(0.9642, 1.0, 0.8249);
++        white = *chromaticAdaptationMatrix * D50;
++    }
++    if (cmsCIExyYTRIPLE *chrmTag = static_cast<cmsCIExyYTRIPLE *>(cmsReadTag(handle, cmsSigChromaticityTag))) {
++        red = Colorimetry::xyToXYZ(QVector2D(chrmTag->Red.x, chrmTag->Red.y)) * chrmTag->Red.Y;
++        green = Colorimetry::xyToXYZ(QVector2D(chrmTag->Green.x, chrmTag->Green.y)) * chrmTag->Green.Y;
++        blue = Colorimetry::xyToXYZ(QVector2D(chrmTag->Blue.x, chrmTag->Blue.y)) * chrmTag->Blue.Y;
++    } else {
++        const cmsCIEXYZ *r = static_cast<cmsCIEXYZ *>(cmsReadTag(handle, cmsSigRedColorantTag));
++        const cmsCIEXYZ *g = static_cast<cmsCIEXYZ *>(cmsReadTag(handle, cmsSigGreenColorantTag));
++        const cmsCIEXYZ *b = static_cast<cmsCIEXYZ *>(cmsReadTag(handle, cmsSigBlueColorantTag));
++        if (!r || !g || !b) {
++            qCWarning(KWIN_CORE, "rXYZ, gXYZ or bXYZ tag is missing");
++            return nullptr;
++        }
++        if (chromaticAdaptationMatrix) {
++            red = *chromaticAdaptationMatrix * QVector3D(r->X, r->Y, r->Z);
++            green = *chromaticAdaptationMatrix * QVector3D(g->X, g->Y, g->Z);
++            blue = *chromaticAdaptationMatrix * QVector3D(b->X, b->Y, b->Z);
++        } else {
++            // if the chromatic adaptation tag isn't available, fall back to using the media whitepoint instead
++            cmsCIEXYZ adaptedR{};
++            cmsCIEXYZ adaptedG{};
++            cmsCIEXYZ adaptedB{};
++            bool success = cmsAdaptToIlluminant(&adaptedR, cmsD50_XYZ(), whitepoint, r);
++            success &= cmsAdaptToIlluminant(&adaptedG, cmsD50_XYZ(), whitepoint, g);
++            success &= cmsAdaptToIlluminant(&adaptedB, cmsD50_XYZ(), whitepoint, b);
++            if (!success) {
++                return nullptr;
++            }
++            red = QVector3D(adaptedR.X, adaptedR.Y, adaptedR.Z);
++            green = QVector3D(adaptedG.X, adaptedG.Y, adaptedG.Z);
++            blue = QVector3D(adaptedB.X, adaptedB.Y, adaptedB.Z);
++        }
++    }
++
++    BToATagData lutData;
++    if (cmsIsTag(handle, cmsSigBToD1Tag) && !cmsIsTag(handle, cmsSigBToA1Tag) && !cmsIsTag(handle, cmsSigBToA0Tag)) {
++        qCWarning(KWIN_CORE, "Profiles with only BToD tags aren't supported yet");
++        return nullptr;
++    }
++    if (cmsIsTag(handle, cmsSigBToA1Tag)) {
++        // lut based profile, with relative colorimetric intent supported
++        auto data = parseBToATag(handle, cmsSigBToA1Tag);
++        if (data) {
++            return std::make_unique<IccProfile>(handle, Colorimetry::fromXYZ(red, green, blue, white), std::move(*data), vcgt);
++        } else {
++            qCWarning(KWIN_CORE, "Parsing BToA1 tag failed");
++            return nullptr;
++        }
++    }
++    if (cmsIsTag(handle, cmsSigBToA0Tag)) {
++        // lut based profile, with perceptual intent. The ICC docs say to use this as a fallback
++        auto data = parseBToATag(handle, cmsSigBToA0Tag);
++        if (data) {
++            return std::make_unique<IccProfile>(handle, Colorimetry::fromXYZ(red, green, blue, white), std::move(*data), vcgt);
++        } else {
++            qCWarning(KWIN_CORE, "Parsing BToA0 tag failed");
++            return nullptr;
++        }
++    }
++    // matrix based profile. The matrix is already read out for the colorimetry above
++    // All that's missing is the EOTF, which is stored in the rTRC, gTRC and bTRC tags
++    cmsToneCurve *r = static_cast<cmsToneCurve *>(cmsReadTag(handle, cmsSigRedTRCTag));
++    cmsToneCurve *g = static_cast<cmsToneCurve *>(cmsReadTag(handle, cmsSigGreenTRCTag));
++    cmsToneCurve *b = static_cast<cmsToneCurve *>(cmsReadTag(handle, cmsSigBlueTRCTag));
++    if (!r || !g || !b) {
++        qCWarning(KWIN_CORE) << "ICC profile is missing at least one TRC tag";
++        return nullptr;
++    }
++    cmsToneCurve *toneCurves[] = {
++        cmsReverseToneCurveEx(4096, r),
++        cmsReverseToneCurveEx(4096, g),
++        cmsReverseToneCurveEx(4096, b),
++    };
++    std::vector<std::unique_ptr<ColorPipelineStage>> stages;
++    stages.push_back(std::make_unique<ColorPipelineStage>(cmsStageAllocToneCurves(nullptr, 3, toneCurves)));
++    const auto inverseEOTF = std::make_shared<ColorTransformation>(std::move(stages));
++    return std::make_unique<IccProfile>(handle, Colorimetry::fromXYZ(red, green, blue, white), inverseEOTF, vcgt);
++}
++
++}
+diff --git a/src/core/iccprofile.h b/src/core/iccprofile.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..003014a1a04d2fb181ca842c2f355874cea4e716
+--- /dev/null
++++ b/src/core/iccprofile.h
+@@ -0,0 +1,66 @@
++/*
++    SPDX-FileCopyrightText: 2023 Xaver Hugl <xaver.hugl@gmail.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#pragma once
++
++#include "kwin_export.h"
++#include "libkwineffects/colorspace.h"
++
++#include <QMatrix4x4>
++#include <QString>
++#include <memory>
++#include <optional>
++
++typedef void *cmsHPROFILE;
++
++namespace KWin
++{
++
++class ColorTransformation;
++class ColorLUT3D;
++
++class KWIN_EXPORT IccProfile
++{
++public:
++    struct BToATagData
++    {
++        std::unique_ptr<ColorTransformation> B;
++        std::optional<QMatrix4x4> matrix;
++        std::unique_ptr<ColorTransformation> M;
++        std::unique_ptr<ColorLUT3D> CLut;
++        std::unique_ptr<ColorTransformation> A;
++    };
++
++    explicit IccProfile(cmsHPROFILE handle, const Colorimetry &colorimetry, BToATagData &&bToATag, const std::shared_ptr<ColorTransformation> &vcgt);
++    explicit IccProfile(cmsHPROFILE handle, const Colorimetry &colorimetry, const std::shared_ptr<ColorTransformation> &inverseEOTF, const std::shared_ptr<ColorTransformation> &vcgt);
++    ~IccProfile();
++
++    /**
++     * the BToA tag describes a transformation from XYZ with D50 whitepoint
++     * to the display color space. May be nullptr!
++     */
++    const BToATagData *BtToATag() const;
++    /**
++     * Contains the inverse of the TRC tags. May be nullptr!
++     */
++    std::shared_ptr<ColorTransformation> inverseEOTF() const;
++    /**
++     * The VCGT is a non-standard tag that needs to be applied before
++     * pixels are sent to the display. May be nullptr!
++     */
++    std::shared_ptr<ColorTransformation> vcgt() const;
++    const Colorimetry &colorimetry() const;
++
++    static std::unique_ptr<IccProfile> load(const QString &path);
++
++private:
++    cmsHPROFILE const m_handle;
++    const Colorimetry m_colorimetry;
++    const std::optional<BToATagData> m_bToATag;
++    const std::shared_ptr<ColorTransformation> m_inverseEOTF;
++    const std::shared_ptr<ColorTransformation> m_vcgt;
++};
++
++}
+diff --git a/src/core/output.cpp b/src/core/output.cpp
+index 798a05c48e0cbfc60c68e66aebd54ff30d70f059..1b9e2dc82c6a3bdaeab1a7c8f3ec9e6d58b058b4 100644
+--- a/src/core/output.cpp
++++ b/src/core/output.cpp
+@@ -8,6 +8,7 @@
+ */
+ 
+ #include "output.h"
++#include "iccprofile.h"
+ #include "outputconfiguration.h"
+ 
+ #include <KConfigGroup>
+@@ -334,6 +335,9 @@ void Output::applyChanges(const OutputConfiguration &config)
+     next.scale = props->scale.value_or(m_state.scale);
+     next.rgbRange = props->rgbRange.value_or(m_state.rgbRange);
+     next.autoRotatePolicy = props->autoRotationPolicy.value_or(m_state.autoRotatePolicy);
++    if (props->iccProfilePath) {
++        next.iccProfile = IccProfile::load(*props->iccProfilePath);
++    }
+ 
+     setState(next);
+     setVrrPolicy(props->vrrPolicy.value_or(vrrPolicy()));
+@@ -410,6 +414,9 @@ void Output::setState(const State &state)
+     if (oldState.autoRotatePolicy != state.autoRotatePolicy) {
+         Q_EMIT autoRotationPolicyChanged();
+     }
++    if (oldState.iccProfile != state.iccProfile) {
++        Q_EMIT iccProfileChanged();
++    }
+     if (oldState.enabled != state.enabled) {
+         Q_EMIT enabledChanged();
+     }
+@@ -558,6 +565,11 @@ Output::AutoRotationPolicy Output::autoRotationPolicy() const
+     return m_state.autoRotatePolicy;
+ }
+ 
++std::shared_ptr<IccProfile> Output::iccProfile() const
++{
++    return m_state.iccProfile;
++}
++
+ bool Output::updateCursorLayer()
+ {
+     return false;
+diff --git a/src/core/output.h b/src/core/output.h
+index e374d0d199f4e46f3596d5f221ad9e5126136fd0..ed95f122cc941f0d28cd904adda53cdb46b5a396 100644
+--- a/src/core/output.h
++++ b/src/core/output.h
+@@ -29,6 +29,7 @@ class EffectScreenImpl;
+ class RenderLoop;
+ class OutputConfiguration;
+ class ColorTransformation;
++class IccProfile;
+ 
+ enum class ContentType {
+     None = 0,
+@@ -313,6 +314,7 @@ public:
+     bool highDynamicRange() const;
+     uint32_t sdrBrightness() const;
+     AutoRotationPolicy autoRotationPolicy() const;
++    std::shared_ptr<IccProfile> iccProfile() const;
+ 
+     virtual bool setGammaRamp(const std::shared_ptr<ColorTransformation> &transformation);
+     virtual bool setChannelFactors(const QVector3D &rgb);
+@@ -376,6 +378,7 @@ Q_SIGNALS:
+     void sdrBrightnessChanged();
+     void highDynamicRangeChanged();
+     void autoRotationPolicyChanged();
++    void iccProfileChanged();
+ 
+ protected:
+     struct Information
+@@ -412,6 +415,7 @@ protected:
+         bool highDynamicRange = false;
+         uint32_t sdrBrightness = 200;
+         AutoRotationPolicy autoRotatePolicy = AutoRotationPolicy::InTabletMode;
++        std::shared_ptr<IccProfile> iccProfile;
+     };
+ 
+     void setInformation(const Information &information);
+diff --git a/src/core/outputconfiguration.h b/src/core/outputconfiguration.h
+index d4b87a59231e9f4aa29040f0a307b552fa0d65cb..f5e4e6b19e40c37d65e59c3bd7df5f5b216f91d8 100644
+--- a/src/core/outputconfiguration.h
++++ b/src/core/outputconfiguration.h
+@@ -18,6 +18,8 @@
+ namespace KWin
+ {
+ 
++class IccProfile;
++
+ class KWIN_EXPORT OutputChangeSet
+ {
+ public:
+@@ -34,6 +36,7 @@ public:
+     std::optional<uint32_t> sdrBrightness;
+     std::optional<bool> wideColorGamut;
+     std::optional<Output::AutoRotationPolicy> autoRotationPolicy;
++    std::optional<QString> iccProfilePath;
+ };
+ 
+ class KWIN_EXPORT OutputConfiguration
+diff --git a/src/libkwineffects/colorspace.cpp b/src/libkwineffects/colorspace.cpp
+index d95775cc3ec464c04fc4a4fa156bbcd5374e7f19..33df149c2f0d4e657a6115fae41758cb991cc420 100644
+--- a/src/libkwineffects/colorspace.cpp
++++ b/src/libkwineffects/colorspace.cpp
+@@ -49,24 +49,83 @@ static QVector3D operator*(const QMatrix3x3 &mat, const QVector3D &v)
+         mat(2, 0) * v.x() + mat(2, 1) * v.y() + mat(2, 2) * v.z());
+ }
+ 
+-static QVector3D xyToXYZ(QVector2D xy)
++QVector3D Colorimetry::xyToXYZ(QVector2D xy)
+ {
+     return QVector3D(xy.x() / xy.y(), 1, (1 - xy.x() - xy.y()) / xy.y());
+ }
+ 
++QVector2D Colorimetry::xyzToXY(QVector3D xyz)
++{
++    xyz /= xyz.y();
++    return QVector2D(xyz.x() / (xyz.x() + xyz.y() + xyz.z()), xyz.y() / (xyz.x() + xyz.y() + xyz.z()));
++}
++
+ QMatrix3x3 Colorimetry::toXYZ() const
+ {
+     const auto r_xyz = xyToXYZ(red);
+-    const auto g_xyz = xyToXYZ(blue);
+-    const auto b_xyz = xyToXYZ(green);
++    const auto g_xyz = xyToXYZ(green);
++    const auto b_xyz = xyToXYZ(blue);
+     const auto w_xyz = xyToXYZ(white);
+     const auto component_scale = inverse(matrixFromColumns(r_xyz, g_xyz, b_xyz)) * w_xyz;
+     return matrixFromColumns(r_xyz * component_scale.x(), g_xyz * component_scale.y(), b_xyz * component_scale.z());
+ }
+ 
++QMatrix3x3 Colorimetry::chromaticAdaptationMatrix(QVector2D sourceWhitepoint, QVector2D destinationWhitepoint)
++{
++    static const QMatrix3x3 bradford = []() {
++        QMatrix3x3 ret;
++        ret(0, 0) = 0.8951;
++        ret(0, 1) = 0.2664;
++        ret(0, 2) = -0.1614;
++        ret(1, 0) = -0.7502;
++        ret(1, 1) = 1.7135;
++        ret(1, 2) = 0.0367;
++        ret(2, 0) = 0.0389;
++        ret(2, 1) = -0.0685;
++        ret(2, 2) = 1.0296;
++        return ret;
++    }();
++    static const QMatrix3x3 inverseBradford = []() {
++        QMatrix3x3 ret;
++        ret(0, 0) = 0.9869929;
++        ret(0, 1) = -0.1470543;
++        ret(0, 2) = 0.1599627;
++        ret(1, 0) = 0.4323053;
++        ret(1, 1) = 0.5183603;
++        ret(1, 2) = 0.0492912;
++        ret(2, 0) = -0.0085287;
++        ret(2, 1) = 0.0400428;
++        ret(2, 2) = 0.9684867;
++        return ret;
++    }();
++    const QVector3D factors = (bradford * xyToXYZ(destinationWhitepoint)) / (bradford * xyToXYZ(sourceWhitepoint));
++    QMatrix3x3 adaptation{};
++    adaptation(0, 0) = factors.x();
++    adaptation(1, 1) = factors.y();
++    adaptation(2, 2) = factors.z();
++    return inverseBradford * adaptation * bradford;
++}
++
+ QMatrix3x3 Colorimetry::toOther(const Colorimetry &other) const
+ {
+-    return toXYZ() * inverse(other.toXYZ());
++    // rendering intent is relative colorimetric, so adapt to the different whitepoint
++    if (white == other.white) {
++        return inverse(other.toXYZ()) * toXYZ();
++    } else {
++        return inverse(other.toXYZ()) * chromaticAdaptationMatrix(this->white, other.white) * toXYZ();
++    }
++}
++
++Colorimetry Colorimetry::adaptedTo(QVector2D newWhitepoint) const
++{
++    const auto mat = chromaticAdaptationMatrix(this->white, newWhitepoint);
++    return Colorimetry{
++        .red = xyzToXY(mat * xyToXYZ(red)),
++        .green = xyzToXY(mat * xyToXYZ(green)),
++        .blue = xyzToXY(mat * xyToXYZ(blue)),
++        .white = newWhitepoint,
++        .name = std::nullopt,
++    };
+ }
+ 
+ bool Colorimetry::operator==(const Colorimetry &other) const
+@@ -75,7 +134,7 @@ bool Colorimetry::operator==(const Colorimetry &other) const
+                                 : (red == other.red && green == other.green && blue == other.blue && white == other.white);
+ }
+ 
+-constexpr Colorimetry Colorimetry::createFromName(NamedColorimetry name)
++constexpr Colorimetry Colorimetry::fromName(NamedColorimetry name)
+ {
+     switch (name) {
+     case NamedColorimetry::BT709:
+@@ -98,6 +157,17 @@ constexpr Colorimetry Colorimetry::createFromName(NamedColorimetry name)
+     Q_UNREACHABLE();
+ }
+ 
++Colorimetry Colorimetry::fromXYZ(QVector3D red, QVector3D green, QVector3D blue, QVector3D white)
++{
++    return Colorimetry{
++        .red = xyzToXY(red),
++        .green = xyzToXY(green),
++        .blue = xyzToXY(blue),
++        .white = xyzToXY(white),
++        .name = std::nullopt,
++    };
++}
++
+ const ColorDescription ColorDescription::sRGB = ColorDescription(NamedColorimetry::BT709, NamedTransferFunction::sRGB, 100, 0, 100, 100);
+ 
+ ColorDescription::ColorDescription(const Colorimetry &colorimety, NamedTransferFunction tf, double sdrBrightness, double minHdrBrightness, double maxFrameAverageBrightness, double maxHdrHighlightBrightness)
+@@ -111,7 +181,7 @@ ColorDescription::ColorDescription(const Colorimetry &colorimety, NamedTransferF
+ }
+ 
+ ColorDescription::ColorDescription(NamedColorimetry colorimetry, NamedTransferFunction tf, double sdrBrightness, double minHdrBrightness, double maxFrameAverageBrightness, double maxHdrHighlightBrightness)
+-    : m_colorimetry(Colorimetry::createFromName(colorimetry))
++    : m_colorimetry(Colorimetry::fromName(colorimetry))
+     , m_transferFunction(tf)
+     , m_sdrBrightness(sdrBrightness)
+     , m_minHdrBrightness(minHdrBrightness)
+diff --git a/src/libkwineffects/colorspace.h b/src/libkwineffects/colorspace.h
+index 92d0f60318bbd4f84fa43b84665cf6a4e20a4f9f..43233933c4ce469f835bc5f8fdd9757631658d64 100644
+--- a/src/libkwineffects/colorspace.h
++++ b/src/libkwineffects/colorspace.h
+@@ -27,11 +27,35 @@ enum class NamedColorimetry {
+ class KWIN_EXPORT Colorimetry
+ {
+ public:
+-    static constexpr Colorimetry createFromName(NamedColorimetry name);
++    static constexpr Colorimetry fromName(NamedColorimetry name);
++    static Colorimetry fromXYZ(QVector3D red, QVector3D green, QVector3D blue, QVector3D white);
++    /**
++     * @returns the XYZ representation of the xyY color passed in. Y is assumed to be one
++     */
++    static QVector3D xyToXYZ(QVector2D xy);
++    /**
++     * @returns the xyY representation of the XYZ color passed in. Y is normalized to be one
++     */
++    static QVector2D xyzToXY(QVector3D xyz);
++    /**
++     * @returns a matrix adapting XYZ values from the source whitepoint to the destination whitepoint with the Bradford transform
++     */
++    static QMatrix3x3 chromaticAdaptationMatrix(QVector2D sourceWhitepoint, QVector2D destinationWhitepoint);
+ 
++    /**
++     * @returns a matrix that transforms from the linear RGB representation of colors in this colorimetry to the XYZ representation
++     */
+     QMatrix3x3 toXYZ() const;
++    /**
++     * @returns a matrix that transforms from linear RGB in this colorimetry to linear RGB in the other colorimetry
++     * the rendering intent is relative colorimetric
++     */
+     QMatrix3x3 toOther(const Colorimetry &colorimetry) const;
+     bool operator==(const Colorimetry &other) const;
++    /**
++     * @returns this colorimetry, adapted to the new whitepoint using the Bradford transform
++     */
++    Colorimetry adaptedTo(QVector2D newWhitepoint) const;
+ 
+     QVector2D red;
+     QVector2D green;
+diff --git a/src/libkwineffects/gllut.cpp b/src/libkwineffects/gllut.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..3c2c2ae49b6eb9ce72488d031d29721725ce95fa
+--- /dev/null
++++ b/src/libkwineffects/gllut.cpp
+@@ -0,0 +1,70 @@
++/*
++    KWin - the KDE window manager
++    This file is part of the KDE project.
++
++    SPDX-FileCopyrightText: 2023 Xaver Hugl <xaver.hugl@gmail.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#include "gllut.h"
++
++#include <vector>
++
++namespace KWin
++{
++
++GlLookUpTable::GlLookUpTable(GLuint handle, size_t size)
++    : m_handle(handle)
++    , m_size(size)
++{
++}
++
++GlLookUpTable::~GlLookUpTable()
++{
++    glDeleteTextures(1, &m_handle);
++}
++
++GLuint GlLookUpTable::handle() const
++{
++    return m_handle;
++}
++
++size_t GlLookUpTable::size() const
++{
++    return m_size;
++}
++
++void GlLookUpTable::bind()
++{
++    glBindTexture(GL_TEXTURE_1D, m_handle);
++}
++
++std::unique_ptr<GlLookUpTable> GlLookUpTable::create(const std::function<QVector3D(size_t value)> &func, size_t size)
++{
++    GLuint handle = 0;
++    glGenTextures(1, &handle);
++    if (!handle) {
++        return nullptr;
++    }
++    glBindTexture(GL_TEXTURE_1D, handle);
++    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAX_LEVEL, 0);
++    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_LOD, 0);
++    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAX_LOD, 0);
++    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    std::vector<float> data;
++    data.reserve(4 * size);
++    for (size_t i = 0; i < size; i++) {
++        const auto color = func(i);
++        data.push_back(color.x());
++        data.push_back(color.y());
++        data.push_back(color.z());
++        data.push_back(1);
++    }
++    glTexImage1D(GL_TEXTURE_1D, 0, GL_RGBA16F, size, 0, GL_RGBA, GL_FLOAT, data.data());
++    glBindTexture(GL_TEXTURE_1D, 0);
++    return std::make_unique<GlLookUpTable>(handle, size);
++}
++
++}
+diff --git a/src/libkwineffects/gllut.h b/src/libkwineffects/gllut.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..baea1c766e9f3e99dcc52dd41c01765bbfd3cc4c
+--- /dev/null
++++ b/src/libkwineffects/gllut.h
+@@ -0,0 +1,40 @@
++/*
++    KWin - the KDE window manager
++    This file is part of the KDE project.
++
++    SPDX-FileCopyrightText: 2023 Xaver Hugl <xaver.hugl@gmail.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#pragma once
++
++#include "kwin_export.h"
++
++#include <QVector3D>
++#include <QVector>
++#include <epoxy/gl.h>
++#include <functional>
++#include <memory>
++
++namespace KWin
++{
++
++class KWIN_EXPORT GlLookUpTable
++{
++public:
++    explicit GlLookUpTable(GLuint handle, size_t size);
++    ~GlLookUpTable();
++
++    GLuint handle() const;
++    size_t size() const;
++
++    void bind();
++
++    static std::unique_ptr<GlLookUpTable> create(const std::function<QVector3D(size_t value)> &func, size_t size);
++
++private:
++    const GLuint m_handle;
++    const size_t m_size;
++};
++
++}
+diff --git a/src/libkwineffects/gllut3D.cpp b/src/libkwineffects/gllut3D.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..828152f1e0c74c105d54fa1173aa0674c19d3830
+--- /dev/null
++++ b/src/libkwineffects/gllut3D.cpp
+@@ -0,0 +1,88 @@
++/*
++    KWin - the KDE window manager
++    This file is part of the KDE project.
++
++    SPDX-FileCopyrightText: 2023 Xaver Hugl <xaver.hugl@gmail.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#include "gllut3D.h"
++
++#include <vector>
++
++namespace KWin
++{
++
++GlLookUpTable3D::GlLookUpTable3D(GLuint handle, size_t xSize, size_t ySize, size_t zSize)
++    : m_handle(handle)
++    , m_xSize(xSize)
++    , m_ySize(ySize)
++    , m_zSize(zSize)
++{
++}
++
++GlLookUpTable3D::~GlLookUpTable3D()
++{
++    glDeleteTextures(1, &m_handle);
++}
++
++GLuint GlLookUpTable3D::handle() const
++{
++    return m_handle;
++}
++
++size_t GlLookUpTable3D::xSize() const
++{
++    return m_xSize;
++}
++
++size_t GlLookUpTable3D::ySize() const
++{
++    return m_ySize;
++}
++
++size_t GlLookUpTable3D::zSize() const
++{
++    return m_zSize;
++}
++
++void GlLookUpTable3D::bind()
++{
++    glBindTexture(GL_TEXTURE_3D, m_handle);
++}
++
++std::unique_ptr<GlLookUpTable3D> GlLookUpTable3D::create(const std::function<QVector3D(size_t x, size_t y, size_t z)> &mapping, size_t xSize, size_t ySize, size_t zSize)
++{
++    GLuint handle = 0;
++    glGenTextures(1, &handle);
++    if (!handle) {
++        return nullptr;
++    }
++    glBindTexture(GL_TEXTURE_3D, handle);
++    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAX_LEVEL, 0);
++    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_LOD, 0);
++    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAX_LOD, 0);
++    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
++    QVector<float> data;
++    data.reserve(4 * xSize * ySize * zSize);
++    for (size_t z = 0; z < zSize; z++) {
++        for (size_t y = 0; y < ySize; y++) {
++            for (size_t x = 0; x < xSize; x++) {
++                const auto color = mapping(x, y, z);
++                data.push_back(color.x());
++                data.push_back(color.y());
++                data.push_back(color.z());
++                data.push_back(1);
++            }
++        }
++    }
++    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F, xSize, ySize, zSize, 0, GL_RGBA, GL_FLOAT, data.data());
++    glBindTexture(GL_TEXTURE_3D, 0);
++    return std::make_unique<GlLookUpTable3D>(handle, xSize, ySize, zSize);
++}
++
++}
+diff --git a/src/libkwineffects/gllut3D.h b/src/libkwineffects/gllut3D.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..569c1040c9378105200d5727a597e1e4cc01271e
+--- /dev/null
++++ b/src/libkwineffects/gllut3D.h
+@@ -0,0 +1,44 @@
++/*
++    KWin - the KDE window manager
++    This file is part of the KDE project.
++
++    SPDX-FileCopyrightText: 2023 Xaver Hugl <xaver.hugl@gmail.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#pragma once
++
++#include "kwin_export.h"
++
++#include <QVector3D>
++#include <QVector>
++#include <epoxy/gl.h>
++#include <functional>
++#include <memory>
++
++namespace KWin
++{
++
++class KWIN_EXPORT GlLookUpTable3D
++{
++public:
++    explicit GlLookUpTable3D(GLuint handle, size_t xSize, size_t ySize, size_t zSize);
++    ~GlLookUpTable3D();
++
++    GLuint handle() const;
++    size_t xSize() const;
++    size_t ySize() const;
++    size_t zSize() const;
++
++    void bind();
++
++    static std::unique_ptr<GlLookUpTable3D> create(const std::function<QVector3D(size_t x, size_t y, size_t z)> &mapping, size_t xSize, size_t ySize, size_t zSize);
++
++private:
++    const GLuint m_handle;
++    const size_t m_xSize;
++    const size_t m_ySize;
++    const size_t m_zSize;
++};
++
++}
+diff --git a/src/libkwineffects/glshader.cpp b/src/libkwineffects/glshader.cpp
+index 4867d2f8bfc506dedefb2d559a2dd5bb3cc89b6c..24985f2696ae324ec98229761d963ecc68c94484 100644
+--- a/src/libkwineffects/glshader.cpp
++++ b/src/libkwineffects/glshader.cpp
+@@ -349,6 +349,14 @@ bool GLShader::setUniform(int location, int value)
+     return (location >= 0);
+ }
+ 
++bool GLShader::setUniform(int location, int xValue, int yValue, int zValue)
++{
++    if (location >= 0) {
++        glUniform3i(location, xValue, yValue, zValue);
++    }
++    return location >= 0;
++}
++
+ bool GLShader::setUniform(int location, const QVector2D &value)
+ {
+     if (location >= 0) {
+diff --git a/src/libkwineffects/glshader.h b/src/libkwineffects/glshader.h
+index abe7a7c36fad398d2b02f112fee41480b893dd19..1b40ff0620cb3ce0813a880a8a2ea23a3e3f52f9 100644
+--- a/src/libkwineffects/glshader.h
++++ b/src/libkwineffects/glshader.h
+@@ -55,6 +55,7 @@ public:
+ 
+     bool setUniform(int location, float value);
+     bool setUniform(int location, int value);
++    bool setUniform(int location, int xValue, int yValue, int zValue);
+     bool setUniform(int location, const QVector2D &value);
+     bool setUniform(int location, const QVector3D &value);
+     bool setUniform(int location, const QVector4D &value);
+diff --git a/src/libkwineffects/openglcontext.cpp b/src/libkwineffects/openglcontext.cpp
+index 7b0ab9276f385fe976a4be7d6f6c66e49ed72a03..41f2fdb9c8a2e2df92973ee2a213d9107b663f52 100644
+--- a/src/libkwineffects/openglcontext.cpp
++++ b/src/libkwineffects/openglcontext.cpp
+@@ -111,6 +111,7 @@ bool OpenGlContext::checkSupported() const
+ {
+     const bool supportsGLSL = m_isOpenglES || (hasOpenglExtension("GL_ARB_shader_objects") && hasOpenglExtension("GL_ARB_fragment_shader") && hasOpenglExtension("GL_ARB_vertex_shader"));
+     const bool supportsNonPowerOfTwoTextures = m_isOpenglES || hasOpenglExtension("GL_ARB_texture_non_power_of_two");
+-    return supportsGLSL && supportsNonPowerOfTwoTextures;
++    const bool supports3DTextures = !m_isOpenglES || hasVersion(Version(3, 0)) || hasOpenglExtension("GL_OES_texture_3D");
++    return supportsGLSL && supportsNonPowerOfTwoTextures && supports3DTextures;
+ }
+ }
+diff --git a/src/plugins/colord-integration/colorddevice.cpp b/src/plugins/colord-integration/colorddevice.cpp
+index 3dbe5d0e5017d33e5976024874e00bcc90008c33..477ee82a9b4395844a5f6a1adc6b038a02cdcb7a 100644
+--- a/src/plugins/colord-integration/colorddevice.cpp
++++ b/src/plugins/colord-integration/colorddevice.cpp
+@@ -10,7 +10,9 @@
+ #include "colors/colordevice.h"
+ #include "colors/colormanager.h"
+ #include "core/output.h"
++#include "core/outputconfiguration.h"
+ #include "main.h"
++#include "workspace.h"
+ 
+ namespace KWin
+ {
+@@ -55,10 +57,9 @@ void ColordDevice::updateProfile()
+         return;
+     }
+ 
+-    ColorDevice *device = kwinApp()->colorManager()->findDevice(m_output);
+-    if (device) {
+-        device->setProfile(profile.filename());
+-    }
++    OutputConfiguration cfg;
++    cfg.changeSet(m_output)->iccProfilePath = profile.filename();
++    workspace()->applyOutputConfiguration(cfg);
+ }
+ 
+ } // namespace KWin
