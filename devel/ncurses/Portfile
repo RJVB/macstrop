@@ -1,12 +1,13 @@
-# $Id: Portfile 140232 2015-09-13 10:45:12Z jeremyhu@macports.org $
-
 PortSystem 1.0
+PortGroup       clang_dependency 1.0
+PortGroup       LTO 1.0
+PortGroup       devport 1.0
 
 name            ncurses
 categories      devel
 platforms       darwin freebsd
 license         MIT
-maintainers     jmr openmaintainer
+maintainers     {jmr @jmroot}
 description     emulation of curses in System V Release 4.0
 long_description \
     The Ncurses (new curses) library is a free software emulation of    \
@@ -15,8 +16,13 @@ long_description \
     characters and function-key mapping, and has all the other          \
     SYSV-curses enhancements over BSD Curses.
 
-homepage        http://www.gnu.org/software/ncurses/ncurses.html
-master_sites    gnu
+homepage        https://invisible-island.net/ncurses/
+master_sites    gnu https://invisible-mirror.net/archives/ncurses/
+
+# Also needed by later clangs.
+if {${os.platform} eq "darwin" && ${os.major} < 11 && ${cxx_stdlib} eq "libc++"} {
+    clang_dependency.extra_versions 3.7
+}
 
 subport ${name}5 {
     version     5.9
@@ -28,8 +34,8 @@ subport ${name}5 {
                 rmd160  dd7dffe38fcc908230ce3e036b71ced2d270ac9e
 
     # from http://www.opensource.apple.com/source/ncurses/ncurses-27/patches/
-    patchfiles  hex5.9.diff ungetch_guard.diff configure5.9.diff \
-                constructor_types.diff pkg_config_libdir.diff
+    patchfiles  5/hex5.9.diff 5/ungetch_guard.diff 5/configure5.9.diff \
+                5/constructor_types.diff 5/pkg_config_libdir.diff
     configure.env \
                 PKG_CONFIG_LIBDIR="${prefix}/lib/pkgconfig"
     configure.args  \
@@ -47,47 +53,69 @@ subport ${name}5 {
         configure.args-append --with-chtype=int
     }
 }
+
+# keep the ncurses5 checks in for easier syncing between the Linux and Mac versions of this port
 if {${subport} ne "${name}5"} {
-    version     6.0
-    checksums   rmd160 4d9e5938f00b400bfb0d37f3c54f2f36c4157d48 \
-                sha256 f551c24b30ce8bfb6e96d9f59b42fbea30fa3a6123384172f9e7284bcf647260
-    # hex.diff from http://opensource.apple.com/source/ncurses/ncurses-44/patches.applied/
-    patchfiles      hex.diff configure.diff
-    configure.args  \
-                --enable-widec \
-                --disable-lib-suffixes \
-                --enable-overwrite \
-                --with-shared \
-                --with-cxx-shared \
-                --without-debug  \
-                --without-ada \
-                --with-manpage-format=normal \
-                --enable-pc-files \
-                --with-pkg-config-libdir="${prefix}/lib/pkgconfig"
+    version     6.4
+    checksums   rmd160 a8b6ef8fe778c87ffdd3e0f3199c156c47b8dc39 \
+                sha256 6931283d9ac87c5073f30b6290c4c75f21632bb4fc3603ac8100812bed248159
+
+    ####################
+    if {${os.platform} ne "darwin"} {
+        PortGroup   devport 1.0
+        create_devport port:${name}
+
+        if {![is_mainport]} {
+            # we don't care about all the mainport-related stuff that follows!
+            return
+        }
+    }
+    ####################    
+
+    # hex.diff from https://opensource.apple.com/source/ncurses/ncurses-57/patches.applied/
+    patchfiles  hex.diff
+    configure.args \
+            --enable-widec \
+            --disable-lib-suffixes \
+            --enable-overwrite \
+            --with-shared \
+            --with-cxx-shared \
+            --without-debug  \
+            --without-ada \
+            --with-manpage-format=normal \
+            --without-pkg-config \
+            --enable-pc-files \
+            --with-pkg-config-libdir="${prefix}/lib/pkgconfig"
 }
 if {${os.platform} ne "darwin"} {
+    configure.ldflags-delete \
+                -L${prefix}/lib
     configure.args-append \
                 --enable-rpath
 }
 
-
-configure.cppflags
-configure.ldflags
+# http://stackoverflow.com/questions/37475222/ncurses-6-0-compilation-error-error-expected-before-int
+configure.cppflags -P
 if {${os.platform} eq "darwin"} {
+    configure.ldflags
     configure.args-append \
                 --disable-mixed-case
+    if {${os.major} < 10} {
+        # See: https://trac.macports.org/ticket/62994
+        configure.args-append \
+                gl_cv_func_getcwd_path_max=yes
+    }
+
+    # Prevent -lstdc++ from creeping into the build when not needed
+    if {[string match *clang* ${configure.cxx}] && ${configure.cxx_stdlib} ne ""} {
+        configure.env-append \
+                CXXLIBS=-stdlib=${configure.cxx_stdlib}
+    }
 }
 
-# Prevent -lstdc++ from creeping into the build when not needed
-if {${os.platform} eq "darwin" && [string match *clang* ${configure.cxx}]} {
-    configure.env-append \
-        CXXLIBS=-stdlib=${configure.cxx_stdlib} \
-        cf_cv_libstdcpp=no
-}
-
-if {[variant_isset universal]} {
+post-configure {
     # check that this doesn't start breaking anything with new versions
-    post-configure {
+    if {[variant_exists universal] && [variant_isset universal]} {
         reinplace s/1UL/1U/g "${worksrcpath}/include/curses.head"
         system -W ${worksrcpath} "ed - include/curses.head < ${filespath}/include_curses.head.ed"
     }
@@ -111,13 +139,34 @@ post-destroot {
         }
         delete -force ${destroot}${prefix}/share
     } else {
+        set archflags [get_canonical_archflags ld]
         foreach f {form menu ncurses ncurses++ panel} {
             ln -s lib${f}.${major}.dylib ${destroot}${prefix}/lib/lib${f}w.dylib
             ln -s lib${f}.${major}.dylib ${destroot}${prefix}/lib/lib${f}w.${major}.dylib
             ln -s lib${f}.a ${destroot}${prefix}/lib/lib${f}w.a
             ln -s ${f}.pc ${destroot}${prefix}/lib/pkgconfig/${f}w.pc
+            reinplace "s|-Wl,-syslibroot,${configure.sdkroot}||" ${destroot}${prefix}/lib/pkgconfig/${f}.pc
+            if {"${archflags}" ne ""} {
+                reinplace "s|${archflags}||" ${destroot}${prefix}/lib/pkgconfig/${f}.pc
+            }
         }
         ln -s libncurses.${major}.dylib ${destroot}${prefix}/lib/libtermcap.dylib
         ln -s ncurses${major}-config ${destroot}${prefix}/bin/ncursesw${major}-config
+        # make really sure that the linker won't find the system version:
+        reinplace "s|-l\$\{THIS\}|\$\{libdir\}/lib\$\{THIS\}.dylib|g" ${destroot}${prefix}/bin/ncurses${major}-config
+        reinplace "s|-l\$\{TINFO_LIB\}|\$\{libdir\}/lib\$\{TINFO_LIB\}.dylib|g" ${destroot}${prefix}/bin/ncurses${major}-config
+        reinplace "s|-Wl,-syslibroot,${configure.sdkroot}||" ${destroot}${prefix}/bin/ncurses6-config
+        reinplace "s|-Wl,-cache_path_lto,${worksrcpath}/.lto_cache||" ${destroot}${prefix}/bin/ncurses6-config
+        if {"${archflags}" ne ""} {
+            reinplace "s|${archflags}||" ${destroot}${prefix}/bin/ncurses6-config
+        }
+        if {${os.platform} ne "darwin"} {
+            ####################
+            register_devport_standard_content
+            create_devport_content_archive
+            ####################
+        }
     }
 }
+
+livecheck.regex ${name}-(\[\\d.-\]+)${extract.suffix}
