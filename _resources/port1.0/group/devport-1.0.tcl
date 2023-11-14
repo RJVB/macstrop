@@ -86,15 +86,31 @@ proc create_devport_content_archive {} {
         # and then delete that archive. We still go through the archive because it's
         # a tested and foolproof way to preserve all permissions as well as the layout.
         set cVariants [dev::port_variants]
+        ui_debug "making sure the devport workdir exists!"
+        system "port -nok archivefetch ${devport_name} ${cVariants}"
+        set devworkdir "[exec port work ${devport_name}]"
+        if {${devworkdir} eq ""} {
+            ui_error "port:${devport_name}'s work directory should exist by now!"
+            return -code error "Internal devport PortGroup error"
+        }
+        set devdestdir "${devworkdir}/destroot"
         ui_debug "Cleaning ${devport_name}"
-        system "port -v clean ${devport_name}"
+        # `port clean` can block on the registry lock so we do this manually:
+        system "rm -rf ${devworkdir}"
+        # now prepare the devport for our manual destroot "injection"
         ui_debug "port -nok -v build ${devport_name} ${cVariants}"
-        system "port -nok -v build ${devport_name} ${cVariants}"
-        set devdestdir "[exec port work ${devport_name}]/destroot"
+        # the fake build can be handled via the port driver up to the extract step
+        # which might block on the registry lock. This also re-creates the work dir.
+        system "port -nok -v fetch ${devport_name} ${cVariants}"
+        # complete shunt of the extract, patch, configure and build steps so we won't lock
+        system -W ${devworkdir} "echo \"target: org.macports.extract\" >> .macports.${devport_name}.state"
+        system -W ${devworkdir} "echo \"target: org.macports.patch\" >> .macports.${devport_name}.state"
+        system -W ${devworkdir} "echo \"target: org.macports.configure\" >> .macports.${devport_name}.state"
+        system -W ${devworkdir} "echo \"target: org.macports.build\" >> .macports.${devport_name}.state"
         xinstall -m 755 -d ${devdestdir}
         ui_debug "unpacking the devport archive into ${devdestdir}"
         unpack_devtarball_from_to_for ${destroot} ${devdestdir} ${devport_name}
-        system -W ${devdestdir} "echo \"target: org.macports.destroot\" >> ../.macports.${devport_name}.state"
+                system -W ${devworkdir} "echo \"target: org.macports.destroot\" >> .macports.${devport_name}.state"
         ui_debug "Deleting the devport archive"
         file delete ${destroot}${dev::archdir}/${dev::archname}
     }
