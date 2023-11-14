@@ -227,8 +227,10 @@ proc create_devport {dependency} {
         long_description [join ${devport_long_description}]
         depends_fetch
         depends_build
-        depends_run
-        depends_lib     ${dependency}
+        depends_lib
+        # we really only have a runtime dependency on the mainport because it
+        # expresses itself only when using the port for building a dependent.
+        depends_run     ${dependency}
         depends_extract bin:bsdtar:libarchive
         installs_libs   yes
         supported_archs noarch
