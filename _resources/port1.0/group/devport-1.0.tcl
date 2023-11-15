@@ -293,7 +293,7 @@ proc create_devport {dependency} {
                 set cRevision [lindex $installed 2]
                 set cVariants [lindex $installed 3]
                 if {${dev::mainport_installed} eq yes} {
-                    ui_msg "---->  Programming the installation of the dev port \"${devport_name} ${cVariants}\""
+                    ui_msg "---->  Programming the delayed (!) installation of the dev port \"${devport_name} ${cVariants}\""
                     catch {
                         # check if our (new!) devport archive exists, which means we're
                         # dealing with an older build for which we need to fall back to
@@ -306,13 +306,21 @@ proc create_devport {dependency} {
                         # we need to spawn/fork the actual install or else we'll be waiting
                         # indefinitely to obtain a lock on the registry!
                         if {![catch {registry_active ${devport_name}}]} {
-                            # the devport is
-                            set dpinstmode install
+                            # a version of the devport is already active; we are certain that
+                            # we can use the fastest safe solution: `upgrade --force`
+                            set dpinstmode upgrade
+                            notes-append "port:${devport_name}@${cVersion}_${cRevision}${cVariants} will be upgraded and activated"
+                            exec port -n ${dpinstmode} --force ${devport_name} ${cVariants} &
                         } else {
+                            # the devport is not active or not installed. We want to use `archive`
+                            # to keep it inactive after the install of this new version, but we
+                            # need to do an uninstall for the case that the user is doing an `upgrade --force`
+                            # in order to reinstall the current/new version.
                             set dpinstmode archive
-                            notes-append "port:${devport_name}@${cVersion}_${cRevision}${cVariants} has been installed but not activated; you can do this manually if/when required"
+                            notes-append "port:${devport_name}@${cVersion}_${cRevision}${cVariants} will be installed but not activated; you can do this manually if/when required"
+                            exec sh -c "port -p -v uninstall ${devport_name}@${version}_${revision}${cVariants} ; \
+                                port -n ${dpinstmode} ${devport_name} ${cVariants}" &
                         }
-                        exec port -n ${dpinstmode} ${devport_name} ${cVariants} &
                     }
                 } else {
                     ui_msg "${baseport}@${cVersion}_${cRevision}${cVariants} activated, please activate the corresponding port:${devport_name}!"
