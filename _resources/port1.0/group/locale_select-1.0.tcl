@@ -54,6 +54,9 @@ default langselect_dirs_dir     {}
 options langselect_lproj_dir
 default langselect_lproj_dir     {}
 
+options langselect_keep_languages
+default langselect_keep_languages {}
+
 namespace eval langselect {
 
     set has_nonstandard_locations 0
@@ -96,6 +99,7 @@ if {[variant_isset langselect]} {
             }
         }
         if {[info exists keep_languages]} {
+            langselect_keep_languages ${keep_languages}
             foreach d [list ${destroot}${prefix}/share/locale ${destroot}${prefix}/share/doc/HTML ${destroot}${prefix}/share/man] {
                 foreach l [glob -nocomplain ${d}/*] {
                     set lang [file tail ${l}]
@@ -132,50 +136,56 @@ if {[variant_isset langselect]} {
                 }
                 set qmidx [expr ${qmidx} + 1]
             }
-            if {[file exists [join ${langselect_html_dir}]]} {
-                set lhtmldir [join ${langselect_html_dir}]
-                foreach l [glob -nocomplain ${lhtmldir}/*.html] {
-                    set keep no
-                    foreach lang ${keep_languages} {
-                        if {[string match *${lang}.html ${l}]} {
-                            set keep yes
+            foreach lhd ${langselect_html_dir} {
+                if {[file exists [join ${lhd}]]} {
+                    set lhtmldir [join ${lhd}]
+                    foreach l [glob -nocomplain ${lhtmldir}/*.html] {
+                        set keep no
+                        foreach lang ${keep_languages} {
+                            if {[string match *${lang}.html ${l}]} {
+                                set keep yes
+                            }
+                        }
+                        if {[tbool keep]} {
+                            ui_debug "won't delete ${l} (${lang})"
+                        } else {
+                            ui_info "rm ${l}"
+                            file delete -force ${l}
                         }
                     }
-                    if {[tbool keep]} {
-                        ui_debug "won't delete ${l} (${lang})"
-                    } else {
-                        ui_info "rm ${l}"
-                        file delete -force ${l}
+                }
+		  }
+            foreach ldd ${langselect_dirs_dir} {
+                if {[file exists [join ${ldd}]]} {
+                    set ldirdir [join ${ldd}]
+                    ui_debug "Pruning \"${ldirdir}\": [glob -nocomplain -types d ${ldirdir}/*]"
+                    foreach l [glob -nocomplain -types d ${ldirdir}/*] {
+                        set lang [file rootname [file tail ${l}]]
+                        if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
+                            ui_info "rm ${l}"
+                            file delete -force ${l}
+                        } else {
+                            ui_debug "won't delete ${l} (${lang})"
+                        }
+                    }
+                } elseif {${ldd} ne {}} {
+                    ui_warn "Non-existent langselect_dirs_dir entry: \"${ldd}\""
+                }
+		  }
+            foreach lld ${langselect_lproj_dir} {
+                if {[file exists [join ${lld}]]} {
+                    set ldirdir [join ${lld}]
+                    foreach l [glob -nocomplain -types d ${ldirdir}/*.lproj] {
+                        set lang [file rootname [file tail ${l}]]
+                        if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
+                            ui_info "rm ${l}"
+                            file delete -force ${l}
+                        } else {
+                            ui_debug "won't delete ${l} (${lang})"
+                        }
                     }
                 }
-            }
-            if {[file exists [join ${langselect_dirs_dir}]]} {
-                set ldirdir [join ${langselect_dirs_dir}]
-                ui_debug "Pruning \"${ldirdir}\": [glob -nocomplain -types d ${ldirdir}/*]"
-                foreach l [glob -nocomplain -types d ${ldirdir}/*] {
-                    set lang [file rootname [file tail ${l}]]
-                    if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
-                        ui_info "rm ${l}"
-                        file delete -force ${l}
-                    } else {
-                        ui_debug "won't delete ${l} (${lang})"
-                    }
-                }
-            } elseif {${langselect_dirs_dir} ne {}} {
-                ui_warn "Non-existent langselect_dirs_dir: \"${langselect_dirs_dir}\""
-            }
-            if {[file exists [join ${langselect_lproj_dir}]]} {
-                set ldirdir [join ${langselect_lproj_dir}]
-                foreach l [glob -nocomplain -types d ${ldirdir}/*.lproj] {
-                    set lang [file rootname [file tail ${l}]]
-                    if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
-                        ui_info "rm ${l}"
-                        file delete -force ${l}
-                    } else {
-                        ui_debug "won't delete ${l} (${lang})"
-                    }
-                }
-            }
+		  }
         }
     }
 }
