@@ -3,10 +3,14 @@
 PortSystem          1.0
 PortGroup           github  1.0
 PortGroup           cmake   1.1
+set LTO.disable_LTO yes
+PortGroup           LTO     1.0
 
-epoch               2
-github.setup        FreeRDP FreeRDP 2.0.0-rc4
-revision            2
+epoch               3
+github.setup        FreeRDP FreeRDP 2.7.0
+fetch.type          git
+distname            ${name}-git
+# revision            0
 categories          net
 platforms           darwin
 license             Apache
@@ -17,15 +21,15 @@ long_description    FreeRDP is a free implementation of the Remote Desktop Proto
 
 homepage            http://www.freerdp.com
 
-checksums           rmd160  8c492959eca7d8621dbb243a94cd1b12d14529f8 \
-                    sha256  5bdaffd8bee655e8471120438c89e84143902cea38e29ecd6c07cc1715e8f91f \
-                    size    6614847
+# checksums           rmd160  593ea88c790f863de87b0d16752f3f1e70c1527f \
+#                     sha256  18ccee68356cd4c62f9e4e42786777d8ad87d53598905ed7fc6e8de41b620b4b \
+#                     size    7274814
 
 depends_build-append \
                     port:pkgconfig
 
 platform darwin {
-    depends_lib-append  \
+    depends_lib-append \
                     port:xorg-libX11 \
                     port:xorg-libXcursor \
                     port:xorg-libXext \
@@ -37,12 +41,23 @@ platform darwin {
                     port:xrender
 }
 depends_lib-append  port:zlib \
-                    path:lib/libjpeg.dylib:libjpeg-turbo \
+                    path:include/turbojpeg.h:libjpeg-turbo \
                     path:lib/libssl.dylib:openssl \
+                    path:lib/pkgconfig/libusb-1.0.pc:libusb \
+                    path:lib/pkgconfig/cairo.pc:cairo \
                     port:kerberos5
 
 # Mac has 64bit filesystem too
 patchfiles-append   patch-64bitfs.diff
+# remove version info from newer .xib files so they're not rejected straight away
+patchfiles-append   patch-xib-files.diff
+
+# disable rdpsnd on macOS < 10.10 since
+# AVAudioBuffer was introduced in 10.10
+if { ${os.platform} eq "darwin" && ${os.major} <= 13 } {
+    patchfiles-append \
+                    patch-rdpsnd-legacy.diff
+}
 
 post-patch {
     if {[string match "*gcc*" ${configure.compiler}]} {
@@ -60,6 +75,7 @@ platform darwin {
 }
 
 configure.args-append \
+                    -DWITH_LIBSYSTEMD=OFF \
                     -DWITH_ALSA=OFF \
                     -DWITH_CCACHE=OFF \
                     -DWITH_FFMPEG=OFF \
@@ -72,6 +88,7 @@ configure.args-append \
                     -DWITH_FAAC=OFF \
                     -DWITH_SOXR=OFF \
                     -DWITH_CUPS=ON \
+                    -DWITH_CAIRO=ON \
                     -DWITH_GSSAPI=ON
 
 # ffmpeg only supports VDA (video hardware acceleration, mostly H264) on 10.6.3+ (#48397)
@@ -84,8 +101,14 @@ platform linux {
     configure.args-replace \
                     -DWITH_ALSA=OFF \
                     -DWITH_ALSA=ON
+    configure.args-replace \
+                    -DWITH_LIBSYSTEMD=OFF \
+                    -DWITH_LIBSYSTEMD=ON
     configure.args-append \
                     -DWITH_WAYLAND=ON
+    depends_lib-append \
+                    port:systemd \
+                    port:wayland
 }
 
 # manpage building can fail for unclear reasons, so provide a variant to turn it off
@@ -125,4 +148,13 @@ variant codecs description {support MP3, FAAD2, FAAC and SOXR codecs} {
                     -DWITH_SOXR=ON
 }
 
-build.post_args-append -k
+platform darwin {
+    post-destroot {
+        xinstall -m 755 -d ${destroot}${prefix}/libexec/FreeRDP
+        file copy ${build.dir}/client/Mac/cli/MacFreeRDP.app ${destroot}${prefix}/libexec/FreeRDP
+        xinstall -m 755 ${filespath}/macfreerdp.sh  ${prefix}/bin/macfreerdp
+        reinplace "s|@PREFIX@|${prefix}|g" ${prefix}/bin/macfreerdp
+    }
+}
+
+build.post_args-append -wk
