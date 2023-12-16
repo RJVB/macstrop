@@ -1,3 +1,3 @@
 #!/bin/sh
 
-kextunload -v /opt/local/Library/Extensions/zfs.kext
+kextunload -v @LIBDIR@/Extensions/zfs.kext

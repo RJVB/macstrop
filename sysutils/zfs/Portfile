@@ -2,6 +2,7 @@
 
 PortSystem          1.0
 PortGroup           github 1.0
+set LTO.allow_ThinLTO no
 PortGroup           LTO 1.0
 PortGroup           save_configure_cmd 1.0
 
@@ -39,6 +40,14 @@ subport ${name}-devel {
     }
 }
 
+variant System description {Install the kext in /System/Library/Extensions} {}
+if {[variant_isset System]} {
+    set libdir "/System/Library"
+    destroot.violate_mtree yes
+} else {
+    set libdir "${prefix}/Library"
+}
+
 if {${subport} eq "${name}-devel"} {
     conflicts       ${name}
     epoch           1
@@ -49,7 +58,7 @@ if {${subport} eq "${name}-devel"} {
     fetch.type      git
     version         2.1.6.2
 
-    set PPREFIX     devel
+    set PPREFIX     devel/
 
     distname        openzfs-git
     # set worksrcpath ${workpath}/openzfs-${zfs_commit}
@@ -57,14 +66,18 @@ if {${subport} eq "${name}-devel"} {
     # ensure we can load from ${prefix}/Library/Extensions and that we always auto-load the kext
     # (as was the case before).
     patchfiles-append \
-                    devel/patch-kextloading.diff
+                    ${PPREFIX}patch-kextloading.diff
     # don't warn about invalid arguments in some thread policy change attemps as
     # they could be due to OS version specifics.
     patchfiles-append \
-                    devel/patch-threadpol-warnings.diff
+                    ${PPREFIX}patch-threadpol-warnings.diff
     # define SYSCTL_ULONG if not provided by sysctl.h
     patchfiles-append \
-                    devel/patch-sysctl_ulong.diff
+                    ${PPREFIX}patch-sysctl_ulong.diff
+    # mute the warnings about thread policy setting failures
+    # by not even attempting to set them.
+    patchfiles-append \
+                    ${PPREFIX}patch-mute-threadpolicy-warning.diff
 
 } else {
     conflicts       ${name}-devel
@@ -79,7 +92,6 @@ if {${subport} eq "${name}-devel"} {
 
     if {[tbool has_dmg]} {
 #         set dmg_version ${version}
-#         set spl_commit  spl-${version}
 #         set zfs_commit  zfs-${version}
     }
 
@@ -273,8 +285,8 @@ if {${subport} eq "${name}-devel"} {
     post-destroot {
         # replace our home-built kexts with the signed ones from the official dmg
         file delete -force ${destroot}${prefix}/Library/Extensions/zfs.kext
-        system "ditto --rsrc ${workpath}/official.pkg/Library/Extensions/zfs.kext ${destroot}${prefix}/Library/Extensions/zfs.kext"
-        system -W ${destroot}${prefix}/Library/Extensions/ "chown -R root:wheel zfs.kext"
+        system "ditto --rsrc ${workpath}/official.pkg/Library/Extensions/zfs.kext ${destroot}${libdir}/Extensions/zfs.kext"
+        system -W ${destroot}${libdir}/Extensions/ "chown -R root:wheel zfs.kext"
     }
     # ensure we can load from ${prefix}/Library/Extensions
     patchfiles-append   patch-kextloading.diff 
@@ -322,7 +334,7 @@ configure.save_configure_cmd "install log"
 configure.args-append \
                     --disable-dependency-tracking \
                     --disable-pyzfs \
-                    --with-kernel-modprefix=${prefix}/Library/Extensions
+                    --with-kernel-modprefix=${libdir}/Extensions
 
 set pythonversions {3.6 3.7 3.8 3.9 3.10 3.11}
 foreach pdv ${pythonversions} {
@@ -347,6 +359,8 @@ foreach pdv ${pythonversions} {
     }
 }
 
+# we need gmake because ZFS builds recursively and the system make can let that
+# lead to too many processes and "resource temp. unavailable" errors.
 build.cmd           ${prefix}/bin/gmake
 build.args-append   V=1
 
@@ -364,13 +378,14 @@ post-destroot {
     foreach d [glob -nocomplain ${destroot}/Library/*] {
         file rename ${d} ${destroot}${prefix}/Library/
     }
-    xinstall -m 755 ${filespath}/${PPREFIX}/zfs_unload_kexts.sh ${destroot}${prefix}/sbin/zfs_unload_kexts.sh
-    xinstall -m 755 ${filespath}/${PPREFIX}/zfs_kexts_loaded.sh ${destroot}${prefix}/sbin/zfs_kexts_loaded.sh
+    xinstall -m 755 ${filespath}/${PPREFIX}zfs_unload_kexts.sh ${destroot}${prefix}/sbin/zfs_unload_kexts.sh
+    reinplace "s|@LIBDIR@|${libdir}|g" ${destroot}${prefix}/sbin/zfs_unload_kexts.sh
+    xinstall -m 755 ${filespath}/${PPREFIX}zfs_kexts_loaded.sh ${destroot}${prefix}/sbin/zfs_kexts_loaded.sh
     xinstall -m 755 ${filespath}/zfsopt.sh ${destroot}${prefix}/bin/zfsopt
     # librt contains clock_gettime, among others, which can mess up building e.g. python 3.10 on OS versions
     # that don't have a header for clock_gettime.
     file delete -force ${destroot}${prefix}/lib/librt.a
-    if {${os.major} == 13} {
+    if {${os.major} == 13 || [variant_isset System]} {
         # put the filesystem plugin in /System/Library/Filesystems to prevent the "unrecognised disk" popup
         xinstall -m 755 -d ${destroot}/System/Library/Filesystems
         file rename ${destroot}${prefix}/Library/Filesystems/zfs.fs ${destroot}/System/Library/Filesystems/zfs.fs
@@ -380,13 +395,13 @@ post-destroot {
 
 # keep this in sync with the list in etc/launchd/daemons/launchd-daemons.am
 # but exclude the import-all plist as well as the zed plist which causes the
-# kexts to load.
+# kext to load.
 set launchddaemon_DATA {org.openzfsonosx.zconfigd.plist \
                         org.openzfsonosx.InvariantDisks.plist}
 
 pre-deactivate {
     if {[catch {exec ${prefix}/sbin/zfs_kexts_loaded.sh} result]} {
-        ui_debug "ZFS and SPL kexts aren't loaded: allowing deactivation"
+        ui_debug "ZFS kext isn't loaded: allowing deactivation"
         foreach p ${launchddaemon_DATA} {
             # unload the plists just as the standard install process does
             # (keep in sync whenever patchfile:patch-dont-invoke-launchctl.diff needs refactoring!)
@@ -408,13 +423,9 @@ pre-deactivate {
 }
 
 post-activate {
-    if {${subport} eq "${name}"} {
-        set kexts "-d ${prefix}/Library/Extensions/spl.kext ${prefix}/Library/Extensions/zfs.kext"
-    } else {
-        set kexts "${prefix}/Library/Extensions/zfs.kext"
-    }
+    set kext "${libdir}/Extensions/zfs.kext"
     # do a diag run of the kext we just installed, but catch any errors!
-    if {[catch {exec kextutil -n -print-diagnostics -v 6 ${kexts}} result]} {
+    if {[catch {exec kextutil -n -print-diagnostics -v 6 ${kext}} result]} {
         ui_msg "Checking zfs.kext:\n${result}"
         foreach p ${launchddaemon_DATA} {
             # load the plists just as the standard install process does
