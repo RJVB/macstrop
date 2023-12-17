@@ -1,6 +1,6 @@
 #!/bin/sh
 
-ZFS_LOADED="`kextstat -k -l -b net.lundman.zfs`"
+ZFS_LOADED="`kextstat -k -l -b org.openzfsonosx.zfs`"
 
 if [ "${ZFS_LOADED}" != "" ] ;then
 	echo "ZFS kernel extension is loaded"
