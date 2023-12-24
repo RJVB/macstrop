@@ -5,12 +5,11 @@ PortSystem          1.0
 PortGroup           compiler_blacklist_versions 1.0
 set LTO.disable_LTO yes
 PortGroup           LTO 1.0
+PortGroup           save_configure_cmd 1.0
 
 name                openssh
-version             9.3p1
-platform darwin {
-    revision        1
-}
+version             9.6p1
+revision            0
 categories          net
 maintainers         {@artkiver gmail.com:artkiver} openmaintainer
 license             BSD
@@ -32,9 +31,9 @@ long_description    OpenSSH is a FREE version of the SSH protocol suite of \
 
 homepage            https://www.openbsd.org/openssh/
 
-checksums           rmd160  29768ab6830484f797d0138d2c7f53791a319d4c \
-                    sha256  e9baba7701a76a51f3d85a62c383a3c9dcd97fa900b859bc7db114c1868af8a8
-#                     size    1856839
+checksums           rmd160  097d033a5f4aeb86baa0b69b0667b94de18cf70b \
+                    sha256  910211c07255a8c5ad654391b40ee59800710dd8119dd5362de09385aa7a777c \
+                    size    1857862
 
 master_sites        openbsd:OpenSSH/portable \
                     ftp://ftp.cise.ufl.edu/pub/mirrors/openssh/portable/ \
@@ -74,6 +73,9 @@ if {${name} eq ${subport}} {
         patchfiles-append \
                         0002-not-Apple-keychain-integration-other-changes.patch
     }
+    # prevent a number of doubly-defined errors because 1 file that's already in libssh.a 
+    # is also given on the commandline
+    patchfiles-append   patch-no-double-sshpkcs11.diff
 
     # We need a couple of patches
     # - pam.patch
@@ -97,9 +99,14 @@ if {${name} eq ${subport}} {
         reinplace "s|@PREFIX@|${prefix}|g" ${worksrcpath}/sandbox-darwin.c
     }
 
+    use_autoreconf      yes
     pre-configure {
-        use_autoreconf  [expr ![file exists ${worksrcpath}/config.log]]
+        if {[file exists ${worksrcpath}/config.log]
+            && [file mtime ${worksrcpath}/configure] > [file mtime ${worksrcpath}/configure.ac]} {
+                use_autoreconf no
+        }
     }
+    configure.save_configure_cmd "install log"
 
     # strnvis(3) isn't actually "broken".  OpenBSD decided to be special and flip
     # the order of arguments to strnvis and considers everyone else to be broken.
@@ -141,7 +148,12 @@ if {${name} eq ${subport}} {
     build.post_args     -wk
 
     platform macosx {
-        if {${os.major} <= 11} {
+        if {${os.major} < 10 || (${os.major} == 10 && ${configure.build_arch} eq "ppc")} {
+            # See: https://trac.macports.org/ticket/60385
+            # clang does not work for ppc on 10.6.8 Rosetta
+            # See also: https://trac.macports.org/ticket/65613
+            configure.args-delete   --with-keychain=apple
+        } elseif {${os.major} <= 11} {
             # clang is required to build the new Apple Keychain integration due
             # to it using the Object Subscripting feature, c.f. #59397.
             # We'll keep it simple and just blacklist any gcc version, cc
@@ -153,6 +165,8 @@ if {${name} eq ${subport}} {
             # support Object Subscripting and the oldest version in our tree is
             # now 3.3.
             compiler.blacklist-append   *gcc* cc {clang < 421}
+        } elseif {(${os.major} >= 22 && ${configure.build_arch} eq "x86_64")} {
+            compiler.blacklist-append   {clang >= 1403 < 1500}
         }
     }
 
@@ -186,6 +200,12 @@ if {${name} eq ${subport}} {
             xinstall -m 755 -d ${destroot}${prefix}/Library/LaunchAgents
             ln -s ${prefix}/${LaunchAgentDir}/org.macports.openbsd.ssh-agent.plist \
                 ${destroot}${prefix}/Library/LaunchAgents/
+            # use QueueDirectories to allow deferring the start of the sshd
+            system -W ${destroot}${prefix} "patch -p1 -i ${filespath}/patch-openssh-server-plist.diff"
+            reinplace "s|@PREFIX@|${prefix}|g" ${destroot}${prefix}/etc/LaunchDaemons/org.macports.OpenSSH/org.macports.OpenSSH.plist
+            xinstall -m 755 -d ${destroot}/Library/LaunchDaemons
+            xinstall -m 755 ${destroot}${prefix}/etc/LaunchDaemons/org.macports.OpenSSH/org.macports.OpenSSH.plist ${destroot}/Library/LaunchDaemons
+            destroot.violate_mtree true
 	   }
     }
 
@@ -218,9 +238,9 @@ if {${name} eq ${subport}} {
 
     variant gsskex requires kerberos5 description "Add OpenSSH GSSAPI key exchange patch" {
         # from Debian's gssapi.patch for OpenSSH 9.2p1 (072c0799884611f3e45a8546bc8c1021bc009b3a):
-        # https://git.launchpad.net/ubuntu/+source/openssh/tree/debian/patches/gssapi.patch?h=applied/debian/sid
-        patchfiles-append       patch-openssh-9.3p1-gsskex-from-debian.diff
-	   platform darwin {
+        # https://git.launchpad.net/ubuntu/+source/openssh/plain/debian/patches/gssapi.patch?h=applied/debian/sid
+        patchfiles-append       patch-openssh-9.6p1-gsskex-from-debian.diff
+        platform darwin {
             # are these still necessary?!
             configure.ldflags-append \
                                 -Wl,-pie
