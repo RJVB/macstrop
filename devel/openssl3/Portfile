@@ -6,20 +6,22 @@ PortGroup           muniversal 1.0
 PortGroup           legacysupport 1.1
 PortGroup           LTO 1.0
 PortGroup           compress_workdir 1.0
+PortGroup           save_configure_cmd 1.0
 
 # Availability.h
 legacysupport.newest_darwin_requires_legacy 8
 
 set major_v         3
 name                openssl$major_v
-version             ${major_v}.1.0
-revision            2
-
+# For rolling back to 3.1.4 release where needed. Must now stay.
+epoch               1
+version             ${major_v}.2.0
 dist_subdir         openssl
 
 # Please revbump these ports when updating the openssl3 version/revision
 #  - freeradius (#43461)
 #  - openssh (#54990)
+#  - p5-net-ssleay (#67321, for minor version bumps)
 #  - openssl (to rebuild the shim links).
 
 categories          devel security
@@ -65,17 +67,32 @@ master_sites        ${homepage}/source \
                     ftp://ftp.linux.hr/pub/openssl/source/ \
                     ftp://guest.kuria.katowice.pl/pub/openssl/source/
 
-checksums           rmd160  203ebe676bbdde1a869fc14c6c4e21983ce4b810 \
-                    sha256  aaa925ad9828745c4cad9d9efeb273deca820f2cdcf2c3ac7d7c1212b7c497b4
-#                     size    15525381
+checksums           rmd160  88d268dca2256ce7d6db7cd20e54bd936d134dbb \
+                    sha256  14c826f07c7e433706fb5c69fa9e25dab95684844b4c962a2cf1bf183eb4690e 
+#                    size    17698352
 
-patchfiles          avx512.patch \
-                    patch-openssl3-ppc-asm.diff \
-                    2017771e2db3e2b96f89bbe8766c3209f6a99545.patch \
-                    d79bb5316e1318bd776d6b2d6723a36778e07f9d.patch \
-                    52a38144b019cfda6b0e5eaa0aca88ae11661a26.patch \
-                    facfb1ab745646e97a1920977ae4a9965ea61d5c.patch \
-                    fc814a30fc4f0bc54fcea7d9a7462f5457aab061.patch
+# 3.2.0 is currently broken for OS < 10.14
+if {${os.platform} eq "darwin" && ${os.major} < 18} {
+
+    subport ${name}-devel {
+        conflicts           ${name}
+    }
+
+    if {$subport eq $name} {
+        conflicts           ${name}-devel
+            version             ${major_v}.1.4
+            revision            1
+
+            distname            openssl-${version}
+
+            checksums           rmd160  44e8f5368a6f62508b8b83124239bf1ebbba8d18 \
+                        sha256  840af5366ab9b522bde525826be3ef0fb0af81c6a9ebd84caa600fea1731eee3 \
+                        size    15569450
+
+            patchfiles          ddeb4b6c6d527e54ce9a99cba785c0f7776e54b6.patch
+    }
+
+}
 
 if {${os.platform} eq "darwin" && ${os.major} < 11} {
     # Having the stdlib set to libc++ on 10.6 causes a dependency on a
@@ -83,12 +100,10 @@ if {${os.platform} eq "darwin" && ${os.major} < 11} {
     configure.cxx_stdlib
 }
 
-if {![info exists universal_possible]} {
-    set universal_possible [expr {${os.universal_supported} && [llength ${configure.universal_archs}] >= 2}]
-}
 set my_name         openssl-${major_v}
 set my_prefix       ${prefix}/libexec/${name}
 
+configure.save_configure_cmd "install log"
 # configure.ccache    no
 if {${os.platform} eq "darwin"} {
     configure.perl  /usr/bin/perl
@@ -103,7 +118,7 @@ configure.args      -L${prefix}/lib \
                     zlib
 
 # Use SDK if necessary.
-if {${configure.sdkroot} ne ""} {
+if {${os.platform} eq "darwin" && ${configure.sdkroot} ne ""} {
     configure.args-append   '-isysroot ${configure.sdkroot}' \
                             -Wl,-syslibroot,${configure.sdkroot}
 }
@@ -230,6 +245,12 @@ variant fips description {enable FIPS} {
     configure.args-append   enable-fips
 }
 
+variant tests description {build the tests} {}
+if {![variant_isset tests]} {
+    configure.args-append  -no-tests
+    test.run no
+}
+
 variant legacy description {enable legacy providers by default} {
     # See https://trac.macports.org/ticket/63857 for context
     post-destroot {
@@ -248,7 +269,9 @@ variant legacy description {enable legacy providers by default} {
         close ${cnf}
     }
 }
-default_variants-append +legacy
+
+default_variants-append +legacy +tests
+
 variant docs description {install (html) documentation} {}
 
 livecheck.type      regex
