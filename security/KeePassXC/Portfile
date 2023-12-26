@@ -37,7 +37,7 @@ homepage                https://keepassxc.org
 
 if {${subport} eq ${name}} {
     # stable
-    github.setup        keepassxreboot keepassxc 2.7.5
+    github.setup        keepassxreboot keepassxc 2.7.6
     github.tarball_from releases
     distname            keepassxc-${version}-src
     use_xz              yes
@@ -46,21 +46,25 @@ if {${subport} eq ${name}} {
 
     conflicts           KeePassXC-devel
 
+    set PPREFIX         ""
+
     # See keepassxc-${version}-src.tar.xz.DIGEST on upstream GitHub releases page for SHA256 sums
     checksums           ${distname}${extract.suffix} \
-                        rmd160  aa94b41f8052ee7d587f3990a62495c035b03b75 \
-                        sha256  ede24800901816c49569aa4f8bc7180a40cb8b554617fa2a2a2653caac13000c
-#                         size    8706996
+                        rmd160  a939976cff7273f9243f9c3aae39269e11047e6d \
+                        sha256  a58074509fa8e90f152c6247f73e75e126303081f55eedb4ea0cbb6fa980d670 \
+                        ${distname}${extract.suffix}.sig \
+                        rmd160  693cbc4a5648735cd4a53afdb9617bca9702bf45 \
+                        sha256  af439d1954101c1b140f759cf0f42efdfe19d066f90412e325b806f8d3774eb4 \
 
     patchfiles-append   patch-no-deployqt.diff
 } else {
     conflicts-append    ${name}
     fetch.type          git
     # check out the "develop" branch:
-    github.setup        keepassxreboot keepassxc 6f14becb8c562cf594bce2f66e9f4df570c17088
+    github.setup        keepassxreboot keepassxc 9e119230d4604c177766e93304578d954e3e8c1f
     # after `git tag w2.7.5 -m "just after release 2.7.5 tagging" 263ce20473419792f6740afe03ff4f3fdf88b5c7`
     # after `git tag w2.7.6 -m "release 2.7.6 backport" 1919c23c097fd5f3e64ae6488aaaabd502db6afb`
-    version             2.7.6
+    version             2.7.6.28
     distname            ${github.project}-git
     worksrcdir          ${github.project}-git
     variant standalone description {Build as a standalone, relocatable app bundle} {}
@@ -69,24 +73,22 @@ if {${subport} eq ${name}} {
                         patch-no-deployqt.diff
     }
 
+    set PPREFIX         "devel/"
+
     pre-configure {
         reinplace "s#@PREFIX@#${prefix}#" \
             ${worksrcpath}/CMakeLists.txt
         reinplace "s#@QT_BINS_DIR@#${qt_bins_dir}#" \
             ${worksrcpath}/CMakeLists.txt
+        system -W ${worksrcpath} "git describe > .version"
+    }
+    pre-build {
+        # refresh .version just in case cmake decides it wants to re-run
+        system -W ${worksrcpath} "git describe > .version"
     }
 
     post-destroot {
-        if {![variant_isset standalone] && ${os.platform} eq "darwin"} {
-
-### FIXME
-# objc[PID]: Class AppKitImpl is implemented in both /Applications/MacPorts/KeePassXC.app/Contents/MacOS/KeePassXC and /Applications/MacPorts/KeePassXC.app/Contents/PlugIns/libkeepassxc-autotype-cocoa.so. One of the two will be used. Which one is undefined.
-###
-
-            file rename ${destroot}${prefix}/KeePassXC.app ${destroot}${applications_dir}/
-            xinstall -m 755 -d ${destroot}${prefix}/share/keepassxc
-            ln -s ${applications_dir}/KeePassXC.app/Contents/Resources/translations ${destroot}${prefix}/share/keepassxc/
-        }
+        file delete -force ${worksrcpath}/.version
     }
 }
 
@@ -105,7 +107,7 @@ depends_lib-append      port:argon2 \
                         port:zlib
 
 patchfiles-append       patch-no-findpackage-path.diff \
-                        add_support_for_old_macos.diff \
+                        ${PPREFIX}add_support_for_old_macos.diff \
                         add_support_for_old_macos-2.diff \
                         patch-allow-secretservice.diff \
                         patch-no-double-AppKitImpl.diff
@@ -139,7 +141,7 @@ if {${os.platform} eq "darwin"} {
 
 cmake.save_configure_cmd "install log"
 
-configure.pre_args-append \
+configure.args-append \
     -DCMAKE_INSTALL_MANDIR=${prefix}/share/man \
     -DCMAKE_PREFIX_PATH=${qt_cmake_module_dir} \
     -DKEEPASSXC_BUILD_TYPE=Release \
@@ -150,18 +152,21 @@ configure.pre_args-append \
     -DWITH_XC_UPDATECHECK=OFF \
     -DWITH_XC_DOCS=OFF
 
+
 # QTest::addRow was introduced in Qt 5.9
 # Don't build tests in that case
 if {[vercmp ${qt5.version} 5.9] < 0} {
-    configure.pre_args-append -DWITH_TESTS=OFF
+    configure.args-append -DWITH_TESTS=OFF
 }
 
 configure.args-append   -DWITH_XC_FDOSECRETS=ON \
                         -DWITH_STANDALONE_APP_BUNDLE=OFF \
                         -DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=On
+# new option, depends on Qt >= 5.12 but is ignored for earlier Qt versions
+configure.args-append   -DWITH_XC_BROWSER_PASSKEYS=ON
 
 if {${os.platform} eq "darwin"} {
-    if {![variant_exists standalone] || [variant_isset standalone]} {
+    if {[variant_exists standalone] && [variant_isset standalone]} {
         cmake.install_prefix ${applications_dir}
         configure.pre_args-append \
                         -DCMAKE_INSTALL_PREFIX=${applications_dir}
@@ -187,6 +192,11 @@ post-destroot {
              ${kp_doc_path}
 
     platform darwin {
+        if {![variant_isset standalone] && ${os.platform} eq "darwin"} {
+            file rename ${destroot}${prefix}/KeePassXC.app ${destroot}${applications_dir}/
+            xinstall -m 755 -d ${destroot}${prefix}/share/keepassxc
+            ln -s ${applications_dir}/KeePassXC.app/Contents/Resources/translations ${destroot}${prefix}/share/keepassxc/
+        }
         set kp_app_path ${applications_dir}/KeePassXC.app/Contents/MacOS
         set kp_bin_path ${destroot}${prefix}/bin
         ln -s ${kp_app_path}/keepassxc-cli \
@@ -200,7 +210,7 @@ post-destroot {
 }
 
 variant yubikey description {Enable YubiKey challenge-response support} {
-    configure.pre_args-append \
+    configure.args-append \
                         -DWITH_XC_YUBIKEY=ON
     depends_lib-append port:ykpers
 }
