@@ -87,7 +87,9 @@ proc create_devport_content_archive {} {
         # a tested and foolproof way to preserve all permissions as well as the layout.
         set cVariants [dev::port_variants]
         ui_debug "making sure the devport workdir exists!"
-        system "port -nok archivefetch ${devport_name} ${cVariants}"
+        if {[catch {system "port -nok fetch ${devport_name} ${cVariants}"} err]} {
+            ui_debug "Ignoring failure doing fetch for ${devport_name}: ${err}"
+        }
         set devworkdir "[exec port work ${devport_name}]"
         if {${devworkdir} eq ""} {
             ui_error "port:${devport_name}'s work directory should exist by now!"
