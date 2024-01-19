@@ -66,6 +66,7 @@ proc dev::port_variants {} {
 # create the online devport content archive
 proc create_devport_content_archive {} {
     global destroot prefix mainport_name devport_name dev::archdir dev::archname
+    global os.major os.platform
     set rawargs [option devport_content]
     set args ""
     # convert the arguments to local-relative:
@@ -86,8 +87,15 @@ proc create_devport_content_archive {} {
         # and then delete that archive. We still go through the archive because it's
         # a tested and foolproof way to preserve all permissions as well as the layout.
         set cVariants [dev::port_variants]
-        ui_debug "making sure the devport workdir exists!"
-        if {[catch {system "port -nok fetch ${devport_name} ${cVariants}"} err]} {
+        ui_debug "making sure the devport workdir exists (UID=[getuid], EUID=[geteuid])!"
+        if {[getuid] == 0 && ${os.major} >= 11 && ${os.platform} eq "darwin"} {
+            catch {
+                # apparently removing the following file can fail because of a permissions problem.
+                # try to prevent that, because the user will see this as a destroot failure of the main port.
+                file delete -force ${prefix}/var/macports/home/Library/Preferences/com.apple.dt.Xcode.plist
+            }
+        }
+        if {[catch {system "port -nok -vd fetch ${devport_name} ${cVariants}"} err]} {
             ui_debug "Ignoring failure doing fetch for ${devport_name}: ${err}"
         }
         set devworkdir "[exec port work ${devport_name}]"
@@ -95,6 +103,7 @@ proc create_devport_content_archive {} {
             ui_error "port:${devport_name}'s work directory should exist by now!"
             return -code error "Internal devport PortGroup error"
         }
+        ui_debug "devport workdir=${devworkdir}"
         set devdestdir "${devworkdir}/destroot"
         ui_debug "Cleaning ${devport_name}"
         # `port clean` can block on the registry lock so we do this manually:
