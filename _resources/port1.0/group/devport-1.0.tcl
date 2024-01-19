@@ -63,10 +63,12 @@ proc dev::port_variants {} {
     return ${variants}
 }
 
+ui_info ${portbuildpath}/${devport_name}/work
+
 # create the online devport content archive
 proc create_devport_content_archive {} {
     global destroot prefix mainport_name devport_name dev::archdir dev::archname
-    global os.major os.platform
+    global os.major os.platform portbuildpath
     set rawargs [option devport_content]
     set args ""
     # convert the arguments to local-relative:
@@ -95,30 +97,28 @@ proc create_devport_content_archive {} {
                 file delete -force ${prefix}/var/macports/home/Library/Preferences/com.apple.dt.Xcode.plist
             }
         }
-        if {[catch {system "port -nok -vd fetch ${devport_name} ${cVariants}"} err]} {
-            ui_debug "Ignoring failure doing fetch for ${devport_name}: ${err}"
-        }
-        set devworkdir "[exec port work ${devport_name}]"
-        if {${devworkdir} eq ""} {
-            ui_error "port:${devport_name}'s work directory should exist by now!"
-            return -code error "Internal devport PortGroup error"
-        }
+        # construct the devport workdir using the fact it's a subport of the main port:
+        set devworkdir "${portbuildpath}/${devport_name}/work"
         ui_debug "devport workdir=${devworkdir}"
         set devdestdir "${devworkdir}/destroot"
         ui_debug "Cleaning ${devport_name}"
         # `port clean` can block on the registry lock so we do this manually:
         system "rm -rf ${devworkdir}"
         # now prepare the devport for our manual destroot "injection"
-        ui_debug "port -nok -v build ${devport_name} ${cVariants}"
-        # the fake build can be handled via the port driver up to the extract step
-        # which might block on the registry lock. This also re-creates the work dir.
-        system "port -nok -v fetch ${devport_name} ${cVariants}"
+        # creating the entire work tree by hand to prevent registry locks and apparently possible
+        # ownership/permissions errors:
+        ui_debug "Creating `port work ${devport_name}`"
+        xinstall -m 755 -d ${devdestdir}
+        # check if we got it right:
+        if {[exec port work ${devport_name}] eq ""} {
+            ui_error "port:${devport_name}'s work directory should exist by now!"
+            return -code error "Internal devport PortGroup error"
+        }
         # complete shunt of the extract, patch, configure and build steps so we won't lock
         system -W ${devworkdir} "echo \"target: org.macports.extract\" >> .macports.${devport_name}.state"
         system -W ${devworkdir} "echo \"target: org.macports.patch\" >> .macports.${devport_name}.state"
         system -W ${devworkdir} "echo \"target: org.macports.configure\" >> .macports.${devport_name}.state"
         system -W ${devworkdir} "echo \"target: org.macports.build\" >> .macports.${devport_name}.state"
-        xinstall -m 755 -d ${devdestdir}
         ui_debug "unpacking the devport archive into ${devdestdir}"
         unpack_devtarball_from_to_for ${destroot} ${devdestdir} ${devport_name}
                 system -W ${devworkdir} "echo \"target: org.macports.destroot\" >> .macports.${devport_name}.state"
