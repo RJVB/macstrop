@@ -68,7 +68,7 @@ ui_info ${portbuildpath}/${devport_name}/work
 # create the online devport content archive
 proc create_devport_content_archive {} {
     global destroot prefix mainport_name devport_name dev::archdir dev::archname
-    global os.major os.platform portbuildpath portsandbox_profile sandbox_enable
+    global os.major os.platform portbuildpath portsandbox_profile sandbox_enable portpath
     set rawargs [option devport_content]
     set args ""
     # convert the arguments to local-relative:
@@ -124,7 +124,8 @@ proc create_devport_content_archive {} {
         if {![catch {set fd [open "${devworkdir}/.macports.${devport_name}.state" "w"]} err]} {
             # complete shunt of the extract, patch, configure and build steps so we won't lock
             puts ${fd} "version: 2"
-            puts ${fd} "checksum: 0"
+            set checksum [lindex [split [exec openssl dgst -sha256 ${portpath}/Portfile] "="] 1]
+            puts ${fd} "checksum:${checksum}"
             foreach v [split ${cVariants} "+"] {
                 if {"${v}" ne ""} {
                     puts ${fd} "variant: +${v}"
