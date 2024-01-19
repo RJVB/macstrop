@@ -109,8 +109,7 @@ proc create_devport_content_archive {} {
         # `port clean` can block on the registry lock so we do this manually:
         exec rm -rf "${dir}"
         # now prepare the devport for our manual destroot "injection"
-        # creating the entire work tree by hand to prevent registry locks and apparently possible
-        # ownership/permissions errors:
+        # creating the entire work tree by hand to prevent registry locks:
         ui_debug "Creating `port work ${devport_name}`"
         # voodoo: create each path components to be really certain they all get the perms we want
         xinstall -m 755 -d "${dir}"
@@ -122,10 +121,12 @@ proc create_devport_content_archive {} {
             return -code error "Internal devport PortGroup error"
         }
         if {![catch {set fd [open "${devworkdir}/.macports.${devport_name}.state" "w"]} err]} {
-            # complete shunt of the extract, patch, configure and build steps so we won't lock
+            # complete shunt of all build phases so we won't lock and don't need the `port` driver
             puts ${fd} "version: 2"
+            # we use the correct Portfile checksum (but still install/archive with the -o flag):
             set checksum [lindex [split [exec openssl dgst -sha256 ${portpath}/Portfile] "="] 1]
             puts ${fd} "checksum:${checksum}"
+            # we'll also need to record the selected variants:
             foreach v [split ${cVariants} "+"] {
                 if {"${v}" ne ""} {
                     puts ${fd} "variant: +${v}"
@@ -249,12 +250,15 @@ proc unpack_devtarball_from_to_for {srcdir destdir portname} {
     if {[file exists ${srcdir}${dev::archdir}/${dev::archname}]
         && [file size ${srcdir}${dev::archdir}/${dev::archname}] > 0} {
         ui_debug "Unpacking \"${srcdir}${dev::archdir}/${dev::archname}\" for ${portname}"
+        # `catch` will consider any output from the command as indicative of an error
+        # so using `exec` instead of `system` is tricky (and verbose unpacking impossible)!
         if {[catch {exec -ignorestderr bsdtar -C ${destdir} -xf ${srcdir}${dev::archdir}/${dev::archname} >& /dev/null} err]} {
             set ls [exec ls -ailsFR ${destdir}/..]
             ui_debug "> ll ${destdir}/..\n${ls}"
             ui_error "Failure unpacking ${srcdir}${dev::archdir}/${dev::archname}: ${err}"
             return -code error "port:${portname} destroot failure"
         } else {
+            # list the archive contents upon success, as an alternative to doing a verbose unpack
             ui_debug "[exec bsdtar -tvf ${srcdir}${dev::archdir}/${dev::archname}]"
         }
     } else {
