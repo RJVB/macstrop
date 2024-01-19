@@ -68,7 +68,7 @@ ui_info ${portbuildpath}/${devport_name}/work
 # create the online devport content archive
 proc create_devport_content_archive {} {
     global destroot prefix mainport_name devport_name dev::archdir dev::archname
-    global os.major os.platform portbuildpath
+    global os.major os.platform portbuildpath portsandbox_profile sandbox_enable
     set rawargs [option devport_content]
     set args ""
     # convert the arguments to local-relative:
@@ -98,30 +98,52 @@ proc create_devport_content_archive {} {
             }
         }
         # construct the devport workdir using the fact it's a subport of the main port:
-        set devworkdir "${portbuildpath}/${devport_name}/work"
+        set dir "${portbuildpath}/${devport_name}"
+        set devworkdir "${dir}/work"
         ui_debug "devport workdir=${devworkdir}"
         set devdestdir "${devworkdir}/destroot"
+        # avoid sandboxing problems (copied from portsandbox.tcl):
+        append portsandbox_profile " (allow file-write* (subpath \"${devworkdir}\"))"
+        ui_debug "sandbox_enable=${sandbox_enable} portsandbox_profile=${portsandbox_profile}"
         ui_debug "Cleaning ${devport_name}"
         # `port clean` can block on the registry lock so we do this manually:
-        system "rm -rf ${devworkdir}"
+        exec rm -rf "${dir}"
         # now prepare the devport for our manual destroot "injection"
         # creating the entire work tree by hand to prevent registry locks and apparently possible
         # ownership/permissions errors:
         ui_debug "Creating `port work ${devport_name}`"
+        # voodoo: create each path components to be really certain they all get the perms we want
+        xinstall -m 755 -d "${dir}"
+        xinstall -m 755 -d "${portbuildpath}/${devport_name}/work"
         xinstall -m 755 -d ${devdestdir}
         # check if we got it right:
         if {[exec port work ${devport_name}] eq ""} {
             ui_error "port:${devport_name}'s work directory should exist by now!"
             return -code error "Internal devport PortGroup error"
         }
-        # complete shunt of the extract, patch, configure and build steps so we won't lock
-        system -W ${devworkdir} "echo \"target: org.macports.extract\" >> .macports.${devport_name}.state"
-        system -W ${devworkdir} "echo \"target: org.macports.patch\" >> .macports.${devport_name}.state"
-        system -W ${devworkdir} "echo \"target: org.macports.configure\" >> .macports.${devport_name}.state"
-        system -W ${devworkdir} "echo \"target: org.macports.build\" >> .macports.${devport_name}.state"
-        ui_debug "unpacking the devport archive into ${devdestdir}"
-        unpack_devtarball_from_to_for ${destroot} ${devdestdir} ${devport_name}
-                system -W ${devworkdir} "echo \"target: org.macports.destroot\" >> .macports.${devport_name}.state"
+        if {![catch {set fd [open "${devworkdir}/.macports.${devport_name}.state" "w"]} err]} {
+            # complete shunt of the extract, patch, configure and build steps so we won't lock
+            puts ${fd} "version: 2"
+            puts ${fd} "checksum: 0"
+            foreach v [split ${cVariants} "+"] {
+                if {"${v}" ne ""} {
+                    puts ${fd} "variant: +${v}"
+                }
+            }
+            puts ${fd} "target: org.macports.fetch"
+            puts ${fd} "target: org.macports.checksum"
+            puts ${fd} "target: org.macports.extract"
+            puts ${fd} "target: org.macports.patch"
+            puts ${fd} "target: org.macports.configure"
+            puts ${fd} "target: org.macports.build"
+            ui_debug "unpacking the devport archive into ${devdestdir}"
+            unpack_devtarball_from_to_for ${destroot} ${devdestdir} ${devport_name}
+            puts ${fd} "target: org.macports.destroot"
+            close ${fd}
+        } else {
+            ui_error "Failed to create the state file for port:${devport_name}: ${err}"
+            return -code error "Internal devport PortGroup error"
+        }
         ui_debug "Deleting the devport archive"
         file delete ${destroot}${dev::archdir}/${dev::archname}
     }
@@ -226,8 +248,13 @@ proc unpack_devtarball_from_to_for {srcdir destdir portname} {
     if {[file exists ${srcdir}${dev::archdir}/${dev::archname}]
         && [file size ${srcdir}${dev::archdir}/${dev::archname}] > 0} {
         ui_debug "Unpacking \"${srcdir}${dev::archdir}/${dev::archname}\" for ${portname}"
-        if {[catch {system -W ${destdir} "bsdtar -xvf ${srcdir}${dev::archdir}/${dev::archname}"} err]} {
+        if {[catch {exec -ignorestderr bsdtar -C ${destdir} -xf ${srcdir}${dev::archdir}/${dev::archname} >& /dev/null} err]} {
+            set ls [exec ls -ailsFR ${destdir}/..]
+            ui_debug "> ll ${destdir}/..\n${ls}"
             ui_error "Failure unpacking ${srcdir}${dev::archdir}/${dev::archname}: ${err}"
+            return -code error "port:${portname} destroot failure"
+        } else {
+            ui_debug "[exec bsdtar -tvf ${srcdir}${dev::archdir}/${dev::archname}]"
         }
     } else {
         ui_error "The port's content archive doesn't exists or is empty (${srcdir}${dev::archdir}/${dev::archname})!"
