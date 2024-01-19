@@ -348,7 +348,7 @@ proc create_devport {dependency} {
                             # we can use the fastest safe solution: `upgrade --force`
                             set dpinstmode upgrade
                             notes-append "port:${devport_name}@${cVersion}_${cRevision}${cVariants} will be upgraded and activated"
-                            exec port -n ${dpinstmode} --force ${devport_name} ${cVariants} &
+                            exec port -no ${dpinstmode} --force ${devport_name} ${cVariants} &
                         } else {
                             # the devport is not active or not installed. We want to use `archive`
                             # to keep it inactive after the install of this new version, but we
@@ -357,7 +357,7 @@ proc create_devport {dependency} {
                             set dpinstmode archive
                             notes-append "port:${devport_name}@${cVersion}_${cRevision}${cVariants} will be installed but not activated; you can do this manually if/when required"
                             exec sh -c "port -p -v uninstall ${devport_name}@${version}_${revision}${cVariants} ; \
-                                port -n ${dpinstmode} ${devport_name} ${cVariants}" &
+                                port -no ${dpinstmode} ${devport_name} ${cVariants}" &
                         }
                     }
                 } else {
