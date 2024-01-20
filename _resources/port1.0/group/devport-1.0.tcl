@@ -146,11 +146,11 @@ proc create_devport_content_archive {} {
             ui_error "Failed to create the state file for port:${devport_name}: ${err}"
             return -code error "Internal devport PortGroup error"
         }
-        ui_debug "Deleting the devport archive"
         file delete ${destroot}${dev::archdir}/${dev::archname}
+        ui_debug "Deleted the devport archive - devport is now ready to be installed."
     }
-
 }
+
 # registers content that standard devports will contain
 proc register_devport_standard_content {} {
     global subport destroot prefix mainport_name devport_name
