@@ -33,12 +33,22 @@
 # Usage:
 # PortGroup     devport 1.0
 
-options mainport_name devport_name devport_content devport_description devport_long_description
+options mainport_name devport_name devport_content devport_description devport_long_description devport_variants
 default mainport_name               {${name}}
 default devport_name                {${mainport_name}-dev}
 default devport_content             ""
 default devport_description         {"Development headers and libraries for ${mainport_name}"}
 default devport_long_description    {"${long_description}\nThis installs the development headers and libraries."}
+# an optionvar to declare variants that would otherwise be missing from the devport
+# because the devport doesn't parse the entire Portfile, e.g. because of
+## create_devport port:${name}
+## if {${subport} eq "${name}-dev"} {
+##     # we're not concerned by anything that follows so return
+##     # here to avoid having to add more subport checks!
+##     return
+## }
+# In this case, add `devport_variants foo1 foo2` above the `create_devport` line.
+default devport_variants            {}
 
 # namespace eval dev {
     # it shouldn't be necessary to record variants in the archive name
@@ -63,12 +73,10 @@ proc dev::port_variants {} {
     return ${variants}
 }
 
-ui_info ${portbuildpath}/${devport_name}/work
-
 # create the online devport content archive
 proc create_devport_content_archive {} {
     global destroot prefix mainport_name devport_name dev::archdir dev::archname
-    global os.major os.platform portbuildpath portsandbox_profile sandbox_enable portpath
+    global os.major os.platform portbuildpath portpath
     set rawargs [option devport_content]
     set args ""
     # convert the arguments to local-relative:
@@ -102,9 +110,6 @@ proc create_devport_content_archive {} {
         set devworkdir "${dir}/work"
         ui_debug "devport workdir=${devworkdir}"
         set devdestdir "${devworkdir}/destroot"
-        # avoid sandboxing problems (copied from portsandbox.tcl):
-        append portsandbox_profile " (allow file-write* (subpath \"${devworkdir}\"))"
-        ui_debug "sandbox_enable=${sandbox_enable} portsandbox_profile=${portsandbox_profile}"
         ui_debug "Cleaning ${devport_name}"
         # `port clean` can block on the registry lock so we do this manually:
         exec rm -rf "${dir}"
@@ -217,19 +222,29 @@ proc restore_devport_tarball {baseport} {
         set cVersion [lindex $installed 1]
         set cRevision [lindex $installed 2]
         set cVariants [lindex $installed 3]
-        global name subport portdbpath os.platform os.major build_arch portarchivetype prefix
-        set portimage "${portdbpath}/software/${baseport}/${baseport}-${cVersion}_${cRevision}${cVariants}.${os.platform}_${os.major}.${build_arch}.${portarchivetype}"
+        global name subport portdbpath os.platform os.major build_arch portarchivetype prefix configure.universal_archs
+        if {[variant_exists universal] && [variant_isset universal]} {
+            set archs [join ${configure.universal_archs} "-"]
+        } else {
+            set archs ${build_arch}
+        }
+        set portimage "${portdbpath}/software/${baseport}/${baseport}-${cVersion}_${cRevision}${cVariants}.${os.platform}_${os.major}.${archs}.${portarchivetype}"
         if {[file exists ${portimage}]} {
-            if {[catch {system -W ${dev::archdir} "bsdtar -xOf ${portimage} .${dev::archdir}/${dev::archname} > ${dev::archname}"} err]} {
-                ui_warn "Failure restoring ${dev::archdir}/${dev::archname}: ${err}"
+            if {[catch {exec bsdtar -C ${dev::archdir} -tf ${portimage} .${dev::archdir}/${dev::archname}} err]} {
+                global devport_name
+                ui_debug "port:${devport_name} is not installed from ${portimage}: ${err}"
                 set ret 0
-            } elseif {![file exists ${dev::archdir}/${dev::archname}]
-                || [file size ${dev::archdir}/${dev::archname}] == 0} {
-                ui_warn "Failure restoring ${dev::archdir}/${dev::archname} - did you use sudo?"
-                system "ls -l ${dev::archdir}/${dev::archname}*"
-                set ret 0
+            } else {
+                if {[catch {exec sh -c "cd ${dev::archdir} ; bsdtar -xOf ${portimage} .${dev::archdir}/${dev::archname} > ${dev::archname}"} err]} {
+                    ui_warn "Failure restoring ${dev::archdir}/${dev::archname}: ${err}"
+                    set ret 0
+                } elseif {![file exists ${dev::archdir}/${dev::archname}]
+                    || [file size ${dev::archdir}/${dev::archname}] == 0} {
+                    ui_warn "Failure restoring ${dev::archdir}/${dev::archname} - did you use sudo?"
+                    system "ls -l ${dev::archdir}/${dev::archname}*"
+                    set ret 0
+                }
             }
-
         } else {
             ui_warn "Calculated port image \"${portimage}\" doesn't exist"
             if {[file exists ${portdbpath}/software/${baseport}]} {
@@ -276,7 +291,8 @@ proc unpack_devport_content {} {
 # and (231021) add post-installation logic to install/upgrade it after installing/upgrading
 # the main port. See comments in the post-activate procedure for when we do and when we don't.
 proc create_devport {dependency} {
-    global subport mainport_name devport_name devport_description devport_long_description baseport \
+    global subport mainport_name devport_name devport_description devport_long_description baseport devport_variants \
+            universal_possible portsandbox_profile sandbox_enable portbuildpath \
             dev::archdir dev::archname \
             dev::mainport_installed
     # just so we're clear that what port we're talking about (the main port):
@@ -284,6 +300,16 @@ proc create_devport {dependency} {
     subport ${devport_name} {
         description     [join ${devport_description}]
         long_description [join ${devport_long_description}]
+        ## NB
+        ## allow the user to declare all non-yet-declared variants of the main port here!
+        ## This probably includes +universal!
+        ## NB
+        foreach v [option devport_variants] {
+            variant ${v} description "stub ${v} variant" {}
+        }
+        if {${universal_possible} && ![variant_exists universal]} {
+            variant universal description "stub universal variant" {}
+        }
         depends_fetch
         depends_build
         depends_lib
@@ -292,14 +318,20 @@ proc create_devport {dependency} {
         depends_run     ${dependency}
         depends_extract bin:bsdtar:libarchive
         installs_libs   yes
-        supported_archs noarch
         distfiles
         fetch {}
         checksum {}
         extract {}
         use_configure   no
+        configure       {}
         patchfiles
         build           {}
+        pre-destroot {
+            # try to avoid sandboxing problems (copied from portsandbox.tcl):
+            # (doesn't really seem to work though...)
+            append portsandbox_profile " (allow file-write* (subpath \"${dev::archdir}\"))"
+            ui_debug "sandbox_enable=${sandbox_enable} portsandbox_profile=${portsandbox_profile}"
+        }
         destroot {
             if {[restore_devport_tarball ${baseport}]} {
                 unpack_devport_content
@@ -322,6 +354,12 @@ proc create_devport {dependency} {
         }
     }
     if {${subport} eq ${baseport}} {
+        pre-destroot {
+            # try to avoid sandboxing problems (copied from portsandbox.tcl):
+            # (doesn't really seem to work though...)
+            append portsandbox_profile " (allow file-write* (subpath \"${portbuildpath}/${devport_name}/work\"))"
+            ui_debug "sandbox_enable=${sandbox_enable} portsandbox_profile=${portsandbox_profile}"
+        }
         post-install {
             # register that we just have installed the main port
             set dev::mainport_installed yes
