@@ -123,6 +123,7 @@ pre-configure {
 
     if {[variant_exists LTO] && [variant_isset LTO]
         && [lsearch [option configure.args] "ltcg"] < 0
+        && (![info exists configure.pre_args] || [lsearch ${configure.pre_args} "ltcg"] < 0)
         && (![info exists configure.post_args] || [lsearch ${configure.post_args} "ltcg"] < 0)} {
             configure.args-append -config ltcg
     }
