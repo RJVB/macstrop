@@ -1,13 +1,20 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 
 PortSystem          1.0
+PortGroup           LTO 1.0
 PortGroup           preserve_runtime_libraries 1.0
+PortGroup           save_configure_cmd 1.0
 
 name                gpgme
-version             1.10.0
+version             1.23.2
+
+checksums           rmd160  d286ccf5028b87bb659a906073172bb6f97a062e \
+                    sha256  9499e8b1f33cccb6815527a1bc16049d35a6198a6c5fae0185f2bd561bce5224
+#                     size    1836904
+
 categories          devel security crypto
 license             {LGPL-2.1+ GPL-3+}
-maintainers         {lbschenkel @lbschenkel} {devans @dbevans} openmaintainer
+maintainers         nomaintainer
 description         A library for easy acces to GnuPG.
 long_description    GnuPG Made Easy (GPGME) is a library designed to make access \
                     to GnuPG easier for applications. It provides a High-Level \
@@ -15,19 +22,15 @@ long_description    GnuPG Made Easy (GPGME) is a library designed to make access
                     verification and key management. Currently it uses GnuPG \
                     as its backend but the API isn't restricted to this engine \
                     in fact we have already developed a backend for CMS (S/MIME).\n\
-                    RJVB/macstrop copy that introduces just the preserve_runtime_libraries variant.
+                    RJVB/macstrop copy that introduces just the preserve_runtime_libraries \
+                    and LTO/cpu variants.
 
 platforms           darwin
 
-homepage            http://www.gnupg.org/related_software/gpgme/
+homepage            https://www.gnupg.org/related_software/gpgme/
 master_sites        gnupg
 use_bzip2           yes
 
-checksums           rmd160  9e6d0cef086b47f697a17384082f0c9f2f95c412 \
-                    sha256  1a8fed1197c3b99c35f403066bb344a26224d292afc048cfdfc4ccd5690a0693
-
-# either gnupg2 (the default) or gnupg21 is needed for running the unit tests
-# and at runtime but does not link directly with gpgme
 depends_build       port:pkgconfig \
                     path:bin/gpg2:gnupg2
 
@@ -42,12 +45,21 @@ use_parallel_build  yes
 patchfiles          patch-configure.ac.diff \
                     patch-tests-gpg-Makefile.am.diff
 
+# the <sys/select.h> header is not pulled on Tiger like it is on newer systems,
+# ticket 65877. cf libassuan port which has similar issue
+patchfiles-append   patch-src-tiger-needs-sys-select.diff
+
 post-patch {
     reinplace "s|@GPG@|${prefix}/bin/gpg2|" ${worksrcpath}/src/gpgme-config.in
     reinplace "s|thread_modules=\"\"|thread_modules=\"pthread\"|" ${worksrcpath}/src/gpgme-config.in
     reinplace "s|@GPGSM@|${prefix}/bin/gpgsm|" ${worksrcpath}/src/gpgme-config.in
 }
 
+compiler.cxx_standard 2017
+# Build uses c++17 features, but incorrectly configures for c++11 only.
+configure.cxxflags-append -std=c++17
+
+configure.checks.implicit_function_declaration.whitelist-append strchr
 if {![file exists ${worksrcpath}/config.log]} {
     use_autoreconf  yes
     autoreconf.args -fvi
@@ -55,18 +67,17 @@ if {![file exists ${worksrcpath}/config.log]} {
 
 # enable cl cpp language bindings for now to avoid opportunistic failures (#52341)
 # TODO: add bindings for python
-# Due to the requirement to support multiple Qt versions, 
+# Due to the requirement to support multiple Qt versions,
 # gpgme Qt5 bindings will be handled in separate port
 # see https://trac.macports.org/ticket/53122
 
 lappend languages cl
+lappend languages cpp
 
-# cpp bindings require libc++
-
+# This has to be enabled, otherwise CMake config files are not installed,
+# which breaks some dependents, like Poppler.
+# Contrary to the earlier situation, it does build now against libstdc++.
 platform darwin {
-    if {${configure.cxx_stdlib} eq "libc++"} {
-        lappend languages cpp
-    }
     post-configure {
         reinplace "s|CC -dynamiclib|CC -dynamiclib [get_canonical_archflags]|g" ${worksrcpath}/libtool
     }
@@ -76,13 +87,13 @@ platform darwin {
 # gpg: can't connect to the agent: File name too long
 # disable for now to avoid build error
 
+configure.save_configure_cmd "install log"
+
 configure.args      --disable-dependency-tracking \
                     --enable-languages="${languages}" \
                     --enable-static \
                     --disable-gpg-test
 
-test.run            yes
-test.target         check
 
 post-destroot {
     preserve_libraries ${prefix}/lib libgpgme-pthread.*.dylib
@@ -106,5 +117,5 @@ pre-activate {
 }
 
 livecheck.type      regex
-livecheck.url       ftp://ftp.gnupg.org/gcrypt/gpgme/
+livecheck.url       https://gnupg.org/ftp/gcrypt/gpgme/
 livecheck.regex     "${name}-(\\d+(?:\\.\\d+)*)${extract.suffix}"
