@@ -1,56 +1,61 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:filetype=tcl:et:sw=4:ts=4:sts=4
 
 PortSystem          1.0
-PortGroup           compiler_blacklist_versions 1.0
-PortGroup           conflicts_build 1.0
 PortGroup           gobject_introspection 1.0
 PortGroup           LTO 1.0
 PortGroup           cmake 1.1
 platform darwin {
-    if {${os.major} < 13} {
-        PortGroup   legacysupport 1.0
-    }
+    PortGroup       legacysupport 1.1
 }
-if {${os.platform} eq "darwin" || ${subport} ne "popper-qt5"} {
+if {${subport} ne "popper-qt5"} {
     PortGroup       preserve_runtime_libraries 1.0
 }
 
 name                poppler
-conflicts           xpdf-tools
-version             0.89.0 ; # see revision below
-if {[variant_isset preserve_runtime_libraries]} {
-    revision        1
-}
-license             GPL-2+
-maintainers         {devans @dbevans} openmaintainer
+conflicts           poppler-devel xpdf-tools
+set my_name         poppler
+version             24.01.0
+
 categories          graphics
-platforms           darwin
-homepage            https://poppler.freedesktop.org/
+license             GPL-2+
+maintainers         {devans @dbevans} {mascguy @mascguy} openmaintainer
 
 description         Poppler is a PDF rendering library based on the xpdf-3.0 code base.
-long_description    ${description}
+long_description    {*}${description}
+homepage            https://poppler.freedesktop.org/
 
-master_sites        ${homepage} \
-                    gentoo
-
+master_sites        ${homepage}
+distname            ${my_name}-${version}
+dist_subdir         ${my_name}
 use_xz              yes
 
-checksums           rmd160  ed31e81e3a316795a4e3dd6c5dea45d82752528d \
-                    sha256  fba230364537782cc5d43b08d693ef69c36586286349683c7b127156a8ef9b5c
-#                     size    1612156
+checksums           rmd160  f18cff10c9066c5b499749e25b89fd2d77a9e749 \
+                    sha256  c7def693a7a492830f49d497a80cc6b9c85cb57b15e9be2d2d615153b79cae08
+#                     size    1895736
+
+if {${os.platform} eq "darwin"} {
+    set py_ver      3.11
+} else {
+    set py_ver      3.9
+}
+
+set py_ver_nodot    [string map {. {}} ${py_ver}]
 
 depends_build-append \
-                    port:pkgconfig
+                    port:pkgconfig \
+                    port:python${py_ver_nodot}
 
-depends_lib-append  port:bzip2 \
+depends_lib-append \
+                    port:bzip2 \
+                    path:lib/pkgconfig/cairo.pc:cairo \
                     port:curl \
                     port:expat \
                     port:freetype \
-                    path:include/turbojpeg.h:libjpeg-turbo \
                     path:lib/pkgconfig/glib-2.0.pc:glib2 \
-                    path:lib/pkgconfig/cairo.pc:cairo \
+                    port:gpgme \
                     port:lcms2 \
                     port:libiconv \
+                    path:include/turbojpeg.h:libjpeg-turbo \
                     port:libpng \
                     port:nss \
                     port:openjpeg \
@@ -64,72 +69,99 @@ platform darwin {
 
 # remove top-level paths, such that internal headers and
 # libraries are used instead of any already-installed ones.
-configure.ldflags-delete -L${prefix}/lib
-configure.cppflags-delete -I${prefix}/include
+configure.ldflags-delete \
+                    -L${prefix}/lib
+configure.cppflags-delete \
+                    -I${prefix}/include
 
-configure.ldflags-append -liconv
+configure.ldflags-append \
+                    -liconv
+gobject_introspection yes
 
-variant vala description {Enable GObject introspection and Vala bindings} {}
-if {[variant_isset vala]} {
-    gobject_introspection yes
-    configure.args-append \
-                    -DENABLE_GOBJECT_INTROSPECTION=ON
-} else {
-    gobject_introspection no
-    configure.args-append \
-                    -DENABLE_GOBJECT_INTROSPECTION=OFF
+compiler.cxx_standard 2017
+compiler.c_standard   2011
+compiler.thread_local_storage yes
+
+# match clang, not strequal
+patchfiles-append   patch-cmake_modules_PopplerMacros.cmake.diff
+
+# fix header include path ordering for gobject-introspection call to
+# be source / build first, then system, as best can be determined
+patchfiles-append   patch-glib_CMakeFiles.txt-fix-include-ordering.diff
+
+# Relax overly modern requirements to allow to build against older deps
+patchfiles-append   patch-allow-older-deps.diff
+
+if {${configure.compiler} eq "macports-gcc-7"} {
+    patchfiles-append \
+                    patch-poppler-gcc7-noexcept.diff
 }
-
-# C++14, thread_local
-compiler.cxx_standard 2014
-configure.cxxflags-append -std=c++14
-compiler.blacklist-append {clang < 800.0.38}
-foreach clv {3.3 3.4 3.5 3.6 3.7 3.8 3.9 4.0} {
-    compiler.blacklist macports-clang-${clv}
-}
-for {set i 5} {${i} <= 12} {incr i} {
-    if {${i} > 9} {
-        set clv ${i}
-    } else {
-        set clv "${i}.0"
-    }
-    if {[file exists ${prefix}/bin/clang-mp-${clv}]} {
-        compiler.whitelist-prepend macports-clang-${clv}
-    }
-    compiler.fallback-prepend macports-clang-${clv}
-}
-
-# https://bugs.freedesktop.org/show_bug.cgi?id=106417
-patchfiles-append   patch-bug106417.diff
-
-# https://trac.macports.org/ticket/57167
-patchfiles-append   patch-trac-57167.diff
-
-configure.args-append \
-                    -DENABLE_UNSTABLE_API_ABI_HEADERS=ON \
-                    -DENABLE_QT5=OFF \
-                    -DBUILD_GTK_TESTS=OFF \
-                    -DBUILD_QT5_TESTS=OFF \
-                    -DBUILD_CPP_TESTS=OFF \
-                    -DWITH_NSS3=ON
-configure.args-append \
-                    -DCMAKE_STRIP:FILEPATH=/bin/echo
 
 cmake.save_configure_cmd "install log"
 
-subport poppler-qt5 {
+configure.args-append \
+                    -DBUILD_CPP_TESTS=OFF \
+                    -DBUILD_GTK_TESTS=OFF \
+                    -DBUILD_MANUAL_TESTS=OFF \
+                    -DBUILD_QT5_TESTS=OFF \
+                    -DBUILD_QT6_TESTS=OFF \
+                    -DENABLE_BOOST=OFF \
+                    -DENABLE_QT5=OFF \
+                    -DENABLE_QT6=OFF \
+                    -DENABLE_UNSTABLE_API_ABI_HEADERS=ON \
+                    -DGLIB2_MKENUMS_PYTHON=${prefix}/bin/python${py_ver} \
+                    -DRUN_GPERF_IF_PRESENT=OFF \
+                    -DWITH_NSS3=ON
+
+# # Poppler cmake doesn't understand build type "MacPorts"; use release unless +debug is set
+# if {[variant_isset debug]} {
+#     cmake.build_type Debug
+# } else {
+#     cmake.build_type RelWithDebInfo
+# }
+
+variant boost conflicts boost171 description "Use Boost when building the Splash graphics backend" {
+    PortGroup boost 1.0
+
+    boost.version 1.76
+    configure.args-replace \
+                    -DENABLE_BOOST=OFF \
+                    -DENABLE_BOOST=ON
+}
+
+variant boost171 conflicts boost description "Use Boost when building the Splash graphics backend" {
+    PortGroup boost 1.0
+
+    boost.version 1.71
+    configure.args-replace \
+                    -DENABLE_BOOST=OFF \
+                    -DENABLE_BOOST=ON
+}
+
+if {![variant_isset boost171]} {
+    default_variants-append +boost
+}
+
+subport ${name}-qt5 {
     PortGroup qt5 1.0
 
-    patchfiles-append       patch-qt5-106118.diff
+    # Builds with Qt 5.8 (requires toSecsSinceEpoch and fromSecsSinceEpoch)
+    # despite CMakeLists.txt in poppler 23.01 saying 5.12 is required
+    # (no longer at this moment because corrected via a patch above)
+    qt5.min_version 5.8
 
-    configure.env-append    MOCQT5=${qt_bins_dir}/moc
-    configure.args-delete   -DENABLE_QT5=OFF
+    configure.env-append \
+                    MOCQT5=${qt_bins_dir}/moc
+    configure.args-delete \
+                    -DENABLE_QT5=OFF
     platform darwin {
-        configure.args-delete -DENABLE_XPDF_HEADERS=ON
+        configure.args-delete \
+                    -DENABLE_XPDF_HEADERS=ON
     }
-    configure.args-append   -DENABLE_UTILS=OFF
-    configure.args-append   -DENABLE_CPP=OFF
-    configure.args-append   -DENABLE_GLIB=OFF
+    configure.args-append \
+                    -DENABLE_CPP=OFF \
+                    -DENABLE_GLIB=OFF \
+                    -DENABLE_UTILS=OFF
 
     post-destroot {
         file delete ${destroot}${prefix}/lib/pkgconfig/poppler-cairo.pc
@@ -178,14 +210,16 @@ subport poppler-qt5 {
 }
 
 if {${subport} ne ${name}} {
-    depends_extract-append  port:git
+    depends_extract-append \
+                    port:git
 
-    depends_lib-append      port:poppler
+    depends_lib-append \
+                    port:${name}
 
     post-extract {
-        system -W ${workpath} "${prefix}/bin/git clone --depth=1 http://anongit.freedesktop.org/git/poppler/test"
+        system -W ${workpath} \
+                    "${prefix}/bin/git clone --depth=1 https://anongit.freedesktop.org/git/poppler/test"
     }
-
 
 # currently poppler only provides unit tests for the Qt wrappers
 
@@ -195,7 +229,7 @@ if {${subport} ne ${name}} {
 
     post-destroot {
         foreach dot_h [glob -nocomplain -directory ${destroot}${prefix}/include/poppler *.h] {
-            delete $dot_h
+            delete ${dot_h}
         }
         foreach libpoppler [glob -nocomplain ${destroot}${prefix}/lib/libpoppler.*] {
             delete ${libpoppler}
@@ -207,16 +241,17 @@ if {${subport} ne ${name}} {
                 ${destroot}${prefix}/lib/pkgconfig/poppler.pc
     }
 } else {
-    # generation of Poppler-0.18.gir fails if previous version of poppler is active
-    # appropriate for main poppler port only
-    if {[tbool gobject_introspection]} {
-        conflicts_build ${name}
-    }
+#     # generation of Poppler-0.18.gir fails if previous version of poppler is active
+#     # appropriate for main poppler port only
+#     if {[tbool gobject_introspection]} {
+#         conflicts_build ${name}
+#     }
     post-destroot {
         preserve_libraries ${prefix}/lib "libpoppler.*.dylib libpoppler.so.*"
     }
 }
 
+
 livecheck.type      regex
-livecheck.url       ${homepage}releases.html
-livecheck.regex     "${name}-(\\d+(?:\\.\\d+)*)${extract.suffix}"
+livecheck.url       ${homepage}
+livecheck.regex     "${my_name}-(\\d+(?:\\.\\d+)*)${extract.suffix}"
