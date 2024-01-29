@@ -11,7 +11,9 @@ platform darwin {
         PortGroup   legacysupport 1.0
     }
 }
-PortGroup           preserve_runtime_libraries 1.0
+if {${os.platform} eq "darwin" || ${subport} ne "popper-qt5"} {
+    PortGroup       preserve_runtime_libraries 1.0
+}
 
 name                poppler
 conflicts           xpdf-tools
@@ -43,7 +45,6 @@ depends_build-append \
 depends_lib-append  port:bzip2 \
                     port:curl \
                     port:expat \
-                    port:fontconfig \
                     port:freetype \
                     path:include/turbojpeg.h:libjpeg-turbo \
                     path:lib/pkgconfig/glib-2.0.pc:glib2 \
@@ -56,6 +57,10 @@ depends_lib-append  port:bzip2 \
                     port:poppler-data \
                     port:tiff \
                     port:zlib
+platform darwin {
+    depends_lib-append \
+                    port:fontconfig
+}
 
 # remove top-level paths, such that internal headers and
 # libraries are used instead of any already-installed ones.
@@ -107,8 +112,10 @@ configure.args-append \
                     -DBUILD_QT5_TESTS=OFF \
                     -DBUILD_CPP_TESTS=OFF \
                     -DWITH_NSS3=ON
+configure.args-append \
+                    -DCMAKE_STRIP:FILEPATH=/bin/echo
 
-cmake.save_configure_cmd "log too"
+cmake.save_configure_cmd "install log"
 
 subport poppler-qt5 {
     PortGroup qt5 1.0
@@ -117,34 +124,44 @@ subport poppler-qt5 {
 
     configure.env-append    MOCQT5=${qt_bins_dir}/moc
     configure.args-delete   -DENABLE_QT5=OFF
-    configure.args-delete   -DENABLE_XPDF_HEADERS=ON
+    platform darwin {
+        configure.args-delete -DENABLE_XPDF_HEADERS=ON
+    }
     configure.args-append   -DENABLE_UTILS=OFF
     configure.args-append   -DENABLE_CPP=OFF
     configure.args-append   -DENABLE_GLIB=OFF
 
     post-destroot {
         file delete ${destroot}${prefix}/lib/pkgconfig/poppler-cairo.pc
-        if {[variant_isset preserve_runtime_libraries]} {
+        if {[variant_exists preserve_runtime_libraries] && [variant_isset preserve_runtime_libraries]} {
            if {![catch {set installed [lindex [registry_active ${subport}] 0]}]} {
                 set _version [lindex $installed 1]
                 # check if the (or a) previous port version is active
                 if {[vercmp $_version ${version}] <= 0} {
                     # move new interface lib aside
-                    file rename ${destroot}${prefix}/lib/libpoppler-qt5.1.dylib \
-                        ${destroot}${prefix}/lib/libpoppler-qt5.1n.dylib
-                    # make sure the linker editor is aware of the rename trick we're pulling
-                    system "install_name_tool -id ${prefix}/lib/libpoppler-qt5.1n.dylib \
-                        ${destroot}${prefix}/lib/libpoppler-qt5.1n.dylib"
-                    # update link library
-                    ln -sf libpoppler-qt5.1n.dylib ${destroot}${prefix}/lib/libpoppler-qt5.dylib
+                    if {${os.platform} eq "darwin"} {
+                        file rename ${destroot}${prefix}/lib/libpoppler-qt5.1.dylib \
+                            ${destroot}${prefix}/lib/libpoppler-qt5.1n.dylib
+                        # make sure the linker editor is aware of the rename trick we're pulling
+                        system "install_name_tool -id ${prefix}/lib/libpoppler-qt5.1n.dylib \
+                            ${destroot}${prefix}/lib/libpoppler-qt5.1n.dylib"
+                        # update link library
+                        ln -sf libpoppler-qt5.1n.dylib ${destroot}${prefix}/lib/libpoppler-qt5.dylib
+                    } else {
+                        file rename ${destroot}${prefix}/lib/libpoppler-qt5.so.1 \
+                            ${destroot}${prefix}/lib/libpoppler-qt5.so.1n
+                        # update link library
+                        ln -sf libpoppler-qt5.so.1n ${destroot}${prefix}/lib/libpoppler-qt5.so
+                    }
                     # install pointer to old runtime which had only a single version interfix
                     # so that dependents can continue to use that previous version.
-                    preserve_libraries ${prefix}/lib libpoppler-qt5.1.dylib
+                    preserve_libraries ${prefix}/lib "libpoppler-qt5.1.dylib libpoppler-qt5.so.*"
                 }
            }
         } else {
             # check if the user possibly was using +preserve_runtime_libraries before,
             # as evidenced by the presence of the renamed interface lib.
+            ## NB: no need for platform checking with this approach! :)
             if {[file exists ${prefix}/lib/libpoppler-qt5.1n.dylib]} {
                 # make sure any applications currently depending on the renamed library
                 # continue to work without rebuilding. We don't have to without the
@@ -152,6 +169,9 @@ subport poppler-qt5 {
                 # to what should be an ABI-compatible library is cheap and most likely safe.
                 # (Apps will use the new version just like they would with a rebuild.)
                 ln -sf libpoppler-qt5.1.dylib ${destroot}${prefix}/lib/libpoppler-qt5.1n.dylib
+            }
+            if {[file exists ${prefix}/lib/libpoppler-qt5.so.1n]} {
+                ln -sf libpoppler-qt5.so.1 ${destroot}${prefix}/lib/libpoppler-qt5.so.1n
             }
         }
     }
@@ -193,7 +213,7 @@ if {${subport} ne ${name}} {
         conflicts_build ${name}
     }
     post-destroot {
-        preserve_libraries ${prefix}/lib libpoppler.*.dylib
+        preserve_libraries ${prefix}/lib "libpoppler.*.dylib libpoppler.so.*"
     }
 }
 
