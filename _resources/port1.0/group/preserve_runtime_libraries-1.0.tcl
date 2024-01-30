@@ -280,8 +280,11 @@ if {${os.platform} eq "darwin"} {
     }
 }
 
-variant preserve_runtime_libraries description {Experimental variant that preserves the pre-existing runtime \
+# allow ports to override the variant description
+if {![variant_exists preserve_runtime_libraries]} {
+    variant preserve_runtime_libraries description {Preserve the pre-existing runtime \
                                         libraries to ease the rebuilding load during upgrades.} {}
+}
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
 
