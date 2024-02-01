@@ -25,7 +25,7 @@ proc printUsage {} {
     puts "  -h    This help"
     puts "  -d    some debug output"
     puts "  -m    list files that will go missing (present in the active named port, not in the version-to-be-installed)"
-    puts "  -n    list files that are newer (can be combined with -v)"
+    puts "  -n    list files that are \"newer\", i.e. have changed content, modification times or attributes (can be combined with -v)"
     puts "  -N    like -n but do an `ls -l` of the compared files (the new file will show up as \".${macports::prefix}/XXX\")"
     puts "  -q    quiet mode"
     puts "  -t    currently ignored"
@@ -333,6 +333,7 @@ proc fileEqual {file1 file2} {
             return 0
         }
         fconfigure $f2 -translation binary
+        # read and compare 4k chunks until a difference is found:
         while {![info exist same]} {
             if {[read $f1 4096] ne [read $f2 4096]} {
                 set same 0
@@ -471,8 +472,15 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                     if {[file exists "${g}"]} {
                         if {[file type "${f}"] eq "file" && [file type "${g}"] eq "file"} {
                             if {${newer}} {
-                                if {[file mtime ${f}] > [file mtime ${g}]} {
-                                    if {[fileEqual ${f} ${g}]} {
+                                # easiest but most expensive check: compare contents.
+                                if {![fileEqual ${f} ${g}]} {
+                                    message ${g} "will be updated"
+                                    if {${listnewer}} {
+                                        message "" [exec ls -alsF ${f} ${g}]
+                                    }
+                                    set newFiles [lappend newFiles ${f}]
+                                } else {
+                                    if {[file mtime ${f}] != [file mtime ${g}]} {
                                         # check if the installed file is probably a headerfile
                                         if {$touchHeaders && [string first "/include/" ${g}]} {
                                             file mtime ${f} [file mtime ${g}]
@@ -480,15 +488,14 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                                         } else {
                                             message ${g} "will be touched"
                                         }
-                                    } else {
-                                        message ${g} "will be updated"
-                                        if {${listnewer}} {
-                                            message "" [exec ls -alsF ${f} ${g}]
-                                        }
-                                        set newFiles [lappend newFiles ${f}]
+                                    }
+                                    if {[file attributes ${f}] != [file attributes ${g}]} {
+                                        message ${g} "attributes will change"
                                     }
                                 }
+
                             } elseif {!${inverse}} {
+                                # file clash, regardless of content or attributes
                                 set InstalledDupsList [lappend InstalledDupsList "${g}"]
                                 set DestrootDupsList [lappend DestrootDupsList "${f}"]
                             }
