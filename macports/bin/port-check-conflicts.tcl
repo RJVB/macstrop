@@ -298,7 +298,7 @@ proc port_contents { portname } {
     return {}
 }
 
-proc message { filename message } {
+proc message-nonewline { filename message } {
     if {${filename} ne ""} {
         regsub -all {[ \r\t\n]+} ${filename} "" gg
         if {${filename} ne ${gg}} {
@@ -314,10 +314,13 @@ proc message { filename message } {
         }
     }
     if {![macports::ui_isset ports_quiet]} {
-        puts "${message}"
-    } else {
-        puts ""
+        puts -nonewline "${message}"
     }
+}
+
+proc message { filename message } {
+    message-nonewline ${filename} ${message}
+    puts ""
 }
 
 # see https://stackoverflow.com/a/29289660/1460868
@@ -480,17 +483,25 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                                     }
                                     set newFiles [lappend newFiles ${f}]
                                 } else {
+                                    set touched 0
                                     if {[file mtime ${f}] != [file mtime ${g}]} {
                                         # check if the installed file is probably a headerfile
                                         if {$touchHeaders && [string first "/include/" ${g}]} {
                                             file mtime ${f} [file mtime ${g}]
-                                            message ${g} "mtime set to that of the installed file"
+                                            message-nonewline ${g} "mtime set to that of the installed file"
                                         } else {
-                                            message ${g} "will be touched"
+                                            message-nonewline ${g} "will be touched"
                                         }
+                                        set touched 1
                                     }
                                     if {[file attributes ${f}] != [file attributes ${g}]} {
-                                        message ${g} "attributes will change"
+                                        if {${touched}} {
+                                            message "" " and attributes will change"
+                                        } else {
+                                            message ${g} "attributes will change"
+                                        }
+                                    } elseif {${touched}} {
+                                        puts ""
                                     }
                                 }
 
