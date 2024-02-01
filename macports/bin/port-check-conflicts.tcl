@@ -425,9 +425,16 @@ for {set i 0} {${i} < ${argc}} {incr i} {
         set pWD [port_workdir ${portName}]
         set OK [chworkdir ${portName} ${pWD}]
     }
+    if {[file exists ${macports::prefix}/bin/gdu]} {
+        set DU "gdu"
+    } else {
+        set DU "du"
+    }
     if {${pWD} ne ""} {
         if {${OK}} {
             set FILES {}
+            set missingFiles {}
+            set newFiles {}
             ui_debug "Building file list for ${portName}"
             Trawler foreach file {
                 if {${missing}} {
@@ -442,7 +449,12 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                 foreach f ${currentFiles} {
                     if {[lsearch -exact ${FILES} ${f}] < 0} {
                         message ${f} "will go missing"
+                        set missingFiles [lappend missingFiles ${f}]
                     }
+                }
+                if {[llength ${missingFiles}]} {
+                    puts -nonewline "Files to be uninstalled will free up "
+                    puts [exec sh -c "${DU} -hc ${missingFiles} | tail -1"]
                 }
             } else {
                 set InstalledDupsList {}
@@ -473,6 +485,7 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                                         if {${listnewer}} {
                                             message "" [exec ls -alsF ${f} ${g}]
                                         }
+                                        set newFiles [lappend newFiles ${f}]
                                     }
                                 }
                             } elseif {!${inverse}} {
@@ -482,6 +495,7 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                         }
                     } elseif {${inverse}} {
                         message ${g} "doesn't exist yet"
+                        set newFiles [lappend newFiles ${f}]
                     }
                 }
                 if {[llength ${InstalledDupsList}]} {
@@ -517,7 +531,14 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                         }
                     }
                 }
+                if {[llength ${newFiles}]} {
+                    puts -nonewline "New or modified files will take up "
+                    puts [exec sh -c "${DU} -hc ${newFiles} | tail -1"]
+                }
             }
+            # print the total size
+            puts -nonewline "Port will take up "
+            puts [exec sh -c "${DU} -hc . | tail -1"]
         }
     }
 }
