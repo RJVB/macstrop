@@ -3,20 +3,20 @@
 PortSystem          1.0
 PortGroup           locale_select 1.0
 PortGroup           compiler_blacklist_versions 1.0
-platform darwin {
-    PortGroup       cxx11 1.1
-}
 PortGroup           cmake 1.1
+PortGroup           boost 1.0
+PortGroup           LTO 1.0
+PortGroup           conflicts_configure 1.0
 
 cmake.generator     Ninja
 
 name                inkscape-devel
-conflicts           inkscape
+conflicts           inkscape inkscape-gtk3-devel
 epoch               2
 set git_commit      33fec40d5c76bbbeeb6f105d8a64b2bc7b5113f9
 # INKSCAPE_0_92_3-113-g33fec40d5c
-version             0.92.3.113
-license             GPL-2 LGPL-2.1
+version             0.92.3.113 ; revision 1
+license             GPL-3+
 maintainers         {devans @dbevans}
 categories          graphics gnome
 platforms           darwin
@@ -42,7 +42,15 @@ set python_minor    7
 set python_version  ${python_major}${python_minor}
 set perl_version    5
 
-depends_build       port:pkgconfig \
+# this port only uses boost headers during build
+# and does not link with any boost libraries
+# no need to rebuild due to boost library ABI changes
+boost.depends_type  build
+boost.version       1.71
+
+depends_build-append \
+                    port:pkgconfig \
+                    port:libtool \
                     port:intltool \
                     port:perl${perl_version}
 
@@ -56,9 +64,8 @@ depends_lib         port:desktop-file-utils \
                     port:glibmm \
                     port:dbus-glib \
                     port:lcms2 \
-                    port:poppler \
-                    port:boost \
-                    port:ImageMagick \
+                    port:poppler073 \
+                    port:ImageMagick6 \
                     port:libcdr-0.1 \
                     port:libexif \
                     port:libvisio-0.1 \
@@ -71,27 +78,45 @@ depends_lib         port:desktop-file-utils \
                     port:py${python_version}-numpy
 
 pre-fetch {
-    # the .git directory will be over 1.2Gb large alone so yes, this will take a while.
+    # the .git directory alone will be over 1.2Gb large so yes, this will take a while.
     ui_msg "--->  Fetching source from git repository: this will take a while"
 }
 
 patchfiles          patch-use-configured-perl.diff
 
+# force the compiler to use the include directive to the found Poppler install
+# rather than allowing a match with $prefix/include/poppler:
+patchfiles-append   patch-use-poppler-includedir-option.diff
+
 post-patch {
-    reinplace "s|@@MP_PERL@@|${prefix}/bin/perl5|" ${worksrcpath}/Makefile.am
-    reinplace "s|\"python-interpreter\", \"python\"|\"python-interpreter\", \"python2.7\"|g" ${worksrcpath}/src/extension/implementation/script.cpp
-    reinplace "s|^#include \"Object.h\"|#include \"${prefix}/include/poppler/Object.h\"|" ${worksrcpath}/src/extension/internal/pdfinput/pdf-parser.h
-    reinplace "s|^#include \"Object.h\"|#include \"${prefix}/include/poppler/Object.h\"|" ${worksrcpath}/src/extension/internal/pdfinput/pdf-parser.cpp
-    reinplace "s|lib/inkscape|lib|" ${worksrcpath}/src/CMakeLists.txt
+    reinplace "s|@@MP_PERL@@|${prefix}/bin/perl5|" \
+                    ${worksrcpath}/Makefile.am
+    reinplace "s|\"python-interpreter\", \"python\"|\"python-interpreter\", \"python2.7\"|g" \
+                    ${worksrcpath}/src/extension/implementation/script.cpp
+    reinplace "s|@PREFIX@|${prefix}|" \
+                    ${worksrcpath}/src/extension/internal/pdfinput/pdf-parser.h \
+                    ${worksrcpath}/src/extension/internal/pdfinput/pdf-parser.cpp
+    reinplace "s|lib/inkscape|lib|" \
+                    ${worksrcpath}/src/CMakeLists.txt
 }
 
 # py27-numpy is currently not universal (#48263).
 
 universal_variant no
 
+# dependencies require C++11
+compiler.cxx_standard 2011
+
 # clang-425.0.28 cannot handle glibmm's headers
 # allow build with more modern gcc on 10.5 and earlier
 compiler.blacklist-append {clang < 500} *gcc-3.* *gcc-4.*
+
+configure.env-append \
+                    PKG_CONFIG_PATH=${prefix}/libexec/poppler073/lib/pkgconfig:${prefix}/libexec/ImageMagick-6/lib/pkgconfig:
+
+# sadly Inkscape's CMake code can't ignore the poppler copy installed directly into $prefix
+# but port:poppler only needs to be deactivated during the configure step.
+conflicts_configure poppler
 
 configure.cppflags-append \
                     -I${worksrcpath}/src/extension/script
@@ -109,10 +134,11 @@ variant gtk3 description {Enable experimental GTK+ 3 build} {
 }
 
 configure.args-append \
+                    -DWITH_DBUS=ON \
                     -DWITH_GNOME_VFS=OFF \
+                    -DWITH_OPENMP=OFF \
                     -DENABLE_LCMS=ON \
-                    -DENABLE_POPPLER=ON -DENABLE_POPPLER_CAIRO=ON \
-                    -DWITH_DBUS=ON
+                    -DENABLE_POPPLER=ON -DENABLE_POPPLER_CAIRO=ON
 if {[variant_isset gtk3]} {
     configure.args-append \
                     -DWITH_GTK3_EXPERIMENTAL=ON
@@ -121,7 +147,7 @@ if {[variant_isset gtk3]} {
                     -DWITH_GTK3_EXPERIMENTAL=OFF
 }
 
-cmake.save_configure_cmd "log too"
+cmake.save_configure_cmd "install log"
 
 #
 # the following dummy variants are used
@@ -148,7 +174,7 @@ if {[variant_isset gtk3]} {
     }
 }
 
-build.post_args-append -k 0
+build.pre_args-prepend -k 0
 
 
 livecheck.type      none
