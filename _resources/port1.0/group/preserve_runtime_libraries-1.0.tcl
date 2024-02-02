@@ -37,7 +37,7 @@
 # holding the libraries to preserve and a filename pattern. Example:
 #
 # post-destroot {
-#   preserve_libraries ${prefix}/lib libwebp*.*.dylib
+#   preserve_libraries ${prefix}/lib "libwebp*.*.dylib libwebp.so.*"
 # }
 #
 # This will create a copy of the pre-existing libraries not installed
@@ -58,9 +58,15 @@
 # legacy runtime belongs to; the symlink makes it easy to test whether
 # the copy is still used.
 #
+# A table of contents (.toc) file is generated named after the currently active version
+# and variant of the port, listing which already preserved are being preserved and which
+# ones are newly preserved (= the current versions), and which of those are exported
+# at the location where dependencies expect them to be.
+#
 # Optionally, use `update_preserved_libraries [pattern]` to update the
 # dependency information of the preserved libraries among each others,
-# pointing them into the preservation directory.
+# pointing them into the preservation directory. This is not logged in the
+# TOC file!
 
 # Note that ports that depend on poppler via poppler-qt4-mac or
 # poppler-qt5-mac do not need this trick to avoid rebuilding.
@@ -70,8 +76,23 @@ set preserve_runtime_library_dir "previous/${subport}"
 options preserve_runtime_libraries_allow_unlinked
 default preserve_runtime_libraries_allow_unlinked {no}
 
+namespace eval PRL {
+    proc variants {} {
+        global PortInfo
+        set variants ""
+        if {[info exists PortInfo(variants)]} {
+            foreach v $PortInfo(variants) {
+                if {[variant_isset ${v}]} {
+                    set variants "${variants}+${v}"
+                }
+            }
+        }
+        return ${variants}
+    }
+}
+
 proc preserve_libraries {srcdir patternlist} {
-    global prefix subport destroot preserve_runtime_library_dir
+    global prefix subport destroot preserve_runtime_library_dir version revision
     if {[variant_isset preserve_runtime_libraries]} {
         if {![file exists ${srcdir}]} {
             ui_debug "Source for previous runtime libraries (${srcdir}) does not exist"
@@ -79,14 +100,17 @@ proc preserve_libraries {srcdir patternlist} {
             set prevdir "${preserve_runtime_library_dir}"
             xinstall -m 755 -d ${destroot}${srcdir}/${prevdir}
             ui_debug "preserve_libraries ${srcdir} ${patternlist}"
-            set fd -1
+            set fd [open "/dev/stderr" "w"]
             if {![catch {set installed [lindex [registry_active ${subport}] 0]}]} {
                 set cVersion [lindex $installed 1]
                 set cRevision [lindex $installed 2]
                 set cVariants [lindex $installed 3]
-                set tocFName "${destroot}${srcdir}/${prevdir}/${subport}-${cVersion}-${cRevision}-${cVariants}.toc"
-                if {![catch {set fd [open ${tocFName} "w"]} err]} {
-                    puts ${fd} "# Libraries saved from port: ${subport}@${cVersion}_${cRevision}+${cVariants}:"
+                set tocFName "${destroot}${srcdir}/${prevdir}/${subport}-${cVersion}-${cRevision}${cVariants}.toc"
+                if {![catch {set nfd [open ${tocFName} "w"]} err]} {
+                    close ${fd}
+                    set fd ${nfd}
+                    puts ${fd} "## Libraries saved from port:${subport}@${cVersion}_${cRevision}${cVariants}"
+                    puts ${fd} "## currently active while destroot'ing port:${subport}@${version}_${revision}[PRL::variants] :"
                     flush ${fd}
                     set tocStartSize [file size ${tocFName}]
                 }
@@ -108,14 +132,10 @@ proc preserve_libraries {srcdir patternlist} {
                                 file attributes ${prevlib} -permissions ${perms}
                             }
                             ln -s [file join ${prevdir} ${lib}] ${destroot}${srcdir}/${lib}
-                            if {${fd} != -1} {
-                                puts ${fd} "## ln -s [file join ${prevdir} ${lib}] ${srcdir}/${lib}"
-                            }
+                            puts ${fd} "#\[old,exported\] ln -s [file join ${prevdir} ${lib}] ${srcdir}/${lib}"
                         } else {
                             lappend extra_preserved ${l}
-                            if {${fd} != -1} {
-                                puts ${fd} "## ${prefix}/lib/${prevdir}/${l}"
-                            }
+                            puts ${fd} "#\[old,hidden\] ${l}"
                         }
                     }
                 }
@@ -129,6 +149,7 @@ proc preserve_libraries {srcdir patternlist} {
                         if {[file type ${prevtoc}] ne "link"} {
                             file attributes ${prevtoc} -permissions ${perms}
                         }
+                        puts ${fd} "#\[old\] ${prevtoc}"
                     }
                 }
                 # now we can do the libraries to backup from ${prefix}/lib (srcdir) itself
@@ -144,22 +165,19 @@ proc preserve_libraries {srcdir patternlist} {
                         set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
                         if {![file exists ${prevlib}] &&
                                 ([option preserve_runtime_libraries_allow_unlinked] || ![file exists ${destroot}${l}])} {
-                            ui_debug "Preserving previous runtime shared library ${l} as ${prevlib}"
-                            if {${fd} != -1 && [file type ${l}] ne "link"} {
-                                puts ${fd} "${l}"
-                                if {![file exists ${destroot}${l}]} {
-                                    puts ${fd} "# ln -s [file join ${prevdir} ${lib}] ${srcdir}/${lib}"
-                                }
-                            }
+                            ui_debug "Preserving current runtime shared library ${l} as ${prevlib}"
                             set perms [file attributes ${l} -permissions]
                             copy ${l} ${prevlib}
                             if {![file exists ${destroot}${srcdir}/${lib}]} {
                                 if {[file type ${prevlib}] ne "link"} {
                                     file attributes ${prevlib} -permissions ${perms}
+                                    puts ${fd} "#\[current\] ${l}"
                                 }
                                 ln -s [file join ${prevdir} ${lib}] ${destroot}${srcdir}/${lib}
+                                puts ${fd} "#\[current,exported\] ln -s [file join ${prevdir} ${lib}] ${srcdir}/${lib}"
                             } else {
                                 lappend extra_preserved ${l}
+                                puts ${fd} "#\[current,hidden\] ${l}"
                             }
                         }
                     } else {
@@ -172,21 +190,18 @@ proc preserve_libraries {srcdir patternlist} {
                     ui_info "\tcurrent libraries: \"${current_libs}\""
                 }
             }
-            if {${fd} != -1} {
-                close ${fd}
-                if {[file size ${tocFName}] <= ${tocStartSize}} {
-                    file delete ${tocFName}
-                }
+            close ${fd}
+            if {[info exists tocStartSize] && [file exists ${tocFName}] \
+                    && [file size ${tocFName}] <= ${tocStartSize}} {
+                file delete ${tocFName}
             }
             if {${extra_preserved} ne {}} {
-                ui_msg "Ports currently depending on the following libraries from the previous installed version of port:${subport} \
-                    can be made to work with those previous libraries manually, pointing them to ${prefix}/lib/${preserve_runtime_library_dir} \
-                    with `install_name_tool -change`:\n\
+                set hiddenMsg "Ports currently depending on the following libraries from the previous installed version of port:${subport} \
+                    can be made to work with those previous libraries manually, pointing them to the now hidden copies \
+                    with `install_name_tool -change ${prefix}/lib/X ${prefix}/lib/${preserve_runtime_library_dir}/X ${prefix}/path/to/dependent`:\n\
                     ${extra_preserved}"
-                notes-append "Ports currently depending on the following libraries from the previous installed version of port:${subport} \
-                    can be made to work with those previous libraries manually, pointing them to ${prefix}/lib/${preserve_runtime_library_dir} \
-                    with `install_name_tool -change`:\n\
-                    ${extra_preserved}"
+                ui_msg ${hiddenMsg}
+                notes-append ${hiddenMsg}
             }
         } else {
             ui_warn "Source for previous runtime libraries (${srcdir}) should be a directory"
