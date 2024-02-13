@@ -211,7 +211,7 @@ variant universal {
     }
 
     # RJVB for $prefix/bin/lipo
-    if {${os.platform} eq "darwin" && [string match macports-clang* ${configure.compiler}]} {
+    if {${os.platform} eq "darwin"} {
         depends_build-append    port:cctools
     }
 
@@ -660,13 +660,8 @@ variant universal {
             set dir2  ${base2}/${prefixDir}
             set dir   ${base}/${prefixDir}
 
-            if {[string match macports-clang* ${configure.compiler}]} {
-                set lipo_cmd            ${prefix}/bin/lipo
-                set libtool_cmd         ${prefix}/bin/libtool
-            } else {
-                set lipo_cmd            /usr/bin/lipo
-                set libtool_cmd         /usr/bin/libtool
-            }
+            set lipo_cmd    ${prefix}/bin/lipo
+            set libtool_cmd ${prefix}/bin/libtool
 
             xinstall -d -m 0755 ${dir}
 

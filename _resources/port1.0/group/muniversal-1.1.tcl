@@ -389,13 +389,8 @@ proc muniversal::merge {base1 base2 base prefixDir arch1 arch2 merger_dont_diff 
     set dir   ${base}/${prefixDir}
 
     # RJVB
-    if {[string match macports-clang* ${configure.compiler}]} {
-        set lipo_cmd            ${prefix}/bin/lipo
-        set libtool_cmd         ${prefix}/bin/libtool
-    } else {
-        set lipo_cmd            /usr/bin/lipo
-        set libtool_cmd         /usr/bin/libtool
-    }
+    set lipo_cmd    ${prefix}/bin/lipo
+    set libtool_cmd ${prefix}/bin/libtool
 
     xinstall -d -m 0755 ${dir}
 
@@ -878,7 +873,7 @@ variant universal {
     }
 
     # RJVB for $prefix/bin/lipo
-    if {${os.platform} eq "darwin" && [string match macports-clang* ${configure.compiler}]} {
+    if {${os.platform} eq "darwin"} {
         depends_build-append    port:cctools
     }
 
