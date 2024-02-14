@@ -8,6 +8,11 @@
 #
 
 
+# Wrap mode handling for subprojects.
+# Possible values: default, nofallback, nodownload, forcefallback, nopromote
+options meson.wrap_mode
+default meson.wrap_mode     {default}
+
 # meson builds need to be done out-of-source
 default build_dir           {${workpath}/build}
 default source_dir          {${worksrcpath}}
@@ -34,15 +39,11 @@ depends_skip_archcheck-append \
 # TODO: --buildtype=plain tells Meson not to add its own flags to the command line. This gives the packager total control on used flags.
 default configure.cmd       {${prefix}/bin/meson}
 default configure.pre_args  {setup --prefix=${prefix}}
-default configure.post_args {[list [option source_dir] "."]}
-# from mcalhoun's commit to make this PG compatible with muniversal:
-## DO WE NEED THIS?! (or is using `source_dir` good enough?)
-# default configure.post_args {[meson::get_post_args]}
+default configure.post_args {[meson::get_post_args]}
 configure.universal_args-delete \
                             --disable-dependency-tracking
 
-default configure.dir       {[meson::build.dir]}
-default build.dir           {${configure.dir}}
+default build.dir           {[meson::build.dir]}
 default build.cmd           {${prefix}/bin/ninja}
 default build.post_args     {-v}
 default build.target        ""
@@ -70,15 +71,15 @@ proc meson::get_post_args {} {
     if {[info exists muniversal.build_arch]} {
         # muniversal 1.1 PG is being used
         if {[option muniversal.is_cross.[option muniversal.build_arch]]} {
-            return "${configure.dir} ${build.dir} --cross-file=[option muniversal.build_arch]-darwin"
+            return "${configure.dir} ${build.dir} --cross-file=[option muniversal.build_arch]-darwin --wrap-mode=[option meson.wrap_mode]"
         } else {
-            return "${configure.dir} ${build.dir}"
+            return "${configure.dir} ${build.dir} --wrap-mode=[option meson.wrap_mode]"
         }
     } elseif {[info exists muniversal.current_arch]} {
         # muniversal 1.0 PG is being used
-        return "${configure.dir} ${build_dir}-${muniversal.current_arch} --cross-file=${muniversal.current_arch}-darwin"
+        return "${configure.dir} ${build_dir}-${muniversal.current_arch} --cross-file=${muniversal.current_arch}-darwin --wrap-mode=[option meson.wrap_mode]"
     } else {
-        return "${configure.dir} ${build_dir}"
+        return "${configure.dir} ${build_dir} --wrap-mode=[option meson.wrap_mode]"
     }
 }
 
