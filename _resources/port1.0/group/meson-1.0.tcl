@@ -133,10 +133,10 @@ pre-configure {
     # for here in a pre-configure block.
     if {!${universal_possible} || ![variant_isset universal]} {
         configure.pre_args-append \
-                            "-Dc_args=\"[join [split ${configure.cflags}]]\"" \
-                            "-Dcpp_args=\"[join [split ${configure.cxxflags}]]\"" \
-                            "-Dobjc_args=\"[join [split ${configure.objcflags}]]\"" \
-                            "-Dobjcpp_args=\"[join [split ${configure.objcxxflags}]]\"" \
+                            "-Dc_args=\"[join [split ${configure.cflags}] [split ${configure.cppflags}]]\"" \
+                            "-Dcpp_args=\"[join [split ${configure.cxxflags}] [split ${configure.cppflags}]]\"" \
+                            "-Dobjc_args=\"[join [split ${configure.objcflags}] [split ${configure.cppflags}]]\"" \
+                            "-Dobjcpp_args=\"[join [split ${configure.objcxxflags}] [split ${configure.cppflags}]]\"" \
                             "-Dcpp_link_args=\"[join [split ${configure.ldflags}]]\""
     }
 }
@@ -183,6 +183,7 @@ proc meson.save_configure_cmd {{save_log_too ""}} {
             if {${configure.objcxx} ne ${configure.cxx}} {
                 puts ${fd} "OBJCXX=\"${configure.objcxx}\""
             }
+            puts ${fd} "CPPFLAGS=\"${configure.cppflags}\""
             puts ${fd} "CFLAGS=\"${configure.cflags}\""
             puts ${fd} "CXXFLAGS=\"${configure.cxxflags}\""
             if {${configure.objcflags} ne ${configure.cflags}} {
