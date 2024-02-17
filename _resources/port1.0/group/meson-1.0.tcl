@@ -132,11 +132,18 @@ pre-configure {
     # in universal mode as it is not (?!) possible to know what arch we're building
     # for here in a pre-configure block.
     if {!${universal_possible} || ![variant_isset universal]} {
+        set flags "[join [split ${configure.cflags}]] [join [split ${configure.cppflags}]]"
         configure.pre_args-append \
-                            "-Dc_args=\"[join [split ${configure.cflags}] [split ${configure.cppflags}]]\"" \
-                            "-Dcpp_args=\"[join [split ${configure.cxxflags}] [split ${configure.cppflags}]]\"" \
-                            "-Dobjc_args=\"[join [split ${configure.objcflags}] [split ${configure.cppflags}]]\"" \
-                            "-Dobjcpp_args=\"[join [split ${configure.objcxxflags}] [split ${configure.cppflags}]]\"" \
+                            "-Dc_args=\"${flags}\""
+        set flags "[join [split ${configure.cxxflags}]] [join [split ${configure.cppflags}]]"
+        configure.pre_args-append \
+                            "-Dcpp_args=\"${flags}\""
+        set flags "[join [split ${configure.objcflags}]] [join [split ${configure.cppflags}]]"
+        configure.pre_args-append \
+                            "-Dobjc_args=\"${flags}\""
+        set flags "[join [split ${configure.objcxxflags}]] [join [split ${configure.cppflags}]]"
+        configure.pre_args-append \
+                            "-Dobjcpp_args=\"${flags}\"" \
                             "-Dcpp_link_args=\"[join [split ${configure.ldflags}]]\""
     }
 }
