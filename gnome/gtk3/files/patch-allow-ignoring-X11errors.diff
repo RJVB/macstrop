@@ -1,0 +1,104 @@
+diff --git gdk/x11/orig.gdkdisplay-x11.c gdk/x11/gdkdisplay-x11.c
+index 7e08f47..88a9735 100644
+--- gdk/x11/orig.gdkdisplay-x11.c
++++ gdk/x11/gdkdisplay-x11.c
+@@ -2706,6 +2706,24 @@ _gdk_x11_decode_request_code(Display *dpy, int code)
+ /* compare X sequence numbers handling wraparound */
+ #define SEQUENCE_COMPARE(a,op,b) (((long) (a) - (long) (b)) op 0)
+ 
++void
++_gdk_x11_fatal_error_handler (Display *display, void *data)
++{
++  gboolean plodon = g_getenv ("GDK_IGNORE_XERRORS");
++  if (plodon) {
++	g_warning ("Continuing after error\n");
++	return;
++  } else {
++#ifdef G_ENABLE_DEBUG
++	g_error ("aborting\n");
++	abort();
++#else /* !G_ENABLE_DEBUG */
++	g_warning ("Exit after error\n");
++	_exit (1);
++#endif /* G_ENABLE_DEBUG */
++  }
++}
++
+ /* delivers an error event from the error handler in gdkmain-x11.c */
+ void
+ _gdk_x11_display_error_event (GdkDisplay  *display,
+@@ -2713,7 +2731,7 @@ _gdk_x11_display_error_event (GdkDisplay  *display,
+ {
+   GdkX11Display *display_x11;
+   GSList *tmp_list;
+-  gboolean ignore;
++  gboolean ignore, plodon;
+ 
+   display_x11 = GDK_X11_DISPLAY (display);
+ 
+@@ -2736,6 +2754,8 @@ _gdk_x11_display_error_event (GdkDisplay  *display,
+         }
+     }
+ 
++  plodon = g_getenv ("GDK_IGNORE_XERRORS");
++
+   if (!ignore)
+     {
+       gchar buf[64];
+@@ -2747,14 +2767,17 @@ _gdk_x11_display_error_event (GdkDisplay  *display,
+         g_strdup_printf ("The program '%s' received an X Window System error.\n"
+                          "This probably reflects a bug in the program.\n"
+                          "The error was '%s'.\n"
+-                         "  (Details: serial %ld error_code %d request_code %d (%s) minor_code %d)\n"
++                         "  (Details: display %p, window 0x%x; serial %ld error_code %d request_code %d (%s) minor_code %d)\n"
+                          "  (Note to programmers: normally, X errors are reported asynchronously;\n"
+                          "   that is, you will receive the error a while after causing it.\n"
+                          "   To debug your program, run it with the GDK_SYNCHRONIZE environment\n"
+                          "   variable to change this behavior. You can then get a meaningful\n"
+-                         "   backtrace from your debugger if you break on the gdk_x_error() function.)",
++                         "   backtrace from your debugger if you break on the gdk_x_error() function.)\n"
++					"  NB: set GDK_IGNORE_XERRORS to attempt continuing after errors.\n",
+                          g_get_prgname (),
+                          buf,
++					error->display,
++					error->resourceid,
+                          error->serial,
+                          error->error_code,
+                          error->request_code,
+@@ -2767,7 +2790,8 @@ _gdk_x11_display_error_event (GdkDisplay  *display,
+ #else /* !G_ENABLE_DEBUG */
+       g_warning ("%s", msg);
+ 
+-      _exit (1);
++      if (!plodon)
++		 _exit (1);
+ #endif /* G_ENABLE_DEBUG */
+     }
+ }
+diff --git gdk/x11/orig.gdkmain-x11.c gdk/x11/gdkmain-x11.c
+index cd877ce..a64499a 100644
+--- gdk/x11/orig.gdkmain-x11.c
++++ gdk/x11/gdkmain-x11.c
+@@ -307,6 +307,22 @@ _gdk_x11_error_handler_push (void)
+ 
+   previous = XSetErrorHandler (gdk_x_error);
+ 
++	 // RJVB : add a handler (per display) to allow the user to opt to continue execution after an X error
++      GdkDisplayManager *manager;
++      GSList *displays;
++      manager = gdk_display_manager_get ();
++      displays = gdk_display_manager_list_displays (manager);
++      while (displays != NULL)
++        {
++          GdkX11Display *gdk_display = displays->data;
++
++          if (GDK_IS_X11_DISPLAY (gdk_display)) {
++			extern void _gdk_x11_fatal_error_handler(Display*, void*);
++			XSetIOErrorExitHandler( gdk_display->xdisplay, _gdk_x11_fatal_error_handler, NULL);
++          }
++		displays = g_slist_next(displays);
++	   }
++
+   if (_gdk_error_handler_push_count > 0)
+     {
+       if (previous != gdk_x_error)
