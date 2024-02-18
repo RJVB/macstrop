@@ -63,11 +63,11 @@ proc configure.save_configure_cmd {{save_log_too ""}} {
             if {${configure.compiler} ne ""} {
                 puts -nonewline ${fd} " configure.compiler=\"${configure.compiler}\""
             }
-            if {${configure.cxx_stdlib} ne ""} {
-                puts -nonewline ${fd} " configure.cxx_stdlib=\"${configure.cxx_stdlib}\""
-            }
             if {${configureccache} ne ""} {
                 puts -nonewline ${fd} " configureccache=\"${configureccache}\""
+            }
+            if {${configure.cxx_stdlib} ne ""} {
+                puts -nonewline ${fd} " configure.cxx_stdlib=\"${configure.cxx_stdlib}\""
             }
             puts ${fd} ""
             puts ${fd} "\ncd ${worksrcpath}"
