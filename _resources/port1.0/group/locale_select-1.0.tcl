@@ -115,7 +115,11 @@ if {[variant_isset langselect]} {
                 }
             }
             set qmidx 0
+            set drlen [string length ${destroot}]
             foreach ld ${langselect_qm_dir} {
+                if {[string compare -length ${drlen} ${ld} ${destroot}]} {
+                    set ld "${destroot}/${ld}"
+                }
                 ui_debug "locale checking ${ld}"
                 foreach l [glob -nocomplain ${ld}/*.qm] {
                     set lang [file rootname [file tail ${l}]]
@@ -137,8 +141,13 @@ if {[variant_isset langselect]} {
                 set qmidx [expr ${qmidx} + 1]
             }
             foreach lhd ${langselect_html_dir} {
-                if {[file exists [join ${lhd}]]} {
-                    set lhtmldir [join ${lhd}]
+                # was this ever really necessary?
+                set lhd [join ${lhd}]
+                if {[string compare -length ${drlen} ${lhd} ${destroot}]} {
+                    set lhd "${destroot}/${lhd}"
+                }
+                if {[file exists ${lhd}]} {
+                    set lhtmldir ${lhd}
                     foreach l [glob -nocomplain ${lhtmldir}/*.html] {
                         set keep no
                         foreach lang ${keep_languages} {
@@ -154,10 +163,14 @@ if {[variant_isset langselect]} {
                         }
                     }
                 }
-		  }
+            }
             foreach ldd ${langselect_dirs_dir} {
-                if {[file exists [join ${ldd}]]} {
-                    set ldirdir [join ${ldd}]
+                set ldd [join ${ldd}]
+                if {[string compare -length ${drlen} ${ldd} ${destroot}]} {
+                    set ldd "${destroot}/${ldd}"
+                }
+                if {[file exists ${ldd}]} {
+                    set ldirdir ${ldd}
                     ui_debug "Pruning \"${ldirdir}\": [glob -nocomplain -types d ${ldirdir}/*]"
                     foreach l [glob -nocomplain -types d ${ldirdir}/*] {
                         set lang [file rootname [file tail ${l}]]
@@ -171,10 +184,14 @@ if {[variant_isset langselect]} {
                 } elseif {${ldd} ne {}} {
                     ui_warn "Non-existent langselect_dirs_dir entry: \"${ldd}\""
                 }
-		  }
+            }
             foreach lld ${langselect_lproj_dir} {
-                if {[file exists [join ${lld}]]} {
-                    set ldirdir [join ${lld}]
+                set lld [join ${lld}]
+                if {[string compare -length ${drlen} ${lld} ${destroot}]} {
+                    set lld "${destroot}/${lld}"
+                }
+                if {[file exists ${lld}]} {
+                    set ldirdir ${lld}
                     foreach l [glob -nocomplain -types d ${ldirdir}/*.lproj] {
                         set lang [file rootname [file tail ${l}]]
                         if {[lsearch -exact ${keep_languages} ${lang}] eq "-1"} {
