@@ -37,7 +37,12 @@ if {[variant_exists LTO]} {
 }
 
 if {[tbool LTO.disable_LTO]} {
-    variant LTO description {stub variant: link-time optimisation disabled for this port} {}
+    variant LTO description {stub variant: link-time optimisation disabled for this port} {
+        pre-configure {
+            ui_warn "The +LTO variant has been disabled and thus has no effect"
+        }
+        notes-append "Port ${subport} has been installed with a dummy +LTO variant!"
+    }
 } else {
     variant LTO description {build with link-time optimisation} {}
 }
@@ -236,6 +241,11 @@ if {[string match *clang* ${configure.compiler}]} {
         default configure.ar "[string map {"cc" "gcc-ar"} ${configure.cc}]"
         default configure.nm "[string map {"cc" "gcc-nm"} ${configure.cc}]"
         default configure.ranlib "[string map {"cc" "gcc-ranlib"} ${configure.cc}]"
+        set LTO.custom_binaries 1
+    } elseif {${configure.compiler} eq "gcc"} {
+        default configure.ar "[string map {"gcc" "gcc-ar"} ${configure.cc}]"
+        default configure.nm "[string map {"gcc" "gcc-nm"} ${configure.cc}]"
+        default configure.ranlib "[string map {"gcc" "gcc-ranlib"} ${configure.cc}]"
         set LTO.custom_binaries 1
     } else {
         default configure.ar "[string map {"gcc" "gcc-ar"} ${configure.cc}]"
