@@ -176,16 +176,18 @@ patchfiles-append \
     patch-RTLD_FIRST.diff
 
 post-patch {
-    reinplace "s|@@PREFIX@@|${prefix}|" \
-        ${patch.dir}/clang/lib/Driver/ToolChains/Clang.cpp \
-        ${patch.dir}/clang/lib/Driver/ToolChains/CommonArgs.cpp
+    if {![variant_exists dummy] || ![variant_isset dummy]} {
+        reinplace "s|@@PREFIX@@|${prefix}|" \
+            ${patch.dir}/clang/lib/Driver/ToolChains/Clang.cpp \
+            ${patch.dir}/clang/lib/Driver/ToolChains/CommonArgs.cpp
 
-    reinplace "s|@CLANG_FORMAT_PATH@|${prefix}/bin/clang-format-${suffix}|g" \
-        ${patch.dir}/clang/tools/clang-format/clang-format-bbedit.applescript \
-        ${patch.dir}/clang/tools/clang-format/clang-format-diff.py            \
-        ${patch.dir}/clang/tools/clang-format/clang-format-sublime.py         \
-        ${patch.dir}/clang/tools/clang-format/clang-format.el                 \
-        ${patch.dir}/clang/tools/clang-format/clang-format.py
+        reinplace "s|@CLANG_FORMAT_PATH@|${prefix}/bin/clang-format-${suffix}|g" \
+            ${patch.dir}/clang/tools/clang-format/clang-format-bbedit.applescript \
+            ${patch.dir}/clang/tools/clang-format/clang-format-diff.py            \
+            ${patch.dir}/clang/tools/clang-format/clang-format-sublime.py         \
+            ${patch.dir}/clang/tools/clang-format/clang-format.el                 \
+            ${patch.dir}/clang/tools/clang-format/clang-format.py
+    }
 }
 
 if {${subport} eq "llvm-${llvm_version}"} {
@@ -205,12 +207,44 @@ if {${subport} eq "llvm-${llvm_version}"} {
     select.group        llvm
     select.file         ${filespath}/mp-${subport}
 
-    configure.args-append \
-        -DLLVM_ENABLE_PROJECTS="polly"
-    if {[variant_isset no_libcxx]} {
+    variant dummy description "for use with port:clang-${llvm_version} +monolithic" {
+        depends_lib-append \
+                        port:clang-${llvm_version}
+        require_active_variants port:clang-${llvm_version} monolithic
+    }
+
+    if {![catch {set installed [lindex [registry_active clang-${llvm_version}] 0]}]} {
+        set clangVariants [split [lindex $installed 3] "+"]
+        if {[lsearch -exact ${clangVariants} "monolithic"] != -1} {
+            default_variants-append +dummy
+            set dummyOK yes
+        }
+    }
+
+    if {![variant_isset dummy]} {
         configure.args-append \
-            -DLLVM_BUILD_RUNTIME=OFF       \
-            -DLIBCXX_INSTALL_LIBRARY=OFF
+            -DLLVM_ENABLE_PROJECTS="polly"
+        if {[variant_isset no_libcxx]} {
+            configure.args-append \
+                -DLLVM_BUILD_RUNTIME=OFF       \
+                -DLIBCXX_INSTALL_LIBRARY=OFF
+        }
+        pre-activate {
+            if {[info exists clangVariants]} {
+                if {[lsearch -exact ${clangVariants} "monolithic"] != -1} {
+                    ui_warn "Deactivating the currently active port:clang-${llvm_version}"
+                    ui_warn "Please reinstall as port:clang-${llvm_version} \[[lindex $installed 3]\] -monolithic!"
+                    registry_deactivate_composite clang-${llvm_version} "" [list ports_nodepcheck 1]
+                }
+            }
+        }
+    } else {
+        PortGroup       stub 1.0
+        if {![tbool dummyOK]} {
+            pre-install {
+                ui_warn "This port variant should only be used with clang-${llvm_version} +monolithic!"
+            }
+        }
     }
 }
 
@@ -230,7 +264,12 @@ if {${subport} eq "clang-${llvm_version}"} {
                         that can be built using the Clang frontend as a \
                         library to parse C/C++ code.
 
-    depends_lib-append  port:libxml2 port:libomp port:llvm-${llvm_version}
+    depends_lib-append  port:libxml2 port:libomp
+    if {![variant_isset monolithic]} {
+        depends_lib-append \
+                        port:llvm-${llvm_version}
+        require_active_variants port:llvm-${llvm_version} {} dummy
+    }
     depends_run-append  port:clang_select port:ld64
     depends_skip_archcheck-append ld64
 
@@ -254,6 +293,16 @@ if {${subport} eq "clang-${llvm_version}"} {
     # disable parallel building until upstream fixes the race condition in compiler_rt
 #     use_parallel_build no
 
+    if {[variant_isset monolithic]} {
+        set polly "polly\;"
+        if {[variant_isset no_libcxx]} {
+            configure.args-append \
+                -DLLVM_BUILD_RUNTIME=OFF       \
+                -DLIBCXX_INSTALL_LIBRARY=OFF
+        }
+    } else {
+        set polly ""
+    }
     # CMAKE_LINKER is used to determine the value for HOST_LINK_VERSION
     configure.args-append \
         -DCMAKE_LINKER=${prefix}/bin/ld    \
@@ -283,10 +332,13 @@ if {${subport} eq "clang-${llvm_version}"} {
     }
     if {[variant_isset flang]} {
         configure.args-append   \
-            -DLLVM_ENABLE_PROJECTS="clang\;clang-tools-extra\;compiler-rt\;libcxx\;libcxxabi\;flang\;mlir\;lld"
+            -DLLVM_ENABLE_PROJECTS="${polly}clang\;clang-tools-extra\;compiler-rt\;libcxx\;libcxxabi\;flang\;mlir\;lld"
     } else {
+        post-extract {
+            file delete -force ${worksrcpath}/flang
+        }   
         configure.args-append   \
-            -DLLVM_ENABLE_PROJECTS="clang\;clang-tools-extra\;compiler-rt\;libcxx\;libcxxabi\;mlir\;lld"
+            -DLLVM_ENABLE_PROJECTS="${polly}clang\;clang-tools-extra\;compiler-rt\;libcxx\;libcxxabi\;mlir\;lld"
     }
 
     if {${os.major} <= 18} {
@@ -423,7 +475,12 @@ if {${subport} ne "lldb-${llvm_version}"} {
 }
 
 if {${subport} eq "clang-${llvm_version}"} {
-    destroot.pre_args tools/clang/install \
+    if {![variant_isset monolithic]} {
+        # reset the pre_args so we only install the targets below
+        destroot.pre_args
+    }
+    destroot.pre_args-append \
+            tools/clang/install \
             tools/lld/install \
             tools/mlir/install \
             projects/compiler-rt/install
@@ -449,6 +506,10 @@ if {${subport} eq "clang-${llvm_version}"} {
 
 post-destroot {
 
+    if {[variant_exists dummy] && [variant_isset dummy]} {
+        return
+    }
+
     if {${subport} eq "clang-${llvm_version}"} {
         # remove the clang symlink and replace it with the actual binary
         delete      ${destroot}${sub_prefix}/bin/clang
@@ -470,7 +531,8 @@ post-destroot {
         reinplace "s:EXEC_PATH:${exec_path}:" "${bin_filename}"
     }
 
-    if {${subport} eq "llvm-${llvm_version}"} {
+    if {${subport} eq "llvm-${llvm_version}"
+        || (${subport} eq "clang-${llvm_version}" && [variant_isset monolithic])} {
         # https://llvm.org/bugs/show_bug.cgi?id=19465
         ln -s LLVMPolly.so ${destroot}${sub_prefix}/lib/LLVMPolly.dylib
     }
@@ -499,6 +561,8 @@ post-destroot {
 }
 
 if {${subport} eq "clang-${llvm_version}"} {
+
+    variant monolithic description {experimental variant that includes the traditional port:llvm-12} {}
 
     variant full_cxx description {Don't limit the C++ std namespace by the system libc++ version} {
         require_active_variants port:libcxx macports_libcxx
@@ -606,6 +670,19 @@ if {${subport} eq "clang-${llvm_version}"} {
     # at present, only the non-arm archs can use this variant
     if {${build_arch} in "x86_64 i386 ppc64 ppc"} {
 #         default_variants-append +libstdcxx
+    }
+
+    if {[variant_isset monolithic]} {
+        pre-activate {
+            if {![catch {set installed [lindex [registry_active llvm-${llvm_version}] 0]}]} {
+                set llvmVariants [split [lindex $installed 3] "+"]
+                if {[lsearch -exact ${llvmVariants} "dummy"] == -1} {
+                    ui_warn "Deactivating the currently active port:llvm-${llvm_version}"
+                    ui_warn "Please reinstall as port:llvm-${llvm_version} \[[lindex $installed 3]\] +dummy!"
+                    registry_deactivate_composite llvm-${llvm_version} "" [list ports_nodepcheck 1]
+                }
+            }
+        }
     }
 }
 
