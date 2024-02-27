@@ -70,6 +70,7 @@ options configure.ar \
 default LTO.use_archive_helpers yes
 default LTO.cpuflags {}
 default LTO.compatcpu westmere
+default LTO.compatflags {-msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul}
 
 if {![info exists LTO.allow_ThinLTO]} {
     set LTO.allow_ThinLTO yes
@@ -296,7 +297,7 @@ if {[variant_isset cputuned]} {
     default LTO.cpuflags "-march=native"
 }
 if {[variant_isset cpucompat]} {
-    default LTO.cpuflags "-march=${LTO.compatcpu} -msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul"
+    default LTO.cpuflags "-march=${LTO.compatcpu} [join ${LTO.compatflags} " "]"
 }
 pre-configure {
     if {[variant_isset cputuned] || [variant_isset cpucompat]} {
