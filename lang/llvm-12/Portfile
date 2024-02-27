@@ -4,6 +4,7 @@ PortSystem                            1.0
 PortGroup select                      1.0
 PortGroup compiler_blacklist_versions 1.0
 PortGroup active_variants             1.1
+PortGroup LTO                         1.0
 PortGroup cmake                       1.1
 PortGroup legacysupport               1.0
 
@@ -214,6 +215,7 @@ if {${subport} eq "llvm-${llvm_version}"} {
 }
 
 if {${subport} eq "clang-${llvm_version}"} {
+    revision            [expr ${revision} +1]
 
     homepage            https://clang.llvm.org/
     description         C, C++, Objective C and Objective C++ compiler
@@ -279,8 +281,13 @@ if {${subport} eq "clang-${llvm_version}"} {
             -DLIBCXX_ENABLE_SHARED=ON      \
             -DLIBCXX_INSTALL_LIBRARY=ON
     }
+    if {[variant_isset flang]} {
         configure.args-append   \
             -DLLVM_ENABLE_PROJECTS="clang\;clang-tools-extra\;compiler-rt\;libcxx\;libcxxabi\;flang\;mlir\;lld"
+    } else {
+        configure.args-append   \
+            -DLLVM_ENABLE_PROJECTS="clang\;clang-tools-extra\;compiler-rt\;libcxx\;libcxxabi\;mlir\;lld"
+    }
 
     if {${os.major} <= 18} {
         # on systems that might build i386, we need atomic builtins
@@ -416,23 +423,14 @@ if {${subport} ne "lldb-${llvm_version}"} {
 }
 
 if {${subport} eq "clang-${llvm_version}"} {
-#     destroot {
-#         # we have to run the destroot like this, because individual targets for each of the
-#         # components we want to install are not available; we want "everything but llvm"
-#         system "cd ${destroot.dir}/tools/clang          && ${destroot.cmd} ${destroot.pre_args} ${destroot.target} ${destroot.post_args}"
-#         system "cd ${destroot.dir}/tools/lld            && ${destroot.cmd} ${destroot.pre_args} ${destroot.target} ${destroot.post_args}"
-#         system "cd ${destroot.dir}/tools/mlir           && ${destroot.cmd} ${destroot.pre_args} ${destroot.target} ${destroot.post_args}"
-#         system "cd ${destroot.dir}/tools/flang          && ${destroot.cmd} ${destroot.pre_args} ${destroot.target} ${destroot.post_args}"
-# 
-#         system "cd ${destroot.dir}/projects/compiler-rt && ${destroot.cmd} ${destroot.pre_args} ${destroot.target} ${destroot.post_args}"
-#         system "cd ${destroot.dir}/projects/libcxx      && ${destroot.cmd} ${destroot.pre_args} ${destroot.target} ${destroot.post_args}"
-#         system "cd ${destroot.dir}/projects/libcxxabi   && ${destroot.cmd} ${destroot.pre_args} ${destroot.target} ${destroot.post_args}"
-#     }
     destroot.pre_args tools/clang/install \
             tools/lld/install \
             tools/mlir/install \
-            tools/flang/install \
             projects/compiler-rt/install
+    if {[variant_isset flang]} {
+        destroot.pre_args-append \
+            tools/flang/install
+    }
     if {![variant_isset no_libcxx]} {
         destroot.pre_args-append \
             projects/libcxxabi/install
@@ -478,8 +476,10 @@ post-destroot {
     }
     
     if {${subport} eq "clang-${llvm_version}"} {
-        # fix errant permissions on the flang binary
-        system "chmod 755 ${destroot}${sub_prefix}/bin/flang"
+        if {[variant_isset flang]} {
+            # fix errant permissions on the flang binary
+            system "chmod 755 ${destroot}${sub_prefix}/bin/flang"
+        }
 
         # fix the cmake scripts to point to the versioned files
         reinplace "s|/bin/clang-${llvm_version}|/bin/clang|g" \
@@ -508,6 +508,12 @@ if {${subport} eq "clang-${llvm_version}"} {
             patch-config-availability+ABIhiding.diff
     }
 
+# lld-for-Mac isn't yet evolved enough in this llvm release
+#     variant lld description "configure to use lld-${suffix} as the default linker" {
+#         configure.args-append \
+#             -DCLANG_DEFAULT_LINKER=lld
+#     }
+
     variant analyzer description {Install clang static analyser} {
         # these have to be switched on or off together
         configure.args-replace -DCLANG_ENABLE_STATIC_ANALYZER=OFF \
@@ -524,6 +530,8 @@ if {${subport} eq "clang-${llvm_version}"} {
                 ${patch.dir}/clang/tools/scan-build/bin/scan-build
        }
     }
+
+    variant flang description {build flang, a Fortran pre-compiler} {}
 
     # Avoid requiring a bootstrap version of perl5 on 10.6.
     if {${os.major} >= 11} {
@@ -601,7 +609,7 @@ if {${subport} eq "clang-${llvm_version}"} {
     }
 }
 
-cmake.save_configure_cmd "log too"
+cmake.save_configure_cmd "install log"
 
 livecheck.type          none
 
