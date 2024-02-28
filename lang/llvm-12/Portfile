@@ -40,6 +40,7 @@ use_xz                  yes
 name                    llvm-${llvm_version}
 
 subport                 clang-${llvm_version} {}
+subport                 lld-${llvm_version} {}
 subport                 lldb-${llvm_version} {
     PortGroup           code_sign 1.0
 }
@@ -52,7 +53,7 @@ worksrcdir              ${worksrcdir}/llvm
 compiler.blacklist      *gcc* {clang < 1001} macports-clang-3.*
 compiler.fallback       clang macports-clang-9.0
 #RJVB - is this still necessary?
-if {${subport} ne "lldb-${llvm_version}"} {
+if {${subport} ne "lldb-${llvm_version}" && ${subport} ne "lld-${llvm_version}"} {
     # blacklist current and future versions if they're not available in order to
     # help break potential dependency cycles.
     foreach ver {13 devel} {
@@ -332,13 +333,15 @@ if {${subport} eq "clang-${llvm_version}"} {
     }
     if {[variant_isset flang]} {
         configure.args-append   \
-            -DLLVM_ENABLE_PROJECTS="${polly}clang\;clang-tools-extra\;compiler-rt\;libcxx\;libcxxabi\;flang\;mlir\;lld"
+            -DLLVM_ENABLE_PROJECTS="${polly}clang\;clang-tools-extra\;compiler-rt\;libcxx\;libcxxabi\;flang\;mlir"
     } else {
         post-extract {
             file delete -force ${worksrcpath}/flang
+            file delete -force ${worksrcpath}/lld
+            file delete -force ${worksrcpath}/lldb
         }   
         configure.args-append   \
-            -DLLVM_ENABLE_PROJECTS="${polly}clang\;clang-tools-extra\;compiler-rt\;libcxx\;libcxxabi\;mlir\;lld"
+            -DLLVM_ENABLE_PROJECTS="${polly}clang\;clang-tools-extra\;compiler-rt\;libcxx\;libcxxabi\;mlir"
     }
 
     if {${os.major} <= 18} {
@@ -370,6 +373,45 @@ if {${subport} eq "clang-${llvm_version}"} {
     if {${os.major} <= 10} {
         # avoid need for thread_local_storage
         configure.args-append -DCLANG_ENABLE_CLANGD=OFF
+        configure.args-append -DLLVM_ENABLE_BACKTRACES=OFF
+    }
+}
+
+if {${subport} eq "lld-${llvm_version}"} {
+    homepage            https://lld.llvm.org/
+    description         The LLVM linker
+    long_description    LLD is a linker from the LLVM project that is a drop-in replacement \
+                        for system linkers and runs much faster than them. It also provides \
+                        features that are useful for toolchain developers.\n\
+                        The ${version} version of lld is not yet on feature parity with ld64!
+
+    depends_lib-append  port:llvm-${llvm_version}
+    depends_run-append  port:clang_select
+
+    select.group        lld
+    select.file         ${filespath}/mp-${subport}
+
+    # CMAKE_LINKER is used to determine the value for HOST_LINK_VERSION
+    configure.args-append \
+        -DCMAKE_LINKER=${prefix}/bin/ld
+    post-extract {
+        file delete -force ${worksrcpath}/flang ${worksrcpath}/clang ${worksrcpath}/polly ${worksrcpath}/lldb
+    }   
+    # for the standalone build:
+    if {[info exists lldb_standalone_build]} {
+        # Seems to find the correct llvm-config under ${prefix}/libexec/llvm-${llvm_version}
+        # on its own but better safe than sorry:
+        configure.args-append \
+            -DLLVM_CONFIG_PATH=${sub_prefix}/bin/llvm-config
+        configure.post_args \
+            ../${worksrcdir}/../lld
+    } else {
+        configure.args-append \
+            -DLLVM_ENABLE_PROJECTS="lld" \
+            -DDARWIN_PREFER_PUBLIC_SDK=ON
+    }
+
+    if {${os.major} <= 10} {
         configure.args-append -DLLVM_ENABLE_BACKTRACES=OFF
     }
 }
@@ -412,7 +454,7 @@ if {${subport} eq "lldb-${llvm_version}"} {
             -DLLVM_CONFIG=${sub_prefix}/bin/llvm-config \
             -DLLVM_DIR=${sub_prefix}/lib/cmake/llvm
         configure.post_args \
-            ../${worksrcdir}/tools/lldb
+            ../${worksrcdir}/../lldb
     }
 
     set worksrcpath ${workpath}/${distname}/lldb
@@ -481,7 +523,6 @@ if {${subport} eq "clang-${llvm_version}"} {
     }
     destroot.pre_args-append \
             tools/clang/install \
-            tools/lld/install \
             tools/mlir/install \
             projects/compiler-rt/install
     if {[variant_isset flang]} {
