@@ -1,6 +1,6 @@
 #!/bin/sh
 
-LLD=@SUBPREFIX@/bin/ld64.lld
+LLD=@SUBPREFIX@/bin/wrapped/ld64.lld
 
 ARGS="$@"
 PV=""
