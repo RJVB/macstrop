@@ -4,6 +4,7 @@ PortSystem      1.0
 PortGroup       muniversal 1.0
 PortGroup       LTO 1.0
 PortGroup       locale_select 1.0
+PortGroup       save_configure_cmd 1.0
 
 name            dbus
 version         1.14.6
@@ -68,7 +69,16 @@ if {${os.platform} eq "darwin"} {
                 port:autoconf-archive \
                 port:automake \
                 port:libtool
-    configure.cmd ./autogen.sh
+    #configure.cmd ./autogen.sh
+    if {[variant_isset universal]} {
+        post-patch {
+            system -W ${worksrcpath} "./autogen.sh --no-configure"
+        }
+    } else {
+        if {![file exists ${worksrcpath}/config.log]} {
+            configure.cmd ./autogen.sh
+        }
+    }
 } else {
     set program_suffix "-mp"
 }
@@ -142,8 +152,16 @@ startupitems        name        dbus-system \
 ## darwin
 }
 platform linux {
-    set dbus_user     root
-    set dbus_group    messagebus
+    set dbus_user   root
+    set dbus_group  messagebus
+
+    # dbus actually builds OK using the rlibtool instead of the libtool script!
+    depends_build-append \
+                port:slibtool
+    build.env-append \
+                "MAKEFLAGS=LIBTOOL=${prefix}/bin/rlibtool"
+    destroot.env-append \
+                "MAKEFLAGS=LIBTOOL=${prefix}/bin/rlibtool"
 }
 
 depends_lib     port:expat
@@ -195,6 +213,8 @@ if {![variant_isset legacy_install]} {
                 --with-dbus-session-bus-listen-address=unix:tmpdir=/tmp
 #                 --runstatedir=/var/run
 }
+
+configure.save_configure_cmd "install log"
 
 use_parallel_build  yes
 
@@ -302,6 +322,12 @@ post-destroot {
         # clean up the workaround from the pre-destroot:
         ln -f ${destroot}${prefix}/libexec/dbus-daemon-launch-helper-mp ${destroot}${prefix}/libexec/dbus-daemon-launch-helper
 
+        if {![file exists ${destroot}${prefix}/bin/dbus-cleanup-sockets-mp]
+                && [file exists ${build.dir}/tools/.libs/dbus-cleanup-sockets]} {
+            xinstall -m 755 ${build.dir}/tools/.libs/dbus-cleanup-sockets \
+                ${destroot}${prefix}/bin/dbus-cleanup-sockets-mp
+        }
+
         # it's probably very unwise to replace the host dbus on Linux so we only provide link-time things
         # like libraries and the privileged helper. A suffix is added to the executables so it should be
         # safe to leave most; we just remove the launch tool
@@ -376,6 +402,11 @@ if {${os.major} < 9} {
     build.cmd ${prefix}/bin/gmake
 }
 }
+
+# build.env-append "MallocErrorAbort=1"
+# build.env-append "MAKEFLAGS=LIBTOOL=${prefix}/bin/rlibtool"
+# destroot.env-append "MAKEFLAGS=LIBTOOL=${prefix}/bin/rlibtool"
+build.post_args-append  V=1
 
 if {[variant_isset legacy_install] && ![variant_isset no_root]} {
     notes-append "############################################################################
