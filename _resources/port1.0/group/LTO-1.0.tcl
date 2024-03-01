@@ -33,10 +33,8 @@
 # PortGroup     LTO 1.0
 
 if {[variant_exists LTO]} {
-    return
-}
-
-if {[tbool LTO.disable_LTO]} {
+    set LTO.disable_LTO yes
+} elseif {[tbool LTO.disable_LTO]} {
     variant LTO description {stub variant: link-time optimisation disabled for this port} {
         pre-configure {
             ui_warn "The +LTO variant has been disabled and thus has no effect"
