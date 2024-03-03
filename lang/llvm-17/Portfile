@@ -7,6 +7,7 @@ PortGroup active_variants             1.1
 PortGroup cmake                       1.1
 PortGroup legacysupport               1.1
 PortGroup conflicts_build             1.0
+PortGroup LTO                         1.0
 PortGroup compress_workdir            1.0
 
 # Do not propagate c/c++ standards as set by base
@@ -80,7 +81,7 @@ cmake.install_prefix    ${sub_prefix}
 cmake.save_configure_cmd "install log"
 
 if {![variant_isset no_libcxx]} {
-# clean up some cmake-PG added values we don't want to use, because we want @rpaths
+# clean up some cmake-PG added values we don't want to use, because we want @rpaths (why?)
     cmake.install_rpath
 
     configure.pre_args-delete \
@@ -117,6 +118,7 @@ configure.args-append \
 # Disable iOS support
 # To Be reviewed with later versions
 # https://reviews.llvm.org/D133273
+# Reported unused by cmake for llvm-17
 configure.args-append -DCOMPILER_RT_ENABLE_IOS=OFF
 
 # cctools is needed to handle objects from newer clang toolchains
@@ -345,7 +347,7 @@ if { ${subport} eq "clang-${llvm_version}" } {
                         for languages in the C language family (C, C++, Objective C/C++, OpenCL, \
                         CUDA, and RenderScript) for the LLVM project.
 
-    depends_run-append  port:clang_select port:cctools
+    depends_run-append  port:clang_select port:cctools port:lld-${llvm_version}
     select.group        clang
     select.file         ${filespath}/mp-${subport}
 
@@ -366,6 +368,10 @@ if { ${subport} eq "clang-${llvm_version}" } {
             -DLIBCXXABI_ENABLE_STATIC=OFF  \
             -DLIBCXXABI_INSTALL_STATIC_LIBRARY=OFF \
             -DLIBCXXABI_INSTALL_SHARED_LIBRARY=OFF
+        # we don't build with @rpath and the runtimes are built with the newly built compiler
+        # so we have to make sure they find their newly built, non-installed dependencies:
+        build.env-append \
+            DYLD_LIBRARY_PATH=${build.dir}/lib
     } else {
             -DLIBCXX_ENABLE_SHARED=ON      \
             -DLIBCXX_INSTALL_LIBRARY=ON
@@ -407,6 +413,13 @@ if { ${subport} eq "lld-${llvm_version}" } {
     #depends_run-append  port:clang_select
     select.group        lld
     select.file         ${filespath}/mp-${subport}
+
+    pre-fetch {
+        if {[variant_isset use_lld]} {
+            ui_error "Port:${subport} cannot be built using itself!"
+            return -code error "Illegal variant +use_lld"
+        }
+    }
 
     post-extract {
         file delete -force ${worksrcpath}/flang ${worksrcpath}/clang ${worksrcpath}/polly ${worksrcpath}/lldb
@@ -652,6 +665,10 @@ post-destroot {
         # remove the clang symlink and replace it with the actual binary
         delete      ${destroot}${sub_prefix}/bin/clang
         file rename ${destroot}${sub_prefix}/bin/clang-${clang_exe_version} ${destroot}${sub_prefix}/bin/clang
+        # amdgpu-ach fails with:
+        # Failed to 'dlopen' libhsa-runtime64.so
+        # Failed to load libamdhip64.so: dlopen(libamdhip64.so, 9): image not found
+        file delete ${destroot}${sub_prefix}/bin/amdgpu-arch
     }
 
     # generate a versioned wrapper script for each file in the bin directory
@@ -682,7 +699,7 @@ post-destroot {
     if {${subport} eq "clang-${llvm_version}"} {
         # fix the cmake scripts to point to the versioned files
         reinplace "s|/bin/clang-${clang_exe_version}|/bin/clang|g" \
-                  "${destroot}${sub_prefix}/lib/cmake/clang/ClangTargets-release.cmake"
+                  "${destroot}${sub_prefix}/lib/cmake/clang/ClangTargets-[string tolower ${cmake.build_type}].cmake"
 
         # http://trac.macports.org/ticket/33207
         ln -s ${prefix}/libexec/ld64/ld ${destroot}${sub_prefix}/bin/ld
