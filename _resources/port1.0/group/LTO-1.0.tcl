@@ -165,7 +165,11 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
                 set lto_flags           "-flto"
             }
         } else {
-            set lto_flags               "-ftracer -flto -fuse-linker-plugin -ffat-lto-objects"
+            if {${os.platform} eq "linux"} {
+                set lto_flags           "-ftracer -flto -fuse-linker-plugin -ffat-lto-objects"
+            } else {
+                set lto_flags           "-ftracer -flto -ffat-lto-objects"
+            }
         }
         ui_debug "LTO: setting LTO compiler and linker option(s) \"${lto_flags}\""
         if {![variant_isset universal] || [tbool LTO_supports_i386]} {
@@ -353,7 +357,7 @@ if {[tbool LTO.allow_UseLLD]} {
             }
         } else {
             pre-configure {
-                ui-warn "+use_lld : the -fuse-ld may or may not be supported!"
+                ui_warn "+use_lld : the -fuse-ld may or may not be supported!"
                 LTO.configure.flags_append {ldflags} "-fuse-ld=${prefix}/bin/ld64.lld-mp-17"
             }
         }
