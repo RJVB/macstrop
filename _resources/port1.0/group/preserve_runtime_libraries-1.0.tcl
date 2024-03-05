@@ -70,19 +70,22 @@
 #
 # Under very specific conditions the algorithm can be instructed to preserve files
 # currently installed by a different port, e.g. in libgcc13 that replaces libgcc8
-# and other earlier versions. Set `preserve_foreign_runtime_libraries` to yes for this.
+# and other earlier versions. Set `preserve_runtime_libraries_ports` to the list of
+# ports to be covered for this. NB: files from these ports also end up in the normal
+# previous/${subport} directory to show that they now belong to ${subport}!
 
 # Note that ports that depend on poppler via poppler-qt4-mac or
 # poppler-qt5-mac do not need this trick to avoid rebuilding.
 
 
-set preserve_runtime_library_dir "previous/${subport}"
 options preserve_runtime_libraries_allow_unlinked \
-        preserve_foreign_runtime_libraries
+        preserve_runtime_libraries_ports
 default preserve_runtime_libraries_allow_unlinked {no}
-default preserve_foreign_runtime_libraries {no}
+default preserve_runtime_libraries_ports {}
 
 namespace eval PRL {
+    set preserve_runtime_library_root "previous"
+    set preserve_runtime_library_dir "${preserve_runtime_library_root}/${subport}"
     proc variants {} {
         global PortInfo
         set variants ""
@@ -98,16 +101,17 @@ namespace eval PRL {
 }
 
 proc preserve_libraries {srcdir patternlist} {
-    global prefix subport destroot preserve_runtime_library_dir version revision
+    global prefix subport destroot PRL::preserve_runtime_library_dir version revision
+    set prlp [split [option preserve_runtime_libraries_ports] " "]
     if {[variant_isset preserve_runtime_libraries]} {
         if {![file exists ${srcdir}]} {
             ui_debug "Source for previous runtime libraries (${srcdir}) does not exist"
         } elseif {[file type ${srcdir}] eq "directory"} {
-            set prevdir "${preserve_runtime_library_dir}"
+            set prevdir "${PRL::preserve_runtime_library_dir}"
             xinstall -m 755 -d ${destroot}${srcdir}/${prevdir}
             ui_debug "preserve_libraries ${srcdir} ${patternlist}"
             set fd [open "/dev/stderr" "w"]
-            if {![catch {set installed [lindex [registry_active ${subport}] 0]}] || [option preserve_foreign_runtime_libraries]} {
+            if {![catch {set installed [lindex [registry_active ${subport}] 0]}] || ${prlp} ne {}} {
                 if {[info exists installed]} {
                     set cVersion "-[lindex $installed 1]"
                     set cRevision [lindex $installed 2]
@@ -125,7 +129,7 @@ proc preserve_libraries {srcdir patternlist} {
                     if {[info exists installed]} {
                         puts ${fd} "## Libraries saved from port:${subport}@${cVersion}_${cRevision}${cVariants}"
                     } else {
-                        puts ${fd} "## Saving libraries installed by other ports!"
+                        puts ${fd} "## Libraries saved from port:${subport}@${cVersion}_${cRevision}${cVariants} and ports ${prlp}"
                     }
                     puts ${fd} "## currently active while destroot'ing port:${subport}@${version}_${revision}[PRL::variants] :"
                     flush ${fd}
@@ -136,6 +140,13 @@ proc preserve_libraries {srcdir patternlist} {
             foreach pattern ${patternlist} {
                 # first handle the preserved backups that already exist
                 set existing_backups [glob -nocomplain ${srcdir}/${prevdir}/${pattern}]
+                if {${prlp} ne {}} {
+                    foreach d ${prlp} {
+                        set extraprevdir "${PRL::preserve_runtime_library_root}/${d}"
+                        ui_debug "Checking extra port ${d} for ${pattern} in ${extraprevdir}"
+                        set existing_backups "${existing_backups} [glob -nocomplain ${srcdir}/${extraprevdir}/${pattern}]"
+                    }
+                }
                 foreach l ${existing_backups} {
                     set lib [file tail ${l}]
                     set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
@@ -177,7 +188,8 @@ proc preserve_libraries {srcdir patternlist} {
                     set fport [registry_file_registered ${l}]
                     # registry_file_registered returns "0" for files not belonging to a port
                     # we give the port author the favour of the doubt and backup the file anyway.
-                    if {${fport} eq "${subport}" || ${fport} eq "0" || [option preserve_foreign_runtime_libraries]} {
+                    if {${fport} eq "${subport}" || ${fport} eq "0" \
+                        || (${prlp} ne {} && [lsearch -exact ${prlp} ${fport}] >= 0)} {
                         set lib [file tail ${l}]
                         set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
                         if {![file exists ${prevlib}] &&
@@ -196,14 +208,14 @@ proc preserve_libraries {srcdir patternlist} {
                                 lappend extra_preserved ${l}
                                 puts -nonewline ${fd} "#\[current,hidden\] ${l}"
                             }
-                            if {[option preserve_foreign_runtime_libraries] && ${fport} ne "0"} {
+                            if {${prlp} ne {} && ${fport} ne "0"} {
                                 puts ${fd} " (provided by port:${fport})"
                             } else {
                                 puts ${fd} ""
                             }
                         }
                     } else {
-                        ui_info "not preserving runtime library ${l} that belongs to port:${fport} (preserve_foreign_runtime_libraries=[option preserve_foreign_runtime_libraries])"
+                        ui_info "not preserving runtime library ${l} that belongs to port:${fport}"
                     }
                 }
                 if {"${existing_backups}" eq "" && "${current_libs}" eq ""} {
@@ -215,12 +227,14 @@ proc preserve_libraries {srcdir patternlist} {
             close ${fd}
             if {[info exists tocStartSize] && [file exists ${tocFName}] \
                     && [file size ${tocFName}] <= ${tocStartSize}} {
+                ui_debug "Removing unused TOC file with contents:"
+                system "cat ${tocFName}"
                 file delete ${tocFName}
             }
             if {${extra_preserved} ne {}} {
                 set hiddenMsg "Ports currently depending on the following libraries from the previous installed version of port:${subport} \
                     can be made to work with those previous libraries manually, pointing them to the now hidden copies \
-                    with `install_name_tool -change ${prefix}/lib/X ${prefix}/lib/${preserve_runtime_library_dir}/X ${prefix}/path/to/dependent`:\n\
+                    with `install_name_tool -change ${prefix}/lib/X ${prefix}/lib/${PRL::preserve_runtime_library_dir}/X ${prefix}/path/to/dependent`:\n\
                     ${extra_preserved}"
                 ui_msg ${hiddenMsg}
                 notes-append ${hiddenMsg}
@@ -235,15 +249,15 @@ proc preserve_libraries {srcdir patternlist} {
 
 if {${os.platform} eq "darwin"} {
     proc update_preserved_libraries {{pattern ""}} {
-        global prefix subport destroot preserve_runtime_library_dir
+        global prefix subport destroot PRL::preserve_runtime_library_dir
         if {[variant_isset preserve_runtime_libraries]} {
             if {${pattern} eq ""} {
                 set pattern {}
                 # construct a list of the current unique library IDs, mapping them to files
                 # (which are probably symlinks of the type libfoo.X.dylib -> libfoo.X.Y.dylib).
-                foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${preserve_runtime_library_dir}/*.dylib] {
+                foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${PRL::preserve_runtime_library_dir}/*.dylib] {
                     set soname [file tail [lindex [exec otool -D ${lib}] 1]]
-                    set lib [file join ${prefix}/lib/${preserve_runtime_library_dir} ${soname}]
+                    set lib [file join ${prefix}/lib/${PRL::preserve_runtime_library_dir} ${soname}]
                     if {[file exists ${destroot}${lib}] && [lsearch ${pattern} ${lib}] eq -1} {
                         lappend pattern ${lib}
                     }
@@ -253,7 +267,7 @@ if {${os.platform} eq "darwin"} {
                     return
                 }
             } else {
-                set pattern [glob -nocomplain ${destroot}${prefix}/lib/${preserve_runtime_library_dir}/${pattern}]
+                set pattern [glob -nocomplain ${destroot}${prefix}/lib/${PRL::preserve_runtime_library_dir}/${pattern}]
             }
             ui_debug "Updating MachO dependency information in preserved libraries matching \"${pattern}\""
             # when preserving multiple directories, make them depend on each other
@@ -283,27 +297,27 @@ if {${os.platform} eq "darwin"} {
     }
 } else {
     proc update_preserved_libraries {{pattern ""}} {
-        global prefix subport destroot preserve_runtime_library_dir
+        global prefix subport destroot PRL::preserve_runtime_library_dir
         if {[variant_isset preserve_runtime_libraries]} {
             if {${pattern} eq ""} {
                 set pattern "*.so.*"
             }
             # when preserving multiple directories, make them depend on each other
             # construct a dict that maps SO names to file names
-            foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${preserve_runtime_library_dir}/${pattern}] {
+            foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${PRL::preserve_runtime_library_dir}/${pattern}] {
                 dict set sonames ${lib} soname [file tail [exec patchelf --print-soname ${lib}]]
                 dict set sonames ${lib} filename [file tail ${lib}]
             }
             # now make the preserved libraries depend on other preserved libraries.
-            foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${preserve_runtime_library_dir}/${pattern}] {
+            foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${PRL::preserve_runtime_library_dir}/${pattern}] {
                 set lrpath [exec patchelf --print-rpath ${lib}]
                 # prepend the new installation path to the rpath
-                system "patchelf --set-rpath ${prefix}/lib/${preserve_runtime_library_dir}:${lrpath} ${lib}"
+                system "patchelf --set-rpath ${prefix}/lib/${PRL::preserve_runtime_library_dir}:${lrpath} ${lib}"
                 # update any dependencies on the other libraries installed by this port
                 dict for {id info} ${sonames} {
                     dict with info {
                         # store a fully resolved DT_NEEDED entry to the preserved library
-                        set sopath [file join ${prefix}/lib/${preserve_runtime_library_dir} ${soname}]
+                        set sopath [file join ${prefix}/lib/${PRL::preserve_runtime_library_dir} ${soname}]
                         if {[file exists ${sopath}] || [file exists [file join ${destroot} ${sopath}]]} {
                             # but only if the file exists
                             system "patchelf --replace-needed ${soname} ${sopath} ${lib}"
