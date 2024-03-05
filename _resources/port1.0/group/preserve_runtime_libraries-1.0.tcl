@@ -67,14 +67,20 @@
 # dependency information of the preserved libraries among each others,
 # pointing them into the preservation directory. This is not logged in the
 # TOC file!
+#
+# Under very specific conditions the algorithm can be instructed to preserve files
+# currently installed by a different port, e.g. in libgcc13 that replaces libgcc8
+# and other earlier versions. Set `preserve_foreign_runtime_libraries` to yes for this.
 
 # Note that ports that depend on poppler via poppler-qt4-mac or
 # poppler-qt5-mac do not need this trick to avoid rebuilding.
 
 
 set preserve_runtime_library_dir "previous/${subport}"
-options preserve_runtime_libraries_allow_unlinked
+options preserve_runtime_libraries_allow_unlinked \
+        preserve_foreign_runtime_libraries
 default preserve_runtime_libraries_allow_unlinked {no}
+default preserve_foreign_runtime_libraries {no}
 
 namespace eval PRL {
     proc variants {} {
@@ -101,15 +107,26 @@ proc preserve_libraries {srcdir patternlist} {
             xinstall -m 755 -d ${destroot}${srcdir}/${prevdir}
             ui_debug "preserve_libraries ${srcdir} ${patternlist}"
             set fd [open "/dev/stderr" "w"]
-            if {![catch {set installed [lindex [registry_active ${subport}] 0]}]} {
-                set cVersion [lindex $installed 1]
-                set cRevision [lindex $installed 2]
-                set cVariants [lindex $installed 3]
-                set tocFName "${destroot}${srcdir}/${prevdir}/${subport}-${cVersion}-${cRevision}${cVariants}.toc"
+            if {![catch {set installed [lindex [registry_active ${subport}] 0]}] || [option preserve_foreign_runtime_libraries]} {
+                if {[info exists installed]} {
+                    set cVersion "-[lindex $installed 1]"
+                    set cRevision [lindex $installed 2]
+                    set cVariants [lindex $installed 3]
+                } else {
+                    # set the variables so we can construct a toc file with a sensible filename
+                    set cVersion "@${version}"
+                    set cRevision ${revision}
+                    set cVariants [PRL::variants]
+                }
+                set tocFName "${destroot}${srcdir}/${prevdir}/${subport}${cVersion}-${cRevision}${cVariants}.toc"
                 if {![catch {set nfd [open ${tocFName} "w"]} err]} {
                     close ${fd}
                     set fd ${nfd}
-                    puts ${fd} "## Libraries saved from port:${subport}@${cVersion}_${cRevision}${cVariants}"
+                    if {[info exists installed]} {
+                        puts ${fd} "## Libraries saved from port:${subport}@${cVersion}_${cRevision}${cVariants}"
+                    } else {
+                        puts ${fd} "## Saving libraries installed by other ports!"
+                    }
                     puts ${fd} "## currently active while destroot'ing port:${subport}@${version}_${revision}[PRL::variants] :"
                     flush ${fd}
                     set tocStartSize [file size ${tocFName}]
@@ -160,7 +177,7 @@ proc preserve_libraries {srcdir patternlist} {
                     set fport [registry_file_registered ${l}]
                     # registry_file_registered returns "0" for files not belonging to a port
                     # we give the port author the favour of the doubt and backup the file anyway.
-                    if {${fport} eq "${subport}" || ${fport} eq "0"} {
+                    if {${fport} eq "${subport}" || ${fport} eq "0" || [option preserve_foreign_runtime_libraries]} {
                         set lib [file tail ${l}]
                         set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
                         if {![file exists ${prevlib}] &&
@@ -171,17 +188,22 @@ proc preserve_libraries {srcdir patternlist} {
                             if {![file exists ${destroot}${srcdir}/${lib}]} {
                                 if {[file type ${prevlib}] ne "link"} {
                                     file attributes ${prevlib} -permissions ${perms}
-                                    puts ${fd} "#\[current\] ${l}"
+                                    puts -nonewline ${fd} "#\[current\] ${l}"
                                 }
                                 ln -s [file join ${prevdir} ${lib}] ${destroot}${srcdir}/${lib}
-                                puts ${fd} "#\[current,exported\] ln -s [file join ${prevdir} ${lib}] ${srcdir}/${lib}"
+                                puts -nonewline ${fd} "#\[current,exported\] ln -s [file join ${prevdir} ${lib}] ${srcdir}/${lib}"
                             } else {
                                 lappend extra_preserved ${l}
-                                puts ${fd} "#\[current,hidden\] ${l}"
+                                puts -nonewline ${fd} "#\[current,hidden\] ${l}"
+                            }
+                            if {[option preserve_foreign_runtime_libraries] && ${fport} ne "0"} {
+                                puts ${fd} " (provided by port:${fport})"
+                            } else {
+                                puts ${fd} ""
                             }
                         }
                     } else {
-                        ui_info "not preserving runtime library ${l} that belongs to port:${fport}"
+                        ui_info "not preserving runtime library ${l} that belongs to port:${fport} (preserve_foreign_runtime_libraries=[option preserve_foreign_runtime_libraries])"
                     }
                 }
                 if {"${existing_backups}" eq "" && "${current_libs}" eq ""} {
