@@ -364,6 +364,11 @@ proc chworkdir {portName pWD} {
     return 0
 }
 
+proc du {files} {
+    global DU SED
+    return [exec sh -c "${DU} -hc --apparent-size ${files} | tail -1 | ${SED} -e 's/\\s\[\\s\]*total//g'"]
+}
+
 if {[catch {mportinit ui_options global_options global_variations} result]} {
     puts \$::errorInfo
         fatal "Failed to initialise MacPorts, \$result"
@@ -382,6 +387,18 @@ if {[llength $::argv] == 0} {
 }
 
 set argc [llength $::argv]
+
+if {[file exists ${macports::prefix}/bin/gdu]} {
+    set DU "gdu"
+} else {
+    set DU "du"
+}
+
+if {[file exists ${macports::prefix}/bin/gsed]} {
+    set SED "gsed"
+} else {
+    set SED "sed"
+}
 
 for {set i 0} {${i} < ${argc}} {incr i} {
     set arg "[lindex $::argv ${i}]"
@@ -429,16 +446,12 @@ for {set i 0} {${i} < ${argc}} {incr i} {
         set pWD [port_workdir ${portName}]
         set OK [chworkdir ${portName} ${pWD}]
     }
-    if {[file exists ${macports::prefix}/bin/gdu]} {
-        set DU "gdu"
-    } else {
-        set DU "du"
-    }
     if {${pWD} ne ""} {
         if {${OK}} {
             set FILES {}
             set missingFiles {}
             set newFiles {}
+            set oldFiles {}
             ui_debug "Building file list for ${portName}"
             Trawler foreach file {
                 if {${missing}} {
@@ -458,7 +471,7 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                 }
                 if {[llength ${missingFiles}]} {
                     puts -nonewline "Files to be uninstalled will free up "
-                    puts [exec sh -c "${DU} -hc ${missingFiles} | tail -1"]
+                    puts [du ${missingFiles}]
                 }
             } else {
                 set InstalledDupsList {}
@@ -482,6 +495,7 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                                         message "" [exec ls -alsF ${f} ${g}]
                                     }
                                     set newFiles [lappend newFiles ${f}]
+                                    set oldFiles [lappend oldFiles ${g}]
                                 } else {
                                     set touched 0
                                     if {[file mtime ${f}] != [file mtime ${g}]} {
@@ -551,12 +565,16 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                 }
                 if {[llength ${newFiles}]} {
                     puts -nonewline "New or modified files will take up "
-                    puts [exec sh -c "${DU} -hc ${newFiles} | tail -1"]
+                    puts -nonewline [du ${newFiles}]
+                    if {[llength ${oldFiles}]} {
+                        puts -nonewline " vs. [du ${oldFiles}] currently."
+                    }
+                    puts ""
                 }
             }
             # print the total size
             puts -nonewline "Port will take up "
-            puts [exec sh -c "${DU} -hc . | tail -1"]
+            puts [du .]
         }
     }
 }
