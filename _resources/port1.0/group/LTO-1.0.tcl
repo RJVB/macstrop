@@ -345,20 +345,20 @@ if {[tbool LTO.allow_UseLLD]} {
             set LLD "${prefix}/bin/ld64.lld-mp-17"
         } else {
             depends_build-append path:bin/ld.lld-mp-12:lld-12
-            set LLD "${prefix}/bin/ld64.ld-mp-12"
+            set LLD "${prefix}/bin/ld.lld-mp-12"
         }
         if {[string match "macports-clang*" ${configure.compiler}]} {
             set cversion [string map {"macports-clang-" ""} ${configure.compiler}]
             # TODO: figure out when --ld-path= was introduced ...
             if {${cversion} >= 15} {
-                LTO.configure.flags_append {ldflags} "-fuse-ld=lld --ld-path=${prefix}/bin/ld64.lld-mp-17"
+                LTO.configure.flags_append {ldflags} "-fuse-ld=lld --ld-path=${LLD}"
             } else {
-                LTO.configure.flags_append {ldflags} "-fuse-ld=${prefix}/bin/ld64.lld-mp-17"
+                LTO.configure.flags_append {ldflags} "-fuse-ld=${LLD}"
             }
         } else {
             pre-configure {
                 ui_warn "+use_lld : the -fuse-ld may or may not be supported!"
-                LTO.configure.flags_append {ldflags} "-fuse-ld=${prefix}/bin/ld64.lld-mp-17"
+                LTO.configure.flags_append {ldflags} "-fuse-ld=${LLD}"
             }
         }
     }
