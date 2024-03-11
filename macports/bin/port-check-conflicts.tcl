@@ -578,7 +578,7 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                 }
             }
             # print the total size
-            puts "Port will take up [du-real .] ([du .] on disk)"
+            puts "Port will take up [du-real .]"
         }
     }
 }
