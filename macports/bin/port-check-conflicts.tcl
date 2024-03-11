@@ -366,6 +366,11 @@ proc chworkdir {portName pWD} {
 
 proc du {files} {
     global DU SED
+    return [exec sh -c "${DU} -hc ${files} | tail -1 | ${SED} -e 's/\\s\[\\s\]*total//g'"]
+}
+
+proc du-real {files} {
+    global DU SED
     return [exec sh -c "${DU} -hc --apparent-size ${files} | tail -1 | ${SED} -e 's/\\s\[\\s\]*total//g'"]
 }
 
@@ -470,8 +475,7 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                     }
                 }
                 if {[llength ${missingFiles}]} {
-                    puts -nonewline "Files to be uninstalled will free up "
-                    puts [du ${missingFiles}]
+                    puts "Files to be uninstalled will free up [du-real ${missingFiles}] ([du ${missingFiles}] on disk)"
                 }
             } else {
                 set InstalledDupsList {}
@@ -564,17 +568,17 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                     }
                 }
                 if {[llength ${newFiles}]} {
-                    puts -nonewline "New or modified files will take up "
-                    puts -nonewline [du ${newFiles}]
+                    puts -nonewline "New or modified files will take up [du-real ${newFiles}]"
                     if {[llength ${oldFiles}]} {
-                        puts -nonewline " vs. [du ${oldFiles}] currently."
+                        puts -nonewline " vs. [du-real ${oldFiles}] currently"
+                        puts " ([du ${newFiles}] vs. [du ${oldFiles}] on disk)."
+                    } else {
+                        puts " ([du ${newFiles}] on disk)."
                     }
-                    puts ""
                 }
             }
             # print the total size
-            puts -nonewline "Port will take up "
-            puts [du .]
+            puts "Port will take up [du-real .] ([du .] on disk)"
         }
     }
 }
