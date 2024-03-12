@@ -1,0 +1,130 @@
+diff --git gcc/c-family/orig.c.opt gcc/c-family/c.opt
+index a750389..e494a34 100644
+--- gcc/c-family/orig.c.opt
++++ gcc/c-family/c.opt
+@@ -2553,7 +2553,7 @@ C ObjC Alias(std=c17)
+ Conform to the ISO 2017 C standard (published in 2018).
+ 
+ stdlib=
+-Driver C++ ObjC++ Common Condition(ENABLE_STDLIB_OPTION) Var(flag_stdlib_kind) Joined Enum(stdlib_kind) RejectNegative Init(1)
++Driver C++ ObjC++ Common Condition(ENABLE_STDLIB_OPTION) Var(flag_stdlib_kind) Joined Enum(stdlib_kind) RejectNegative Init(2)
+ -stdlib=[libstdc++|libc++]	The standard library to be used for C++ headers
+ and runtime.
+ 
+diff --git gcc/cp/orig.g++spec.cc gcc/cp/g++spec.cc
+index 7584f8c..f76d246 100644
+--- gcc/cp/orig.g++spec.cc
++++ gcc/cp/g++spec.cc
+@@ -23,6 +23,10 @@ along with GCC; see the file COPYING3.  If not see
+ #include "tm.h"
+ #include "opts.h"
+ 
++#ifdef __APPLE__
++#include <AvailabilityMacros.h>
++#endif
++
+ /* This bit is set if we saw a `-xfoo' language specification.  */
+ #define LANGSPEC	(1<<1)
+ /* This bit is set if they did `-lm' or `-lmath'.  */
+@@ -97,7 +101,11 @@ lang_specific_driver (struct cl_decoded_option **in_decoded_options,
+   int library = 0;
+ 
+   /* Which c++ runtime library to link.  */
++#if defined(MAC_OS_X_VERSION_MIN_REQUIRED) && defined(MAC_OS_X_VERSION_10_9) && MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_9
++  stdcxxlib_kind which_library = USE_LIBCXX;
++#else
+   stdcxxlib_kind which_library = USE_LIBSTDCXX;
++#endif
+ 
+   /* The number of arguments being added to what's in argv, other than
+      libraries.  We use this to track the number of times we've inserted
+diff --git gcc/m2/orig.gm2spec.cc gcc/m2/gm2spec.cc
+index cd7ae80..3adbf1c 100644
+--- gcc/m2/orig.gm2spec.cc
++++ gcc/m2/gm2spec.cc
+@@ -50,6 +50,10 @@ along with GNU Modula-2; see the file COPYING3.  If not see
+ #endif
+ #endif
+ 
++#ifdef __APPLE__
++#include <AvailabilityMacros.h>
++#endif
++
+ /* This bit is set if the arguments is a M2 source file.  */
+ #define M2SOURCE	(1<<1)
+ /* This bit is set if we saw a `-xfoo' language specification.  */
+@@ -424,7 +428,11 @@ lang_specific_driver (struct cl_decoded_option **in_decoded_options,
+   int library = 0;
+ 
+   /* Which c++ runtime library to link.  */
++#if defined(MAC_OS_X_VERSION_MIN_REQUIRED) && defined(MAC_OS_X_VERSION_10_9) && MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_9
++  stdcxxlib_kind which_library = USE_LIBCXX;
++#else
+   stdcxxlib_kind which_library = USE_LIBSTDCXX;
++#endif
+ 
+   const char *dialect = DEFAULT_DIALECT;
+ 
+diff --git gcc/orig.incpath.cc gcc/incpath.cc
+index 4d44321..7ee105c 100644
+--- gcc/orig.incpath.cc
++++ gcc/incpath.cc
+@@ -128,12 +128,24 @@ add_env_var_paths (const char *env_var, incpath_kind chain)
+ /* Append the standard include chain defined in cppdefault.cc.  */
+ static void
+ add_standard_paths (const char *sysroot, const char *iprefix,
+-		    const char *imultilib, int cxx_stdinc)
++		    const char *imultilib, int cxx_stdinc, int verbose)
+ {
+   const struct default_include *p;
+   int relocated = cpp_relocated ();
+   size_t len;
+ 
++  // RJVB : try to make -stdlib=libc++ behave like `-nostdinc++ -isystem${GPLUSPLUS_LIBCXX_INCLUDE_DIR} -lc++`
++  // which will put GPLUSPLUS_LIBCXX_INCLUDE_DIR at the top of the header dir search list
++  if (cxx_stdinc && flag_stdlib_kind == 2) {
++      for (p = cpp_include_defaults; p->fname; p++) {
++	  if (cxx_stdinc && (p->cplusplus == 2)) {
++		add_path (xstrdup(p->fname), INC_SYSTEM, p->cxx_aware, false);
++		if (verbose) {
++			fprintf(stderr, "### Adding libc++ \"%s\" in C++=%d mode\n", p->fname, p->cplusplus);
++		}
++	  }
++	 }
++  }
+   if (iprefix && (len = cpp_GCC_INCLUDE_DIR_len) != 0)
+     {
+       /* Look for directories that start with the standard prefix.
+@@ -165,6 +177,11 @@ add_standard_paths (const char *sysroot, const char *iprefix,
+ 		      str = reconcat (str, str, dir_separator_str,
+ 				      imultiarch, NULL);
+ 		    }
++	       if (verbose) if (cxx_stdinc && (p->cplusplus == flag_stdlib_kind)) {
++			  fprintf(stderr, "### Adding \"%s\" derived from \"%s\" from iprefix=\"%s\" in C++=%d mode\n", str, p->fname, iprefix, p->cplusplus);
++		  } else {
++			  fprintf(stderr, "### Adding \"%s\" from iprefix=\"%s\"\n", str, iprefix);
++		  }
+ 		  add_path (str, INC_SYSTEM, p->cxx_aware, false);
+ 		}
+ 	    }
+@@ -232,6 +249,11 @@ add_standard_paths (const char *sysroot, const char *iprefix,
+ 	      str = reconcat (str, str, dir_separator_str, imultiarch, NULL);
+ 	    }
+ 
++	  if (verbose) if (cxx_stdinc && (p->cplusplus == flag_stdlib_kind)) {
++		  fprintf(stderr, "### Adding \"%s\" derived from \"%s\" in C++=%d mode\n", str, p->fname, p->cplusplus);
++	  } else {
++		  fprintf(stderr, "### Adding \"%s\"\n", str);
++	  }
+ 	  add_path (str, INC_SYSTEM, p->cxx_aware, false);
+ 	}
+     }
+@@ -499,7 +521,7 @@ register_include_chains (cpp_reader *pfile, const char *sysroot,
+ 
+   /* Finally chain on the standard directories.  */
+   if (stdinc)
+-    add_standard_paths (sysroot, iprefix, imultilib, cxx_stdinc);
++    add_standard_paths (sysroot, iprefix, imultilib, cxx_stdinc, verbose);
+ 
+   target_c_incpath.extra_includes (sysroot, iprefix, stdinc);
+ 
