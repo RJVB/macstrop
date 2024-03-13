@@ -115,9 +115,10 @@ if {[variant_isset langselect]} {
                 }
             }
             set qmidx 0
+            set wplen [string length ${workpath}]
             set drlen [string length ${destroot}]
             foreach ld ${langselect_qm_dir} {
-                if {[string compare -length ${drlen} ${ld} ${destroot}]} {
+                if {[string compare -length ${wplen} ${ld} ${workpath}]} {
                     set ld "${destroot}/${ld}"
                 }
                 ui_debug "locale checking ${ld}"
@@ -143,7 +144,7 @@ if {[variant_isset langselect]} {
             foreach lhd ${langselect_html_dir} {
                 # was this ever really necessary?
                 set lhd [join ${lhd}]
-                if {[string compare -length ${drlen} ${lhd} ${destroot}]} {
+                if {[string compare -length ${wplen} ${lhd} ${workpath}]} {
                     set lhd "${destroot}/${lhd}"
                 }
                 if {[file exists ${lhd}]} {
@@ -166,7 +167,7 @@ if {[variant_isset langselect]} {
             }
             foreach ldd ${langselect_dirs_dir} {
                 set ldd [join ${ldd}]
-                if {[string compare -length ${drlen} ${ldd} ${destroot}]} {
+                if {[string compare -length ${wplen} ${ldd} ${workpath}]} {
                     set ldd "${destroot}/${ldd}"
                 }
                 if {[file exists ${ldd}]} {
@@ -187,7 +188,7 @@ if {[variant_isset langselect]} {
             }
             foreach lld ${langselect_lproj_dir} {
                 set lld [join ${lld}]
-                if {[string compare -length ${drlen} ${lld} ${destroot}]} {
+                if {[string compare -length ${wplen} ${lld} ${workpath}]} {
                     set lld "${destroot}/${lld}"
                 }
                 if {[file exists ${lld}]} {
