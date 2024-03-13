@@ -366,12 +366,20 @@ proc chworkdir {portName pWD} {
 
 proc du {files} {
     global DU SED
-    return [exec sh -c "${DU} -hc ${files} | tail -1 | ${SED} -e 's/\\s\[\\s\]*total//g'"]
+    if {[catch {set ret [exec sh -c "${DU} -hc ${files} | tail -1 | ${SED} -e 's/\\s\[\\s\]*total//g'"]}]} {
+        return ""
+    } else {
+        return ${ret}
+    }
 }
 
 proc du-real {files} {
     global DU SED
-    return [exec sh -c "${DU} -hc --apparent-size ${files} | tail -1 | ${SED} -e 's/\\s\[\\s\]*total//g'"]
+    if {[catch {set ret [exec sh -c "${DU} -hc --apparent-size ${files} | tail -1 | ${SED} -e 's/\\s\[\\s\]*total//g'"]}]} {
+        return ""
+    } else {
+        return ${ret}
+    }
 }
 
 if {[catch {mportinit ui_options global_options global_variations} result]} {
