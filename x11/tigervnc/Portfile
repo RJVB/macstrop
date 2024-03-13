@@ -4,19 +4,23 @@ PortSystem              1.0
 PortGroup               cmake 1.1
 PortGroup               conflicts_build 1.0
 PortGroup               github 1.0
-platform darwin {
+if {${os.platform} eq "darwin"} {
     PortGroup           muniversal 1.0
     PortGroup           active_variants 1.1
+} else {
+    # go for maximum optimisation because we'll be building the VNC server(s)!
+    set LTO.allow_ThinLTO no
 }
 PortGroup               LTO 1.0
 PortGroup               locale_select 1.0
 
 # github.setup            TigerVNC tigervnc 1.11.0 v
-github.setup            TigerVNC tigervnc 1a008c1380305648ab50f1d99e73439747e9d61d
+github.setup            TigerVNC tigervnc e9d78517c90f393a5f5c420d6543b958d2b31032
 fetch.type              git
 # after `git tag 1.11.0 -m "v1.11.0 released after this commit" e6f910a0ad660d38617341747f49d7bcc41b2696`
-# 1.11.0-125-g1b00e997
-version                 1.11.0.184
+# after `git tag 1.13.1 -m "v1.13.1 released just after this commit" cbed625888eb1ef87272dac39472b67dccf677b4`
+# 1.13.1-144-ge9d78517c90f393a5f5c420d6543b958d2b31032
+version                 1.13.1.144
 epoch                   1
 conflicts               vnc tightvnc
 categories              x11 vnc
@@ -32,47 +36,64 @@ long_description        TigerVNC is an advanced VNC implementation. \
                         projects. This includes accelerated JPEG compression. \
                         TigerVNC supports the latest X.Org X server.
 
-homepage                http://www.tigervnc.com/
+homepage                https://tigervnc.org
+github.tarball_from     archive
 
-# checksums               rmd160  970e3633b70589e57c13683f35aedc5d8f3ec01e \
-#                         sha256  59a9656a080d1c5ca60d4143ad4263bd8b5122f87cdfbd3349bc37a48d6f4cc4
-# #                         size    1347027
+#checksums               rmd160  2afe93bc9cbfb1a0aa83414f6da5c9cf90bb5216 \
+#                        sha256  b7c5b8ed9e4e2c2f48c7b2c9f21927db345e542243b4be88e066b2daa3d1ae25 \
+#                        size    1989081
 
 worksrcdir              ${name}-git
 distname                ${name}-git
-patch.pre_args          -Np1
 
-depends_lib             port:gettext \
-                        port:gnutls \
+depends_build           port:gettext
+
+depends_lib-append      port:gettext-runtime \
+                        path:lib/pkgconfig/gnutls.pc:gnutls \
                         path:include/turbojpeg.h:libjpeg-turbo \
                         port:libiconv \
+                        path:lib/pkgconfig/pixman-1.pc:libpixman \
                         port:zlib
-
-cmake.save_configure_cmd "log too"
-
-patchfiles-append       patch-cmakefind-fltk.diff
 
 if {${os.platform} eq "darwin"} {
     depends_lib-append  path:lib/libfltk.dylib:fltk
-    patchfiles-append   patch-release-CMakeLists.txt.diff \
-                        patch-darwin-x11.diff \
-                        patch-release-makemacapp.in.diff
+    patchfiles          patch-release-makemacapp.in.diff \
+                        patch-vncviewer-CMakeLists.txt.diff
+    if {[string match macports-gcc* ${configure.compiler}]} {
+        configure.cflags-append \
+                        -fpermissive
+        configure.cxxflags-append \
+                        -fpermissive
+    }
 } else {
     depends_lib-append  path:lib/libfltk.so:fltk
     depends_build-append \
-                        port:ImageMagick
+                        port:ffmpeg \
+                        port:gmp \
+                        port:nettle \
+                        port:systemd
     patchfiles-append   patch-CMakeLists-linux.diff
 }
+# get rid of that fugly blue
+patchfiles-append       patch-selection-colour.diff
 
 # ivtools' OS/os.h shadows tigervnc's os/os.h on case-insensitive filesystems.
 if {[file exists ${prefix}/include/os/os.h]} {
     conflicts_build-append ivtools
 }
 
+post-extract {
+    xinstall -m 655 ${filespath}/FindFLTK.cmake ${worksrcpath}/cmake/Modules/
+}
+
+cmake.save_configure_cmd "install log"
+
+# patch.pre_args          -Np1
+
 if {${os.platform} eq "darwin"} {
 
-    variant x11 description {build an X11 version} {}
-    if {[variant_isset x11]} {
+    # variant x11 description {build an X11 version} {}
+    if {[variant_exists x11] && [variant_isset x11]} {
         require_active_variants \
                         path:lib/libfltk.dylib:fltk x11
         configure.args-append \
@@ -80,29 +101,34 @@ if {${os.platform} eq "darwin"} {
     } else {
         require_active_variants \
                         path:lib/libfltk.dylib:fltk "" x11
-        # make certain the app bundle is created
-        build.pre_args-append \
-                        dmg
+        configure.cppflags-append \
+                        -D__APPLE_QUARTZ__
         configure.args-append \
                         -DAPPLE_FORCE_X11=OFF
+        # make certain the app bundle is created
+        build.target    translations dmg
     }
-    configure.args-append \
-                        -DINSTALL_SYSTEMD_UNITS=OFF
+#    configure.args-append \
+#                        -DINSTALL_SYSTEMD_UNITS=OFF
 
-    if {![variant_isset x11]} {
-        if {[variant_isset universal]} {
+    # the app bundle is moved into place in a post-destroot step that comes after the
+    # langselect prune step...
+    langselect_dirs_dir "${build.dir}/TigerVNC Viewer.app/Contents/Resources/locale"
+
+    if {![variant_exists x11] || ![variant_isset x11]} {
+        if {${universal_possible} && [variant_isset universal]} {
             merger-post-destroot {
                 foreach arch ${universal_archs_to_use} {
                     copy "${build.dir}-${arch}/TigerVNC Viewer.app" ${destroot}-${arch}${applications_dir}
-                    delete ${destroot}-${arch}${prefix}/bin/vncviewer
-                    ln -s "${applications_dir}/TigerVNC Viewer.app/Contents/MacOS/TigerVNC Viewer" ${destroot}-${arch}${prefix}/bin/vncviewer
+                    xinstall ${filespath}/vncviewer.in ${destroot}-${arch}${prefix}/bin/vncviewer
+                    reinplace "s|@APPLICATIONS_DIR@|${applications_dir}|g" ${destroot}-${arch}${prefix}/bin/vncviewer
                 }
             }
         } else {
             post-destroot {
                 copy "${build.dir}/TigerVNC Viewer.app" ${destroot}${applications_dir}
-                delete ${destroot}${prefix}/bin/vncviewer
-                ln -s "${applications_dir}/TigerVNC Viewer.app/Contents/MacOS/TigerVNC Viewer" ${destroot}${prefix}/bin/vncviewer
+                xinstall ${filespath}/vncviewer.in ${destroot}${prefix}/bin/vncviewer
+                reinplace "s|@APPLICATIONS_DIR@|${applications_dir}|g" ${destroot}${prefix}/bin/vncviewer
             }
         }
     }
