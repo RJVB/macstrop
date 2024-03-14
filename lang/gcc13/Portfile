@@ -117,7 +117,7 @@ configure.args      --enable-languages=[join ${gcc_configure_langs} ","] \
                     --disable-multilib \
                     --enable-lto \
                     --enable-libstdcxx-time \
-                    --with-build-config=bootstrap-debug \
+                    --with-build-config=bootstrap-Os \
                     --with-as=${prefix}/bin/as \
                     --with-ld=${prefix}/bin/ld \
                     --with-ar=${prefix}/bin/ar \
@@ -153,7 +153,7 @@ if { ${subport} ne ${libcxxname} && ${os.platform} eq "darwin" } {
              ${os.major} < 11 || ${os.major} == 17 } \
     {
         # Skip bootstrap comparison entirely
-        configure.args-replace --with-build-config=bootstrap-debug --without-build-config
+        configure.args-replace --with-build-config=bootstrap-Os --without-build-config
         post-patch {
             reinplace {s|^do-compare =|do-compare = /usr/bin/true|g} \
                 ${worksrcpath}/Makefile.in \
@@ -312,9 +312,12 @@ if { ${subport} ne ${libcxxname} } {
 ### MacStrop private
     PortGroup save_configure_cmd    1.0
     PortGroup compress_workdir      1.0
+    set LTO.disable_LTO yes
     PortGroup LTO                   1.0
     PortGroup preserve_runtime_libraries 1.0
     configure.save_configure_cmd "install log"
+
+    LTO.use_archive_helpers no
 ### MacStrop private
 
     # the quick variant simplifies gcc patch development but also decreases the build time by a factor > 4.
@@ -343,16 +346,15 @@ if { ${subport} ne ${libcxxname} } {
         if {${subport} eq ${name}} {
             depends_build-append \
                 port:libcxx-dev
-            depends_run-append \
-                port:${libcxxname}
-            require_active_variants port:${libcxxname} libcxx
-            require_active_variants libcxx-dev macports_libcxx
-            if {[variant_isset quick]} {
-                # it must be possible to inject -stdlib=libstdc++ in the level 2&3 compiler flags?!
-                patchfiles-append \
-                    patch-use-libcxx-by-default.diff
+            platform darwin {
+                depends_run-append \
+                    port:${libcxxname}
+                require_active_variants port:${libcxxname} libcxx
+                require_active_variants libcxx-dev macports_libcxx
             }
         }
+        patchfiles-append \
+                    patch-use-libcxx-on-linux.diff
         configure.args-append --with-gxx-libcxx-include-dir="[libcxx_incpath]"
     }
 
@@ -601,6 +603,11 @@ if {${subport} eq ${name}} {
 
 if { ${subport} ne ${libcxxname} } {
 
+    post-extract {
+        xinstall -m 644 ${worksrcpath}/config/bootstrap-O3.mk ${worksrcpath}/config/bootstrap-Os.mk
+        reinplace "s|-O3|-Os|g" ${worksrcpath}/config/bootstrap-Os.mk
+    }
+
     post-destroot {
         # Ensure all dylibs in destroot have our extra rpath added ..
         # https://trac.macports.org/ticket/65503
@@ -639,12 +646,52 @@ if { ${subport} ne ${libcxxname} } {
         "CPP=${configure.cc} -E" \
         "CPP_FOR_BUILD=${configure.cc} -E" \
         "CXXCPP=${configure.cxx} -E"
+    if {[variant_exists libcxx] && [variant_isset libcxx] && ![variant_isset quick]} {
+        post-patch {
+            reinplace "s|BOOT_CFLAGS= -g -O2|BOOT_CFLAGS= -Os|g" ${worksrcpath}/Makefile.in
+        }
+        # Skip bootstrap comparison entirely
+        configure.args-replace \
+            --with-build-config=bootstrap-debug \
+            --without-build-config
+        configure.env-append \
+            "CFLAGS_FOR_TARGET=-g ${configure.cflags} ${LTO.cpuflags}" \
+            "CXXFLAGS_FOR_TARGET=-g ${configure.cxxflags} ${LTO.cpuflags}"
+        build.env-append \
+            "VOID_STAGE_COMPARISON=1" \
+            "BOOT_CFLAGS=-Os" \
+            "CFLAGS_FOR_TARGET=${configure.cflags} ${LTO.cpuflags}" \
+            "CXXFLAGS_FOR_TARGET=${configure.cxxflags} ${LTO.cpuflags} -stdlib=libstdc++" \
+            "LDFLAGS_FOR_TARGET=-stdlib=libstdc++"
+        # RJVB: tweak the bootstrap stage C(XX)FLAGS, in particular that the stage2 and stage3 compiler
+        # don't try to use/build against libc++; idem for building the target libraries with the final
+        # compiler (*FLAGS_FOR_TARGET).
+        # NB: this assumes that the bootstrap compiler uses an appropriate default; just set it to -Os
+        set preargs ${build.pre_args}
+        build.pre_args \
+            "BOOT_CFLAGS=-Os" \
+            "STAGE1_CFLAGS=-Os" \
+            "STAGE1_CXXFLAGS=-Os" \
+            "STAGE2_CFLAGS=-Os" \
+            {*}"STAGE2_CXXFLAGS=\"-Os -stdlib=libstdc++\"" \
+            "STAGE2_LDFLAGS=\"-stdlib=libstdc++\"" \
+            "STAGE3_CFLAGS=\"${configure.cflags} ${LTO.cpuflags}\"" \
+            "STAGE3_CXXFLAGS=\"${configure.cxxflags} ${LTO.cpuflags} -stdlib=libstdc++\"" \
+            "STAGE3_LDFLAGS=\"-stdlib=libstdc++\"" \
+            "CFLAGS_FOR_TARGET=\"-g ${configure.cflags} ${LTO.cpuflags}\"" \
+            "CXXFLAGS_FOR_TARGET=\"-g ${configure.cxxflags} ${LTO.cpuflags} -stdlib=libstdc++\"" \
+            "LDFLAGS_FOR_TARGET=\"-g -stdlib=libstdc++\"" \
+            "do-compare=/usr/bin/true" \
+            {*}${preargs}
+        depends_build port:gmake
+        build.cmd ${prefix}/bin/gmake
+    }
     configure.cc-append [get_canonical_archflags]
     if {[variant_exists quick] && [variant_isset quick]} {
         # quick (and hopefully not too dirty) build: don't bootstrap
         # and leave the configure environment mostly intact.
         configure.args-replace \
-            --with-build-config=bootstrap-debug \
+            --with-build-config=bootstrap-Os \
             --disable-bootstrap
         build.target all
     } else {
