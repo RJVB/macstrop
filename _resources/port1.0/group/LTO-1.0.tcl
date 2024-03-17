@@ -80,6 +80,10 @@ if {![info exists LTO.allow_UseLLD]} {
     set LTO.allow_UseLLD yes
 }
 
+if {![info exists LTO.fat_LTO_Objects]} {
+    set LTO.fat_LTO_Objects no
+}
+
 # NB
 # FIXME
 # We should ascertain that configure.{ar,nm,ranlib} be full, absolute paths!
@@ -149,13 +153,7 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
         ui_debug "LTO: setting custom configure option(s) \"${LTO.configure_option}\""
         configure.args-append           ${LTO.configure_option}
     } else {
-        if {${configure.compiler} eq "cc" && ${os.platform} eq "linux"} {
-            set lto_flags               "-ftracer -flto -fuse-linker-plugin -ffat-lto-objects"
-        } elseif {[string match *clang* ${configure.compiler}]} {
-#             if {${os.platform} ne "darwin"} {
-#                 ui_error "unsupported combination +LTO with configure.compiler=${configure.compiler}"
-#                 return -code error "Unsupported variant/compiler combination in ${subport}"
-#             }
+        if {[string match *clang* ${configure.compiler}]} {
             # detect support for flto=thin but only with MacPorts clang versions (being a bit cheap here)
             set clang_version [string map {"macports-clang-" ""} ${configure.compiler}]
             if {[tbool LTO.allow_ThinLTO] && "${clang_version}" ne "${configure.compiler}" && [vercmp ${clang_version} "4.0"] >= 0} {
@@ -166,9 +164,12 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
             }
         } else {
             if {${os.platform} eq "linux"} {
-                set lto_flags           "-ftracer -flto -fuse-linker-plugin -ffat-lto-objects"
-            } else {
-                set lto_flags           "-ftracer -flto -ffat-lto-objects"
+                set lto_flags           "-ftracer -flto -fuse-linker-plugin"
+            } elseif {${configure.compiler} ne "cc"} {
+                set lto_flags           "-ftracer -flto"
+            }
+            if {[tbool LTO.fat_LTO_Objects]} {
+                set lto_flags           "${lto_flags} -ffat-lto-objects"
             }
         }
         ui_debug "LTO: setting LTO compiler and linker option(s) \"${lto_flags}\""
