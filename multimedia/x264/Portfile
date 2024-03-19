@@ -3,10 +3,14 @@
 PortSystem          1.0
 PortGroup           muniversal 1.0
 PortGroup           xcodeversion 1.0
+PortGroup           xcode_workaround 1.0
+set LTO.configure_option --enable-lto
+PortGroup           LTO 1.0
 PortGroup           preserve_runtime_libraries 1.0
+PortGroup           save_configure_cmd 1.0
 
 name                x264
-version             20180807
+version             20191217
 categories          multimedia
 license             GPL-2+
 platforms           darwin
@@ -17,21 +21,28 @@ long_description    x264 is a free library for encoding H264/AVC video streams. 
                     Chen (vfw/nasm), Justin Clay(vfw), Måns Rullgård and Loren \
                     Merritt from scratch. It is released under the terms of the \
                     GPL license.
-homepage            http://www.videolan.org/x264.html
-master_sites        http://ftp.videolan.org/pub/videolan/x264/snapshots/
+homepage            https://www.videolan.org/x264.html
+master_sites        https://download.videolan.org/pub/videolan/x264/snapshots/
 
 dist_subdir         x264
 distname            ${name}-snapshot-${version}-2245-stable
 
 use_bzip2           yes
 
-checksums           rmd160  ac2611138ecdf0f4f97b0c77326af26e80b17cc9 \
-                    sha256  1439f1a054c87965089b646e77d16e1a8bf2f9687e4dd696ac518e44c7644c2a \
-                    size    766771
+checksums           rmd160  6a204dfd1d56faf2d9c0ff2b90642507112f291d \
+                    sha256  b2495c8f2930167d470994b1ce02b0f4bfb24b3317ba36ba7f112e9809264160
+#                     size    770169
 
 minimum_xcodeversions {9 3.1}
 
 depends_build       port:nasm
+
+# as of 20190313 the PPC assembly uses VSX, which is Power7+ only. We could disable asm, but
+# instead we can use the previous ppc assembly,  which does compile and provides the same functions
+patchfiles-append   patch-x264-older-ppc-code.diff \
+                    patch-x264-apple-silicon.diff
+
+configure.save_configure_cmd "install log"
 
 configure.args      --enable-pic \
                     --enable-shared \
@@ -43,26 +54,22 @@ configure.args      --enable-pic \
                     --disable-gpac \
                     --disable-lsmash
 
-configure.args-append \
-                    --enable-lto
-
 # as of build 148 asm optimizations are believed to work with x86_64 Snow Leopard and up
 # please file a ticket if you have evidence to the contrary
 # i386 clang build issues remain which break i386 build when asm optimizations are enabled
 # assert configure option --disable-asm for all i386 builds
 # see https://mailman.videolan.org/pipermail/x264-devel/2014-February/010371.html, #42672.
-
-if {${os.platform} eq "darwin" && ${build_arch} ne "" && ![variant_isset universal]} {
-    if {${build_arch} eq "i386"} {
+if {${os.platform} eq "darwin" && ${configure.build_arch} ne "" && (!${universal_possible} || ![variant_isset universal])} {
+    if {${configure.build_arch} eq "i386"} {
         configure.args-append   --host=i686-apple-darwin${os.major} \
                                 --disable-asm
     } else {
-        configure.args-append   --host=${build_arch}-apple-darwin${os.major}
+        configure.args-append   --host=${configure.build_arch}-apple-darwin${os.major}
     }
     configure.ldflags-append {*}${configure.cc_archflags}
 }
 
-foreach arch ${universal_archs} {
+foreach arch ${configure.universal_archs} {
     if {${arch} eq "i386"} {
         set merger_configure_args(${arch}) "--host=i686-apple-darwin${os.major} --disable-asm"
     } else {
@@ -74,10 +81,13 @@ configure.universal_args-delete --disable-dependency-tracking
 
 platform darwin 8 {
     # https://trac.macports.org/ticket/24893
-    if {${build_arch} eq "i386" && ![variant_isset universal]} {
+    if {${configure.build_arch} eq "i386" && (!${universal_possible} || ![variant_isset universal])} {
         configure.cflags-append -msse2
     }
     set merger_configure_cflags(i386) -msse2
+
+    depends_build-append port:gmake
+    build.cmd            gmake
 }
 
 # sets its own optflags
