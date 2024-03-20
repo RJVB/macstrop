@@ -1,14 +1,17 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
 
-namespace eval configure {}
+namespace eval configure {
+    variable redirect_configure_output yes
+    variable statevar no
+}
 
 proc configure.save_configure_cmd {{save_log_too ""}} {
     namespace upvar ::configure configure_cmd_saved statevar
-    if {[tbool statevar]} {
+    if {${configure::statevar}} {
         ui_debug "configure.save_configure_cmd already called"
         return;
     }
-    set statevar yes
+    set configure::statevar yes
 
     if {![info exists configure.args]} {
         configure.args-append
@@ -18,10 +21,12 @@ proc configure.save_configure_cmd {{save_log_too ""}} {
     }
     if {${save_log_too} ne ""} {
         pre-configure {
-            configure.pre_args-prepend "-cf '${configure.cmd} "
-            configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure.log'"
-            configure.cmd "/bin/csh"
-            ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
+            if {${configure::redirect_configure_output}} {
+                configure.pre_args-prepend "-cf '${configure.cmd} "
+                configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure.log'"
+                configure.cmd "/bin/csh"
+                ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
+            }
         }
         if {${save_log_too} eq "install log"} {
             post-destroot {
@@ -74,6 +79,19 @@ proc configure.save_configure_cmd {{save_log_too ""}} {
             puts ${fd} "${configure.cmd} [join ${configure.pre_args}] [join ${configure.args}] [join ${configure.post_args}]"
             close ${fd}
             unset fd
+        }
+        if {!${configure::redirect_configure_output}} {
+            set lfile [exec port logfile ${portpath}]
+            # sadly the logfile descriptor is owned by a different interpreter...
+            foreach f [file channels] {
+                if {![catch {flush ${f}}]} {
+                    ui_debug "Flushed file ${f}"
+                }
+            }
+            ui_debug [exec lsof -p [pid]]
+            ui_debug "Filtering configure log from ${lfile})"
+            exec sync
+            catch {exec fgrep ":info:configure " ${lfile} | sed "s/:info:configure //g" > ${workpath}/.macports.${subport}.configure.log}
         }
     }
 }
