@@ -1,8 +1,15 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
 
 namespace eval configure {
-    variable redirect_configure_output yes
+    variable redirect_configure_output no
     variable statevar no
+    proc logfile {} {
+        if {[catch {set fn [get_logfile]}]} {
+            return ""
+        } else {
+            return $fn
+        }
+    }
 }
 
 proc configure.save_configure_cmd {{save_log_too ""}} {
@@ -21,7 +28,7 @@ proc configure.save_configure_cmd {{save_log_too ""}} {
     }
     if {${save_log_too} ne ""} {
         pre-configure {
-            if {${configure::redirect_configure_output}} {
+            if {${configure::redirect_configure_output} || [configure::logfile] eq ""} {
                 configure.pre_args-prepend "-cf '${configure.cmd} "
                 configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure.log'"
                 configure.cmd "/bin/csh"
@@ -80,18 +87,16 @@ proc configure.save_configure_cmd {{save_log_too ""}} {
             close ${fd}
             unset fd
         }
-        if {!${configure::redirect_configure_output}} {
-            set lfile [exec port logfile ${portpath}]
-            # sadly the logfile descriptor is owned by a different interpreter...
-            foreach f [file channels] {
-                if {![catch {flush ${f}}]} {
-                    ui_debug "Flushed file ${f}"
-                }
+        set logfile [configure::logfile]
+        if {!${configure::redirect_configure_output} && ${logfile} ne ""} {
+            ui_debug "Filtering configure log from ${logfile})"
+            if {![catch {flush_logfile} err]} {
+                ui_debug "Flushed file ${logfile}"
+            } else {
+                ui_debug "Couldn't flush ${logfile}: $err"
             }
-            ui_debug [exec lsof -p [pid]]
-            ui_debug "Filtering configure log from ${lfile})"
             exec sync
-            catch {exec fgrep ":info:configure " ${lfile} | sed "s/:info:configure //g" > ${workpath}/.macports.${subport}.configure.log}
+            catch {exec fgrep ":info:configure " ${logfile} | sed "s/:info:configure //g" > ${workpath}/.macports.${subport}.configure.log}
         }
     }
 }
