@@ -164,9 +164,9 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
             }
         } else {
             if {${os.platform} eq "linux"} {
-                set lto_flags           "-ftracer -flto -fuse-linker-plugin"
+                set lto_flags           "-ftracer -flto=${build.jobs} -fuse-linker-plugin"
             } elseif {${configure.compiler} ne "cc"} {
-                set lto_flags           "-ftracer -flto"
+                set lto_flags           "-ftracer -flto=${build.jobs}"
             }
             if {[tbool LTO.fat_LTO_Objects]} {
                 set lto_flags           "${lto_flags} -ffat-lto-objects"
