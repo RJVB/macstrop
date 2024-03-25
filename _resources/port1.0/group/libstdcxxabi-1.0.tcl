@@ -12,6 +12,16 @@
 # if built with the new libstdc++ ABI it will require that same choice from its dependents.
 #
 # The fine print: https://gcc.gnu.org/onlinedocs/libstdc++/manual/using_dual_abi.html .
+#
+# The `oldabi` variant is set automatically if the system C++ runtime is configured to use it (currently
+# based on querying /usr/bin/g++). The *gcc12* and *gcc13* ports as well as port:libgcc use this PortGroup
+# to auto-configure in correspondence to how the system runtime is configured.
+# Overriding this variant (unsetting it, or setting it explicitly) will lead to an attempt to insert the
+# appropriate -D_GLIBCXX_USE_CXX11_ABI addition to configure.cxxflags .
+#
+# Ports require dependents to have the same `oldabi` variant setting via the
+# stdcxxabi.dependencies_concerned_by_ABI option (a list of port depspecs). The GCC ports do this for
+# the libgcc port they depend on, and port:kf5-kdevelop does it for port:astyle.
 
 platform linux {
 
@@ -65,8 +75,9 @@ platform linux {
             }
         }
 
-        variant oldabi description {The old libstdc++ ABI will be used by default (#define _GLIBCXX_USE_CXX11_ABI 0)} {}
-        if {![info exists stdcxxabi.is_gcc_internal]} {
+        variant oldabi conflicts libcxx description {The old libstdc++ ABI will be used by default (#define _GLIBCXX_USE_CXX11_ABI 0)} {}
+        if {![info exists stdcxxabi.is_gcc_internal]
+                && !([variant_exists libcxx] && [variant_isset libcxx])} {
             if {!${stdcxxabi::_GLIBCXX_USE_CXX11_ABI}} {
                 default_variants +oldabi
                 if {![variant_isset oldabi]} {
@@ -74,24 +85,52 @@ platform linux {
                     notes-append "\nvariant `oldabi` is unset; code generated against port:${subport} can fail to link with binaries generated against the system C++ runtime!"
                 }
             }
-            if {[string match macports-gcc* ${configure.compiler}]
-                    || ${configure.cxx_stdlib} eq "libstdc++_macports"
-                    || ${configure.cxx_stdlib} eq "macports-libstdc++"} {
-                depends_lib-append port:libgcc
-                stdcxxabi.dependencies_concerned_by_ABI-append port:libgcc
-            }
         }
 
         proc stdcxxabi::callback {} {
-            global stdcxxabi.dependencies_concerned_by_ABI
-            foreach d ${stdcxxabi.dependencies_concerned_by_ABI} {
-                if {[variant_isset oldabi]} {
-                    ui_debug "Requiring old stdc++ ABI (+oldabi) on ${d}"
-                    require_active_variants ${d} oldabi
-                } else {
-                    ui_debug "Requiring new stdc++ ABI (-oldabi) on ${d}"
-                    require_active_variants ${d} {} oldabi
+            global stdcxxabi.dependencies_concerned_by_ABI configure.compiler configure.cxx_stdlib \
+                configure.cxxflags configure.cxx
+            if {![variant_exists libcxx] || ![variant_isset libcxx]} {
+                foreach d ${stdcxxabi.dependencies_concerned_by_ABI} {
+                    if {[variant_isset oldabi]} {
+                        ui_debug "Requiring old stdc++ ABI (+oldabi) on ${d}"
+                        require_active_variants ${d} oldabi
+                    } else {
+                        ui_debug "Requiring new stdc++ ABI (-oldabi) on ${d}"
+                        require_active_variants ${d} {} oldabi
+                    }
                 }
+                if {![info exists stdcxxabi.is_gcc_internal]} {
+                    if {[string match macports-gcc* ${configure.compiler}]
+                            || ${configure.cxx_stdlib} eq "libstdc++_macports"
+                            || ${configure.cxx_stdlib} eq "macports-libstdc++"} {
+                        depends_lib-append port:libgcc
+                        stdcxxabi.dependencies_concerned_by_ABI-append port:libgcc
+                        if {${configure.cxx_stdlib} ne ""} {
+                            set currentABI [stdcxxabi::getABISetter ${configure.cxx} -stdlib=${configure.cxx_stdlib}]
+                        } else {
+                            set currentABI [stdcxxabi::getABISetter ${configure.cxx}]
+                        }
+                        if {${currentABI} eq "set _GLIBCXX_USE_CXX11_ABI 0" && ![variant_isset oldabi]} {
+                            ui_debug "current libstdc++ set to use old ABI, port requests new ABI"
+                            set define -D_GLIBCXX_USE_CXX11_ABI=1
+                        } elseif {${currentABI} eq "set _GLIBCXX_USE_CXX11_ABI 1" && [variant_isset oldabi]} {
+                            ui_debug "current libstdc++ set to use new ABI, port requests olds ABI"
+                            set define -D_GLIBCXX_USE_CXX11_ABI=0
+                        }
+                        if {[info exists define]} {
+                            configure.cxxflags-append ${define}
+                            if {${configure.cxx_stdlib} ne ""} {
+                                ui_debug "Checking resulting ABI: [stdcxxabi::getABISetter ${configure.cxx} ${define} -stdlib=${configure.cxx_stdlib}]"
+                            } else {
+                                ui_debug "Checking resulting ABI: set currentABI [stdcxxabi::getABISetter ${configure.cxx} ${define}]"
+                            }
+                        }
+                    }
+                }
+            } else {
+                ui_debug "Build against libc++ requested; ignoring stdcxxabi.dependencies_concerned_by_ABI\
+                    (${stdcxxabi.dependencies_concerned_by_ABI})"
             }
         }
         port::register_callback stdcxxabi::callback
