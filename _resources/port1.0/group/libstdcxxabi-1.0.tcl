@@ -45,15 +45,20 @@ platform linux {
         options stdcxxabi.dependencies_concerned_by_ABI
         default stdcxxabi.dependencies_concerned_by_ABI {}
 
+        proc stdcxxabi::getMacroSetter {cmd macro} {
+            set cmd "${cmd} -x c++ -CC -dD -E -o - -"
+            ui_debug "Determining C++ macro ${macro} set by \"${cmd}\""
+            return [exec echo "#include <cstddef>" | {*}${cmd} \
+                | grep "${macro}.*\[01\]" | sed -e "s/#define/set/g"]
+        }
         proc stdcxxabi::getABISetter {CXX {args {}}} {
             ui_debug "Determining C++ ABI used by ${CXX} ${args}"
             if {${args} ne {}} {
-                set cmd "${CXX} ${args} -x c++ -CC -dD -E -o - -"
+                set cmd "${CXX} ${args}"
             } else {
-                set cmd "${CXX} -x c++ -CC -dD -E -o - -"
+                set cmd "${CXX}"
             }
-            set ret [exec echo "#include <cstddef>" | {*}${cmd} \
-                | grep "_GLIBCXX_USE_CXX11_ABI.*\[01\]" | sed -e "s/#define/set/g"]
+            set ret [stdcxxabi::getMacroSetter ${cmd} "_GLIBCXX_USE_CXX11_ABI"]
             if {${ret} eq ""} {
                 ui_debug "_GLIBCXX_USE_CXX11_ABI is not defined, assuming ancient libstdc++ evidently using the old ABI"
                 return "set _GLIBCXX_USE_CXX11_ABI 0"
@@ -68,6 +73,14 @@ platform linux {
         # the system compilers or our own macports-clang compilers NOT invoked with
         # -stdlib=macports-libstdc++).
         namespace eval stdcxxabi {
+            # check _GLIBCXX_USE_DUAL_ABI; if false compilers using the system libstdc++
+            # cannot use the new ABI even by defining _GLIBCXX_USE_CXX11_ABI=1!
+            if {[catch {eval [getMacroSetter /usr/bin/g++ "_GLIBCXX_USE_DUAL_ABI"]} err]} {
+                ui_debug "Failed to determine libstdc++ support for dual ABIs: ${err}"
+                ui_debug "Assuming support has NOT been built in"
+                set _GLIBCXX_USE_DUAL_ABI 0
+            }
+            ui_debug "System libstdc++ sets _GLIBCXX_USE_DUAL_ABI=${_GLIBCXX_USE_DUAL_ABI}"
             if {[catch {eval [getABISetter /usr/bin/g++]} err]} {
                 ui_debug "Failed to determine the libstdc++ ABI in use: ${err}"
                 ui_debug "Assuming a modern system that doesn't disable the dual ABI"
@@ -101,7 +114,11 @@ platform linux {
                     }
                 }
                 if {![info exists stdcxxabi.is_gcc_internal]} {
+                    # check if we use a compiler using a libstdc++ build that supports the 2 ABIs
+                    # Currently that's macports-gcc*, clang using the macports-libstdc++ or any
+                    # compiler using the system libstdc++ if _GLIBCXX_USE_DUAL_ABI is true.
                     if {[string match macports-gcc* ${configure.compiler}]
+                            || ${stdcxxabi::_GLIBCXX_USE_DUAL_ABI}
                             || ${configure.cxx_stdlib} eq "libstdc++_macports"
                             || ${configure.cxx_stdlib} eq "macports-libstdc++"} {
                         depends_lib-append port:libgcc
@@ -123,10 +140,17 @@ platform linux {
                             if {${configure.cxx_stdlib} ne ""} {
                                 ui_debug "Checking resulting ABI: [stdcxxabi::getABISetter ${configure.cxx} ${define} -stdlib=${configure.cxx_stdlib}]"
                             } else {
-                                ui_debug "Checking resulting ABI: set currentABI [stdcxxabi::getABISetter ${configure.cxx} ${define}]"
+                                ui_debug "Checking resulting ABI: set currentABI with [stdcxxabi::getABISetter ${configure.cxx} ${define}]"
                             }
                         }
                     }
+                }
+                pre-configure {
+                    ui_debug "####################################"
+                    ui_debug "Reminder about the system libstdc++:"
+                    ui_debug "_GLIBCXX_USE_DUAL_ABI=${stdcxxabi::_GLIBCXX_USE_DUAL_ABI}"
+                    ui_debug "_GLIBCXX_USE_CXX11_ABI=${stdcxxabi::_GLIBCXX_USE_CXX11_ABI}"
+                    ui_debug "####################################"
                 }
             } else {
                 ui_debug "Build against libc++ requested; ignoring stdcxxabi.dependencies_concerned_by_ABI\
