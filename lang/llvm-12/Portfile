@@ -7,6 +7,7 @@ PortGroup active_variants             1.1
 PortGroup LTO                         1.0
 PortGroup cmake                       1.1
 PortGroup legacysupport               1.0
+PortGroup conflicts_build             1.0
 
 # optional support for HFS-compression of the source and build dirs
 if {[file exists ${cmake::currentportgroupdir}/compress_workdir-1.0.tcl]} {
@@ -67,7 +68,7 @@ variant no_libcxx description {don't build/install with embedded libc++ (also us
 default_variants-append +no_libcxx
 # conflicts_build-append  libcxx-dev
 
-# We can't (CAN?!) use Ninja with our custom destrooting plan for llvm
+# We CAN use Ninja with our custom destrooting plan for llvm but we just need to know the proper install targets
 cmake.generator         Ninja
 build.pre_args-prepend  -k 0
 cmake.install_prefix    ${sub_prefix}
@@ -97,6 +98,62 @@ if {![variant_isset no_libcxx]} {
         port:libcxx-dev
 }
 
+# if {[string match macports-gcc* ${configure.compiler}]} {
+#     # building llvm-9.0 with g++ -stdlib=libc++ no worky...
+#     # TODO: figure out the best way to require a variant that uses libstdc++ by default.
+#     # because the cxxflag addition will be filtered out by "base" >:(
+#     # Or nevermind because GCC12 with default libstdc usages fails to build clang-12 
+#     configure.cxxflags-append   -stdlib=libstdc++
+#     configure.ldflags-append    -stdlib=libstdc++
+#     variant gcc description {automatic variant signalling that the port was built with gcc} {}
+#     default_variants-append +gcc
+#     if {![variant_isset gcc]} {
+#         ui_error "+gcc should be set when building with ${configure.cxx}!"
+#         pre-configure {
+#             return -code error "Invalid compiler/variant combination!"
+#         }
+#     }
+# } elseif {[variant_isset gcc]} {
+#     ui_error "+gcc should not be set when building with ${configure.cxx}!"
+#     pre-configure {
+#         return -code error "Invalid compiler/variant combination!"
+#     }
+# }
+
+## Experimental: build with -stdlib=libstdc++_macports
+if {![catch {set clang_non_gnuxx [active_variants clang-${llvm_version} {} gnuxx]} err]} {
+    set conflicts_check yes
+}
+if {[string match *macports-libstdc* ${configure.optflags}] || ${configure.cxx_stdlib} eq "macports-libstdc++"} {
+    ui_warn "Port:clang-${llvm_version} won't build with -stdlib=macports-libstdc++!"
+    pre-configure {
+        return -code error "Invalid C++ runtime specification!"
+    }
+} elseif {[string match *libstdc++_macports* ${configure.optflags}] || ${configure.cxx_stdlib} eq "libstdc++_macports"} {
+    variant gnuxx description {automatic variant signalling that the port was built with gcc} {}
+    default_variants-append +gnuxx +lld
+    if {![variant_isset gnuxx]} {
+        ui_warn "+gnuxx should be set when building with -stdlib=libstdc++_macports!"
+        pre-configure {
+            return -code error "Invalid C++ runtime/variant combination!"
+        }
+    }
+    configure.ldflags-append -stdlib=libstdc++_macports
+} elseif {[variant_isset gnuxx]} {
+    ui_warn "+gnuxx should not be set when building without -stdlib=libstdc++_macports!"
+    pre-configure {
+        return -code error "Invalid C++ runtime/variant combination!"
+    }
+}
+if {[tbool conflicts_check]} {
+    if {[variant_exists gnuxx] && [tbool clang_non_gnuxx]} {
+        conflicts_build-append clang-${llvm_version}
+    }
+}
+if {[string match *clang* ${configure.cc}] && ![variant_isset use_lld]} {
+    configure.ldflags-append -fuse-ld=ld
+}
+
 configure.args-append \
     -DLLVM_LINK_LLVM_DYLIB=ON \
     -DLLVM_ENABLE_RTTI=ON \
@@ -105,6 +162,10 @@ configure.args-append \
     -DLLVM_ENABLE_FFI=ON \
     -DFFI_INCLUDE_DIR=${prefix}/include \
     -DFFI_LIBRARY_DIR=${prefix}/lib
+# Go and ocaml are not dependencies so disable building bindings for them gratuitously
+configure.args-append \
+    -DLLVM_INCLUDE_GO_TESTS=OFF \
+    -DLLVM_ENABLE_BINDINGS=OFF
 
 
 # cctools is needed to handle objects from newer clang toolchains
@@ -174,7 +235,8 @@ if {${os.platform} eq "darwin" && ${os.major} < 10} {
 # RJVB
 patchfiles-append \
     patch-accept-build_types.diff \
-    patch-RTLD_FIRST.diff
+    patch-RTLD_FIRST.diff \
+    patch-allow-libstdcxx_macports.diff
 
 post-patch {
     if {![variant_exists dummy] || ![variant_isset dummy]} {
@@ -341,7 +403,7 @@ if {${subport} eq "clang-${llvm_version}"} {
             file delete -force ${worksrcpath}/lldb
         }   
         configure.args-append   \
-            -DLLVM_ENABLE_PROJECTS="${polly}clang\;clang-tools-extra\;compiler-rt\;libcxx\;libcxxabi\;mlir"
+            -DLLVM_ENABLE_PROJECTS="${polly}clang\;clang-tools-extra\;compiler-rt\;libcxx\;libcxxabi"
     }
 
     if {${os.major} <= 18} {
@@ -365,8 +427,9 @@ if {${subport} eq "clang-${llvm_version}"} {
         configure.args-append    -DCOMPILER_RT_BUILD_MEMPROF=OFF
     }
 
-    if {${os.major} <= 11} {
+    if {${os.major} <= 11 || [string match macports-gcc-* ${configure.compiler}]} {
         # xpc.h available 10.7 but doesn't support nullable features
+        # GCC doesn't have 'blocks' support
         configure.args-append    -DCLANGD_BUILD_XPC=OFF
     }
 
@@ -523,10 +586,10 @@ if {${subport} eq "clang-${llvm_version}"} {
     }
     destroot.pre_args-append \
             tools/clang/install \
-            tools/mlir/install \
             projects/compiler-rt/install
     if {[variant_isset flang]} {
         destroot.pre_args-append \
+            tools/mlir/install \
             tools/flang/install
     }
     if {![variant_isset no_libcxx]} {
@@ -590,6 +653,8 @@ post-destroot {
 
         # http://trac.macports.org/ticket/33207
         ln -s ${prefix}/libexec/ld64/ld ${destroot}${sub_prefix}/bin/ld
+        # from MacStrop's port:lld-17 :
+        ln -s ${prefix}/bin/ld64.lld ${destroot}${sub_prefix}/bin/
     }
     
     if {${subport} eq "lldb-${llvm_version}"} {
@@ -613,12 +678,6 @@ if {${subport} eq "clang-${llvm_version}"} {
             patch-config-availability+ABIhiding.diff
     }
 
-# lld-for-Mac isn't yet evolved enough in this llvm release
-#     variant lld description "configure to use lld-${suffix} as the default linker" {
-#         configure.args-append \
-#             -DCLANG_DEFAULT_LINKER=lld
-#     }
-
     variant analyzer description {Install clang static analyser} {
         # these have to be switched on or off together
         configure.args-replace -DCLANG_ENABLE_STATIC_ANALYZER=OFF \
@@ -637,6 +696,17 @@ if {${subport} eq "clang-${llvm_version}"} {
     }
 
     variant flang description {build flang, a Fortran pre-compiler} {}
+
+    variant lld description "configure to use lld as the default linker" {}
+    if {[variant_isset lld]} {
+        configure.args-append \
+            -DCLANG_DEFAULT_LINKER=lld
+        # MacStrop provides a current lld via port:llb-17
+        depends_run-append path:bin/ld64.lld:lld-17
+    } else {
+        configure.args-append \
+            -UCLANG_DEFAULT_LINKER
+    }
 
     # Avoid requiring a bootstrap version of perl5 on 10.6.
     if {${os.major} >= 11} {
