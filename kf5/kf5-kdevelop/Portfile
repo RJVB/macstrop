@@ -111,15 +111,22 @@ if {(${subport} eq "${name}-${PARSER}") || (${subport} eq "${name}-${PARSER}-dev
         configure.cppflags-append \
                     -DNO_UNKNOWNDECLARATION_PROBLEM_SUPPORT
     }
-    variant system conflicts description "Use the system LLVM/Clang for the C/C++ parser (must be >= v3.8)" {}
-    set lldversions {6.0 7.0 8.0 9.0}
+    variant system conflicts description "Use the system LLVM/Clang for the C/C++ parser" {}
+    set lldversions {6.0 7.0 8.0 9.0 12 15 16 17}
     set llvariant ""
+    proc llvm_branch {ldv} {
+        if {${ldv} < 10} {
+            return [join [lrange [split ${ldv} .] 0 1] ""]
+        } else {
+            return "${ldv}0"
+        }
+    }
     foreach ldv ${lldversions} {
-        set llv [join [lrange [split ${ldv} .] 0 1] ""]
+        set llv [llvm_branch ${ldv}]
         set conflist ""
         foreach v ${lldversions} {
             if {${v} ne ${ldv}} {
-                set v [join [lrange [split ${v} .] 0 1] ""]
+                set v [llvm_branch ${v}]
                 set conflist "${conflist} llvm${v}"
             }
         }
@@ -133,12 +140,23 @@ if {(${subport} eq "${name}-${PARSER}") || (${subport} eq "${name}-${PARSER}-dev
                     +llvm60
     }
     foreach ldv ${lldversions} {
-        set llv [join [lrange [split ${ldv} .] 0 1] ""]
+        set llv [llvm_branch ${ldv}]
         if {[variant_isset llvm${llv}]} {
             depends_lib-append \
                 port:llvm-${ldv} port:clang-${ldv}
             configure.args-append \
                 -DLLVM_ROOT=${prefix}/libexec/llvm-${ldv}
+            if {${os.platform} eq "darwin" && [string match macports-gcc* ${configure.compiler}]} {
+                # this is a hack, for the even greater hack of building with GCC on Mac...
+                # The ObjC++ code in the tree won't build with G++ so we need to use clang. Since
+                # we already depend on port:clang-${ldv} we can just as well use the compiler provided
+                # by that port since it's supposed to be available.
+                configure.objc clang-mp-${ldv}
+                configure.objcxx clang++-mp-${ldv}
+                pre-configure {
+                    ui_warn "Building with ${configure.cxx} except for ObjC++ code that will be built with ${configure.objcxx}!"
+                }
+            }
         }
     }
 }
@@ -161,7 +179,7 @@ if {(${subport} eq "${name}-devel") || (${subport} eq "${name}-${PARSER}-devel")
     kf5.git.setup   kdevelop
     # after `git tag RJVB-v5.5.2 -a -m "RJVB 5.5.2 release tag" 291ab872fe78bdc08eba0e29e8bf7d38346b8cec`
     git.branch      e5caadeb82b84434503a88c678bd487d1672a33e
-    version         5.6.2.22 ; revision 3
+    version         5.6.2.22 ; revision 4
     epoch           543
     if {${subport} eq "${name}-${PARSER}-devel"} {
         worksrcdir  ${name}-clangparser-5
@@ -377,7 +395,7 @@ depends_build-append \
 
 if {${os.platform} eq "darwin"} {
     compiler.blacklist *gcc* {clang < 602} macports-clang-3.3 macports-clang-3.4 macports-clang-3.5
-    foreach clv {3.6 3.7 3.8 3.9 4.0 5.0 6.0} {
+    foreach clv {3.6 3.7 3.8 3.9 4.0 5.0 6.0 7.0 8.0 9.0 10 11 12} {
         if {[file exists ${prefix}/bin/clang-mp-${clv}]} {
             compiler.whitelist-prepend macports-clang-${clv}
         }
@@ -508,6 +526,14 @@ if {${subport} eq "${name}-devel" || ${subport} eq "${name}-${PARSER}-devel"} {
                     ${PPREFIX56d}/patch-lldb-qt-formatter.diff
     patchfiles-append \
                     ${PPREFIX56d}/patch-find-clangtidy.diff
+    # be compatible with newer astyle versions
+    patchfiles-append \
+                    ${PPREFIX56d}/patch-newer-astyle-compat.h
+    # on Mac the source tree will contain ObjC++. No need for special treatment
+    # as long as clang is used for the build, but GCC will choke on Apple's ObjC
+    # so we need to be able to set CMAKE_OBJCXX_COMPILER to something else
+    patchfiles-append \
+                    ${PPREFIX56d}/patch-mac-uses-objcxx-too.diff
 }
 
 if {${subport} eq ${name} || ${subport} eq "${name}-${PARSER}"} {
