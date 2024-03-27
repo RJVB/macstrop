@@ -318,8 +318,6 @@ default configure.pre_args {[list \
                     {*}[cmake::distccing] \
                     {-DCMAKE_C_COMPILER="$CC"} \
                     {-DCMAKE_CXX_COMPILER="$CXX"} \
-                    {-DCMAKE_OBJC_COMPILER="$CC"} \
-                    {-DCMAKE_OBJCXX_COMPILER="$CXX"} \
                     -DCMAKE_POLICY_DEFAULT_CMP0025=NEW \
                     -DCMAKE_POLICY_DEFAULT_CMP0060=NEW \
                     -DCMAKE_VERBOSE_MAKEFILE=ON \
