@@ -88,9 +88,10 @@ platform linux {
             }
         }
 
-        variant oldabi conflicts libcxx description {The old libstdc++ ABI will be used by default (#define _GLIBCXX_USE_CXX11_ABI 0)} {}
         if {![info exists stdcxxabi.is_gcc_internal]
                 && !([variant_exists libcxx] && [variant_isset libcxx])} {
+            variant oldabi conflicts libcxx description \
+                {The old libstdc++ ABI will be used by default (#define _GLIBCXX_USE_CXX11_ABI 0)} {}
             if {!${stdcxxabi::_GLIBCXX_USE_CXX11_ABI}} {
                 default_variants +oldabi
                 if {![variant_isset oldabi]} {
@@ -98,6 +99,11 @@ platform linux {
                     notes-append "\nvariant `oldabi` is unset; code generated against port:${subport} can fail to link with binaries generated against the system C++ runtime!"
                 }
             }
+        } else {
+            # The libcxx variant has a different meaning in GCC ports and we cannot have
+            # the oldabi variant declare a conflict here!
+            variant oldabi description \
+                {The old libstdc++ ABI will be used by default (#define _GLIBCXX_USE_CXX11_ABI 0)} {}
         }
 
         proc stdcxxabi::callback {} {
