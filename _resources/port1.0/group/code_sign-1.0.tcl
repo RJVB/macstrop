@@ -61,7 +61,7 @@ proc codesign {app {sign_identity 0} {sign_user ""} {preserve ""}} {
         set fd [open ${codesigning_conf} r]
         while {[gets $fd line] >= 0} {
             if {[regexp {^(\w+)([ \t]+(.*))?$} $line match option ignore val] == 1} {
-                ui_msg "Option ${option} set to ${val}"
+                ui_info "Option ${option} set to ${val}"
                 set ${option} ${val}
             }
         }

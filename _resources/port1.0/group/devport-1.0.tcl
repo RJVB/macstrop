@@ -412,12 +412,13 @@ proc create_devport {dependency} {
                         }
                         # we need to spawn/fork the actual install or else we'll be waiting
                         # indefinitely to obtain a lock on the registry!
+                        # NB: add the compiler definition so we can support the +builtwith variant from the LTO PG!
                         if {![catch {registry_active ${devport_name}}]} {
                             # a version of the devport is already active; we are certain that
                             # we can use the fastest safe solution: `upgrade --force`
                             set dpinstmode upgrade
                             notes-append "port:${devport_name}@${cVersion}_${cRevision}${cVariants} will be upgraded and activated"
-                            exec port -no ${dpinstmode} --force ${devport_name} ${cVariants} &
+                            exec port -no ${dpinstmode} --force ${devport_name} ${cVariants} configure.compiler=${configure.compiler}&
                         } else {
                             # the devport is not active or not installed. We want to use `archive`
                             # to keep it inactive after the install of this new version, but we
@@ -426,7 +427,7 @@ proc create_devport {dependency} {
                             set dpinstmode archive
                             notes-append "port:${devport_name}@${cVersion}_${cRevision}${cVariants} will be installed but not activated; you can do this manually if/when required"
                             exec sh -c "port -p -v uninstall ${devport_name}@${version}_${revision}${cVariants} ; \
-                                port -no ${dpinstmode} ${devport_name} ${cVariants}" &
+                                port -no ${dpinstmode} ${devport_name} ${cVariants} configure.compiler=${configure.compiler}" &
                         }
                     }
                 } else {
