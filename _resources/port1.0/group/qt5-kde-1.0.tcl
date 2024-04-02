@@ -383,8 +383,15 @@ global qt_qmake_spec_32
 global qt_qmake_spec_64
 
 if {${os.platform} eq "darwin"} {
-    set qt_qmake_spec_32        macx-clang-32
-    set qt_qmake_spec_64        macx-clang
+    if {[string match macports-gcc* ${configure.compiler}]} {
+        # probably no need to test for *gcc* as the system `gcc`/`g++` commands that are
+        # actually GNU GCC most certainly are too old to build modern Qt code.
+        set qt_qmake_spec_32        macx-g++
+        set qt_qmake_spec_64        macx-g++
+    } else {
+        set qt_qmake_spec_32        macx-clang
+        set qt_qmake_spec_64        macx-clang
+    }
 } elseif {${os.platform} eq "linux"} {
     if {[string match *clang* ${configure.compiler}]} {
         set qt_qmake_spec_32    linux-clang
@@ -404,8 +411,6 @@ if {${os.platform} eq "darwin"} {
     } else {
         set qt_qmake_spec_32    linux-g++
         set qt_qmake_spec_64    linux-g++-64
-#         compiler.blacklist-append \
-#                                 clang
     }
 } else {
     if {[string match *clang* ${configure.compiler}]} {
