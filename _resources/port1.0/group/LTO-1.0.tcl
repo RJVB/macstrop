@@ -184,24 +184,24 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
             LTO.configure.flags_append      ldflags "${configure.optflags} ${lto_flags}"
         } elseif {${build_arch} ne "i386"} {
             if {[info exists merger_configure_cflags(x86_64)]} {
-                set merger_configure_cflags(x86_64) "{*}$merger_configure_cflags(x86_64) {*}${lto_flags}"
+                set merger_configure_cflags(x86_64) "{*}$merger_configure_cflags(x86_64) ${lto_flags}"
             } else {
-                set merger_configure_cflags(x86_64) "{*}${lto_flags}"
+                set merger_configure_cflags(x86_64) "${lto_flags}"
             }
             if {[info exists merger_configure_cxxflags(x86_64)]} {
-                set merger_configure_cxxflags(x86_64) "{*}$merger_configure_cxxflags(x86_64) {*}${lto_flags}"
+                set merger_configure_cxxflags(x86_64) "{*}$merger_configure_cxxflags(x86_64) ${lto_flags}"
             } else {
-                set merger_configure_cxxflags(x86_64) "{*}${lto_flags}"
+                set merger_configure_cxxflags(x86_64) "${lto_flags}"
             }
             if {[info exists merger_configure_objcflags(x86_64)]} {
-                set merger_configure_objcflags(x86_64) "{*}$merger_configure_objcflags(x86_64) {*}${lto_flags}"
+                set merger_configure_objcflags(x86_64) "{*}$merger_configure_objcflags(x86_64) ${lto_flags}"
             } else {
-                set merger_configure_objcflags(x86_64) "{*}${lto_flags}"
+                set merger_configure_objcflags(x86_64) "${lto_flags}"
             }
             if {[info exists merger_configure_ldflags(x86_64)]} {
-                set merger_configure_ldflags(x86_64) "{*}$merger_configure_ldflags(x86_64) {*}${lto_flags}"
+                set merger_configure_ldflags(x86_64) "{*}$merger_configure_ldflags(x86_64) ${lto_flags}"
             } else {
-                set merger_configure_ldflags(x86_64) "{*}${lto_flags}"
+                set merger_configure_ldflags(x86_64) "${lto_flags}"
             }
             # ${configure.optflags} is a list, and that can lead to strange effects
             # in certain situations if we don't treat it as such here.
@@ -210,13 +210,15 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
             }
             set merger_arch_flag            yes
         }
-        platform darwin {
-            pre-configure {
-                LTO.set_lto_cache
-            }
-            if {[info exists LTO_needs_pre_build]} {
-                pre-build {
+        if {${os.platform} eq "darwin" && ![tbool LTO.allow_ThinLTO]} {
+            if {![variant_isset universal] || [tbool LTO_supports_i386]} {
+                pre-configure {
                     LTO.set_lto_cache
+                }
+                if {[info exists LTO_needs_pre_build]} {
+                    pre-build {
+                        LTO.set_lto_cache
+                    }
                 }
             }
         }
@@ -336,7 +338,7 @@ if {[info exists LTO_needs_pre_build]} {
 
 if {[tbool LTO.allow_UseLLD]} {
     if {${os.platform} eq "darwin"} {
-        variant use_lld description {use the LLD linker (not for 32bit building)} {}
+        variant use_lld conflicts universal description {use the LLD linker (not for 32bit building)} {}
     } else {
         variant use_lld description {use the LLD linker} {}
     }
@@ -361,6 +363,15 @@ if {[tbool LTO.allow_UseLLD]} {
                 ui_warn "+use_lld : the -fuse-ld may or may not be supported!"
                 LTO.configure.flags_append {ldflags} "-fuse-ld=${LLD}"
             }
+        }
+    }
+}
+if {![variant_exists use_lld] || ![variant_isset use_lld]} {
+    if {[string match "macports-clang*" ${configure.compiler}]} {
+        set cversion [string map {"macports-clang-" ""} ${configure.compiler}]
+        if {${cversion} >= 5} {
+            # simple, unconditional "don't use lld" for clang compilers built to use lld by default
+            LTO.configure.flags_append {ldflags} "-fuse-ld=ld"
         }
     }
 }
