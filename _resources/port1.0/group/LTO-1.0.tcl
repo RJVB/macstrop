@@ -44,8 +44,8 @@ if {[variant_exists LTO]} {
 } else {
     variant LTO description {build with link-time optimisation} {}
 }
-options LTO_supports_i386
-default LTO_supports_i386 yes
+options LTO.supports_i386
+default LTO.supports_i386 yes
 
 namespace eval LTO {}
 
@@ -173,7 +173,7 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
             }
         }
         ui_debug "LTO: setting LTO compiler and linker option(s) \"${lto_flags}\""
-        if {![variant_isset universal] || [tbool LTO_supports_i386]} {
+        if {![variant_isset universal] || [tbool LTO.supports_i386]} {
             LTO.configure.flags_append      {cflags \
                                             cxxflags \
                                             objcflags \
@@ -182,7 +182,7 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
             # ${configure.optflags} is a list, and that can lead to strange effects
             # in certain situations if we don't treat it as such here.
             LTO.configure.flags_append      ldflags "${configure.optflags} ${lto_flags}"
-        } elseif {${build_arch} ne "i386"} {
+        } else { # checking build_arch probably won't do what I thought here #  if {${build_arch} ne "i386"} 
             if {[info exists merger_configure_cflags(x86_64)]} {
                 set merger_configure_cflags(x86_64) "{*}$merger_configure_cflags(x86_64) ${lto_flags}"
             } else {
@@ -211,7 +211,7 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
             set merger_arch_flag            yes
         }
         if {${os.platform} eq "darwin" && ![tbool LTO.allow_ThinLTO]} {
-            if {![variant_isset universal] || [tbool LTO_supports_i386]} {
+            if {![variant_isset universal] || [tbool LTO.supports_i386]} {
                 pre-configure {
                     LTO.set_lto_cache
                 }
