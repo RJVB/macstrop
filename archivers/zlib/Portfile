@@ -2,7 +2,8 @@
 
 PortSystem              1.0
 PortGroup               xcodeversion 1.0
-PortGroup               LTO 1.0
+set LTO.allow_ThinLTO   no
+set LTO_supports_i386   no
 
 name                    zlib
 version                 1.2.11
@@ -34,6 +35,7 @@ use_parallel_build      yes
 test.run                yes
 
 if {![variant_isset ng] && ![variant_isset cloudflare]} {
+    PortGroup           LTO 1.0
     # don't muck with this setting for the +ng variant (or it will destroot directly into ${prefix})
     destroot.destdir    prefix=${destroot}${prefix}
 }
@@ -62,9 +64,17 @@ post-destroot {
 
 variant ng conflicts cloudflare description {provides the "Next Generation" zlib-ng project} {}
 if {[variant_isset ng]} {
+    if {![file exists ${prefix}/bin/cmake]} {
+        pre-fetch {
+            ui_error "Please install the standard zlib first in order to install cmake"
+            return -code error "Bootstrap required"
+        }
+    }
     PortGroup           github 1.0
+    PortGroup           muniversal-rjvb 1.0
+    PortGroup           LTO 1.0
+    PortGroup           save_configure_cmd 1.0
     PortGroup           cmake 1.1
-    PortGroup           muniversal 1.0
     long_description-append This variant provides the \"Next Generation\" zlib-ng library\; \
                         zlib version v1.3.1 with \"NG\" additions v2.1.6 . Built in \"COMPAT\" \
                         mode in order to provide a drop-in replacement.
@@ -78,14 +88,34 @@ if {[variant_isset ng]} {
     worksrcdir          ${distname}
     homepage            https://github.com/zlib-ng/zlib-ng
     depends_build-append \
-                        port:cpuid
+                        port:cpuid \
+                        port:gtest
+
+    variant advuni requires universal description {use port:clang-9 for the i386 build. Allows using GCC for the current build arch.} {}
+
+    if {[variant_isset advuni] && [string match macports-gcc-12 ${configure.compiler}]} {
+        # we'll be using the system clang for the 32-bit part of the build
+        depends_skip_archcheck-append gcc12 libgcc12
+    }
 
     patch.pre_args      -Np1
+    # The build of the examples and tests can fail for unclear reasons when using clang > 9.0 with -flto
+    # and the standard configuration that builds shared + static libs but uses the latter in the examples and tests.
+    # Possibly because the buildsystem inserts -fno-lto unless -DWITH_NATIVE_INSTRUCTIONS=ON .
+    # There's only support for -DBUILD_SHARED_LIBS; add it for -DBUILD_STATIC_LIBS
+    # patchfiles-append   ng/patch-cmakefile.diff
 
     compiler.c_standard 2011
 
-    cmake.save_configure_cmd "install log"
+    configure.cflags-delete \
+                        -isystem${prefix}/include
+    configure.cxxflags-delete \
+                        -isystem${prefix}/include
+    configure.ldflags-delete \
+                        -L${prefix}/lib
     configure.args-append \
+                        -DFORCE_SSE2=OFF \
+                        -DWITH_NATIVE_INSTRUCTIONS=OFF \
                         -DZLIB_COMPAT:BOOL=ON \
                         -DWITH_GZFILEOP:BOOL=ON \
                         -DZLIB_DUAL_LINK=OFF \
@@ -93,6 +123,51 @@ if {[variant_isset ng]} {
                         -DWITH_FUZZERS=ON \
                         -DWITH_BENCHMARKS=ON \
                         -DWITH_BENCHMARK_APPS=OFF
+#     if {[variant_isset LTO]} {
+#         if {![variant_isset cputuned]} {
+#             platform darwin {
+#                 pre-configure {
+#                     ui_warn "The build has been known to fail with +LTO but without +cputuned and clang versions > 9.0"
+#                     ui_warn "Continuing, but you have been warned."
+#                 }
+#             }
+#         } else {
+#             LTO.cpuflags-delete \
+#                         -march=native
+#             configure.cflags-delete \
+#                         -march=native
+#             configure.cxxflags-delete \
+#                         -march=native
+#             # this also drops the different intrinsic benchmarks from benchmark_zlib...
+#             configure.args-replace \
+#                         -DWITH_NATIVE_INSTRUCTIONS=OFF \
+#                         -DWITH_NATIVE_INSTRUCTIONS=ON
+#         }
+#     }
+    variant native conflicts cputuned cpucompat description {instruct the compiler to use the full instruction set on this host} {}
+    if {[variant_isset native]} {
+        configure.args-replace \
+                            -DWITH_NATIVE_INSTRUCTIONS=OFF \
+                            -DWITH_NATIVE_INSTRUCTIONS=ON
+    }
+
+    if {![catch {system "${prefix}/bin/cpuid | fgrep -i sse2 > /dev/null"} has_sse2]} {
+        if {![variant_isset universal]} {
+            if {${build_arch} eq "x86_64" || ${build_arch} eq "i386"} {
+                configure.args-replace \
+                            -DFORCE_SSE2=OFF \
+                            -DFORCE_SSE2=ON
+            }
+        } else {
+            configure.args-delete \
+                            -DFORCE_SSE2=OFF
+            set merger_configure_args(ppc)      -DFORCE_SSE2=OFF
+            set merger_configure_args(ppc64)    -DFORCE_SSE2=OFF
+            set merger_configure_args(arm64)    -DFORCE_SSE2=OFF
+            set merger_configure_args(i386)     -DFORCE_SSE2=ON
+            set merger_configure_args(x86_64)   -DFORCE_SSE2=ON
+        }
+    }
     pre-configure {
         if {[catch {system "${prefix}/bin/cpuid | fgrep -i sse4.2 > /dev/null"} has_sse4]} {
             ui_warn "Your CPU doesn't have the SSE4.2 instruction set: ${has_sse4}"
@@ -105,14 +180,83 @@ if {[variant_isset ng]} {
 #                        -mno-pclmul
         }
     }
+    if {${os.platform} eq "darwin"} {
+        if {[info exists env(DYLD_LIBRARY_PATH)]} {
+            set DYLD_LIBRARY_PATH ":$env(DYLD_LIBRARY_PATH)"
+        } else {
+            set DYLD_LIBRARY_PATH ""
+        }
+    } else {
+        if {[info exists env(LD_LIBRARY_PATH)]} {
+            set LD_LIBRARY_PATH ":$env(LD_LIBRARY_PATH)"
+        } else {
+            set LD_LIBRARY_PATH ""
+        }
+    }
+    if {[variant_isset universal]} {
+        if {[variant_isset advuni]} {
+            depends_build-append    port:clang-9.0
+            depends_skip_archcheck-append clang-9.0 llvm-9.0
+            case ${build_arch} {
+                "x86_64" {
+                    set merger_configure_compiler(i386)     "macports-clang-9.0"
+                    set merger_configure_compiler(arm64)    "macports-clang-9.0"
+                }
+                "arm64" {
+                    set merger_configure_compiler(i386)     "macports-clang-9.0"
+                    set merger_configure_compiler(x86_64)   "macports-clang-9.0"
+                }
+                "i386" {
+                    set merger_configure_compiler(x86_64)   "macports-clang-9.0"
+                    set merger_configure_compiler(arm64)    "macports-clang-9.0"
+                }
+            }
+        }
+        # this can save the configure log from the main.log
+        configure.save_configure_cmd "install log"
+        # set the shared library search path. We can simply add all potential build dirs here.
+        test.env-append \
+            "DYLD_LIBRARY_PATH=${workpath}/build-x86_64:${workpath}/build-i386:${workpath}/build-arm64${DYLD_LIBRARY_PATH}"
+        post-test {
+            set b test/benchmarks/benchmark_zlib
+            foreach a {i386 x86_64 arm64} {
+                if {[file exists ${workpath}/build-${a}/${b}]} {
+                    system -W ${workpath} "build-${a}/${b}"
+                }
+            }
+        }
+    } else {
+        cmake.save_configure_cmd "install log"
+        if {${os.platform} eq "darwin"} {
+            test.env-append \
+                "DYLD_LIBRARY_PATH=${build.dir}${DYLD_LIBRARY_PATH}"
+        } else {
+            test.env-append \
+                "LD_LIBRARY_PATH=${build.dir}${LD_LIBRARY_PATH}"
+        }
+        post-test {
+            set b test/benchmarks/benchmark_zlib
+            if {[file exists ${build.dir}/${b}]} {
+                system -W ${build.dir} "${b}"
+            }
+        }
+    }
 }
 
 global cloudflare-commit
 variant cloudflare conflicts ng description {Applies CloudFlare's patches to use SSE for accelerated compression. \
                             Note it is not 100% certain the zlib license continues to apply to this variant!} {}
 if {[variant_isset cloudflare]} {
+    if {![file exists ${prefix}/bin/cmake]} {
+        pre-fetch {
+            ui_error "Please install the standard zlib first in order to install cmake"
+            return -code error "Bootstrap required"
+        }
+    }
     PortGroup               github 1.0
-    PortGroup               muniversal 1.0
+    PortGroup               muniversal-rjvb 1.0
+    PortGroup               LTO 1.0
+    PortGroup               save_configure_cmd 1.0
     PortGroup               cmake 1.1
     long_description-append This variant has the CloudFlare patches for SSE accelerated compression
     # This version contains a GPL'ed assembly file which may be incorporated. Just add GPL2+ to the license info.
@@ -127,26 +271,29 @@ if {[variant_isset cloudflare]} {
     distname                zlib-cloudflare
     worksrcdir              ${distname}
     depends_build           port:cpuid
+
+    variant advuni requires universal description {use the system clang for the i386 build. May be required to get valid compression using the i386 architecture!} {}
+
     if {[catch {system "${prefix}/bin/cpuid | fgrep -i sse4.2 > /dev/null"} has_sse4]} {
         set has_sse4 no
     } else {
         set has_sse4 yes
-#         configure.optflags-append \
-#                             -msse4
     }
-# SSE4.2 is no longer a requirement (with the CMake build system??)
-#     pre-fetch {
-#         if {!${has_sse4}} {
-#             ui_error "Error checking for the SSE4.2 instruction set: ${has_sse4}"
-#             return -code error "Your CPU doesn't seem to have the SSE4.2 instruction set: please install the regular zlib port"
-#         }
-#     }
+    pre-fetch {
+        if {!${has_sse4}} {
+            ui_error "Error checking for the SSE4.2 instruction set: ${has_sse4}"
+            return -code error "Your CPU doesn't seem to have the SSE4.2 instruction set: please install the regular zlib port"
+        }
+    }
+
     patch.pre_args          -Np1
     patchfiles              cloudflare/patch-restore-uLong-API.diff \
-                            cloudflare/patch-build-staticlib-too.diff
+                            cloudflare/patch-build-staticlib-too.diff \
+                            cloudflare/patch-disable-pclmul-option.diff
 
-    cmake.save_configure_cmd "install log"
-    configure.args-append   -DBUILD_SHARED_LIBS=ON \
+
+    configure.args-append \
+                            -DBUILD_SHARED_LIBS=ON \
                             -DBUILD_EXAMPLES=ON
 
     if {${build_arch} eq "i386" || [catch {system "${prefix}/bin/cpuid | fgrep -i pclmul"} has_pclmul]} {
@@ -154,11 +301,18 @@ if {[variant_isset cloudflare]} {
     } else {
         set has_pclmul yes
     }
-#     if {!${has_pclmul}} {
-#         ui_warn "Your CPU or build architecture doesn't support the PCLMUL code"
-#         configure.cflags-append             "-no-pclmul -UHAS_PCLMUL -DHAS_SSE42"
-#     }
-#     if {[variant_isset universal]} {
+    if {[variant_isset universal]} {
+        # this can save the configure log from the main.log
+        configure.save_configure_cmd "install log"
+
+        if {[variant_isset advuni] && [string match macports-gcc-12 ${configure.compiler}]} {
+            # we'll be using the system clang for the 32-bit part of the build
+            depends_skip_archcheck-append gcc12 libgcc12
+        }
+
+        # make sure we don't introduce a -mpclmul argument; the CMake file will add one if appropriate for the 64bit build
+        #configure.cflags-delete -mpclmul
+        #LTO.cpuflags-delete     -mpclmul ui_warn "cflags=${configure.cflags}"
 #         if {${has_pclmul}} {
 #             # only on 64bit!
 #             set merger_configure_cflags(i386)   "-mno-pclmul -UHAS_PCLMUL -DHAS_SSE42"
@@ -166,7 +320,13 @@ if {[variant_isset cloudflare]} {
 #         }
 #         set merger_configure_args(i386)     "--target=i386"
 #         set merger_configure_args(x86_64)   "--target=x86_64"
-#     }
+        if {[variant_isset advuni]} {
+            # overriding the compiler if the user passed "configure.compiler=??" on the commandline requires muniversal-rjvb !
+            set merger_configure_compiler(i386) "clang"
+        }
+    } else {
+        cmake.save_configure_cmd "install log"
+    }
 
     post-destroot {
         set docdir ${prefix}/share/doc/${name}
