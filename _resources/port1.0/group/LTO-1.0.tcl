@@ -250,10 +250,10 @@ if {[string match *clang* ${configure.compiler}]} {
         }
     }
     if {${os.platform} ne "darwin" \
-        && [string match macports-clang* ${configure.compiler}]
-        && [LTO::variant_enabled LTO]} {
+            && [string match macports-clang* ${configure.compiler}]
+            && [LTO::variant_enabled LTO]} {
         ## clang on ~Darwin doesn't like -Os -flto so remove that flag from the initial C*FLAGS
-	   ui_warn "Changing -Os for -O2 because of +LTO"
+        ui_warn "Changing -Os for -O2 because of +LTO"
         configure.cflags-replace -Os -O2
         configure.objcflags-replace -Os -O2
         configure.cxxflags-replace -Os -O2
