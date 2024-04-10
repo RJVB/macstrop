@@ -58,6 +58,14 @@ proc LTO::variant_enabled {v} {
     }
 }
 
+if {[string match "macports-clang*" ${configure.compiler}]} {
+    set LTO::mp_compiler_version [string map {"macports-clang-" ""} ${configure.compiler}]
+} elseif {[string match "macports-gcc*" ${configure.compiler}]} {
+    set LTO::mp_compiler_version [string map {"macports-gcc-" ""} ${configure.compiler}]
+} else {
+    set LTO::mp_compiler_version -1
+}
+
 # Set up AR, NM and RANLIB to prepare for +LTO even if we don't end up using it
 options configure.ar \
         configure.nm \
@@ -80,6 +88,7 @@ if {![info exists LTO.allow_UseLLD]} {
     set LTO.allow_UseLLD yes
 }
 
+## NB: clang also supports -ffat-lto-objects from v17 and up
 if {![info exists LTO.fat_LTO_Objects]} {
     set LTO.fat_LTO_Objects no
 }
@@ -161,6 +170,9 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
                 set lto_flags           "-flto=thin"
             } else {
                 set lto_flags           "-flto"
+            }
+            if {[tbool LTO.fat_LTO_Objects] && (${LTO::mp_compiler_version} >= 17)} {
+                set lto_flags           "${lto_flags} -ffat-lto-objects"
             }
         } else {
             if {${os.platform} eq "linux"} {
@@ -351,9 +363,8 @@ if {[tbool LTO.allow_UseLLD]} {
             set LLD "${prefix}/bin/ld.lld-mp-12"
         }
         if {[string match "macports-clang*" ${configure.compiler}]} {
-            set cversion [string map {"macports-clang-" ""} ${configure.compiler}]
             # TODO: figure out when --ld-path= was introduced ...
-            if {${cversion} >= 15} {
+            if {${LTO::mp_compiler_version} >= 15} {
                 LTO.configure.flags_append {ldflags} "-fuse-ld=lld --ld-path=${LLD}"
             } else {
                 LTO.configure.flags_append {ldflags} "-fuse-ld=${LLD}"
@@ -368,8 +379,7 @@ if {[tbool LTO.allow_UseLLD]} {
 }
 if {![variant_exists use_lld] || ![variant_isset use_lld]} {
     if {[string match "macports-clang*" ${configure.compiler}]} {
-        set cversion [string map {"macports-clang-" ""} ${configure.compiler}]
-        if {${cversion} >= 5} {
+        if {${LTO::mp_compiler_version} >= 5} {
             # simple, unconditional "don't use lld" for clang compilers built to use lld by default
             LTO.configure.flags_append {ldflags} "-fuse-ld=ld"
         }
