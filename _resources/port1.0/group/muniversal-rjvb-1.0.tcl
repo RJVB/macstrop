@@ -713,9 +713,28 @@ variant universal {
                         } else {
                             # Actually try to merge the files
                             # First try lipo, then libtool
+## to help lipo: if arch1 in dir1 -> "-arch arch1", idem for dir2
+                            if {[string last "-${arch1}" ${dir1}] > 0} {
+                                ui_debug "arch1 \"${arch1}\" found in \"${dir1}\"; assuming \"-arch ${arch1}\" is a valid lipo option"
+                                set arch1opt "-arch ${arch1}"
+                            } else {
+                                ui_debug "arch1 \"${arch1}\" not found in \"${dir1}\""
+                                set arch1opt ""
+                            }
+                            if {[string last "-${arch2}" ${dir2}] > 0} {
+                                ui_debug "arch2 \"${arch2}\" found in \"${dir2}\"; assuming \"-arch ${arch2}\" is a valid lipo option"
+                                set arch2opt "-arch ${arch2}"
+                            } else {
+                                ui_debug "arch2 \"${arch2}\" not found in \"${dir2}\""
+                                set arch2opt ""
+                            }
                             if { ! [catch {system "${lipo_cmd} -create \"${dir1}/${fl}\" \"${dir2}/${fl}\" -output \"${dir}/${fl}\""}] } {
                                 # lipo worked
                                 ui_debug "universal: merge: ${lipo_cmd} created ${prefixDir}/${fl}"
+                            } elseif { ! [catch {system "${lipo_cmd} -create ${arch1opt} \"${dir1}/${fl}\" ${arch2opt} \"${dir2}/${fl}\" -output \"${dir}/${fl}\""}] } {
+                                # lipo worked with some help
+                                system "file \"${dir}/${fl}\""
+                                ui_debug "universal: merge: ${lipo_cmd} ${arch1opt},${arch2opt} created ${prefixDir}/${fl}"
                             } elseif { ! [catch {system "${libtool_cmd} \"${dir1}/${fl}\" \"${dir2}/${fl}\" -o \"${dir}/${fl}\""}] } {
                                 # libtool worked
                                 ui_debug "universal: merge: ${libtool_cmd} created ${prefixDir}/${fl}"
@@ -750,7 +769,7 @@ variant universal {
                                     switch -glob ${fl} {
                                         *.mod {
                                             # .mod files from Fortran modules.
-                                            # Create a sepcial module directory for each architecture.
+                                            # Create a special module directory for each architecture.
                                             # To find these modules, GFortran might require -M or -J.
                                             file mkdir ${dir}/mods32
                                             file mkdir ${dir}/mods64
