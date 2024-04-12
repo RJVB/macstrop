@@ -1,0 +1,202 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
+PortSystem              1.0
+PortGroup               xcodeversion 1.0
+PortGroup               github 1.0
+PortGroup               muniversal-rjvb 1.0
+set LTO.allow_ThinLTO   no
+set LTO.supports_i386   no
+set LTO.fat_LTO_Objects yes
+PortGroup               LTO 1.0
+PortGroup               save_configure_cmd 1.0
+PortGroup               cmake 1.1
+
+categories              archivers
+maintainers             gmail.com:rjvbertin  openmaintainer
+license                 zlib
+homepage                http://www.zlib.net/
+platforms               darwin linux freebsd
+
+description             zlib data compression library for the next generation systems
+
+long_description        The original zlib is designed to be a free, general-purpose, \
+                        legally unencumbered, lossless data-compression \
+                        library for use on virtually any computer hardware \
+                        and operating system.\n\
+                        This port provides the \"Next Generation\" zlib-ng library\; \
+                        zlib version v1.3.1 with \"NG\" additions v2.1.6 , NOT \
+                        built in compatibility mode and installing in parallel \
+                        to port:zlib
+
+# there are releases but development continues and is well-tested so safe to use
+github.setup            zlib-ng zlib-ng 3f35bfccff2d1dacdfe9844712be1e042d028700
+fetch.type              git
+name                    zlib-ng
+version                 2.1.6.100
+supported_archs         i386 x86_64 arm64
+distname                zlib-ng
+worksrcdir              ${distname}
+homepage                https://github.com/zlib-ng/zlib-ng
+
+minimum_xcodeversions   {8 2.4.1 9 3.1}
+
+configure.universal_args
+
+use_parallel_build      yes
+
+test.run                yes
+
+variant native conflicts cputuned cpucompat description {instruct the compiler to use the full instruction set on this host} {}
+
+if {![file exists ${prefix}/bin/cmake]} {
+    pre-fetch {
+        ui_error "Please install the standard zlib first in order to install cmake"
+        return -code error "Bootstrap required"
+    }
+}
+
+depends_build-append \
+                    port:cpuid \
+                    port:gtest
+
+variant advuni requires universal description {use port:clang-9 for the i386 build. Allows using GCC for the current build arch.} {}
+
+if {[variant_isset advuni]} {
+    if {[string match macports-gcc-12 ${configure.compiler}]} {
+        # we'll be using the system clang for the 32-bit part of the build
+        depends_skip_archcheck-append gcc12 libgcc12
+    } elseif {[string match macports-gcc-13 ${configure.compiler}]} {
+        # we'll be using the system clang for the 32-bit part of the build
+        depends_skip_archcheck-append gcc13 libgcc13
+    }
+}
+
+patch.pre_args      -Np1
+# The build of the examples and tests can fail for unclear reasons when using clang > 9.0 with -flto
+# and the standard configuration that builds shared + static libs but uses the latter in the examples and tests.
+# Possibly because the buildsystem inserts -fno-lto unless -DWITH_NATIVE_INSTRUCTIONS=ON .
+# There's only support for -DBUILD_SHARED_LIBS; add it for -DBUILD_STATIC_LIBS
+# patchfiles-append   ng/patch-cmakefile.diff
+
+compiler.c_standard 2011
+
+configure.cflags-delete \
+                    -isystem${prefix}/include
+configure.cxxflags-delete \
+                    -isystem${prefix}/include
+configure.ldflags-delete \
+                    -L${prefix}/lib
+## Keep the cmake options (except ZLIB_COMPAT!) synced between port:zlib+ng and port:zlib-ng
+configure.args-append \
+                    -DFORCE_SSE2=OFF \
+                    -DWITH_NATIVE_INSTRUCTIONS=OFF \
+                    -DZLIB_COMPAT:BOOL=OFF \
+                    -DWITH_GZFILEOP:BOOL=ON \
+                    -DZLIB_DUAL_LINK=OFF \
+                    -DINSTALL_UTILS=ON \
+                    -DWITH_FUZZERS=ON \
+                    -DWITH_BENCHMARKS=ON \
+                    -DWITH_BENCHMARK_APPS=OFF
+if {[variant_isset native]} {
+    configure.args-replace \
+                        -DWITH_NATIVE_INSTRUCTIONS=OFF \
+                        -DWITH_NATIVE_INSTRUCTIONS=ON
+}
+
+if {![catch {system "${prefix}/bin/cpuid | fgrep -i sse2 > /dev/null"} has_sse2]} {
+    if {![variant_isset universal]} {
+        if {${build_arch} eq "x86_64" || ${build_arch} eq "i386"} {
+            configure.args-replace \
+                        -DFORCE_SSE2=OFF \
+                        -DFORCE_SSE2=ON
+        }
+    } else {
+        configure.args-delete \
+                        -DFORCE_SSE2=OFF
+        set merger_configure_args(ppc)      -DFORCE_SSE2=OFF
+        set merger_configure_args(ppc64)    -DFORCE_SSE2=OFF
+        set merger_configure_args(arm64)    -DFORCE_SSE2=OFF
+        set merger_configure_args(i386)     -DFORCE_SSE2=ON
+        set merger_configure_args(x86_64)   -DFORCE_SSE2=ON
+    }
+}
+pre-configure {
+    if {[catch {system "${prefix}/bin/cpuid | fgrep -i sse4.2 > /dev/null"} has_sse4]} {
+        ui_warn "Your CPU doesn't have the SSE4.2 instruction set: ${has_sse4}"
+    }
+    if {[catch {system "${prefix}/bin/cpuid | fgrep -i pclmul"} has_pclmul]} {
+        ui_warn "Your CPU or build architecture doesn't support the PCLMUL code"
+    }
+}
+
+if {${os.platform} eq "darwin"} {
+    if {[info exists env(DYLD_LIBRARY_PATH)]} {
+        set DYLD_LIBRARY_PATH ":$env(DYLD_LIBRARY_PATH)"
+    } else {
+        set DYLD_LIBRARY_PATH ""
+    }
+} else {
+    if {[info exists env(LD_LIBRARY_PATH)]} {
+        set LD_LIBRARY_PATH ":$env(LD_LIBRARY_PATH)"
+    } else {
+        set LD_LIBRARY_PATH ""
+    }
+}
+if {[variant_isset universal]} {
+    if {[variant_isset advuni]} {
+        depends_build-append    port:clang-9.0
+        depends_skip_archcheck-append clang-9.0 llvm-9.0
+        case ${build_arch} {
+            "x86_64" {
+                set merger_configure_compiler(i386)     "macports-clang-9.0"
+                set merger_configure_compiler(arm64)    "macports-clang-9.0"
+            }
+            "arm64" {
+                set merger_configure_compiler(i386)     "macports-clang-9.0"
+                set merger_configure_compiler(x86_64)   "macports-clang-9.0"
+            }
+            "i386" {
+                set merger_configure_compiler(x86_64)   "macports-clang-9.0"
+                set merger_configure_compiler(arm64)    "macports-clang-9.0"
+            }
+        }
+    }
+    # this can save the configure log from the main.log
+    configure.save_configure_cmd "install log"
+    # set the shared library search path. We can simply add all potential build dirs here.
+    test.env-append \
+        "DYLD_LIBRARY_PATH=${workpath}/build-x86_64:${workpath}/build-i386:${workpath}/build-arm64${DYLD_LIBRARY_PATH}"
+    post-test {
+        set b test/benchmarks/benchmark_zlib
+        foreach a {i386 x86_64 arm64} {
+            if {[file exists ${workpath}/build-${a}/${b}]} {
+                system -W ${workpath} "build-${a}/${b}"
+            }
+        }
+    }
+} else {
+    cmake.save_configure_cmd "install log"
+    if {${os.platform} eq "darwin"} {
+        test.env-append \
+            "DYLD_LIBRARY_PATH=${build.dir}${DYLD_LIBRARY_PATH}"
+    } else {
+        test.env-append \
+            "LD_LIBRARY_PATH=${build.dir}${LD_LIBRARY_PATH}"
+    }
+    post-test {
+        set b test/benchmarks/benchmark_zlib
+        if {[file exists ${build.dir}/${b}]} {
+            system -W ${build.dir} "${b}"
+        }
+    }
+}
+
+post-destroot {
+    set docdir ${prefix}/share/doc/${name}
+    xinstall -d ${destroot}${docdir}
+    xinstall -m 0644 -W ${worksrcpath} README.md ${destroot}${docdir}
+    file rename ${destroot}${prefix}/bin/minigzip ${destroot}${prefix}/bin/minigzip-ng
+    file rename ${destroot}${prefix}/bin/minideflate ${destroot}${prefix}/bin/minideflate-ng
+}
+
+# kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
