@@ -388,13 +388,13 @@ if {![variant_exists use_lld] || ![variant_isset use_lld]} {
 
 variant builtwith description {Label the install with the compiler used} {}
 if {[variant_isset builtwith]} {
-	set usedCompiler [string map {"-" "_"} [file tail ${configure.cc}]]
-	variant ${usedCompiler} requires builtwith description "placeholder variant to record the compiler used" {
-		pre-configure {
-			ui_warn "+builtwith+${usedCompiler} are just placeholder variants used only to label the install with the compiler used"
-		}
-	}
-	default_variants-append +${usedCompiler}
+    set usedCompiler [string map {"-" "_"} [file tail ${configure.cc}]]
+    variant ${usedCompiler} requires builtwith description "placeholder variant to record the compiler used" {
+        pre-configure {
+            ui_warn "+builtwith+${usedCompiler} are just placeholder variants used only to label the install with the compiler used"
+        }
+    }
+    default_variants-append +${usedCompiler}
 }
 
 proc LTO::callback {} {

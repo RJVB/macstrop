@@ -33,7 +33,8 @@
 # Usage:
 # PortGroup     devport 1.0
 
-options mainport_name devport_name devport_content devport_description devport_long_description devport_variants
+options mainport_name devport_name devport_content devport_description devport_long_description
+options devport_variants devport_excluded_variants
 default mainport_name               {${name}}
 default devport_name                {${mainport_name}-dev}
 default devport_content             ""
@@ -49,9 +50,14 @@ default devport_long_description    {"${long_description}\nThis installs the dev
 ## }
 # In this case, add `devport_variants foo1 foo2` above the `create_devport` line.
 default devport_variants            {}
+# And its complement, a variable to declare variants that are to be excluded
+# from the devport, for instance because they make no sense. NB: this variable
+# has to be set in common code or by the main port, NOT exclusively by the devport!!
+default devport_excluded_variants   {}
 
 # namespace eval dev {
     # it shouldn't be necessary to record variants in the archive name
+    # (NB: the one that's part of the main port!)
     options dev::archname dev::archdir dev::cachedir
     default dev::archname   {${mainport_name}@${version}-dev.tar.bz2}
     # this could go into the software images directory
@@ -76,8 +82,8 @@ proc dev::port_variants {} {
 
 # create the online devport content archive
 proc create_devport_content_archive {} {
-    global destroot prefix mainport_name devport_name dev::archdir dev::archname
-    global os.major os.platform portbuildpath portpath
+    global mainport_name devport_name dev::archdir dev::archname devport_excluded_variants
+    global destroot prefix os.major os.platform portbuildpath portpath
     set rawargs [option devport_content]
     set args ""
     # convert the arguments to local-relative:
@@ -132,9 +138,9 @@ proc create_devport_content_archive {} {
             # we use the correct Portfile checksum (but still install/archive with the -o flag):
             set checksum [lindex [split [exec openssl dgst -sha256 ${portpath}/Portfile] "="] 1]
             puts ${fd} "checksum:${checksum}"
-            # we'll also need to record the selected variants:
+            # we'll also need to record ("activate") the selected variants:
             foreach v [split ${cVariants} "+"] {
-                if {"${v}" ne ""} {
+                if {"${v}" ne "" && [lsearch -exact ${devport_excluded_variants} ${v}] < 0} {
                     puts ${fd} "variant: +${v}"
                 }
             }
@@ -418,7 +424,8 @@ proc create_devport {dependency} {
                             # we can use the fastest safe solution: `upgrade --force`
                             set dpinstmode upgrade
                             notes-append "port:${devport_name}@${cVersion}_${cRevision}${cVariants} will be upgraded and activated"
-                            exec port -no ${dpinstmode} --force ${devport_name} ${cVariants} configure.compiler=${configure.compiler}&
+                            ui_msg "---->  port:${devport_name}@${cVersion}_${cRevision}${cVariants} will be upgraded and activated"
+                            exec port -no ${dpinstmode} --force ${devport_name} ${cVariants} configure.compiler=${configure.compiler} &
                         } else {
                             # the devport is not active or not installed. We want to use `archive`
                             # to keep it inactive after the install of this new version, but we
@@ -426,6 +433,7 @@ proc create_devport {dependency} {
                             # in order to reinstall the current/new version.
                             set dpinstmode archive
                             notes-append "port:${devport_name}@${cVersion}_${cRevision}${cVariants} will be installed but not activated; you can do this manually if/when required"
+                            ui_msg "---->  port:${devport_name}@${cVersion}_${cRevision}${cVariants} will be installed but not activated; you can do this manually if/when required"
                             exec sh -c "port -p -v uninstall ${devport_name}@${version}_${revision}${cVariants} ; \
                                 port -no ${dpinstmode} ${devport_name} ${cVariants} configure.compiler=${configure.compiler}" &
                         }
@@ -459,3 +467,7 @@ proc is_mainport {} {
 # if {[is_mainport] && [file exists ${destroot}${dev::archdir}/${dev::archname}]} {
 #     notes-append "Don't forget to upgrade port:${devport_name} after upgrading port:${mainport_name}"
 # }
+
+# proc dev::callback {} {
+# }
+# port::register_callback dev::callback
