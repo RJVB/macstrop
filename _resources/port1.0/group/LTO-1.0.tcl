@@ -35,11 +35,23 @@
 if {[variant_exists LTO]} {
     set LTO.disable_LTO yes
 } elseif {[tbool LTO.disable_LTO]} {
-    variant LTO description {stub variant: link-time optimisation disabled for this port} {
+    ui_debug "LTO cannot be activated"
+    set LTO.must_be_disabled yes
+    variant LTO description {dummy variant: link-time optimisation disabled for this port} {
         pre-configure {
             ui_warn "The +LTO variant has been disabled and thus has no effect"
         }
         notes-append "Port ${subport} has been installed with a dummy +LTO variant!"
+        # cast the iron while it's hot (takes care of +LTO on the commandline)
+        if {[variant_isset LTO]} {
+             ui_warn "Variant +LTO unsetting itself!"
+             unset ::variations(LTO)
+        }
+    }
+    # cast the iron while it's hot (takes care of +LTO on the commandline)
+    if {[variant_isset LTO]} {
+         ui_warn "Variant disabled, please don't request +LTO!"
+         unset ::variations(LTO)
     }
 } else {
     variant LTO description {build with link-time optimisation} {}
@@ -399,10 +411,15 @@ if {[variant_isset builtwith]} {
 
 proc LTO::callback {} {
     # this callback could really also handle the disable and allow switches!
-    global supported_archs
+    global supported_archs LTO.must_be_disabled
     if {[variant_exists use_lld] && [variant_isset use_lld]} {
         # lld doesn't support 32bit architectures
         supported_archs-delete i386 ppc
+    }
+    # don't allow the Portfile to activate the LTO variant
+    if {[info exists LTO.must_be_disabled] && [variant_exists LTO] && [variant_isset LTO]} {
+         ui_warn "Unsetting +LTO!"
+         unset ::variations(LTO)
     }
 }
 port::register_callback LTO::callback
