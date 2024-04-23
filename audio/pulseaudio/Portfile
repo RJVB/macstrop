@@ -8,12 +8,13 @@ PortGroup           active_variants 1.1
 PortGroup           compiler_blacklist_versions 1.0
 PortGroup           locale_select 1.0
 PortGroup           LTO 1.0
+PortGroup           meson 1.0
+platform darwin {
+    PortGroup       code_sign 1.0
+}
 
 name                pulseaudio
-version             13.99.1 ; revision 1
-platform linux {
-    revision        2
-}
+version             17.0
 license             LGPL-2.1+ MIT BSD
 categories          audio
 maintainers         {ionic @Ionic} openmaintainer
@@ -32,49 +33,37 @@ master_sites        https://www.freedesktop.org/software/${name}/releases/
 
 use_xz              yes
 
-checksums           rmd160  45c505cb04c9429840db90f571393937999436a8 \
-                    sha256  e6a111cc078e6039bf657a3fd1f73dc804c8ee362ca03a0732dc5c38c13e0a0c
-#                     size    1955840
+checksums           rmd160  091da3b1d4d7e4ef464cfc53969995d408985bae \
+                    sha256  053794d6671a3e397d849e478a80b82a63cb9d8ca296bd35b73317bb5ceb87b5
+#                     size    1566556
+
 
 set perl_branch     5
 
-depends_build       port:pkgconfig \
-                    port:intltool \
-                    port:autoconf \
-                    port:automake \
-                    port:libtool \
+depends_build-append \
                     port:gettext \
-                    port:p${perl_branch}-xml-parser
-platform linux {
+                    port:p${perl_branch}-xml-parser \
+                    path:bin/pkg-config:pkgconfig \
+                    port:m4
+
+depends_lib-append  port:dbus \
+                    port:fftw-3-single \
+                    port:gdbm \
+                    port:gettext-runtime \
+                    path:lib/pkgconfig/glib-2.0.pc:glib2 \
+                    port:libiconv \
+                    port:libsndfile \
+                    port:libtool \
+                    port:orc \
+                    port:soxr \
+                    path:lib/libspeexdsp.so:speexdsp
+if {${os.platform} ne "darwin"} {
     depends_lib-append \
                     port:bluez
     depends_build-append \
                     port:gettext-dev
-    configure.env-append \
-                    "LIBS=-L${prefix}/lib -lintl"
-}
-
-if {${os.platform} eq "darwin"} {
-    depends_lib     port:libiconv \
-                    port:libsndfile \
-                    port:libtool \
-                    port:gdbm \
-                    path:lib/pkgconfig/glib-2.0.pc:glib2 \
-                    port:dbus \
-                    port:fftw-3-single \
-                    path:lib/libspeexdsp.dylib:speexDSP \
-                    port:orc \
-                    port:soxr
-} else {
-    depends_lib     port:libiconv \
-                    port:libsndfile \
-                    port:libtool \
-                    port:gdbm \
-                    path:lib/pkgconfig/glib-2.0.pc:glib2 \
-                    port:dbus \
-                    port:fftw-3 \
-                    path:lib/libspeexdsp.so:speexDSP \
-                    port:soxr
+    configure.ldflags-append \
+                    "-L${prefix}/lib"
 }
 
 # configure falls back to libatomic_ops as last resort
@@ -97,95 +86,148 @@ platform darwin {
 # All work has or will be sent upstream.
 # C.f. https://bugs.freedesktop.org/show_bug.cgi?id=62987
 # and posts on the mailing list.
-patchfiles          patch-man-Makefile.am.diff \
-                    patch-src_modules_macosx_module_coreaudio_device.c-respect-PA_NAME_MAX.diff \
-                    patch-src_daemon_default.pa.in-skip-consolekit-and-systemdlogin.diff \
-                    patch-enable_gstreamer.diff
-
-# reconfigure using upstream autogen.sh for intltool 0.51 compatibility
-post-patch {
-    xinstall -m 755 ${filespath}/autogen.sh ${worksrcpath}
-    reinplace "s|@@MP_PERL@@|${prefix}/bin/perl${perl_branch}|" ${worksrcpath}/man/Makefile.am
-}
+patchfiles-append   patch-src_modules_macosx_module_coreaudio_device.c-respect-PA_NAME_MAX.diff \
+                    patch-src_daemon_default.pa.in-skip-consolekit-and-systemdlogin.diff
 
 platform darwin {
-    # Blacklist compilers that do not support C11.
-    compiler.blacklist  {*gcc-3*} {*gcc-4.[0-8]} {clang < 300} cc
-}
-
-pre-configure {
-    if {![file exists ${worksrcpath}/config.log]} {
-        configure.cmd ./autogen.sh
+    patchfiles-append \
+                    patch-src_pulsecore_shm.c_Static_assert.diff
+    if {${os.major} <= 8} {
+        patchfiles-append \
+                    patch-src_modules_macosx_module_coreaudio_device.c-tiger-compat.diff
     }
 }
+
+set meson_config    ${workpath}/meson_config.ini
+
+configure.args-append \
+                    --native-file ${meson_config}
+
+post-patch {
+#     reinplace "s|@PERL@|${prefix}/bin/perl5|g" ${worksrcpath}/man/meson.build
+    set fp [open ${meson_config} w]
+    puts ${fp} {[binaries]}
+    puts ${fp} "m4='${prefix}/bin/gm4'"
+    puts ${fp} "perl='${prefix}/bin/perl5'"
+    close ${fp}
+}
+
+compiler.c_standard 2011
+# orc uses stdatomic.h
+compiler.blacklist-append {clang < 700}
 
 if {${os.platform} eq "darwin"} {
-    configure.args  --with-mac-version-min=$macosx_deployment_target \
-                    --with-caps \
-                    --with-soxr \
-                    --with-speex \
-                    --disable-silent-rules \
-                    --disable-tests \
-                    --disable-gtk3 \
-                    --disable-x11 \
-                    --disable-oss-output \
-                    --disable-alsa \
-                    --disable-esound \
-                    --disable-solaris \
-                    --disable-waveout \
-                    --disable-avahi \
-                    --disable-gconf \
-                    --disable-gsettings \
-                    --disable-jack \
-                    --disable-asyncns \
-                    --disable-tcpwrap \
-                    --disable-lirc \
-                    --disable-bluez4 \
-                    --disable-bluez5 \
-                    --disable-udev \
-                    --disable-hal-compat \
-                    --disable-openssl \
-                    --disable-systemd-daemon \
-                    --disable-systemd-login \
-                    --disable-systemd-journal \
-                    --enable-neon-opt=no \
-                    --enable-orc \
-                    --enable-adrian-aec
+    ## give the modules a .so extension like on other Unices
+    patchfiles-append \
+                    patch-modules-extension.diff
+    # soversions from 13.99.1 Linux:
+    # libpulse-mainloop-glib.so.0.0.5
+    # libpulse-simple.so.0.1.1
+    # libpulse.so.0.21.2
+    # dylib versions from 14.2 Darwin:
+#     libpulse-mainloop-glib.0.dylib : versions 1.0.0/1.6.0
+#     libpulse-simple.0.dylib : versions 2.0.0/2.1.0
+#     libpulse.0.dylib : versions 24.0.0/24.0.0
+    # dylib versions from 13.99.1 Darwin:
+#     libpulse-mainloop-glib.0.dylib : versions 1.0.0/1.5.0
+#     libpulse-simple.0.dylib : versions 2.0.0/2.1.0
+#     libpulse.0.dylib : versions 22.0.0/22.0.2
+    # dylib versions from 12.99.3 Darwin:
+#     libpulse-mainloop-glib.0.dylib : versions 1.0.0/1.5.0
+#     libpulse.0.dylib : versions 22.0.0/22.1.0
+    # dylib versions from 11.1 Darwin:
+#     libpulse-mainloop-glib.0.dylib : versions 1.0.0/1.5.0
+#     libpulse-simple.0.dylib : versions 2.0.0/2.1.0
+#     libpulse.0.dylib : versions 21.0.0/21.2.0
+    # soversions from 17.0 Linux:
+    # libpulse-mainloop-glib.so.0.0.6
+    # libpulse-simple.so.0.1.1
+    # libpulse.so.0.24.3
+    ## set the compatibility & current versions of the dylibs linked to by our dependents
+    ## to avoid having to rebuild all of the because of the autoconf -> meson transition.
+    ## The patch below sets the dylib current_versions from the soversion information used
+    ## on other Unices too, but sets the compatibility_versions to the latest values shown
+    ## above (i.e. those from v13.99.1).
+    ## NB: this should NOT be an issue for ports already rebuilt after that transition!
+    patchfiles-append \
+                    patch-dylib-darwin_versions.diff
+
+    configure.args-append \
+                    -Dadrian-aec=true \
+                    -Dalsa=disabled \
+                    -Dasyncns=disabled \
+                    -Davahi=disabled \
+                    -Dbluez5=disabled \
+                    -Dconsolekit=disabled \
+                    -Ddatabase=gdbm \
+                    -Ddbus=enabled \
+                    -Ddoxygen=false \
+                    -Delogind=disabled \
+                    -Denable-smoother-2=true \
+                    -Dfftw=enabled \
+                    -Dglib=enabled \
+                    -Dgsettings=disabled \
+                    -Dgstreamer=disabled \
+                    -Dgtk=disabled \
+                    -Dhal-compat=false \
+                    -Dipv6=true \
+                    -Djack=disabled \
+                    -Dlirc=disabled \
+                    -Dopenssl=disabled \
+                    -Dorc=enabled \
+                    -Doss-output=disabled \
+                    -Dsoxr=enabled \
+                    -Dspeex=enabled \
+                    -Dsystemd=disabled \
+                    -Dtcpwrap=disabled \
+                    -Dtests=false \
+                    -Dudev=disabled \
+                    -Dvalgrind=disabled \
+                    -Dwebrtc-aec=disabled \
+                    -Dx11=disabled
 } else {
     depends_lib-append \
-                    port:gstreamer1-gst-plugins-base
-    configure.args  --with-caps \
-                    --with-soxr \
-                    --with-speex \
-                    --disable-silent-rules \
-                    --disable-tests \
-                    --disable-gtk3 \
-                    --disable-x11 \
-                    --disable-esound \
-                    --disable-jack \
-                    --enable-orc \
-                    --enable-adrian-aec \
-                    --enable-gstreamer
+                     port:gstreamer1-gst-plugins-base
+    configure.args-append \
+                    -Dsoxr=enabled \
+                    -Dspeex=enabled \
+                    -Dtests=false \
+                    -Dgtk=disabled \
+                    -Dx11=disabled \
+                    -Djack=disabled \
+                    -Dorc=enabled \
+                    -Dadrian-aec=true \
+                    -Dgstreamer=enabled \
+                    -Dipv6=true \
+                    -Dopenssl=disabled \
+                    -Davahi=disabled
 }
 
-platform darwin {
-    if {"${configure.sdkroot}" eq ""} {
-        configure.args-append --with-mac-sysroot=/
-    } else {
-        configure.args-append --with-mac-sysroot=${configure.sdkroot}
+configure.args-append \
+                    -Dbashcompletiondir=${prefix}/share/bash-completion/completions
+
+# Same error as in: https://trac.macports.org/ticket/25064
+configure.ldflags-append \
+                    -lintl
+
+if {${os.platform} eq "darwin"} {
+    if {${os.major} < 16} {
+        # _AbsoluteToNanoseconds
+        configure.ldflags-append \
+                    -framework CoreServices
     }
+    add_users       pulse group=pulse realname=Pulse\ Audio
 }
+
+meson.save_configure_cmd "install log"
 
 test.run            no
 test.target         check
 
-platform darwin {
-    add_users       pulse group=pulse realname=Pulse\ Audio
-}
 
 variant x11 conflicts minimal {
-    configure.args-replace  --disable-x11 \
-                            --enable-x11
+    configure.args-replace  -Dx11=disabled \
+                            -Dx11=enabled
     platform darwin {
         depends_lib-append  port:xorg-libX11 \
                             port:xorg-libxcb \
@@ -195,45 +237,57 @@ variant x11 conflicts minimal {
     }
 }
 
-variant jack conflicts minimal description {Enable Jack support} {
-    configure.args-delete  --disable-jack
-    configure.args-append   --enable-jack
-    platform darwin {
-        # depend on the distro-version on Linux for now
+variant jack conflicts minimal description {Enable Jack support.} {
+    configure.args-replace  -Djack=disabled \
+                            -Djack=enabled
+    if {${os.platform} eq "darwin"} {
         depends_lib-append  port:jack
+    } else {
+        # depend on the distro-version on Linux for now
+        depends_lib-append  bin:jack_test:jack
+        # accept the older system version
+        patchfiles-append \
+                    patch-old-jack.diff
     }
 }
 
 variant openssl conflicts minimal description {Enable OpenSSL (& Airtunes) support } {
-    configure.args-delete   --disable-openssl --disable-avahi
-    depends_lib-append      port:openssl
-    platform darwin {
+    PortGroup       openssl 1.0
+    configure.args-replace \
+                    -Dopenssl=disabled \
+                    -Dopenssl=enabled
+    platform linux {
+        configure.args-replace \
+                    -Davahi=disabled \
+                    -Davahi=enabled
         depends_lib-append \
-                            port:avahi
+                    bin:avahi-daemon:avahi
     }
 }
 
 variant gconf conflicts minimal description {Enable GConf and GSettings support } {
     configure.args-delete   --disable-gconf
-    configure.args-append   --enable-gconf \
-                            --enable-gsettings
+    configure.args-append   -Dgsettings=enabled
     depends_lib-append      port:gconf
 }
 
 variant gtk3 conflicts minimal description {Enable gtk3 support } {
-    configure.args-replace  --disable-gtk3 \
-                            --enable-gtk3
+    configure.args-replace  -Dgtk=disabled \
+                            -Dgtk=enabled
     depends_lib-append      port:gtk3
 }
 
-variant _internal_valgrind description {DO NOT USE! Enable valgrind support. DO NOT USE!} {
+variant valgrind description {Enable Valgrind support.} {
+    configure.args-replace  -Dvalgrind=disabled \
+                            -Dvalgrind=enabled
     depends_lib-append      path:bin/valgrind:valgrind-devel
     patchfiles-append       patch-src_daemon_caps.c-enable-root.diff
 }
 
-variant esound description {Enable optional esound emulation support.} {
-    configure.args-replace  --disable-esound \
-                            --enable-esound
+variant tests description {Enable testing.} {
+    configure.args-replace  -Dtests=false \
+                            -Dtests=true
+    test.run                yes
 }
 
 variant minimal conflicts jack conflicts x11 conflicts openssl conflicts gconf gtk3 description {Builds a minimal version. Do not use if unsure. Please build this ONLY in trace mode.} {
@@ -246,17 +300,16 @@ variant minimal conflicts jack conflicts x11 conflicts openssl conflicts gconf g
                             port:orc \
                             port:soxr
 
-    configure.args-replace  --with-soxr \
-                            --without-soxr
+    configure.args-replace  -Dsoxr=enabled \
+                            -Dsoxr=disabled
 
-    configure.args-replace  --enable-orc \
-                            --disable-orc
+    configure.args-replace  -Dorc=enabled \
+                            -Dorc=disabled
 
-    configure.args-append   --with-database=simple \
-                            --disable-glib2 \
-                            --disable-dbus \
-                            --without-fftw \
-                            --disable-nls
+    configure.args-append   -Ddatabase=simple \
+                            -Dglib=disabled \
+                            -Ddbus=disabled \
+                            -Dfftw=disabled
 
     require_active_variants libsndfile no_external_libs
 }
@@ -270,8 +323,11 @@ platform linux {
 
 post-destroot {
     # RJVB
-    file rename ${destroot}${prefix}/bin/pulseaudio ${destroot}${prefix}/bin/pulseaudio.daemon
-    file rename ${destroot}${prefix}/share/man/man1/pulseaudio.1 ${destroot}${prefix}/share/man/man1/pulseaudio.daemon.1
+    platform darwin {
+        file rename ${destroot}${prefix}/bin/pulseaudio ${destroot}${prefix}/bin/pulseaudio.daemon
+        file rename ${destroot}${prefix}/share/man/man1/pulseaudio.1 ${destroot}${prefix}/share/man/man1/pulseaudio.daemon.1
+        codesign ${destroot}${prefix}/bin/pulseaudio.daemon
+    }
     foreach f [glob ${destroot}${prefix}/etc/pulse/*] {
         file rename ${f} ${f}.sample
     }
