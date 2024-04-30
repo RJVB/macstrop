@@ -409,9 +409,65 @@ if {[variant_isset builtwith]} {
     default_variants-append +${usedCompiler}
 }
 
+platform linux {
+    variant fromHost description {assume the host already provides this port via distro packages, typically with the dev package included.} {}
+    set newVariantName fromHost
+    if {[variant_isset fromHost]} {
+        PortGroup stub 1.0
+    }
+#     variant testIdea description {Some fancy new experiment.} {}
+#     set newVariantName testIdea
+}
+
 proc LTO::callback {} {
     # this callback could really also handle the disable and allow switches!
     global supported_archs LTO.must_be_disabled
+    global PortInfo newVariantName subport name
+    platform linux {
+        if {[variant_exists ${newVariantName}] && [info exist PortInfo(variants)] && [info exists PortInfo(vinfo)]} {
+            array unset vinfo
+            array set vinfo $PortInfo(vinfo)
+            foreach v $PortInfo(variants) {
+                if {${v} eq ${newVariantName}} {
+                    continue
+                }
+                ## When running in a PortGroup callback like here:
+                # this code gets evaluated after "base" has already taken action on any
+                # previously known conflict situations, so we need to handle the ones we
+                # introduce ourselves!
+                # Not needed when copied into ${prefix}/libexec/macports/lib/macports1.0/macports.tcl ,
+                # in a $workername eval {} block just under the one invoking universal_setup. No
+                # need for a callback there either (?!).
+                if {[variant_isset ${newVariantName}] && [variant_isset ${v}]} {
+                    ui_error "${subport}: Variant ${v} conflicts with ${newVariantName}"
+                    return -code error "Unable to open port: Error evaluating variants"
+                }
+                # if we're in the clear for ${v} vs. ${newVariantName} we can record
+                # the conflict to inform the user via `port variants`:
+                array unset variant
+                array set variant $vinfo(${v})
+                if {[info exists variant(conflicts)]} {
+                    ui_debug "${v}: conflicts with $variant(conflicts), adding +${newVariantName}"
+                    set conflicts [join [lsort "$variant(conflicts) ${newVariantName}"]]
+                } else {
+                    ui_debug "${v}: adding conflict with +${newVariantName}"
+                    set conflicts "${newVariantName}"
+                }
+                array set variant [list conflicts ${conflicts}]
+                array set vinfo [list ${v} [array get variant]]
+                array set PortInfo [list vinfo [array get vinfo]]
+            }
+        }
+        if {[variant_exists ${newVariantName}] && [variant_isset ${newVariantName}]} {
+            PortGroup stub 1.0
+            long_description-append \nNB: Stub because of +fromHost\; make sure you have all \
+                the required distro packages installed to use and build against \"${subport}\" and/or \"${name}\"!
+            depends_fetch
+            depends_extract
+            depends_lib
+            depends_build
+        }
+    }
     if {[variant_exists use_lld] && [variant_isset use_lld]} {
         # lld doesn't support 32bit architectures
         supported_archs-delete i386 ppc
