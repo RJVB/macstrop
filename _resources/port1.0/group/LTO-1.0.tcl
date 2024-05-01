@@ -56,8 +56,10 @@ if {[variant_exists LTO]} {
 } else {
     variant LTO description {build with link-time optimisation} {}
 }
-options LTO.supports_i386
+options LTO.supports_i386 \
+        LTO.gcc_lto_jobs
 default LTO.supports_i386 yes
+default LTO.gcc_lto_jobs {${build.jobs}}
 
 namespace eval LTO {}
 
@@ -187,10 +189,14 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
                 set lto_flags           "${lto_flags} -ffat-lto-objects"
             }
         } else {
+            # we should probably use -flto=auto when build.cmd=[g]make (forcing it to gmake in that case)
+            # but that would require inserting the lto_flags after the port has had a chance to
+            # set the build.cmd . Catch-22 ...
+            # Easier to define another hook ports can set before including us.
             if {${os.platform} eq "linux"} {
-                set lto_flags           "-ftracer -flto=${build.jobs} -fuse-linker-plugin"
+                set lto_flags           "-ftracer -flto=${LTO.gcc_lto_jobs} -fuse-linker-plugin"
             } elseif {${configure.compiler} ne "cc"} {
-                set lto_flags           "-ftracer -flto=${build.jobs}"
+                set lto_flags           "-ftracer -flto=${LTO.gcc_lto_jobs}"
             }
             if {[tbool LTO.fat_LTO_Objects]} {
                 set lto_flags           "${lto_flags} -ffat-lto-objects"
@@ -206,7 +212,7 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
             # ${configure.optflags} is a list, and that can lead to strange effects
             # in certain situations if we don't treat it as such here.
             LTO.configure.flags_append      ldflags "${configure.optflags} ${lto_flags}"
-        } else { # checking build_arch probably won't do what I thought here #  if {${build_arch} ne "i386"} 
+        } else { # checking build_arch probably won't do what I thought here #  if {${build_arch} ne "i386"}
             if {[info exists merger_configure_cflags(x86_64)]} {
                 set merger_configure_cflags(x86_64) "{*}$merger_configure_cflags(x86_64) ${lto_flags}"
             } else {
