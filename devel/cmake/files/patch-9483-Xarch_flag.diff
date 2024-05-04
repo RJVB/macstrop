@@ -1,0 +1,230 @@
+From 99bfb430eeff5816125b5ae48fda8816453435e9 Mon Sep 17 00:00:00 2001
+From: Brad King <brad.king@kitware.com>
+Date: Wed, 1 May 2024 12:27:16 -0400
+Subject: [PATCH 1/2] cmNinjaTargetGenerator: Remove unused Apple architecture
+ list
+
+---
+ Source/cmNinjaTargetGenerator.cxx | 6 ------
+ 1 file changed, 6 deletions(-)
+
+diff --git Source/cmNinjaTargetGenerator.cxx Source/cmNinjaTargetGenerator.cxx
+index c52a01282fa..3b89db39a58 100644
+--- Source/cmNinjaTargetGenerator.cxx
++++ Source/cmNinjaTargetGenerator.cxx
+@@ -1841,12 +1841,6 @@ void cmNinjaTargetGenerator::WriteCxxModuleBmiBuildStatement(
+ 
+   std::vector<std::string> depList;
+ 
+-  std::vector<std::string> architectures =
+-    this->GeneratorTarget->GetAppleArchs(config, language);
+-  if (architectures.empty()) {
+-    architectures.emplace_back();
+-  }
+-
+   bmiBuild.OrderOnlyDeps.push_back(this->OrderDependsTargetForTarget(config));
+ 
+   // For some cases we scan to dynamically discover dependencies.
+-- 
+GitLab
+
+
+From ef006ebd9b11945cfb1b93f85d9ff85a077e8991 Mon Sep 17 00:00:00 2001
+From: Brad King <brad.king@kitware.com>
+Date: Wed, 1 May 2024 12:34:38 -0400
+Subject: [PATCH 2/2] PCH: Use per-arch .pch files only when building multiple
+ Apple architectures
+
+Since commit f593b354da (PCH: Add support for multi architecture iOS
+projects, 2020-04-02, v3.18.0-rc1~414^2) we use per-arch .pch files
+even when compiling for just the host architecture on macOS arm64.
+This breaks with compilers that do not support `-Xarch_` flags, such
+as GCC.  Avoid using per-arch .pch files in single-architecture builds.
+
+Fixes: #25514
+Issue: #20497
+---
+ Source/cmFileAPICodemodel.cxx        |  9 +++------
+ Source/cmGeneratorTarget.cxx         | 14 ++++++++++++++
+ Source/cmGeneratorTarget.h           |  2 ++
+ Source/cmLocalGenerator.cxx          | 13 ++++---------
+ Source/cmMakefileTargetGenerator.cxx | 11 ++++-------
+ Source/cmNinjaTargetGenerator.cxx    | 20 +++++++-------------
+ 6 files changed, 34 insertions(+), 35 deletions(-)
+
+diff --git Source/cmFileAPICodemodel.cxx Source/cmFileAPICodemodel.cxx
+index 869b94a66fe..b9daffb53bd 100644
+--- Source/cmFileAPICodemodel.cxx
++++ Source/cmFileAPICodemodel.cxx
+@@ -1384,14 +1384,11 @@ CompileData Target::BuildCompileData(cmSourceFile* sf)
+   }
+ 
+   // Add precompile headers compile options.
+-  std::vector<std::string> architectures =
+-    this->GT->GetAppleArchs(this->Config, fd.Language);
+-  if (architectures.empty()) {
+-    architectures.emplace_back();
+-  }
++  std::vector<std::string> pchArchs =
++    this->GT->GetPchArchs(this->Config, fd.Language);
+ 
+   std::unordered_map<std::string, std::string> pchSources;
+-  for (const std::string& arch : architectures) {
++  for (const std::string& arch : pchArchs) {
+     const std::string pchSource =
+       this->GT->GetPchSource(this->Config, fd.Language, arch);
+     if (!pchSource.empty()) {
+diff --git Source/cmGeneratorTarget.cxx Source/cmGeneratorTarget.cxx
+index 319526aec9e..5861dc5741c 100644
+--- Source/cmGeneratorTarget.cxx
++++ Source/cmGeneratorTarget.cxx
+@@ -4304,6 +4304,20 @@ std::vector<BT<std::string>> cmGeneratorTarget::GetPrecompileHeaders(
+   return list;
+ }
+ 
++std::vector<std::string> cmGeneratorTarget::GetPchArchs(
++  std::string const& config, std::string const& lang) const
++{
++  std::vector<std::string> pchArchs;
++  if (!this->GetGlobalGenerator()->IsXcode()) {
++    pchArchs = this->GetAppleArchs(config, lang);
++  }
++  if (pchArchs.size() < 2) {
++    // We do not need per-arch PCH files when building for one architecture.
++    pchArchs = { {} };
++  }
++  return pchArchs;
++}
++
+ std::string cmGeneratorTarget::GetPchHeader(const std::string& config,
+                                             const std::string& language,
+                                             const std::string& arch) const
+diff --git Source/cmGeneratorTarget.h Source/cmGeneratorTarget.h
+index 6228dafa8a6..9e5cef05a19 100644
+--- Source/cmGeneratorTarget.h
++++ Source/cmGeneratorTarget.h
+@@ -598,6 +598,8 @@ public:
+   std::vector<BT<std::string>> GetPrecompileHeaders(
+     const std::string& config, const std::string& language) const;
+ 
++  std::vector<std::string> GetPchArchs(std::string const& config,
++                                       std::string const& lang) const;
+   std::string GetPchHeader(const std::string& config,
+                            const std::string& language,
+                            const std::string& arch = std::string()) const;
+diff --git Source/cmLocalGenerator.cxx Source/cmLocalGenerator.cxx
+index 7a411131b95..ffd41d2110c 100644
+--- Source/cmLocalGenerator.cxx
++++ Source/cmLocalGenerator.cxx
+@@ -2721,15 +2721,10 @@ void cmLocalGenerator::AddPchDependencies(cmGeneratorTarget* target)
+         continue;
+       }
+ 
+-      std::vector<std::string> architectures;
+-      if (!this->GetGlobalGenerator()->IsXcode()) {
+-        architectures = target->GetAppleArchs(config, lang);
+-      }
+-      if (architectures.empty()) {
+-        architectures.emplace_back();
+-      } else {
++      std::vector<std::string> pchArchs = target->GetPchArchs(config, lang);
++      if (pchArchs.size() > 1) {
+         std::string useMultiArchPch;
+-        for (const std::string& arch : architectures) {
++        for (const std::string& arch : pchArchs) {
+           const std::string pchHeader =
+             target->GetPchHeader(config, lang, arch);
+           if (!pchHeader.empty()) {
+@@ -2746,7 +2741,7 @@ void cmLocalGenerator::AddPchDependencies(cmGeneratorTarget* target)
+         }
+       }
+ 
+-      for (const std::string& arch : architectures) {
++      for (const std::string& arch : pchArchs) {
+         const std::string pchSource = target->GetPchSource(config, lang, arch);
+         const std::string pchHeader = target->GetPchHeader(config, lang, arch);
+ 
+diff --git Source/cmMakefileTargetGenerator.cxx Source/cmMakefileTargetGenerator.cxx
+index 960b35827ce..d5c50bcfc22 100644
+--- Source/cmMakefileTargetGenerator.cxx
++++ Source/cmMakefileTargetGenerator.cxx
+@@ -672,15 +672,12 @@ void cmMakefileTargetGenerator::WriteObjectRuleFiles(
+   std::string const configUpper = cmSystemTools::UpperCase(config);
+ 
+   // Add precompile headers dependencies
+-  std::vector<std::string> architectures =
+-    this->GeneratorTarget->GetAppleArchs(config, lang);
+-  if (architectures.empty()) {
+-    architectures.emplace_back();
+-  }
++  std::vector<std::string> pchArchs =
++    this->GeneratorTarget->GetPchArchs(config, lang);
+ 
+   std::string filterArch;
+   std::unordered_map<std::string, std::string> pchSources;
+-  for (const std::string& arch : architectures) {
++  for (const std::string& arch : pchArchs) {
+     const std::string pchSource =
+       this->GeneratorTarget->GetPchSource(config, lang, arch);
+     if (pchSource == source.GetFullPath()) {
+@@ -692,7 +689,7 @@ void cmMakefileTargetGenerator::WriteObjectRuleFiles(
+   }
+ 
+   if (!pchSources.empty() && !source.GetProperty("SKIP_PRECOMPILE_HEADERS")) {
+-    for (const std::string& arch : architectures) {
++    for (const std::string& arch : pchArchs) {
+       std::string const& pchHeader =
+         this->GeneratorTarget->GetPchHeader(config, lang, arch);
+       depends.push_back(pchHeader);
+diff --git Source/cmNinjaTargetGenerator.cxx Source/cmNinjaTargetGenerator.cxx
+index 3b89db39a58..c61f4453f24 100644
+--- Source/cmNinjaTargetGenerator.cxx
++++ Source/cmNinjaTargetGenerator.cxx
+@@ -189,14 +189,11 @@ std::string cmNinjaTargetGenerator::ComputeFlagsForObject(
+   const std::string& config, const std::string& objectFileName)
+ {
+   std::unordered_map<std::string, std::string> pchSources;
+-  std::vector<std::string> architectures =
+-    this->GeneratorTarget->GetAppleArchs(config, language);
+-  if (architectures.empty()) {
+-    architectures.emplace_back();
+-  }
++  std::vector<std::string> pchArchs =
++    this->GeneratorTarget->GetPchArchs(config, language);
+ 
+   std::string filterArch;
+-  for (const std::string& arch : architectures) {
++  for (const std::string& arch : pchArchs) {
+     const std::string pchSource =
+       this->GeneratorTarget->GetPchSource(config, language, arch);
+     if (pchSource == source->GetFullPath()) {
+@@ -1500,14 +1497,11 @@ void cmNinjaTargetGenerator::WriteObjectBuildStatement(
+   // Add precompile headers dependencies
+   std::vector<std::string> depList;
+ 
+-  std::vector<std::string> architectures =
+-    this->GeneratorTarget->GetAppleArchs(config, language);
+-  if (architectures.empty()) {
+-    architectures.emplace_back();
+-  }
++  std::vector<std::string> pchArchs =
++    this->GeneratorTarget->GetPchArchs(config, language);
+ 
+   std::unordered_set<std::string> pchSources;
+-  for (const std::string& arch : architectures) {
++  for (const std::string& arch : pchArchs) {
+     const std::string pchSource =
+       this->GeneratorTarget->GetPchSource(config, language, arch);
+ 
+@@ -1517,7 +1511,7 @@ void cmNinjaTargetGenerator::WriteObjectBuildStatement(
+   }
+ 
+   if (!pchSources.empty() && !source->GetProperty("SKIP_PRECOMPILE_HEADERS")) {
+-    for (const std::string& arch : architectures) {
++    for (const std::string& arch : pchArchs) {
+       depList.push_back(
+         this->GeneratorTarget->GetPchHeader(config, language, arch));
+       if (pchSources.find(source->GetFullPath()) == pchSources.end()) {
+-- 
+GitLab
+
