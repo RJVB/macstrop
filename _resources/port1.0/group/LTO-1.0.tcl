@@ -188,27 +188,45 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
             if {[tbool LTO.fat_LTO_Objects] && (${LTO::mp_compiler_version} >= 17)} {
                 set lto_flags           "${lto_flags} -ffat-lto-objects"
             }
+            set objc_lto_flags          ${lto_flags}
         } else {
             # we should probably use -flto=auto when build.cmd=[g]make (forcing it to gmake in that case)
             # but that would require inserting the lto_flags after the port has had a chance to
             # set the build.cmd . Catch-22 ...
             # Easier to define another hook ports can set before including us.
+            if {${LTO.gcc_lto_jobs} ne ""} {
+                set LTO::gcc_lto_jobs "=${LTO.gcc_lto_jobs}"
+            } else {
+                set LTO::gcc_lto_jobs ""
+            }
             if {${os.platform} eq "linux"} {
-                set lto_flags           "-ftracer -flto=${LTO.gcc_lto_jobs} -fuse-linker-plugin"
+                set lto_flags           "-ftracer -flto${LTO::gcc_lto_jobs} -fuse-linker-plugin"
+                set objc_lto_flags      ${lto_flags}
             } elseif {${configure.compiler} ne "cc"} {
-                set lto_flags           "-ftracer -flto=${LTO.gcc_lto_jobs}"
+                set lto_flags           "-ftracer -flto${LTO::gcc_lto_jobs}"
+                set objc_lto_flags      "-flto"
             }
             if {[tbool LTO.fat_LTO_Objects]} {
                 set lto_flags           "${lto_flags} -ffat-lto-objects"
+                set objc_lto_flags      "${objc_lto_flags} -ffat-lto-objects"
             }
         }
         ui_debug "LTO: setting LTO compiler and linker option(s) \"${lto_flags}\""
+        ui_debug "     ObjC and ObjC++ will use:                 \"${objc_lto_flags}\""
         if {![variant_isset universal] || [tbool LTO.supports_i386]} {
+            # consolidate the current (possibly) default values for ObjC compiler flags
+            # (to make sure they're "unlinked from" the corresponding C/C++ flags!)
+            configure.objcflags             {*}${configure.objcflags}
+            configure.objcxxflags           {*}${configure.objcxxflags}
+            # now we can add the possibly GCC-specific LTO flags into the C/C++ flags
+            # without risk that they also get appended to the ObjC/++ flags.
             LTO.configure.flags_append      {cflags \
-                                            cxxflags \
-                                            objcflags \
-                                            objcxxflags} \
+                                            cxxflags} \
                                             ${lto_flags}
+            # ObjC may require different LTO flags because on Darwin we may be using clang instead of gcc.
+            LTO.configure.flags_append      {objcflags \
+                                            objcxxflags} \
+                                            ${objc_lto_flags}
             # ${configure.optflags} is a list, and that can lead to strange effects
             # in certain situations if we don't treat it as such here.
             LTO.configure.flags_append      ldflags "${configure.optflags} ${lto_flags}"
@@ -224,14 +242,14 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
                 set merger_configure_cxxflags(x86_64) "${lto_flags}"
             }
             if {[info exists merger_configure_objcflags(x86_64)]} {
-                set merger_configure_objcflags(x86_64) "{*}$merger_configure_objcflags(x86_64) ${lto_flags}"
+                set merger_configure_objcflags(x86_64) "{*}$merger_configure_objcflags(x86_64) ${objc_lto_flags}"
             } else {
-                set merger_configure_objcflags(x86_64) "${lto_flags}"
+                set merger_configure_objcflags(x86_64) "${objc_lto_flags}"
             }
             if {[info exists merger_configure_ldflags(x86_64)]} {
-                set merger_configure_ldflags(x86_64) "{*}$merger_configure_ldflags(x86_64) ${lto_flags}"
+                set merger_configure_ldflags(x86_64) "{*}$merger_configure_ldflags(x86_64) ${objc_lto_flags}"
             } else {
-                set merger_configure_ldflags(x86_64) "${lto_flags}"
+                set merger_configure_ldflags(x86_64) "${objc_lto_flags}"
             }
             # ${configure.optflags} is a list, and that can lead to strange effects
             # in certain situations if we don't treat it as such here.
