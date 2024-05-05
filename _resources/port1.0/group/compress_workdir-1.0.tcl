@@ -1,5 +1,4 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
-# $Id:$
 
 # Copyright (c) 2015 The MacPorts Project
 # Copyright (c) 2016 R.J.V. Bertin
@@ -67,6 +66,8 @@ platform darwin {
 
         proc hfscompress {target} {
             global use_parallel_build build.jobs prefix
+            # from RJVB's "Base" tweaks:
+            catch {flush_logfile}
             if {${use_parallel_build}} {
                 set compjobs "-J${build.jobs}"
             } else {
