@@ -1,11 +1,14 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 
 PortSystem                  1.0
-PortGroup                   compiler_blacklist_versions 1.0
 PortGroup                   clang_dependency 1.0
+PortGroup                   compiler_blacklist_versions 1.0
+PortGroup                   conflicts_build 1.0
+PortGroup                   legacysupport 1.1
 PortGroup                   meson 1.0
 PortGroup                   muniversal 1.0
 PortGroup                   locale_select 1.0
+set LTO.gcc_lto_jobs        auto
 PortGroup                   LTO 1.0
 PortGroup                   compress_workdir 1.0
 
@@ -14,11 +17,12 @@ PortGroup                   compress_workdir 1.0
 name                        glib2
 conflicts                   glib2-devel glib2-upstream
 set my_name                 glib
-version                     2.70.5
-revision                    1
-checksums                   rmd160  e22c130e1179f7ac716cf818f88eb8f9e5aed671 \
-                            sha256  f70bf76ebcc84e0705722f038be8e2f9a58d17e1a700810c635fcc18b8974b7e 
-#                             size    4822784
+version                     2.78.4
+epoch                       1
+
+checksums                   rmd160  7941be85af18c428d86f4a00e52f41542b061aa9 \
+                            sha256  24b8e0672dca120cc32d394bccb85844e732e04fe75d18bb0573b2dbc7548f63
+#                             size    5331892
 
 set branch                  [join [lrange [split ${version} .] 0 1] .]
 categories                  devel
@@ -34,33 +38,34 @@ use_parallel_build          yes
 meson.save_configure_cmd    "log too"
 
 description                 Library with data structure functions and other constructs
-
 long_description            Glib is a library which includes support routines \
                             for C, such as lists, trees, hashes, memory \
                             allocation, and many other things.
 
 master_sites                gnome:sources/${my_name}/${branch}/
 
-patchfiles                  libintl.patch \
-                            patch-gio-tests-meson.build.diff \
-                            patch-glib_gunicollate.c.diff \
-                            patch-gio_xdgmime_xdgmime.c.diff \
-                            patch-get-launchd-dbus-session-address.diff \
-                            patch-gmodule-gmodule-dl.c.diff \
-                            patch-meson_build-meson_options-appinfo.diff \
-                            patch-meson-build-python-path.diff \
-                            patch-meson_build-atomic-test-older-clang-versions.diff \
-                            universal.patch \
-                            patch-glib2-findfolders-before-SL.diff
+# Disable unexpected download of subprojects
+meson.wrap_mode             nodownload
 
-# patch for old gccs not accepting pragmas inside functions
-if {[string match *gcc* ${configure.compiler}]} {
-    patchfiles-append       patch-glib2-pragmas-old-gcc.diff
-}
+# Needed for clock_gettime
+legacysupport.newest_darwin_requires_legacy 15
 
-# Patch for broken poll() on macOS; fix included in glib2 v2.72.1 and later
-# See: https://trac.macports.org/ticket/63650
-patchfiles-append           patch-meson-build-broken_poll.diff
+patchfiles-append           libintl.patch
+patchfiles-append           patch-gio-tests-meson.build.diff
+patchfiles-append           patch-glib_gmem.c.diff
+patchfiles-append           patch-glib_gspawn.c.diff
+patchfiles-append           patch-glib_gunicollate.c.diff
+patchfiles-append           patch-gio_xdgmime_xdgmime.c.diff
+patchfiles-append           patch-get-launchd-dbus-session-address.diff
+patchfiles-append           patch-gmodule-gmodule-dl.c.diff
+patchfiles-append           patch-meson_build-meson_options-appinfo.diff
+patchfiles-append           patch-meson-build-python-path.diff
+patchfiles-append           patch-meson_build-atomic-test-older-clang-versions.diff
+patchfiles-append           universal.patch
+patchfiles-append           patch-glib2-findfolders-before-SL.diff
+patchfiles-append           patch-declarations.diff
+patchfiles-append           no-distutils.patch
+
 # RJVB: try to avoid aborting when a gsettings key isn't found
 patchfiles-append           patch-gsettings-tweak.diff
 platform linux {
@@ -70,13 +75,23 @@ platform linux {
 
 platform darwin {
     if {${os.major} < 11} {
-        patchfiles-append   patch-gio_gcredentialsprivate.h.diff \
-                            patch-gio_gcredentials.c.diff \
-                            patch-gio_gsocket.h.diff
+        patchfiles-append   patch-gio_gcredentialsprivate.h.diff
+        patchfiles-append   patch-gio_gcredentials.c.diff
+        patchfiles-append   patch-gio_gsocket.h.diff
+    }
+
+    if {${os.major} == 10 && ${build_arch} eq "ppc"} {
+        patchfiles-replace \
+                            patch-glib2-findfolders-before-SL.diff \
+                            patch-glib2-findfolders-before-Lion.diff
     }
 }
 
-set python_versions         {3.7 3.8 3.9 3.10 3.11}
+depends_build-append        port:gettext \
+                            bin:xmllint:libxml2 \
+                            path:bin/pkg-config:pkgconfig
+
+set python_versions         {3.7 3.8 3.9 3.10 3.11 3.12}
 
 proc set_python {dv} {
     global py_ver py_ver_nodot
@@ -103,18 +118,16 @@ if {![tbool variant_set]} {
     set_python              3.9
 }
 
-
-depends_build-append        port:gettext \
-                            bin:xmllint:libxml2 \
-                            port:pkgconfig
-
-
 depends_lib                 port:gettext-runtime \
+                            port:libelf \
                             port:libffi \
                             port:libiconv \
                             port:pcre \
                             port:zlib
 
+# Python only needed for scripts
+depends_skip_archcheck-append \
+                            python${py_ver_nodot}
 platform linux {
     depends_build-append    port:gettext-dev \
                             port:libiconv-dev
@@ -122,23 +135,30 @@ platform linux {
     #build.env-append        "LIBS=-L${prefix}/lib -lintl"
 }
 
+compiler.cxx_standard       2011
 
-if {[vercmp ${macosx_deployment_target} 10.9] < 0} {
-    # fatal error: error in backend: Cannot select: 0x103357f10: i8,ch = AtomicLoad 0x10334b410, 0x103354b10<Volatile LD1[@is_running.b]> [ID=18]
-    compiler.blacklist-append   {clang < 500}
-} else {
-    # gcocoanotificationbackend.c:115:52: error: array subscript is not an integer
-    compiler.blacklist-append   {clang < 600}
-}
+# Issues for Clang 5.x:
+# - fatal error: error in backend: Cannot select: 0x103357f10: i8,ch = AtomicLoad 0x10334b410,
+#   0x103354b10<Volatile LD1[@is_running.b]> [ID=18]
+# - ERROR: Problem encountered: GLib requires a C++ compiler with support for C99 __VA_ARG__ in macros.
+# Issues for Clang 6.x:
+# - gcocoanotificationbackend.c:115:52: error: array subscript is not an integer
+# - Checking if "GCC size_t typedef is long" compiles: NO
+compiler.blacklist-append   {clang < 700}
 
 # https://bugzilla.gnome.org/show_bug.cgi?id=697017
-compiler.blacklist-append   gcc-3.3 *gcc-4.0
+compiler.blacklist-append   gcc-3.3 *gcc-4.0 *gcc-4.2
 
-platform darwin {
+if {${os.platform} eq "darwin"} {
     # -lresolv is needed at least on Tiger PPC.
     configure.ldflags-append \
                             -lresolv \
                             -bind_at_load
+} else {
+    # avoid having to declare a build conflict with ourselves:
+    # (glib-compile-resources: symbol lookup error: /opt/local/var/lnxports/build/_opt_local_site-ports_devel_glib2/glib2/work/build/gio/glib-compile-resources: undefined symbol: g_string_free_and_steal)
+    configure.ldflags-delete \
+                            -L${prefix}/lib
 }
 
 configure.cflags-append     -fstrict-aliasing
@@ -148,6 +168,7 @@ configure.cflags-append     -Wno-deprecated-declarations
 configure.objcflags-append  -Wno-deprecated-declarations
 
 configure.args-append       -Ddefault_library=shared \
+                            -Dlibelf=enabled \
                             -Dwarning_level=0
 
 variant static description {build static libraries too} {}
@@ -157,7 +178,9 @@ if {[variant_isset static]} {
 }
 
 if {${os.platform} ne "darwin"} {
-    configure.args-append   -Diconv=external
+#     configure.args-append   -Diconv=external
+} else {
+    configure.args-append   -Dlibmount=disabled
 }
 configure.args-append       -Dgtk_doc=false
 
@@ -173,16 +196,46 @@ if {${universal_possible} && [variant_isset universal]} {
 }
 
 post-patch {
-    reinplace -W ${worksrcpath} "s|@PYTHON@|${configure.python}|" meson.build
+    reinplace -W ${worksrcpath} "s|@PYTHON@|${configure.python}|" \
+        meson.build
+
     if {${os.platform} eq "darwin"} {
-        reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}|g" gio/xdgmime/xdgmime.c glib/gi18n-lib.h glib/gi18n.h gio/gdbusaddress.c
+        reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}|g" \
+            gio/xdgmime/xdgmime.c \
+            glib/gi18n-lib.h \
+            glib/gi18n.h \
+            gio/gdbusaddress.c
     } else {
-        reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}|g" glib/gi18n-lib.h glib/gi18n.h 
-        reinplace -W ${worksrcpath} "s|@PREFIX@||g" gio/gdbusprivate.c gio/gdbusaddress.c
-        reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}/share:/usr/local|g" gio/xdgmime/xdgmime.c
+        reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}/share:/usr/local|g" \
+            gio/xdgmime/xdgmime.c
+        reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}|g" \
+            glib/gi18n-lib.h \
+            glib/gi18n.h 
+        reinplace -W ${worksrcpath} "s|@PREFIX@||g" \
+            gio/gdbusprivate.c \
+            gio/gdbusaddress.c
     }
-    reinplace "s|data_dirs = \"/usr|data_dirs = \"${prefix}/share:/usr|g" ${worksrcpath}/glib/gutils.c
-    reinplace "s|path = \"/bin|path = \"${prefix}/bin:/bin|g" ${worksrcpath}/glib/gutils.c ${worksrcpath}/glib/gspawn.c
+
+    reinplace -W ${worksrcpath} "s|data_dirs = \"/usr|data_dirs = \"${prefix}/share:/usr|g" \
+        glib/gutils.c
+
+    reinplace -W ${worksrcpath} "s|path = \"/bin|path = \"${prefix}/bin:/bin|g" \
+        glib/gutils.c \
+        glib/gspawn.c
+
+    # Upstream mixes three variations of Python shebangs, so account for all
+    fs-traverse f ${worksrcpath} {
+        if {[string match *.py ${f}]} {
+            ui_info "patching testpath: ${f}"
+            reinplace -q "s|/usr/bin/python3$|${configure.python}|" ${f}
+            reinplace -q "s|/usr/bin/env python$|${configure.python}|" ${f}
+            reinplace -q "s|/usr/bin/env python3$|${configure.python}|" ${f}
+        }
+    }
+}
+
+if {${os.platform} ne "darwin"} {
+    build.env-append LD_LIBRARY_PATH=${build.dir}/glib
 }
 
 # this edit does not, for some reason, apply against the build-arm64 config.h
@@ -192,7 +245,8 @@ post-patch {
 #    system "ed - ${build.dir}/config.h < ${filespath}/config.h.ed"
 #}
 
-build.args-append           -v
+build.args-append           --verbose
+build.pre_args-append       -k 0
 
 post-build {
     if {[variant_exists universal] && [variant_isset universal]} {
@@ -209,16 +263,16 @@ post-build {
     }
 }
 
-# test.args-append            -v
+# test.args-append            --verbose
 test.run                    yes
-test.target                 -v test
+test.target                 --verbose test
 
 post-destroot {
     delete ${destroot}${prefix}/lib/charset.alias
 
     set docdir ${prefix}/share/doc/${my_name}
     xinstall -d ${destroot}${docdir}
-    xinstall -m 0644 -W ${worksrcpath} AUTHORS COPYING HACKING NEWS README.md \
+    xinstall -m 0644 -W ${worksrcpath} COPYING NEWS README.md \
         ${destroot}${docdir}
     if {![file exists ${destroot}${prefix}/include/gio-unix-2.0/gio/gdesktopappinfo.h]} {
 	   ui_msg "installing missing gdesktopappinfo.h file"
@@ -239,9 +293,20 @@ post-activate {
 
 platform darwin {
     configure.args-append   -Ddtrace=false
+    
+    # some tests fail to build on 10.6.8 Rosetta: https://trac.macports.org/ticket/65517
+    if {${os.major} == 10 && ${build_arch} eq "ppc"} {
+        configure.args-append   -Dtests=false
+    }
 }
 
 platform darwin 8 {
+    # https://trac.macports.org/ticket/67307
+    configure.cflags-append -D__DARWIN_NON_CANCELABLE=1
+
+    # the @loader_path linkages in the test binaries can't find the dylibs
+    configure.args-append   -Dtests=false
+
     # meson on Tiger cannot use rpaths, so we workaround with this to find dylibs
     foreach my_phase {build test destroot} {
         ${my_phase}.env-append  "DYLD_LIBRARY_PATH=${build_dir}/glib:${build_dir}/gobject:${build_dir}/gio:${build_dir}/gthread:${build_dir}/gmodule"
@@ -288,6 +353,42 @@ if {[variant_isset install_tests]} {
 } else {
 	configure.args-append  -Dinstalled_tests=false
 }
+
+proc port_conflict_check {p_port_name p_conflict_ver_min p_conflict_ver_max} {
+    ui_debug "port_conflict_check: Checking for conflict against port: ${p_port_name}"
+
+    if { ![catch {set port_conflict_ver_info [lindex [registry_active ${p_port_name}] 0]}] } {
+        set port_conflict_ver [lindex ${port_conflict_ver_info} 1]_[lindex ${port_conflict_ver_info} 2]
+        ui_debug "port_conflict_check: ${p_port_name} active version: ${port_conflict_ver}"
+
+        if { [vercmp ${port_conflict_ver} ${p_conflict_ver_min}] >= 0
+            && [vercmp ${port_conflict_ver} ${p_conflict_ver_max}] <= 0 } {
+
+            ui_debug "port_conflict_check: ${p_port_name} conflicts; declare build conflict"
+            conflicts_build-append \
+                ${p_port_name}
+        } else {
+            ui_debug "port_conflict_check: ${p_port_name} does not conflict"
+        }
+    }
+}
+
+# If the user happens to have `gobject-introspection` 1.80.x installed, force them to
+# deactivate it first. Otherwise, the newer version can cause other unexpected failures
+# if still active on downgrade.
+# Logic added 2024-04-17; keep in place for at least 12 months.
+proc gobj_conflict_check {} {
+    set gobj_port_name "gobject-introspection"
+    set gobj_port_names [list ${gobj_port_name} "${gobj_port_name}-devel"]
+    set gobj_ver_min "1.80.1_0"
+    set gobj_ver_max "1.80.1_0"
+
+    foreach p ${gobj_port_names} {
+        port_conflict_check ${p} ${gobj_ver_min} ${gobj_ver_max}
+    }
+}
+
+gobj_conflict_check
 
 livecheck.type              gnome
 livecheck.name              ${my_name}
