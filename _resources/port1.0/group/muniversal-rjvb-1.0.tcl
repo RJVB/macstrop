@@ -118,21 +118,21 @@ proc universal_setup {args} {
         } elseif {${os.arch} eq "i386"} {
             set universal_archs_supported [ldelete ${universal_archs_supported} "ppc64"]
             set universal_archs_supported [ldelete ${universal_archs_supported} "arm64"]
-            if {${os.major} >= 9 && ![catch {sysctl hw.cpu64bit_capable} result] && $result == 0} {
+            if {${os.major} < 11 && ![catch {sysctl hw.cpu64bit_capable} result] && $result == 0} {
                 set universal_archs_supported [ldelete ${universal_archs_supported} "x86_64"]
             }
         } else {
             set universal_archs_supported [ldelete ${universal_archs_supported} "i386"]
             set universal_archs_supported [ldelete ${universal_archs_supported} "x86_64"]
             set universal_archs_supported [ldelete ${universal_archs_supported} "arm64"]
-            if {${os.major} >= 9 && ![catch {sysctl hw.cpu64bit_capable} result] && $result == 0} {
+            if {![catch {sysctl hw.cpu64bit_capable} result] && $result == 0} {
                 set universal_archs_supported [ldelete ${universal_archs_supported} "ppc64"]
             }
         }
     }
 
     # set universal_archs_to_use as the intersection of universal_archs and universal_archs_supported
-    set universal_archs_to_use {}
+    set universal_archs_to_use [list]
     foreach arch ${configure.universal_archs} {
         if {${arch} in ${universal_archs_supported}} {
             lappend universal_archs_to_use ${arch}
@@ -185,10 +185,14 @@ proc universal_setup {args} {
         }
     }
 
+    # Err on the side of creating the variant, as the environment can change
+    # between the port being indexed and being built.
+    # https://trac.macports.org/ticket/68685
+    set orig_num_archs [llength ${configure.universal_archs}]
     # ensure correct archs are recorded in the registry, archive name, etc
     configure.universal_archs {*}${universal_archs_to_use}
 
-    if {[llength ${configure.universal_archs}] < 2} {
+    if {$orig_num_archs < 2} {
         ui_debug "muniversal: < 2 archs supported, not adding universal variant"
     } else {
 
@@ -319,7 +323,7 @@ variant universal {
                 if {$merger_host($arch) ne ""} {
                     set host  --host=$merger_host($arch)
                 }
-            } elseif {([file tail ${configure.cmd}] ne "cmake") && ([file tail ${configure.cmd}] ne "meson")} {
+            } elseif {([file tail ${configure.cmd}] ni [list cmake meson printenv])} {
                 # check if building for a word length we can't run
                 set bits_differ 0
                 if {${arch} in [list ppc64 x86_64] &&
@@ -629,18 +633,12 @@ variant universal {
             copy ${dir1}/${fl} ${tempfile1}
             copy ${dir2}/${fl} ${tempfile2}
 
-            reinplace -q -E {s:-arch +[0-9a-zA-Z_]+::g} ${tempfile1} ${tempfile2}
-            reinplace -q {s:-m32::g} ${tempfile1} ${tempfile2}
-            reinplace -q {s:-m64::g} ${tempfile1} ${tempfile2}
-
-            # also strip out host information and stray space runs
-            reinplace -q -E {s:--host=[^ ]+::g}     ${tempfile1} ${tempfile2}
-            reinplace -q -E {s:host_alias=[^ ]+::g} ${tempfile1} ${tempfile2}
-            reinplace -q -E {s:  +: :g}             ${tempfile1} ${tempfile2}
+            set re {(-m32|-m64|-arch +[0-9a-zA-Z_]+|(--host|host_alias)=[0-9a-zA-Z_.-]+)}
+            reinplace -q -E "s: *(${re}|'${re}'|\"${re}\")::g" ${tempfile1} ${tempfile2}
 
             if { ! [catch {system "/usr/bin/cmp -s \"${tempfile1}\" \"${tempfile2}\""}] } {
                 # modified files are identical
-                ui_debug "universal: merge: ${fl} differs in ${dir1} and ${dir2} but are the same when stripping out -m32, -m64, and -arch XXX"
+                ui_debug "universal: merge: ${fl} differs in ${dir1} and ${dir2} but are the same when stripping out -m32, -m64, -arch *, --host=*, and host_alias=*"
                 copy ${tempfile1} ${dir}/${fl}
                 delete ${tempfile1} ${tempfile2} ${tempdir}
             } else {
@@ -922,7 +920,7 @@ variant universal {
 '}
 
         if { ![info exists merger_dont_diff] } {
-            set merger_dont_diff {}
+            set merger_dont_diff [list]
         }
 
         merge2Dir  ${workpath}/destroot-ppc      ${workpath}/destroot-ppc64     ${workpath}/destroot-powerpc   ""  ppc ppc64      ${merger_dont_diff}  ${diffFormatM}
