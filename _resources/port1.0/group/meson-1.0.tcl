@@ -29,7 +29,13 @@ namespace eval meson {
     proc build.dir {} {
         return "[option build_dir]"
     }
-
+    proc logfile {} {
+        if {[catch {set fn [get_logfile]}]} {
+            return ""
+        } else {
+            return $fn
+        }
+    }
 }
 
 depends_skip_archcheck-append \
@@ -50,6 +56,7 @@ default build.target        ""
 
 # remove DESTDIR= from arguments, but rather take it from environmental variable
 destroot.env-append         DESTDIR=${destroot}
+default destroot.cmd        {${prefix}/bin/meson}
 default destroot.post_args  ""
 if {![info exists python.default_version]} {
     destroot.pre_args-prepend -v
@@ -150,6 +157,7 @@ pre-configure {
 
 proc meson.save_configure_cmd {{save_log_too ""}} {
     namespace upvar ::meson configure_cmd_saved statevar
+    global merger_combine merger_arch_flag
     if {[tbool statevar]} {
         ui_debug "meson.save_configure_cmd already called"
         return;
@@ -160,11 +168,19 @@ proc meson.save_configure_cmd {{save_log_too ""}} {
         configure.args-append
     }
     if {${save_log_too} ne ""} {
-        pre-configure {
-            configure.pre_args-prepend "-cf '${configure.cmd} "
-            configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure.log'"
-            configure.cmd "/bin/csh"
-            ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
+        if {[variant_isset universal] &&
+            ([info exists merger_combine] || [info exists merger_arch_flag])
+        } {
+            # we're using one of the muniversal PortGroups; don't redefine configure.cmd!
+            set no_configure_redirection yes
+        }
+        if {[meson::logfile] eq "" && ![info exists no_configure_redirection]} {
+            pre-configure {
+                configure.pre_args-prepend "-cf '${configure.cmd} "
+                configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure.log'"
+                configure.cmd "/bin/csh"
+                ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
+            }
         }
         if {${save_log_too} eq "install log"} {
             post-destroot {
@@ -218,6 +234,17 @@ proc meson.save_configure_cmd {{save_log_too ""}} {
             puts ${fd} "${configure.cmd} [join ${configure.pre_args}] [join ${configure.args}] [join ${configure.post_args}]"
             close ${fd}
             unset fd
+        }
+        set logfile [meson::logfile]
+        if {${logfile} ne ""} {
+            ui_debug "Filtering configure log from ${logfile})"
+            if {![catch {flush_logfile} err]} {
+                ui_debug "Flushed file ${logfile}"
+            } else {
+                ui_debug "Couldn't flush ${logfile}: $err"
+            }
+            exec sync
+            catch {exec fgrep ":info:configure " ${logfile} | sed "s/:info:configure //g" > ${workpath}/.macports.${subport}.configure.log}
         }
     }
 }
