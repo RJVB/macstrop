@@ -86,13 +86,15 @@ options configure.ar \
         configure.ranlib \
         LTO.use_archive_helpers \
         LTO.cpuflags \
-        LTO.compatcpu
+        LTO.compatcpu \
+        LTO.ltoflags
 
 # give the port a say over whether or not the selected helpers are used
 default LTO.use_archive_helpers yes
 default LTO.cpuflags {}
 default LTO.compatcpu westmere
 default LTO.compatflags {-msse4.1 -msse4.2 -msse3 -mssse3 -msse2 -msse -mmmx -mpclmul}
+default LTO.ltoflags {}
 
 if {![info exists LTO.allow_ThinLTO]} {
     set LTO.allow_ThinLTO yes
@@ -270,6 +272,7 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
                 }
             }
         }
+        LTO.ltoflags ${lto_flags}
     }
 }
 
