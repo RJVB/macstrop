@@ -1,53 +1,41 @@
 diff --git Modules/CMakeDetermineCompilerABI.cmake Modules/CMakeDetermineCompilerABI.cmake
-index 012a87cafc..9557851bf6 100644
+index 012a87cafc..20bec3a109 100644
 --- Modules/CMakeDetermineCompilerABI.cmake
 +++ Modules/CMakeDetermineCompilerABI.cmake
-@@ -89,6 +89,50 @@ function(CMAKE_DETERMINE_COMPILER_ABI lang src)
+@@ -89,6 +89,38 @@ function(CMAKE_DETERMINE_COMPILER_ABI lang src)
      # Load the resulting information strings.
      if(CMAKE_${lang}_ABI_COMPILED)
        message(CHECK_PASS "done")
 +      if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-+        message(CHECK_START "Verifying ${lang} compiler target architectures")
 +        file(READ_MACHO ${BIN} ARCHITECTURES archs)
-+        message(CONFIGURE_LOG
-+          "Checking the architectures in the generated ABI info binary:\n"
-+          "file(READ_MACHO \"${BIN}\" ARCHITECTURES out) returns:\n"
-+          "${archs}\n")
 +        if(NOT archs)
-+          message(CHECK_FAIL "Cannot determine architectures in the binaries the compiler generates")
-+          set(arch_list "unknown")
-+        else()
-+          # sort and prune the list of found architectures
-+          set(arch_list_sorted ${archs})
-+          list(SORT arch_list_sorted)
-+          list(REMOVE_DUPLICATES arch_list_sorted)
-+          # sort and prune the list of requested architectures
-+          set(requested_arch_list ${CMAKE_OSX_ARCHITECTURES})
-+          list(SORT requested_arch_list)
-+          list(REMOVE_DUPLICATES requested_arch_list)
-+          message(CONFIGURE_LOG
-+            "Effective list of requested architectures (possibly empty)  : \"${requested_arch_list}\"\n"
-+            "Effective list of architectures found in the ABI info binary: \"${arch_list_sorted}\"\n")
-+          # If all generated archtectures were known to libmacho:
-+          # Compare requested and found:
-+          # - if no architecture(s) were requested explicitly, just check if lipo returned
-+          #   an architecture for the ABI info binary.
-+          # - otherwise, check if the requested and found lists are equal
-+          if(arch_list_sorted MATCHES "unknown")
-+            # Rare but not impossible: a host with a toolchain capable of generating binaries with
-+            # architectures that the system libmacho is too old to know. Report the found archs as
-+            # usual, warn about the unknowns and skip the comparison with CMAKE_OSX_ARCHITECTURES.
-+            message(CHECK_PASS "${archs}")
-+            message(WARNING "The ${lang} compiler generates universal binaries with at least 1 architecture not known to the host")
-+          elseif((NOT requested_arch_list AND arch_list_sorted)
-+              OR "${requested_arch_list}" STREQUAL "${arch_list_sorted}")
-+            # confirm success by printing the unsorted list of found architectures
-+            message(CHECK_PASS "${archs}")
-+          else()
-+            message(CHECK_FAIL "not as required")
-+            # inform the user of the mismatch but show the raw input and output lists
-+            message(SEND_ERROR "Generated architectures: \"${archs}\" but CMAKE_OSX_ARCHITECTURES=\"${CMAKE_OSX_ARCHITECTURES}\"")
-+          endif()
++          set(archs "unknown")
++        endif()
++        # sort and prune the list of found architectures
++        set(arch_list_sorted ${archs})
++        list(SORT arch_list_sorted)
++        list(REMOVE_DUPLICATES arch_list_sorted)
++        # sort and prune the list of requested architectures
++        set(requested_arch_list ${CMAKE_OSX_ARCHITECTURES})
++        list(SORT requested_arch_list)
++        list(REMOVE_DUPLICATES requested_arch_list)
++        message(CONFIGURE_LOG
++          "Effective list of requested architectures (possibly empty)  : \"${requested_arch_list}\"\n"
++          "Effective list of architectures found in the ABI info binary: \"${arch_list_sorted}\"\n")
++        # If all generated archtectures were known to libmacho:
++        # Compare requested and found:
++        # - if no architecture(s) were requested explicitly, just check if lipo returned
++        #   an architecture for the ABI info binary.
++        # - otherwise, check if the requested and found lists are equal
++        if(arch_list_sorted MATCHES "unknown")
++          # Rare but not impossible: a host with a toolchain capable of generating binaries with
++          # architectures that the system libmacho is too old to know. Report the found archs as
++          # usual, warn about the unknowns and skip the comparison with CMAKE_OSX_ARCHITECTURES.
++          message(WARNING "The ${lang} compiler generates universal binaries with at least 1 architecture not known to the host")
++        elseif(requested_arch_list AND arch_list_sorted
++            AND NOT "${requested_arch_list}" STREQUAL "${arch_list_sorted}")
++          # inform the user of the mismatch but show the raw input and output lists
++          message(FATAL_ERROR "${lang} compiler target architectures: \"${archs}\" but CMAKE_OSX_ARCHITECTURES=\"${CMAKE_OSX_ARCHITECTURES}\"")
 +        endif()
 +      endif()
        file(STRINGS "${BIN}" ABI_STRINGS LIMIT_COUNT 32 REGEX "INFO:[A-Za-z0-9_]+\\[[^]]*\\]")
@@ -155,30 +143,34 @@ index 0000000000..0604267f95
 +}
 diff --git Source/cmFileCommand-ReadMacho.h Source/cmFileCommand-ReadMacho.h
 new file mode 100644
-index 0000000000..8ac8d8d488
+index 0000000000..b79e15f15f
 --- /dev/null
 +++ Source/cmFileCommand-ReadMacho.h
-@@ -0,0 +1,6 @@
+@@ -0,0 +1,11 @@
 +/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
 +   file Copyright.txt or https://cmake.org/licensing for details.  */
 +#pragma once
 +
++#include <string>
++#include <vector>
++
++class cmExecutionStatus;
++
 +bool HandleReadMachoCommand(std::vector<std::string> const& args,
 +                            cmExecutionStatus& status);
 diff --git Source/cmFileCommand.cxx Source/cmFileCommand.cxx
-index e3f5b9626d..c0ee77f99e 100644
+index e3f5b9626d..c247e2d36e 100644
 --- Source/cmFileCommand.cxx
 +++ Source/cmFileCommand.cxx
-@@ -60,6 +60,8 @@
- #include "cmWorkingDirectory.h"
- #include "cmake.h"
- 
+@@ -35,6 +35,7 @@
+ #include "cmELF.h"
+ #include "cmExecutionStatus.h"
+ #include "cmFSPermissions.h"
 +#include "cmFileCommand-ReadMacho.h"
-+
- #if !defined(CMAKE_BOOTSTRAP)
- #  include <cm3p/curl/curl.h>
- 
-@@ -3858,6 +3860,7 @@ bool cmFileCommand(std::vector<std::string> const& args,
+ #include "cmFileCopier.h"
+ #include "cmFileInstaller.h"
+ #include "cmFileLockPool.h"
+@@ -3858,6 +3859,7 @@ bool cmFileCommand(std::vector<std::string> const& args,
      { "RPATH_CHECK"_s, HandleRPathCheckCommand },
      { "RPATH_REMOVE"_s, HandleRPathRemoveCommand },
      { "READ_ELF"_s, HandleReadElfCommand },
