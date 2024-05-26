@@ -8,15 +8,32 @@
 
 namespace eval devport_helper {
     # our directory:
-    variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
+    set thisfile [dict get [info frame 0] file]
+    variable currentportgroupdir [file dirname ${thisfile}]
+    if {[info exists ::argv]} {
+        set asscript 1
+        set useportgroup 0
+        proc ui_info {msg} {
+            puts stderr ${msg}
+        }
+        set ui_error ui_info
+    } else {
+        set asscript 0
+        # check if the current port has any dependencies at all to
+        # avoid searching for devports when we can.
+        if {[option depends_build] ne {} || [option depends_lib] ne {}} {
+            set useportgroup 1
+            set updatedb [expr ![file exists ${currentportgroupdir}/devport_db.tcl] \
+                || ([file mtime ${thisfile}] > [file mtime ${currentportgroupdir}/devport_db.tcl])]
+        } else {
+            set useportgroup 0
+            set updatedb 0
+        }
+    }
 
     # check if we're invoked as a standalone script, or if the devport database hasn't been created yet:
-    if {[info exists ::argv] || ![file exists ${currentportgroupdir}/devport_db.tcl]} {
-        if {![info exists ::argv]} {
-            ui_info "Generating the devport database"
-        } else {
-            puts stderr "Generating the devport database"
-        }
+    if {${asscript} || ${updatedb}} {
+        ui_info "Generating the devport database"
         # use the port driver to find all ports called ${name}-dev
         set devports [exec port -q info --index --line --name "*-dev"]
         # generate a database (array) that maps the main port name to its corresponding devport
@@ -31,20 +48,44 @@ namespace eval devport_helper {
             puts ${fp} "\]"
             close ${fp}
         } else {
-            if {[info exists ::argv]} {
-                puts stderr "Error writing ${currentportgroupdir}/devport_db.tcl: $err"
-            } else {
-                ui_error "Error writing ${currentportgroupdir}/devport_db.tcl: $err"
-            }
+            ${ui_error} "Error writing ${currentportgroupdir}/devport_db.tcl: $err"
             return -code error "Error writing devport database ${currentportgroupdir}/devport_db.tcl"
         }
     }
-    if {![info exists ::argv]} { ## this is where we do the actual PortGroup work:
-        if {![catch {source "${currentportgroupdir}/devport_db.tcl"} err] && [info exists devportDB]} {
-        } else {
-            ui_error "Error reading ${currentportgroupdir}/devport_db.tcl: $err"
-            return -code error "Error reading devport database ${currentportgroupdir}/devport_db.tcl"
+    # this PortGroup is included through "base" *after* the Portfile has been parsed, but the callbacks
+    # from any other PGs will be executed after we've been read. So, we need to use a callback too in
+    # order to scan the best possibly definitive depends_lib and depends_build lists.
+    proc callback {} {
+        global depends_lib depends_build
+        if {${devport_helper::useportgroup}} { ## this is where we do the actual PortGroup work:
+            if {![catch {source "${devport_helper::currentportgroupdir}/devport_db.tcl"} err] && [info exists devportDB]} {
+                # scan the depends_build and depends_lib lists for ports that have devports
+                foreach d [list {*}${depends_build} {*}${depends_lib}] {
+                    set dep [lindex [split ${d} ":"] end]
+                    if {[info exists devportDB(${dep})]} {
+                        set devdep $devportDB(${dep})
+                        # found one, let's see if the devport is already declared in depends_build:
+                        if {[lsearch -regexp ${depends_build} "\[^ \]*:${devdep}"] < 0} {
+                            ui_debug "port:${devdep} is missing from the build dependencies; adding it"
+                            depends_build-append "port:${devdep}"
+                            if {[catch {registry_active ${devdep}}]} {
+                                # it'd be nice if there were a conditional way to use ui_warn here
+                                # where it prints before asking the used to install a dependency
+                                # that may simply have been deactivate (= is installed).
+                                # With my patched "base" the ui_info routine is an acceptable workaround.
+                                ui_info "WARNING: port:${devdep} is installed but not activated."
+                            }
+                        }
+                    }
+                }
+            } else {
+                ui_error "Error reading ${devport_helper::currentportgroupdir}/devport_db.tcl: $err"
+                return -code error "Error reading devport database ${devport_helper::currentportgroupdir}/devport_db.tcl"
+            }
         }
     }
+}
+if {${devport_helper::useportgroup}} {
+    port::register_callback devport_helper::callback
 }
 
