@@ -11,6 +11,7 @@ namespace eval devport_helper {
     set thisfile [dict get [info frame 0] file]
     variable currentportgroupdir [file dirname ${thisfile}]
     set useportgroup 0
+    set updatedb 0
     if {[info exists ::argv]} {
         set asscript 1
         proc ui_info {msg} {
@@ -23,10 +24,10 @@ namespace eval devport_helper {
         # avoid searching for devports when we can.
         if {[info exists depends_build] || [info exists depends_lib]} {
             set useportgroup 1
-            set updatedb [expr ![file exists ${currentportgroupdir}/devport_db.tcl] \
-                || ([file mtime ${thisfile}] > [file mtime ${currentportgroupdir}/devport_db.tcl])]
-        } else {
-            set updatedb 0
+            if {!([file exists ${currentportgroupdir}/devport_db.tcl]
+                    && [file mtime ${thisfile}] <= [file mtime ${currentportgroupdir}/devport_db.tcl])} {
+                set updatedb 1
+            }
         }
     }
 
