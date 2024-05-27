@@ -10,9 +10,9 @@ namespace eval devport_helper {
     # our directory:
     set thisfile [dict get [info frame 0] file]
     variable currentportgroupdir [file dirname ${thisfile}]
+    set useportgroup 0
     if {[info exists ::argv]} {
         set asscript 1
-        set useportgroup 0
         proc ui_info {msg} {
             puts stderr ${msg}
         }
@@ -21,12 +21,11 @@ namespace eval devport_helper {
         set asscript 0
         # check if the current port has any dependencies at all to
         # avoid searching for devports when we can.
-        if {[option depends_build] ne {} || [option depends_lib] ne {}} {
+        if {[info exists depends_build] || [info exists depends_lib]} {
             set useportgroup 1
             set updatedb [expr ![file exists ${currentportgroupdir}/devport_db.tcl] \
                 || ([file mtime ${thisfile}] > [file mtime ${currentportgroupdir}/devport_db.tcl])]
         } else {
-            set useportgroup 0
             set updatedb 0
         }
     }
@@ -60,6 +59,12 @@ namespace eval devport_helper {
         if {${devport_helper::useportgroup}} { ## this is where we do the actual PortGroup work:
             if {![catch {source "${devport_helper::currentportgroupdir}/devport_db.tcl"} err] && [info exists devportDB]} {
                 # scan the depends_build and depends_lib lists for ports that have devports
+                if {![info exists depends_build]} {
+                    depends_build
+                }
+                if {![info exists depends_lib]} {
+                    depends_lib
+                }
                 foreach d [list {*}${depends_build} {*}${depends_lib}] {
                     set dep [lindex [split ${d} ":"] end]
                     if {[info exists devportDB(${dep})]} {
