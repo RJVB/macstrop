@@ -4,6 +4,7 @@
 
 PortSystem          1.0
 
+
 set basename        qt53-kde
 set namesuffix      ""
 name                ${basename}${namesuffix}
@@ -131,11 +132,54 @@ distname            qt-everywhere-opensource-src-${version}
 master_sites        http://download.qt.io/official_releases/qt/${branch}/${version}/single/
 
 use_xz              yes
-checksums           rmd160  e4664d55eb4cfb04e982d680602e4cdcd4f2ac05 \
-                    sha256  7f5bf93344cb57bac374ea4a32c8eda87f1357f998f14278e717cf84d0289bf0
 
 # Share the distfiles dir with port:qt5
 dist_subdir         qt5
+
+if {![file exists ${distpath}/${distname}${extract.suffix}]} {
+    # Qt have retired the source tarball we want for this port, so we need to go through git
+    git.url         https://code.qt.io/qt/qt5.git
+    fetch {
+        # do a bare fetch without history of the tag corresponding to ${version}
+        system -W ${workpath} "git clone --progress -n -b v${version} --depth=1 ${git.url} ${distname}"
+
+        # populate the skeleton tree, discarding the future:
+        system -W ${worksrcpath} "git reset --hard v${version}"
+        # hack the init-repository script so it checks out the version we want, only
+        # of the components we know exist and without any git history:
+        system -W ${worksrcpath} "patch -Np1 -i ${filespath}/patch-init-repository.diff"
+        # populate the source tree
+        ui_msg " -->  Populating the source tree. This will take some time!"
+        system -W ${worksrcpath} "./init-repository -f"
+        # cleanup:
+        exec find ${worksrcpath} -name .git | xargs rm -rf
+        foreach d {qtdocgallery qtenginio qtfeedback qtpim qtqa qtrepotools qtsystems qtwayland} {
+            file delete -force ${worksrcpath}/${d}
+        }
+        ui_msg " -->  Generating our own source tarball. This will take even more time!"
+        system -W ${workpath} "tar -c ${distname} | xz -v --threads=${build.jobs} > ${distpath}/${distname}${extract.suffix}"
+        # create a checksum file
+        exec echo "checksums rmd160 [rmd160 file ${distpath}/${distname}${extract.suffix}] \\\n\
+                             size [file size ${distpath}/${distname}${extract.suffix}]" > ${distpath}/${distname}${extract.suffix}.sig
+        # no point in removing ${worksrcpath} as the extract phase will overwrite it with its archived contents
+        # On SSDs it might even be beneficial to leave the files in place.
+    }
+} else {
+    # check for the presence of a checksum file and load it or dump one on the terminal"
+    if {[file exists ${distpath}/${distname}${extract.suffix}.sig]} {
+        source ${distpath}/${distname}${extract.suffix}.sig
+    } else {
+        ui_msg "Missing checksum file \"${distpath}/${distname}${extract.suffix}.sig !"
+        ui_msg "Please create it for this port if you are certain about the provenance"
+        ui_msg "of the archive (tarball) named below, containing the following text:"
+        ui_msg "##---------------------------------------------------------"
+        ui_msg "checksums rmd160 [rmd160 file ${distpath}/${distname}${extract.suffix}] \\"
+        ui_msg "          size [file size ${distpath}/${distname}${extract.suffix}]"
+        ui_msg "##---------------------------------------------------------"
+        # return the designated error immediately:
+        return -code error "No checksum set for ${distpath}/${distname}${extract.suffix}"
+    }
+}
 
 # be neat and put all --exclude extract exclusions before any specified components to extract
 options             do_not_extract \
@@ -1584,9 +1628,7 @@ subport ${name}-examples {
                                 ${distname}/qtsensors/examples/         \
                                 ${distname}/qtsvg/examples/             \
                                 ${distname}/qttools/examples/           \
-                                ${distname}/qtxmlpatterns/examples/     \
-                                ${distname}/qt3d/examples               \
-                                ${distname}/qtcanvas3d/examples
+                                ${distname}/qtxmlpatterns/examples/
     extract_components-append   ${distname}/qtquick1/examples/          \
                                 ${distname}/qtwebkit-examples/examples/
     depends_lib-append          ${qt5_dependency}
