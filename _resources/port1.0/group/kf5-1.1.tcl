@@ -174,7 +174,9 @@ if {${kf5::includecounter} == 0} {
     # here; moved to kf5_frameworks-1.0.tcl
 
     platform darwin {
-        variant nativeQSP description {use the native Apple-style QStandardPaths locations} {}
+        if {![variant_exists nativeQSP]} {
+            variant nativeQSP description {use the native Apple-style QStandardPaths locations} {}
+        }
 
     #     if {![file exists ${qt_includes_dir}/QtCore/qextstandardpaths.h]}
         if {![catch {set result [active_variants qt5-qtbase {}]}]} {
@@ -250,8 +252,10 @@ if {${kf5::includecounter} == 0} {
                             -DKDE_INSTALL_LIBEXECDIR=${kf5.libexec_dir} \
                             -DCMAKE_MACOSX_RPATH=ON
         if {[string match *g*-mp-7* ${configure.cxx}]} {
-            variant libcxx description {Experimental option to use -stdlib=libc++ with g++-mp-7. \
-                    Requires using port:gcc7+libcxxXY.} {}
+            if {![variant_exists libcxx]} {
+                variant libcxx description {Experimental option to use -stdlib=libc++ with g++-mp-7. \
+                        Requires using port:gcc7+libcxxXY.} {}
+            }
             if {[variant_isset libcxx]} {
                 configure.cxx_stdlib \
                                 libc++
@@ -280,14 +284,18 @@ if {${kf5::includecounter} == 0} {
     }
     if {${os.platform} ne "darwin"} {
         if {[string match *clang* ${configure.cxx}]} {
-            variant libcxx description {highly experimental option to build against libc++. \
-                    Requires using clang and an independently provided libc++ installation.} {
-                configure.cxx_stdlib \
-                                libc++
+            if {![variant_exists libcxx]} {
+                variant libcxx description {highly experimental option to build against libc++. \
+                        Requires using clang and an independently provided libc++ installation.} {
+                    configure.cxx_stdlib \
+                                    libc++
+                }
             }
         } elseif {[string match *g*-mp-7* ${configure.cxx}]} {
-            variant libcxx description {highly experimental option to build against libc++. \
-                    Requires using port:gcc7+libcxx and an independently provided libc++ installation.} {}
+            if {![variant_exists libcxx]} {
+                variant libcxx description {highly experimental option to build against libc++. \
+                        Requires using port:gcc7+libcxx and an independently provided libc++ installation.} {}
+            }
             if {[variant_isset libcxx]} {
                 configure.cxx_stdlib \
                                 libc++
@@ -295,7 +303,9 @@ if {${kf5::includecounter} == 0} {
                                 -stdlib=libc++
             }
         } else {
-            variant libcxx description {Not supported. Use libc++ when building with clang or a libc++-enabled GCC port} {}
+            if {![variant_exists libcxx]} {
+                variant libcxx description {Not supported. Use libc++ when building with clang or a libc++-enabled GCC port} {}
+            }
             if {[variant_isset libcxx]} {
                 ui_warn "+libcxx is supported only with clang or with g++ from port:gcc7+libcxxXY!"
                 pre-configure {
@@ -311,37 +321,39 @@ if {${kf5::includecounter} == 0} {
     options kf5.allow_apidocs_generation
     default kf5.allow_apidocs_generation {yes}
 
-    variant chm requires docs description {when building the API documentation, also create a .chm version} {
-        depends_build-append \
-                            port:chmcmd-fpc
-        depends_skip_archcheck-append \
-                            chmcmd-fpc
-    }
-    variant docs description {build and install the API documentation, for use with Qt's Assistant and KDevelop} {
-        configure.args-delete \
-                            -DBUILD_doc=OFF \
-                            -DBUILD_docs=OFF
-        if {${subport} ne "kf5-kapidox" && ${subport} ne "kf5-kapidox-devel"} {
-            if {[tbool kf5.allow_apidocs_generation]} {
-                if {![info exists kf5.framework]} {
-                    kf5.depends_build_frameworks \
-                            kdoctools
+    if {![variant_exists chm]} {
+        variant chm requires docs description {when building the API documentation, also create a .chm version} {
+            depends_build-append \
+                                port:chmcmd-fpc
+            depends_skip_archcheck-append \
+                                chmcmd-fpc
+        }
+        variant docs description {build and install the API documentation, for use with Qt's Assistant and KDevelop} {
+            configure.args-delete \
+                                -DBUILD_doc=OFF \
+                                -DBUILD_docs=OFF
+            if {${subport} ne "kf5-kapidox" && ${subport} ne "kf5-kapidox-devel"} {
+                if {[tbool kf5.allow_apidocs_generation]} {
+                    if {![info exists kf5.framework]} {
+                        kf5.depends_build_frameworks \
+                                kdoctools
+                    }
+                    if {[info exists kf5.framework]} {
+                        # KF5 frameworks are more or less guaranteed to have a metainfo.yaml file
+                        # which is required for newer kapidox versions. We could check for
+                        # the existence of that file, but that would mean depending on both
+                        # versions of the framework.
+                        kf5.depends_build_frameworks \
+                                kapidox
+                    } else {
+                        # other software will be processed by an older KApiDox version,
+                        # installed under the name kf5-kgenapidox
+                        kf5.depends_build_frameworks \
+                                kgenapidox
+                    }
+                    depends_skip_archcheck-append \
+                                ${kf5::kapidox_dep} ${kf5::kgenapidox_dep}
                 }
-                if {[info exists kf5.framework]} {
-                    # KF5 frameworks are more or less guaranteed to have a metainfo.yaml file
-                    # which is required for newer kapidox versions. We could check for
-                    # the existence of that file, but that would mean depending on both
-                    # versions of the framework.
-                    kf5.depends_build_frameworks \
-                            kapidox
-                } else {
-                    # other software will be processed by an older KApiDox version,
-                    # installed under the name kf5-kgenapidox
-                    kf5.depends_build_frameworks \
-                            kgenapidox
-                }
-                depends_skip_archcheck-append \
-                            ${kf5::kapidox_dep} ${kf5::kgenapidox_dep}
             }
         }
     }

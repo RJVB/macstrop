@@ -34,27 +34,29 @@
 
 if {[variant_exists LTO]} {
     set LTO.disable_LTO yes
-} elseif {[tbool LTO.disable_LTO]} {
-    ui_debug "LTO cannot be activated"
-    set LTO.must_be_disabled yes
-    variant LTO description {dummy variant: link-time optimisation disabled for this port} {
-        pre-configure {
-            ui_warn "The +LTO variant has been disabled and thus has no effect"
+} elseif {![variant_exists LTO]} {
+    if {[tbool LTO.disable_LTO]} {
+        ui_debug "LTO cannot be activated"
+        set LTO.must_be_disabled yes
+        variant LTO description {dummy variant: link-time optimisation disabled for this port} {
+            pre-configure {
+                ui_warn "The +LTO variant has been disabled and thus has no effect"
+            }
+            notes-append "Port ${subport} has been installed with a dummy +LTO variant!"
+            # cast the iron while it's hot (takes care of +LTO on the commandline)
+            if {[variant_isset LTO]} {
+                 ui_warn "Variant +LTO unsetting itself!"
+                 unset ::variations(LTO)
+            }
         }
-        notes-append "Port ${subport} has been installed with a dummy +LTO variant!"
         # cast the iron while it's hot (takes care of +LTO on the commandline)
         if {[variant_isset LTO]} {
-             ui_warn "Variant +LTO unsetting itself!"
+             ui_warn "Variant disabled, please don't request +LTO!"
              unset ::variations(LTO)
         }
+    } else {
+        variant LTO description {build with link-time optimisation} {}
     }
-    # cast the iron while it's hot (takes care of +LTO on the commandline)
-    if {[variant_isset LTO]} {
-         ui_warn "Variant disabled, please don't request +LTO!"
-         unset ::variations(LTO)
-    }
-} else {
-    variant LTO description {build with link-time optimisation} {}
 }
 options LTO.supports_i386 \
         LTO.gcc_lto_jobs
@@ -352,8 +354,10 @@ if {[info exists LTO.custom_binaries]} {
     }
 }
 
-variant cputuned conflicts cpucompat description {Build using -march=native for optimal tuning to your CPU} {}
-variant cpucompat conflicts cputuned description {Build using some commonly supported SIMD settings for optimal cross-CPU tuning} {}
+if {![variant_exists cputuned]} {
+    variant cputuned conflicts cpucompat description {Build using -march=native for optimal tuning to your CPU} {}
+    variant cpucompat conflicts cputuned description {Build using some commonly supported SIMD settings for optimal cross-CPU tuning} {}
+}
 
 if {[variant_isset cputuned]} {
     default LTO.cpuflags "-march=native"
@@ -387,7 +391,7 @@ if {[info exists LTO_needs_pre_build]} {
     }
 }
 
-if {[tbool LTO.allow_UseLLD]} {
+if {[tbool LTO.allow_UseLLD] && ![variant_exists use_lld]} {
     if {${os.platform} eq "darwin"} {
         variant use_lld conflicts universal description {use the LLD linker (not for 32bit building)} {}
     } else {
@@ -425,26 +429,30 @@ if {![variant_exists use_lld] || ![variant_isset use_lld]} {
     }
 }
 
-variant builtwith description {Label the install with the compiler used} {}
+if {![variant_exists builtwith]} {
+    variant builtwith description {Label the install with the compiler used} {}
+}
 if {[variant_isset builtwith]} {
     set usedCompiler [string map {"-" "_"} [file tail ${configure.cc}]]
-    variant ${usedCompiler} requires builtwith description "placeholder variant to record the compiler used" {
-        pre-configure {
-            ui_warn "+builtwith+${usedCompiler} are just placeholder variants used only to label the install with the compiler used"
+    if {![variant_exists ${usedCompiler}]} {
+        variant ${usedCompiler} requires builtwith description "placeholder variant to record the compiler used" {
+            pre-configure {
+                ui_warn "+builtwith+${usedCompiler} are just placeholder variants used only to label the install with the compiler used"
+            }
         }
+        default_variants-append +${usedCompiler}
     }
-    default_variants-append +${usedCompiler}
 }
 
-platform linux {
-    variant fromHost description {assume the host already provides this port via distro packages, typically with the dev package included.} {}
-    set newVariantName fromHost
-    if {[variant_isset fromHost]} {
-        PortGroup stub 1.0
-    }
+# platform linux {
+#     variant fromHost description {assume the host already provides this port via distro packages, typically with the dev package included.} {}
+#     set newVariantName fromHost
+#     if {[variant_isset fromHost]} {
+#         PortGroup stub 1.0
+#     }
 #     variant testIdea description {Some fancy new experiment.} {}
 #     set newVariantName testIdea
-}
+# }
 
 proc LTO::callback {} {
     # this callback could really also handle the disable and allow switches!

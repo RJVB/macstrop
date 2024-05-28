@@ -683,7 +683,10 @@ platform darwin {
 
 configure.universal_args-delete --disable-dependency-tracking
 
-variant debug description "Enable debug binaries" {
+if {![variant_exists debug]} {
+    variant debug description "Enable debug binaries" {}
+}
+if {[variant_isset debug]} {
     pre-configure {
         # this PortGroup uses a custom CMAKE_BUILD_TYPE giving complete control over
         # the compiler flags. We use that here: replace the default -O2 or -Os with -O0, add
