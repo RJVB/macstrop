@@ -208,15 +208,20 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
                 set objc_lto_flags      ${lto_flags}
             } elseif {${configure.compiler} ne "cc"} {
                 set lto_flags           "-ftracer -flto${LTO::gcc_lto_jobs}"
-                set objc_lto_flags      "-flto"
+                set objc_lto_flags      ""
             }
             if {[tbool LTO.fat_LTO_Objects]} {
                 set lto_flags           "${lto_flags} -ffat-lto-objects"
-                set objc_lto_flags      "${objc_lto_flags} -ffat-lto-objects"
+                set objc_lto_flags      ""
             }
         }
         ui_debug "LTO: setting LTO compiler and linker option(s) \"${lto_flags}\""
         ui_debug "     ObjC and ObjC++ will use:                 \"${objc_lto_flags}\""
+        pre-configure {
+            if {${objc_lto_flags} eq ""} {
+                ui_warn "Warning: ObjC/++ files will be compiled without LTO because of the main compiler choice!"
+            }
+        }
         if {![variant_isset universal] || [tbool LTO.supports_i386]} {
             # consolidate the current (possibly) default values for ObjC compiler flags
             # (to make sure they're "unlinked from" the corresponding C/C++ flags!)
