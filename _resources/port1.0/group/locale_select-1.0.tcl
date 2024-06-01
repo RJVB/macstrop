@@ -57,6 +57,9 @@ default langselect_lproj_dir     {}
 options langselect_keep_languages
 default langselect_keep_languages {}
 
+options langselect_keep_locales_file
+default langselect_keep_locales_file {${prefix}/etc/macports/locales.tcl}
+
 namespace eval langselect {
 
     set has_nonstandard_locations 0
@@ -86,16 +89,17 @@ namespace eval langselect {
 
 if {[variant_isset langselect]} {
     post-destroot {
-        if {[file exists ${prefix}/etc/macports/locales.tcl] &&
+        ui_debug "## starting langselect scan/pruning"
+        if {[file exists ${langselect_keep_locales_file}] &&
             (${langselect::has_nonstandard_locations} || \
 		  [file exists ${destroot}${prefix}/share/locale] || \
             [file exists [join ${langselect_qm_dir}]] || \
             [file exists ${destroot}${prefix}/share/man])
         } {
-            ui_debug "Reading local locale prefs from \"${prefix}/etc/macports/locales.tcl\""
-            if {[catch {source "${prefix}/etc/macports/locales.tcl"} err]} {
-                ui_error "Error reading ${prefix}/etc/macports/locales.tcl: $err"
-                return -code error "Error reading ${prefix}/etc/macports/locales.tcl"
+            ui_debug "Reading local locale prefs from \"${langselect_keep_locales_file}\""
+            if {[catch {source "${langselect_keep_locales_file}"} err]} {
+                ui_error "Error reading ${langselect_keep_locales_file}: $err"
+                return -code error "Error reading ${langselect_keep_locales_file}"
             }
         }
         if {[info exists keep_languages]} {
@@ -204,7 +208,10 @@ if {[variant_isset langselect]} {
                     }
                 }
 		  }
+        } else {
+            ui_debug "## langselect not applicable or configured - does ${langselect_keep_locales_file} exist?"
         }
+        ui_debug "## langselect scan done."
     }
 }
 
