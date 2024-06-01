@@ -1,81 +1,103 @@
 diff --git Modules/CMakeDetermineCompilerABI.cmake Modules/CMakeDetermineCompilerABI.cmake
-index 012a87cafc..20bec3a109 100644
+index 012a87cafc..490024c787 100644
 --- Modules/CMakeDetermineCompilerABI.cmake
 +++ Modules/CMakeDetermineCompilerABI.cmake
-@@ -89,6 +89,38 @@ function(CMAKE_DETERMINE_COMPILER_ABI lang src)
+@@ -89,6 +89,41 @@ function(CMAKE_DETERMINE_COMPILER_ABI lang src)
      # Load the resulting information strings.
      if(CMAKE_${lang}_ABI_COMPILED)
        message(CHECK_PASS "done")
-+      if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-+        file(READ_MACHO ${BIN} ARCHITECTURES archs)
-+        if(NOT archs)
-+          set(archs "unknown")
-+        endif()
-+        # sort and prune the list of found architectures
-+        set(arch_list_sorted ${archs})
-+        list(SORT arch_list_sorted)
-+        list(REMOVE_DUPLICATES arch_list_sorted)
-+        # sort and prune the list of requested architectures
-+        set(requested_arch_list ${CMAKE_OSX_ARCHITECTURES})
-+        list(SORT requested_arch_list)
-+        list(REMOVE_DUPLICATES requested_arch_list)
-+        message(CONFIGURE_LOG
-+          "Effective list of requested architectures (possibly empty)  : \"${requested_arch_list}\"\n"
-+          "Effective list of architectures found in the ABI info binary: \"${arch_list_sorted}\"\n")
-+        # If all generated archtectures were known to libmacho:
-+        # Compare requested and found:
-+        # - if no architecture(s) were requested explicitly, just check if lipo returned
-+        #   an architecture for the ABI info binary.
-+        # - otherwise, check if the requested and found lists are equal
-+        if(arch_list_sorted MATCHES "unknown")
-+          # Rare but not impossible: a host with a toolchain capable of generating binaries with
-+          # architectures that the system libmacho is too old to know. Report the found archs as
-+          # usual, warn about the unknowns and skip the comparison with CMAKE_OSX_ARCHITECTURES.
-+          message(WARNING "The ${lang} compiler generates universal binaries with at least 1 architecture not known to the host")
-+        elseif(requested_arch_list AND arch_list_sorted
-+            AND NOT "${requested_arch_list}" STREQUAL "${arch_list_sorted}")
-+          # inform the user of the mismatch but show the raw input and output lists
-+          message(FATAL_ERROR "${lang} compiler target architectures: \"${archs}\" but CMAKE_OSX_ARCHITECTURES=\"${CMAKE_OSX_ARCHITECTURES}\"")
++      if(CMAKE_HOST_APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin")
++        file(READ_MACHO "${BIN}" ARCHITECTURES archs CAPTURE_ERROR macho_error) # undocumented file() subcommand
++        if (NOT macho_error)
++          # sort and prune the list of found architectures
++          set(arch_list_sorted ${archs})
++          list(SORT arch_list_sorted)
++          list(REMOVE_DUPLICATES arch_list_sorted)
++          # sort and prune the list of requested architectures
++          set(requested_arch_list ${CMAKE_OSX_ARCHITECTURES})
++          list(SORT requested_arch_list)
++          list(REMOVE_DUPLICATES requested_arch_list)
++          message(CONFIGURE_LOG
++            "Effective list of requested architectures (possibly empty)  : \"${requested_arch_list}\"\n"
++            "Effective list of architectures found in the ABI info binary: \"${arch_list_sorted}\"\n")
++          # If all generated architectures were known to READ_MACHO (i.e. libmacho):
++          # Compare requested and found:
++          # - if no architecture(s) were requested explicitly, just check if READ_MACHO returned
++          #   an architecture for the ABI info binary.
++          # - otherwise, check if the requested and found lists are equal
++          if(arch_list_sorted MATCHES "unknown")
++            # Rare but not impossible: a host with a toolchain capable of generating binaries with
++            # architectures that the system libmacho is too old to know. Report the found archs as
++            # usual, warn about the unknowns and skip the comparison with CMAKE_OSX_ARCHITECTURES.
++            message(WARNING "The ${lang} compiler generates universal binaries with at least 1 architecture not known to the host")
++          elseif(requested_arch_list AND arch_list_sorted
++              AND NOT "${requested_arch_list}" STREQUAL "${arch_list_sorted}")
++            # inform the user of the mismatch but show the raw input and output lists
++            message(FATAL_ERROR
++              "The ${lang} compiler targets architectures:\n"
++              "  \"${archs}\"\n"
++              "but CMAKE_OSX_ARCHITECTURES is\n"
++              "  \"${CMAKE_OSX_ARCHITECTURES}\"\n")
++          endif()
 +        endif()
 +      endif()
        file(STRINGS "${BIN}" ABI_STRINGS LIMIT_COUNT 32 REGEX "INFO:[A-Za-z0-9_]+\\[[^]]*\\]")
        set(ABI_SIZEOF_DPTR "NOTFOUND")
        set(ABI_BYTE_ORDER "NOTFOUND")
 diff --git Source/CMakeLists.txt Source/CMakeLists.txt
-index 8c57762fbe..e6897470b2 100644
+index 8c57762fbe..2051ca7ee5 100644
 --- Source/CMakeLists.txt
 +++ Source/CMakeLists.txt
 @@ -547,6 +547,8 @@ add_library(
    cmFLTKWrapUICommand.h
    cmFileCommand.cxx
    cmFileCommand.h
-+  cmFileCommand-ReadMacho.cxx
-+  cmFileCommand-ReadMacho.h
++  cmFileCommand_ReadMacho.cxx
++  cmFileCommand_ReadMacho.h
    cmFindBase.cxx
    cmFindBase.h
    cmFindCommon.cxx
-diff --git Source/cmFileCommand-ReadMacho.cxx Source/cmFileCommand-ReadMacho.cxx
+diff --git Source/cmFileCommand.cxx Source/cmFileCommand.cxx
+index e3f5b9626d..d4db9d1fe0 100644
+--- Source/cmFileCommand.cxx
++++ Source/cmFileCommand.cxx
+@@ -35,6 +35,7 @@
+ #include "cmELF.h"
+ #include "cmExecutionStatus.h"
+ #include "cmFSPermissions.h"
++#include "cmFileCommand_ReadMacho.h"
+ #include "cmFileCopier.h"
+ #include "cmFileInstaller.h"
+ #include "cmFileLockPool.h"
+@@ -3858,6 +3859,7 @@ bool cmFileCommand(std::vector<std::string> const& args,
+     { "RPATH_CHECK"_s, HandleRPathCheckCommand },
+     { "RPATH_REMOVE"_s, HandleRPathRemoveCommand },
+     { "READ_ELF"_s, HandleReadElfCommand },
++    { "READ_MACHO"_s, HandleReadMachoCommand },
+     { "REAL_PATH"_s, HandleRealPathCommand },
+     { "RELATIVE_PATH"_s, HandleRelativePathCommand },
+     { "TO_CMAKE_PATH"_s, HandleCMakePathCommand },
+diff --git Source/cmFileCommand_ReadMacho.cxx Source/cmFileCommand_ReadMacho.cxx
 new file mode 100644
-index 0000000000..0604267f95
+index 0000000000..5c5d60b17e
 --- /dev/null
-+++ Source/cmFileCommand-ReadMacho.cxx
-@@ -0,0 +1,81 @@
++++ Source/cmFileCommand_ReadMacho.cxx
+@@ -0,0 +1,91 @@
 +/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
 +   file Copyright.txt or https://cmake.org/licensing for details.  */
-+#include "cmFileCommand-ReadMacho.h"
++#include "cmFileCommand_ReadMacho.h"
 +
 +#include "cmArgumentParser.h"
 +#include "cmExecutionStatus.h"
-+#include "cmFileCommand.h"
-+#include "cmMakefile.h"
 +#include "cmRange.h"
 +#include "cmStringAlgorithms.h"
 +#include "cmSystemTools.h"
 +#if defined(CMake_USE_MACH_PARSER)
 +#  include "cmMachO.h"
++#  include "cmMakefile.h"
 +#endif
 +
-+#include <iostream>
++#include <cmext/string_view>
 +
 +bool HandleReadMachoCommand(std::vector<std::string> const& args,
 +                            cmExecutionStatus& status)
@@ -94,15 +116,24 @@ index 0000000000..0604267f95
 +    std::string Error;
 +  };
 +
-+  static auto const parser = cmArgumentParser<Arguments>{}.Bind(
-+    "ARCHITECTURES"_s, &Arguments::Architectures);
++  static auto const parser = cmArgumentParser<Arguments>{}
++    .Bind("ARCHITECTURES"_s, &Arguments::Architectures)
++    .Bind("CAPTURE_ERROR"_s, &Arguments::Error);
 +  Arguments const arguments = parser.Parse(cmMakeRange(args).advance(2),
 +                                           /*unparsedArguments=*/nullptr);
 +
++  if (!arguments.Architectures.empty()) {
++    status.GetMakefile().AddDefinition(arguments.Architectures, "unknown"_s);
++  }
 +  if (!cmSystemTools::FileExists(fileNameArg, true)) {
-+    status.SetError(cmStrCat("READ_MACHO given FILE \"", fileNameArg,
-+                             "\" that does not exist."));
-+    return false;
++    if (arguments.Error.empty()) {
++      status.SetError(cmStrCat("READ_MACHO given FILE \"", fileNameArg,
++                               "\" that does not exist."));
++      return false;
++    }
++    status.GetMakefile().AddDefinition(arguments.Error, cmStrCat(
++       fileNameArg, " does not exist"));
++    return true;
 +  }
 +
 +#if defined(CMake_USE_MACH_PARSER)
@@ -113,24 +144,26 @@ index 0000000000..0604267f95
 +                               "\nthat is not a valid Macho-O file."));
 +      return false;
 +    }
-+    status.GetMakefile().AddDefinition(arguments.Error,
-+                                       "not a valid Macho-O file");
++    status.GetMakefile().AddDefinition(arguments.Error, cmStrCat(
++       fileNameArg, " is not a valid Macho-O file"));
 +    return true;
 +  } else if (!macho.GetErrorMessage().empty()) {
-+    status.SetError(cmStrCat(
-+      "READ_MACHO given FILE:\n  ", fileNameArg,
-+      "\nthat is not a supported Macho-O file: ", macho.GetErrorMessage()));
-+    return false;
++    if (arguments.Error.empty()) {
++      status.SetError(cmStrCat(
++        "READ_MACHO given FILE:\n  ", fileNameArg,
++        "\nthat is not a supported Macho-O file: ", macho.GetErrorMessage()));
++      return false;
++    }
++    status.GetMakefile().AddDefinition(arguments.Error,cmStrCat(
++       fileNameArg, " is not a supported Macho-O file: ", macho.GetErrorMessage()));
++    return true;
 +  }
 +
 +  std::string output;
 +
 +  if (!arguments.Architectures.empty()) {
 +    auto archs = macho.GetArchitectures();
-+    output = archs[0];
-+    for (int i = 1; i < archs.size(); ++i) {
-+      output += ";" + archs[i];
-+    }
++    output = cmJoin(archs, ";");
 +
 +    // Save the output in a makefile variable.
 +    status.GetMakefile().AddDefinition(arguments.Architectures, output);
@@ -141,11 +174,11 @@ index 0000000000..0604267f95
 +  return false;
 +#endif // CMake_USE_MACH_PARSER
 +}
-diff --git Source/cmFileCommand-ReadMacho.h Source/cmFileCommand-ReadMacho.h
+diff --git Source/cmFileCommand_ReadMacho.h Source/cmFileCommand_ReadMacho.h
 new file mode 100644
 index 0000000000..b79e15f15f
 --- /dev/null
-+++ Source/cmFileCommand-ReadMacho.h
++++ Source/cmFileCommand_ReadMacho.h
 @@ -0,0 +1,11 @@
 +/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
 +   file Copyright.txt or https://cmake.org/licensing for details.  */
@@ -158,28 +191,8 @@ index 0000000000..b79e15f15f
 +
 +bool HandleReadMachoCommand(std::vector<std::string> const& args,
 +                            cmExecutionStatus& status);
-diff --git Source/cmFileCommand.cxx Source/cmFileCommand.cxx
-index e3f5b9626d..c247e2d36e 100644
---- Source/cmFileCommand.cxx
-+++ Source/cmFileCommand.cxx
-@@ -35,6 +35,7 @@
- #include "cmELF.h"
- #include "cmExecutionStatus.h"
- #include "cmFSPermissions.h"
-+#include "cmFileCommand-ReadMacho.h"
- #include "cmFileCopier.h"
- #include "cmFileInstaller.h"
- #include "cmFileLockPool.h"
-@@ -3858,6 +3859,7 @@ bool cmFileCommand(std::vector<std::string> const& args,
-     { "RPATH_CHECK"_s, HandleRPathCheckCommand },
-     { "RPATH_REMOVE"_s, HandleRPathRemoveCommand },
-     { "READ_ELF"_s, HandleReadElfCommand },
-+    { "READ_MACHO"_s, HandleReadMachoCommand },
-     { "REAL_PATH"_s, HandleRealPathCommand },
-     { "RELATIVE_PATH"_s, HandleRelativePathCommand },
-     { "TO_CMAKE_PATH"_s, HandleCMakePathCommand },
 diff --git Source/cmMachO.cxx Source/cmMachO.cxx
-index 91a7b8404f..5a7c342390 100644
+index 91a7b8404f..06a642bc5f 100644
 --- Source/cmMachO.cxx
 +++ Source/cmMachO.cxx
 @@ -4,7 +4,6 @@
@@ -245,7 +258,7 @@ index 91a7b8404f..5a7c342390 100644
  }
  
  cmMachO::~cmMachO() = default;
-@@ -355,3 +367,31 @@ bool cmMachO::GetInstallName(std::string& install_name)
+@@ -355,3 +367,40 @@ bool cmMachO::GetInstallName(std::string& install_name)
  void cmMachO::PrintInfo(std::ostream& /*os*/) const
  {
  }
@@ -265,9 +278,18 @@ index 91a7b8404f..5a7c342390 100644
 +      } else
 +#endif
 +      {
++#if defined __clang__
++#  define CM_MACOS_DEPRECATED_NXGetArchInfoFromCpuType
++#  pragma clang diagnostic push
++#  pragma clang diagnostic ignored "-Wdeprecated-declarations"
++#endif
 +        const NXArchInfo* archInfo = (header.CpuType & CPU_TYPE_ARM)
 +          ? NXGetArchInfoFromCpuType(header.CpuType, header.CpuSubType)
 +          : NXGetArchInfoFromCpuType(header.CpuType, CPU_SUBTYPE_MULTIPLE);
++#ifdef CM_MACOS_DEPRECATED_NXGetArchInfoFromCpuType
++#  undef CM_MACOS_DEPRECATED_NXGetArchInfoFromCpuType
++#  pragma clang diagnostic pop
++#endif
 +        if (archInfo) {
 +          archName = archInfo->name;
 +        }
@@ -278,7 +300,7 @@ index 91a7b8404f..5a7c342390 100644
 +  return archs;
 +}
 diff --git Source/cmMachO.h Source/cmMachO.h
-index ec7d54c44d..7810205185 100644
+index ec7d54c44d..ddbfc28df3 100644
 --- Source/cmMachO.h
 +++ Source/cmMachO.h
 @@ -7,6 +7,9 @@
@@ -315,7 +337,7 @@ index ec7d54c44d..7810205185 100644
 +  /** Get the architectural header(s) from the Mach-O file.  */
 +  std::vector<struct MachHeader> GetHeaders() const { return this->Headers; }
 +
-+  /** Get a list of the recognised architectures present in the Mach-O file
++  /** Get a list of the recognized architectures present in the Mach-O file
 +   * in the order in which they are found.
 +   */
 +  StringList GetArchitectures() const;
