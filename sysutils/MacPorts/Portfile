@@ -3,7 +3,7 @@
 PortSystem          1.0
 PortGroup           github 1.0
 
-github.setup        macports macports-base 2.6.2 v
+github.setup        macports macports-base 2.9.3 v
 name                MacPorts
 
 categories          sysutils macports
@@ -22,10 +22,12 @@ selfupdate' for that."
 homepage            https://www.macports.org
 distname            ${name}-${version}
 github.tarball_from releases
+# testing subdir is for non-final releases only
+#dist_subdir         ${name}/testing
 use_bzip2           yes
 
-checksums           rmd160 1400db2449d50e77d5d30e5f0820bb339dc3b080 \
-                    sha256 1b58ccbb1cd6c6fab5e1f15b959208ef5233802fc9ac9585037d21c8e42e2b70
+checksums           rmd160 51547bd24f101b75e69905495c5a8cb7ca120ab4 \
+                    sha256 ff98de0ad8ef6156c3231fff0c9c87b4adf8441ff039746bc16bf511f4905d3c
 
 if {![string match /* ${prefix}]} {
     # this is for `portindex`:
@@ -205,8 +207,8 @@ if {${subport} ne "${name}"} {
 #     git.branch      718e903df8a22c916f9032564fb1436c8da6ebdb
 ##     after `git tag RJVB-v2.7.1 -a -m "RJVB 2.7.1 release tag" 8e66a82b3fb50812c05a19b7bb49e1eec86ed708`
 ##     after `git tag RJVB-v2.9.3 -a -m "RJVB 2.9.3 release tag" b6878b17059c12ff056931fa50ae2172074e57ea`
-    git.branch      9c81555a5e2ddce4a03488918cba3661be262904
-    version         2.9.3.51
+    git.branch      8e677f9d968807a539c1b9ab4fd039751a6d74ed
+    version         2.9.3.66
     # the version from autoconf (config/macports_version), which is counterproductive in the master branch:
     set macports_version 2.9.99
     worksrcdir      ${name}-git
@@ -468,10 +470,16 @@ pre-pkg {
 
     reinplace "s|__PREFIX__|${prefix}|g" \
               ${resources_lang}/ReadMe.rtf
-    if {${os.major} < 11} {
+    if {${os.major} < 11 || ${os.major} >= 20} {
         reinplace "s|is built|contains a Universal installer|" ${resources_lang}/ReadMe.rtf
     }
-    reinplace "s|__XVERS__|${macosx_deployment_target}|" ${resources_lang}/ReadMe.rtf
+
+    if {[vercmp $macosx_deployment_target >= 11]} {
+        set mdt_major [lindex [split $macosx_deployment_target .] 0]
+    } else {
+        set mdt_major $macosx_deployment_target
+    }
+    reinplace "s|__XVERS__|${mdt_major}|" ${resources_lang}/ReadMe.rtf
     if {${package.flat}} {
         file copy -force -- ${worksrcpath}/portmgr/dmg/Distribution ${workpath}
         file attributes ${workpath}/Distribution -permissions 0644
@@ -483,10 +491,21 @@ pre-pkg {
             default {set xcode_cli "Command Line Tools or UNIX Development"}
         }
         reinplace "s|__XCODECLITOOLS__|${xcode_cli}|g" ${workpath}/Distribution
-        reinplace "s|__XVERS__|${macosx_deployment_target}|" ${workpath}/Distribution
-        set next_major [lindex [split $macosx_deployment_target .] 0].[expr [lindex [split $macosx_deployment_target .] 1] + 1]
+        reinplace "s|__XVERS__|$mdt_major|" ${workpath}/Distribution
+        if {[vercmp $macosx_deployment_target 11] >= 0} {
+            set next_major [expr {[lindex [split $macosx_deployment_target .] 0]+1}].0
+            set hostArchs { hostArchitectures="arm64,x86_64"}
+        } else {
+            set next_major [lindex [split $macosx_deployment_target .] 0].[expr {[lindex [split $macosx_deployment_target .] 1] + 1}]
+            set hostArchs ""
+        }
         reinplace "s|__NEXT_XVERS__|$next_major|" ${workpath}/Distribution
-        reinplace "s|__VERSION__|${version}|" ${workpath}/Distribution
+        reinplace "s|__ARCHS__|$hostArchs|" ${workpath}/Distribution
+        set pkgvers ${version}
+        if {$revision != 0} {
+            append pkgvers _${revision}
+        }
+        reinplace "s|__VERSION__|${pkgvers}|" ${workpath}/Distribution
         move ${package.scripts}/postflight ${package.scripts}/postinstall
     } else {
         file copy -force -- ${worksrcpath}/portmgr/dmg/InstallationCheck ${package.resources}
@@ -501,8 +520,12 @@ pre-pkg {
     }
 
     reinplace "s|or newer ||" ${resources_lang}/Welcome.html
-    if {${os.major} > 8} {
-        reinplace "s|10\\.4|${macosx_deployment_target}|" ${resources_lang}/Welcome.html
+    if {${os.major} >= 16} {
+        reinplace "s|Mac OS X 10\\.4|macOS ${mdt_major}|" ${resources_lang}/Welcome.html
+    } elseif {${os.major} >= 12} {
+        reinplace "s|Mac OS X 10\\.4|OS X ${mdt_major}|" ${resources_lang}/Welcome.html
+    } elseif {${os.major} > 8} {
+        reinplace "s|10\\.4|${mdt_major}|" ${resources_lang}/Welcome.html
     }
 }
 
@@ -523,11 +546,7 @@ platform darwin 8 powerpc {
             }
             # Supply architecture and sysroot flags to build MacPorts universal.
             configure.cflags-append -isysroot ${sdkrootpath} -arch ppc -arch i386
-            if {[vercmp [macports_version] 2.5.99] >= 0} {
-                configure.env-append "SHLIB_LDFLAGS=-Wl,-syslibroot,${sdkrootpath} -arch ppc -arch i386"
-            } else {
-                configure.env-append SHLIB_LDFLAGS='-Wl,-syslibroot,${sdkrootpath} -arch ppc -arch i386'
-            }
+            configure.env-append "SHLIB_LDFLAGS=-Wl,-syslibroot,${sdkrootpath} -arch ppc -arch i386"
         }
     }
 }
@@ -545,14 +564,41 @@ platform darwin 9 {
 }
 
 platform darwin {
-    if {${os.major} >= 11} {
-        # Lion and above only run on x86_64.
+    if {${os.major} >= 20} {
+        # Big Sur runs on arm64 and x86_64.
+        configure.cflags-append -arch arm64 -arch x86_64
+        configure.args-append SHLIB_LDFLAGS='-arch arm64 -arch x86_64'
+
+        # Notarization requires static libs to be signed, but
+        # codesign(1) doesn't seem to be able to sign them properly.
+        post-destroot {
+            delete {*}[glob ${destroot}${prefix}/libexec/macports/lib/libtclstub*.a] \
+                {*}[glob ${destroot}${prefix}/libexec/macports/lib/tdbc*/libtdbcstub*.a] \
+                {*}[glob ${destroot}${prefix}/libexec/macports/lib/itcl*/libitclstub*.a]
+        }
+    } elseif {${os.major} >= 11} {
+        # Lion through Catalina only run on x86_64.
         configure.cflags-append -arch x86_64
         configure.args-append SHLIB_LDFLAGS='-arch x86_64'
     } elseif {${os.major} == 10} {
         # Supply architecture flags to build MacPorts universal.
         configure.cflags-append -arch x86_64 -arch i386
         configure.args-append SHLIB_LDFLAGS='-arch x86_64 -arch i386'
+    }
+
+    # FIXME: "error: The specified item could not be found in the keychain."
+    if {${os.major} >= 18} {
+        # Workaround: in-tree tclsh can't be used to install tcllib
+        # when it has been signed (ignores DYLD_* vars).
+        patchfiles-append   tclsh.patch
+    #    post-build {
+    #        if {[getuid] == 0 && [info exists sudo_user]} {
+    #            set codesign_cmd "/usr/bin/env SUDO_USER=${sudo_user} HOME=/Users/${sudo_user} ${build.cmd} codesign"
+    #        } else {
+    #            set codesign_cmd "${build.cmd} codesign"
+    #        }
+    #        system -W ${worksrcpath} ${codesign_cmd}
+    #    }
     }
 }
 
@@ -586,6 +632,15 @@ destroot.keepdirs    ${destroot}${prefix}/include \
                      ${destroot}${prefix}/share/man/manl \
                      ${destroot}${prefix}/share/man/mann \
                      ${destroot}${prefix}/share/nls/C \
+                     ${destroot}${prefix}/share/skel \
+                     ${destroot}${prefix}/var/cache \
+                     ${destroot}${prefix}/var/db \
+                     ${destroot}${prefix}/var/macports/build \
+                     ${destroot}${prefix}/var/macports/distfiles \
+                     ${destroot}${prefix}/var/macports/registry \
+                     ${destroot}${prefix}/var/macports/sip-workaround \
+                     ${destroot}${prefix}/var/run \
+                     ${destroot}${prefix}/var/spool \
                      ${destroot}${prefix}/share/skel \
                      ${destroot}${prefix}/var/cache \
                      ${destroot}${prefix}/var/db \
@@ -680,12 +735,7 @@ if {![variant_isset langselect]} {
                      ${destroot}${prefix}/share/nls/zh_TW.Big5
 }
 
-# (new options should be tested and not assumed so the version introducing them
-# can be built from the Portfile!)
-if {[info commands known_fail] ne ""} {
-    known_fail yes
-}
-
+known_fail yes
 if {${subport} ne "${name}-altdevel"} {
     pre-install {
         ui_error ""
