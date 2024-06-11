@@ -33,6 +33,23 @@ depends_build-append \
                     port:curl
 depends_lib-append  port:MacPorts-libcurl \
                     port:readline
+if {${os.platform} ne "darwin"} {
+    # Off Darwin, Pextlib will require MD5 implementations from either
+    # libmd or libcrypto. The latter is already a dependency of MacPorts-libcurl
+    # which in this implementation uses LibreSSL instead of OpenSSL. We
+    # formalise the direct dependency and make certain the build will find
+    # the intended libcrypto + associated headerfiles.
+    PortGroup       conflicts_build 1.0
+    depends_lib-append \
+                    port:libressl-co
+    configure.cppflags-append \
+                    -I${prefix}/libexec/libressl/include
+    configure.ldflags-append \
+                    -L${prefix}/libexec/libressl/lib -Wl,-rpath,${prefix}/libexec/libressl/lib
+    configure.args-append \
+                    --with-openssl=${prefix}/libexec/libressl/bin/openssl
+    conflicts_build openssl-dev
+}
 
 if {![string match /* ${prefix}]} {
     # this is for `portindex`:
@@ -83,23 +100,6 @@ autoreconf.args -fvi
 
 patch.pre_args      -Np1
 
-# pre-configure {
-#     # See if we can avoid wasting time again on re-generating the configure script
-#     if {[file exists ${worksrcpath}/configure] \
-#             && [file exists ${worksrcpath}/config.log]
-#             && [file mtime ${worksrcpath}/aclocal.m4] <= [file mtime ${worksrcpath}/configure]
-#             && [file mtime ${worksrcpath}/configure.ac] <= [file mtime ${worksrcpath}/configure]} {
-#         use_autoreconf no
-#         if {${os.platform} ne "darwin"} {
-#             # check if we need to remove something that would have gotten removed by
-#             # re-generating the configure script:
-#             if {![catch {fgrep "rdar://7244457" ${worksrcpath}/configure > /dev/null}]} {
-#                 system -W ${worksrcpath} "${patch.cmd} ${patch.pre_args} ${filespath}/lamarck/patch-configure-libcurl.diff"
-#             }
-#         }
-#     }
-# }
-
 # MacPorts' configure removes ${prefix}/bin from $PATH,
 # so we have to patch that out because we *want* to build
 # against stuff installed through MacPorts!
@@ -118,17 +118,9 @@ if {${subport} ne "${name}"} {
     worksrcdir      ${name}-git
     distname        ${name}-git
     if {${os.platform} ne "darwin"} {
-#         # maybe only Clang needs to be told to pull in libm but it won't hurt with other compilers
-#         configure.env-append \
-#                     "LIBS=-lm"
         configure.args-append \
                     --enable-shared \
-                    --with-applications-dir=${prefix}/Applications \
-                    --disable-flag-sanitization
-        if {[file exists /usr/libexec/openssl11/bin/openssl]} {
-            configure.args-append \
-                    --with-openssl=/usr/libexec/openssl11/bin/openssl
-        }
+                    --with-applications-dir=${prefix}/Applications
         compiler.whitelist \
                     clang macports-clang
         post-configure {
@@ -146,8 +138,10 @@ if {${subport} ne "${name}"} {
             ui_info "      Patching for ${os.platform}"
         }
         # Lamarck isn't Darwin :)
+        # NB: the following patch is NOT the same as the one for port:MacPorts-*devel!
         patchfiles-append \
-                    lamarck/patch-aclocalm4-libcurl.diff \
+                    lamarck/patch-aclocalm4-libcurl.diff
+        patchfiles-append \
                     lamarck/patch-fileIsBinary-for-linux.diff \
                     lamarck/patch-no-enforced-universal-on-linux.diff \
                     lamarck/patch-machistawrap.diff \
@@ -168,7 +162,9 @@ if {${subport} ne "${name}"} {
     patchfiles-append \
                     patch-better-registry-error.diff \
                     patch-xinstall-mkdirchmod-warning.diff \
-                    patch-progressbar-tweaks.diff \
+                    patch-progressbar-tweaks.diff
+    # allow me to test more aggressively:
+    patchfiles-append \
                     patch-pextlib-restore-mkstemp.diff
     # RJVB personal patches>
 
@@ -250,6 +246,7 @@ set pextdir ${prefix}/libexec/macports/lib/pextlib1.0
 
 destroot {
     xinstall -m 755 -d ${destroot}${pextdir}
+    xinstall -m 644 ${filespath}/pkgIndex.tcl.in ${destroot}${pextdir}/pkgIndex-mp.tcl
     if {${os.platform} eq "darwin"} {
         xinstall -m 755 ${worksrcpath}/src/pextlib1.0/Pextlib.dylib ${destroot}${pextdir}/Pextlib-mp.dylib
         # change the library ID to reflect the new name it is installed under:
@@ -265,10 +262,8 @@ destroot {
         xinstall -m 755 ${worksrcpath}/src/pextlib1.0/Pextlib.so ${destroot}${pextdir}/Pextlib-mp.so
         system "patchelf --add-rpath ${pextdir} ${destroot}${pextdir}/Pextlib-mp.so"
         system "patchelf --replace-needed libcurl.so.4 libcurl-mp.so ${destroot}${pextdir}/Pextlib-mp.so"
+        reinplace "s|dylib|so|g" ${destroot}${pextdir}/pkgIndex-mp.tcl
     }
-    # we don't need to modify anything in the replacement loader script (pkgIndex.tcl)
-    # so we could avoid making this "hot" template/copy in the destination dir
-    xinstall -m 644 ${filespath}/pkgIndex.tcl.in ${destroot}${pextdir}/pkgIndex-mp.tcl
 }
 
 # see https://stackoverflow.com/a/29289660/1460868
@@ -314,6 +309,7 @@ post-activate {
             file rename ${pextdir}/pkgIndex.tcl ${pextdir}/pkgIndex.tcl.orig
         }
         file copy -force  ${pextdir}/pkgIndex-mp.tcl ${pextdir}/pkgIndex.tcl
+        ui_msg "       The new Pextlib has been activated."
     }
 }
 
