@@ -1,0 +1,320 @@
+# -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
+
+PortSystem          1.0
+PortGroup           github 1.0
+
+github.setup        macports macports-base 2.9.3 v
+name                MacPorts-pextlib
+
+categories          sysutils macports
+platforms           darwin freebsd
+maintainers         gmail.com:rjvbertin lists.macports.org:macports-mgr
+license             BSD
+
+description         The MacPorts Pextlib plugin for Tcl
+long_description \
+   This port provides an up-to-date version of the Pextlib plugin used for an \
+   important part of the MacPorts base installation. It overrides the version \
+   included in the MacPorts installer with one that uses up-to-date libraries \
+   installed under ${prefix} through Macports, instead of the (older) versions \
+   that are included with the OS.
+
+homepage            https://www.macports.org
+distname            ${name}-${version}
+github.tarball_from releases
+# testing subdir is for non-final releases only
+#dist_subdir         ${name}/testing
+use_bzip2           yes
+
+checksums           rmd160 51547bd24f101b75e69905495c5a8cb7ca120ab4 \
+                    sha256 ff98de0ad8ef6156c3231fff0c9c87b4adf8441ff039746bc16bf511f4905d3c
+
+depends_build-append \
+                    port:curl
+depends_lib-append  port:MacPorts-libcurl \
+                    port:readline
+
+if {![string match /* ${prefix}]} {
+    # this is for `portindex`:
+    set prefix "/opt/local"
+    ui_debug "Prefix not set to a path, setting it to /opt/local"
+}
+
+subport ${name}-devel {
+    description     {*}${description}. Installs to ${prefix}. Follows git/master.
+    long_description \
+                    {*}${long_description} \nFollows git/master.
+}
+
+if {${subport} eq "${name}"} {
+    PortGroup stub 1.0
+    description-append "Not yet implemented"
+    long_description-append "\nNot yet implemented"
+    return
+}
+
+# Readline is disabled by default to avoid support issues with people who
+# have a readline in /usr/local. Since this portfile is presumably used in a
+# clean environment, enable it here.
+configure.args      --enable-readline
+
+# Some of MacPorts' default flags don't play well when we're building MacPorts
+# itself; nuke them. Do all this before configuring the subports and Linux build, below.
+# configure.cppflags
+# configure.ldflags
+# configure.cc_archflags
+# configure.objc_archflags
+# configure.ld_archflags
+# compiler.cpath
+# compiler.library_path
+configure.cxx_stdlib
+
+#<RJVB
+# import the LTO PortGroup after resetting all the above flags
+# building with LTO worked for a while by adding -fno-lto in the proper places
+# but that is no longer the case, sadly.
+set LTO.disable_LTO yes
+PortGroup           LTO 1.0
+PortGroup           save_configure_cmd 1.0
+#RJVB>
+
+use_autoreconf  yes
+autoreconf.args -fvi
+
+patch.pre_args      -Np1
+
+# pre-configure {
+#     # See if we can avoid wasting time again on re-generating the configure script
+#     if {[file exists ${worksrcpath}/configure] \
+#             && [file exists ${worksrcpath}/config.log]
+#             && [file mtime ${worksrcpath}/aclocal.m4] <= [file mtime ${worksrcpath}/configure]
+#             && [file mtime ${worksrcpath}/configure.ac] <= [file mtime ${worksrcpath}/configure]} {
+#         use_autoreconf no
+#         if {${os.platform} ne "darwin"} {
+#             # check if we need to remove something that would have gotten removed by
+#             # re-generating the configure script:
+#             if {![catch {fgrep "rdar://7244457" ${worksrcpath}/configure > /dev/null}]} {
+#                 system -W ${worksrcpath} "${patch.cmd} ${patch.pre_args} ${filespath}/lamarck/patch-configure-libcurl.diff"
+#             }
+#         }
+#     }
+# }
+
+# MacPorts' configure removes ${prefix}/bin from $PATH,
+# so we have to patch that out because we *want* to build
+# against stuff installed through MacPorts!
+patchfiles-append   patch-allow-MPprefix.diff
+
+configure.save_configure_cmd "install log"
+
+if {${subport} ne "${name}"} {
+    fetch.type      git
+##     after `git tag RJVB-v2.7.1 -a -m "RJVB 2.7.1 release tag" 8e66a82b3fb50812c05a19b7bb49e1eec86ed708`
+##     after `git tag RJVB-v2.9.3 -a -m "RJVB 2.9.3 release tag" b6878b17059c12ff056931fa50ae2172074e57ea`
+    git.branch      2699477022d8f0a414e0180cd2f542c81cd34f52
+    version         2.9.3.77
+    # the version from autoconf (config/macports_version), which isn't very useful in the master branch:
+    set macports_version 2.9.99
+    worksrcdir      ${name}-git
+    distname        ${name}-git
+    if {${os.platform} ne "darwin"} {
+#         # maybe only Clang needs to be told to pull in libm but it won't hurt with other compilers
+#         configure.env-append \
+#                     "LIBS=-lm"
+        configure.args-append \
+                    --enable-shared \
+                    --with-applications-dir=${prefix}/Applications \
+                    --disable-flag-sanitization
+        if {[file exists /usr/libexec/openssl11/bin/openssl]} {
+            configure.args-append \
+                    --with-openssl=/usr/libexec/openssl11/bin/openssl
+        }
+        compiler.whitelist \
+                    clang macports-clang
+        post-configure {
+            reinplace "s|.*undef HAVE_SETMODE.*|\#define HAVE_SETMODE 1|g" ${worksrcpath}/src/config.h
+            reinplace "s|.*undef HAVE_STRLCAT.*|\#define HAVE_STRLCAT 1|g" ${worksrcpath}/src/config.h
+            reinplace "s|LIBS+= \$\{CURL_LIBS\}|LIBS+= -lbsd \$\{CURL_LIBS\}|g" ${worksrcpath}/src/pextlib1.0/Makefile
+        }
+    }
+
+    # add a `curl version` command to Pextlib:
+    patchfiles-append \
+                    patch-pextlib-curl_version_cmd.diff
+    if {${os.platform} ne "darwin"} {
+        pre-patch {
+            ui_info "      Patching for ${os.platform}"
+        }
+        # Lamarck isn't Darwin :)
+        patchfiles-append \
+                    lamarck/patch-aclocalm4-libcurl.diff \
+                    lamarck/patch-fileIsBinary-for-linux.diff \
+                    lamarck/patch-no-enforced-universal-on-linux.diff \
+                    lamarck/patch-machistawrap.diff \
+                    lamarck/patch-pextlib-no-sip.diff \
+                    lamarck/patch-pextlib-passwd-fields.diff
+        if {${os.platform} eq "linux"} {
+            patchfiles-append \
+                    lamarck/patch-xinstall-have_setmode.diff \
+                    lamarck/patch-configure-mtree.diff
+        } else {
+            // for now this means freebsd
+            patchfiles-append \
+                    lamarck/patch-for-freebsd.diff
+        }
+    }
+
+    # <RJVB personal patches
+    patchfiles-append \
+                    patch-better-registry-error.diff \
+                    patch-xinstall-mkdirchmod-warning.diff \
+                    patch-progressbar-tweaks.diff \
+                    patch-pextlib-restore-mkstemp.diff
+    # RJVB personal patches>
+
+    post-patch {
+        # there must be a more elegant way to get everyone to use the right `ar` and `ranlib`
+        # commands but that would require running autoreconf (and fails on the required
+        # AM_PROG_AR macro).
+        reinplace "s|@STLIB_LD@|${configure.ar} crs|g" ${worksrcpath}/src/cregistry/Makefile.in
+        reinplace "s|@RANLIB@|${configure.ranlib}|g" ${worksrcpath}/src/cregistry/Makefile.in
+    }
+}
+
+platform darwin 8 {
+    # has ${prefix}/include ahead of /usr/include in default search path
+    compiler.blacklist apple-gcc-4.2
+}
+
+platform darwin 8 powerpc {
+    pre-configure {
+        set sdkrootpath /Developer/SDKs/MacOSX10.4u.sdk
+        if {[file exists ${sdkrootpath}]} {
+            # User has SDK installed.
+            set tclstubpath /System/Library/Frameworks/Tcl.framework/Versions/8.4/libtclstub8.4.a
+            if {![file exists ${sdkrootpath}${tclstubpath}]} {
+                ui_msg "Fixing your MacOSX10.4u installation by copying libtclstub8.4.a to ${sdkrootpath}${tclstubpath}"
+                xinstall -p ${tclstubpath} ${sdkrootpath}${tclstubpath}
+            }
+            # Supply architecture and sysroot flags to build MacPorts universal.
+            configure.cflags-append -isysroot ${sdkrootpath} -arch ppc -arch i386
+            configure.env-append "SHLIB_LDFLAGS=-Wl,-syslibroot,${sdkrootpath} -arch ppc -arch i386"
+        }
+    }
+}
+
+platform darwin 8 i386 {
+    # Supply architecture flags to build MacPorts universal.
+    configure.cflags-append -arch ppc -arch i386
+    configure.args-append SHLIB_LDFLAGS='-arch ppc -arch i386'
+}
+
+platform darwin 9 {
+    # Supply architecture flags to build MacPorts universal.
+    configure.cflags-append -arch ppc -arch i386
+    configure.args-append SHLIB_LDFLAGS='-arch ppc -arch i386'
+}
+
+platform darwin {
+    if {${os.major} >= 20} {
+        # Big Sur runs on arm64 and x86_64.
+        configure.cflags-append -arch arm64 -arch x86_64
+        configure.args-append SHLIB_LDFLAGS='-arch arm64 -arch x86_64'
+    } elseif {${os.major} >= 11} {
+        # Lion through Catalina only run on x86_64.
+        configure.cflags-append -arch x86_64
+        configure.args-append SHLIB_LDFLAGS='-arch x86_64'
+    } elseif {${os.major} == 10} {
+        # Supply architecture flags to build MacPorts universal.
+        configure.cflags-append -arch x86_64 -arch i386
+        configure.args-append SHLIB_LDFLAGS='-arch x86_64 -arch i386'
+    }
+
+#     # FIXME: "error: The specified item could not be found in the keychain."
+#     if {${os.major} >= 18} {
+#         # Workaround: in-tree tclsh can't be used to install tcllib
+#         # when it has been signed (ignores DYLD_* vars).
+#         patchfiles-append   tclsh.patch
+#     #    post-build {
+#     #        if {[getuid] == 0 && [info exists sudo_user]} {
+#     #            set codesign_cmd "/usr/bin/env SUDO_USER=${sudo_user} HOME=/Users/${sudo_user} ${build.cmd} codesign"
+#     #        } else {
+#     #            set codesign_cmd "${build.cmd} codesign"
+#     #        }
+#     #        system -W ${worksrcpath} ${codesign_cmd}
+#     #    }
+#     }
+}
+
+set pextdir ${prefix}/libexec/macports/lib/pextlib1.0
+
+destroot {
+    xinstall -m 755 -d ${destroot}${pextdir}
+    if {${os.platform} eq "darwin"} {
+        xinstall -m 755 ${worksrcpath}/src/pextlib1.0/Pextlib.dylib ${destroot}${pextdir}/Pextlib-mp.dylib
+        # change the library ID to reflect the new name it is installed under:
+        system "install_name_tool -id ${pextdir}/Pextlib-mp.dylib ${destroot}${pextdir}/Pextlib-mp.dylib"
+        # make it depend on the libcurl from port:MacPorts-libcurl. This is supposed to be the same curl version
+        # that Pextlib was just built against so this replacement should be safe (any differences in activated
+        # features or SSL backend are hidden behind a common ABI).
+        system "install_name_tool -change ${prefix}/lib/libcurl.4.dylib ${pextdir}/libcurl-mp.dylib ${destroot}${pextdir}/Pextlib-mp.dylib"
+        ##
+        # TODO: do we need to code-sign??
+        ##
+    } else {
+        xinstall -m 755 ${worksrcpath}/src/pextlib1.0/Pextlib.so ${destroot}${pextdir}/Pextlib-mp.so
+        system "patchelf --add-rpath ${pextdir} ${destroot}${pextdir}/Pextlib-mp.so"
+        system "patchelf --replace-needed libcurl.so.4 libcurl-mp.so ${destroot}${pextdir}/Pextlib-mp.so"
+    }
+    # we don't need to modify anything in the replacement loader script (pkgIndex.tcl)
+    # so we could avoid making this "hot" template/copy in the destination dir
+    xinstall -m 644 ${filespath}/pkgIndex.tcl.in ${destroot}${pextdir}/pkgIndex-mp.tcl
+}
+
+# see https://stackoverflow.com/a/29289660/1460868
+proc fileEqual {file1 file2} {
+    if {[file size $file1] == [file size $file2]} {
+        if {[catch {set f1 [open $file1]} cresult]} {
+            ui_debug $::errorInfo
+            return 0
+        }
+        fconfigure $f1 -translation binary
+        if {[catch {set f2 [open $file2]} cresult]} {
+            ui_debug $::errorInfo
+            return 0
+        }
+        fconfigure $f2 -translation binary
+        # read and compare chunks until a difference is found
+        # (we expect small files so use 256 byte chunks).
+        while {![info exist same]} {
+            if {[read $f1 256] ne [read $f2 256]} {
+                set same 0
+            } elseif {[eof $f1]} {
+                # The same if we got to EOF at the same time
+                set same [eof $f2]
+            } elseif {[eof $f2]} {
+                set same 0
+            }
+        }
+        close $f1
+        close $f2
+        return $same
+    } else {
+        return 0
+    }
+}
+
+post-activate {
+    # Compare the existing loader script with our conditional loader script.
+    # As noted above, this comparison could be done against the copy
+    # in ${filespath}, a priori.
+    if {![fileEqual ${pextdir}/pkgIndex.tcl ${pextdir}/pkgIndex-mp.tcl]} {
+        if {![file exists ${pextdir}/pkgIndex.tcl.orig]} {
+            # back up the original
+            file rename ${pextdir}/pkgIndex.tcl ${pextdir}/pkgIndex.tcl.orig
+        }
+        file copy -force  ${pextdir}/pkgIndex-mp.tcl ${pextdir}/pkgIndex.tcl
+    }
+}
+
+github.livecheck.regex  {([0-9.]+)}
