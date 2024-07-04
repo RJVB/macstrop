@@ -200,6 +200,11 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
             # Easier to define another hook ports can set before including us.
             if {${LTO.gcc_lto_jobs} ne ""} {
                 set LTO::gcc_lto_jobs "=${LTO.gcc_lto_jobs}"
+                if {${LTO.gcc_lto_jobs} eq "auto"} {
+                    build.cmd           gmake
+                    depends_build-append \
+                                        port:gmake
+                }
             } else {
                 set LTO::gcc_lto_jobs ""
             }
