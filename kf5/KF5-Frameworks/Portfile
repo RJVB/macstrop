@@ -98,9 +98,14 @@ switch ${subport} {
     }
     "kf5-kfilemetadata" {
         # revbump for building the poppler plugin with C++17
-        revision 1
+        # revbump for building the poppler plugin in a subport
+        revision 2
     }
     "kf5-tier3-frameworks" {}
+    "kf5-baloo" {
+        # for the poppler_extractor subport
+        revision 1
+    }
     "kf5-kglobalaccel" {
         # for the +x11 variant
         revision 1
@@ -189,6 +194,7 @@ set kf5::tier2_frameworks {kauth kcompletion kcrash kdoctools kfilemetadata kjob
 set kf5::tier3_frameworks {kconfigwidgets kiconthemes kservice kglobalaccel ktextwidgets kxmlgui kbookmarks kwallet kio baloo kactivities kactivities-stats kdeclarative kcmutils kinit kded kparts kdesignerplugin kdesu kemoticons knewstuff knotifyconfig kpeople plasma-framework kirigami2 ktexteditor kxmlrpcclient krunner}
 set kf5::tier3_frameworks [lappend kf5::tier3_frameworks kirigami purpose qqc2-desktop-style]
 set kf5::tier4_frameworks {frameworkintegration}
+set kf5::non_frameworks {kfilemetadata-pdf_extractor}
 # kdewebkit has been promoted to portingAids in 5.60.0; we keep it as a dependency of kf5-tier3-frameworks.
 set kf5::portingAid_frameworks {kdelibs4support kjs khtml kross kjsembed kdewebkit}
 
@@ -203,7 +209,7 @@ proc kf5::tier {{fw -1}} {
         }
     }
     set fwnd [string map {"-devel" ""} ${fw}]
-    foreach t {tier1 tier2 tier3 tier4 portingAid} {
+    foreach t {tier1 tier2 tier3 tier4 portingAid non} {
         namespace upvar ::kf5 ${t}_frameworks lname
         if {[lsearch -exact $lname ${fw}] >= 0 || [lsearch -exact $lname ${fwnd}] >= 0 \
                 || ${fw} eq "${t}-frameworks"} {
@@ -329,12 +335,15 @@ if {[file exists ${filespath}/${checksums.table}]} {
     source ${filespath}/${checksums.table}
 }
 
-proc kf5::set_checkums {} {
+proc kf5::set_checkums {{port ""}} {
     global checksumtable
     global subport
+    if {${port} eq ""} {
+        set port ${subport}
+    }
     if {[info exists checksumtable]} {
-        checksums   rmd160  [lindex $checksumtable(${subport}) 0] \
-                    sha256  [lindex $checksumtable(${subport}) 1]
+        checksums   rmd160  [lindex $checksumtable(${port}) 0] \
+                    sha256  [lindex $checksumtable(${port}) 1]
     }
 }
 
@@ -1464,12 +1473,8 @@ subport kf5-kfilemetadata {
                     kfilemetadata
     kf5::set_checkums
 
-    patchfiles-append \
-                    kfilemetadata/patch-c++17-for-poppler.diff
-
     depends_lib-append \
-                    port:exiv2 \
-                    port:poppler-qt5
+                    port:exiv2 
     kf5.depends_frameworks \
                     karchive ki18n
     platform darwin {
@@ -1480,6 +1485,10 @@ subport kf5-kfilemetadata {
                     path:bin/ffmpeg:ffmpeg \
                     port:ebook-tools
     }
+    # The PDF extractor depends on Poppler which breaks ABI often enough that
+    # it is better to provide the component via a dedicated subport.
+    configure.args-append \
+                -DCMAKE_DISABLE_FIND_PACKAGE_Poppler=ON
     kf5.kde4compat {
         # even in kde4compat mode we can be in conflict with port:kfilemetadata
         # if the KDE4 ports were installed without headerfile migration.
@@ -1502,6 +1511,49 @@ subport kf5-kfilemetadata {
             configure.args-append \
                     -DBUILD_TESTING=OFF
         }
+    }
+}
+
+subport kf5-kfilemetadata-pdf_extractor {
+    description     PDF extractor for port:kf5-kfilemetadata
+    long_description \
+                    KFileMetaData provides a simple library for extracting the text and metadata \
+                    from a number of different files. This port provides the PDF extractor.
+    set_kf5_framework \
+                    kfilemetadata
+    kf5::set_checkums kf5-kfilemetadata
+
+    patchfiles-append \
+                    kfilemetadata/patch-c++17-for-poppler.diff
+
+    depends_lib-append \
+                    port:poppler \
+                    port:poppler-qt5
+    kf5.depends_frameworks \
+                    kfilemetadata
+    set test_target popplerextractortest
+    if {${os.platform} ne "darwin"} {
+        if {[variant_isset LTO]} {
+            configure.args-append \
+                    -DBUILD_TESTING=OFF
+            unset test_target
+            test.run no
+        }
+    }
+    build.pre_args-replace \
+                    all \
+                    kfilemetadata_popplerextractor
+    if {[info exists test_target]} {
+        build.pre_args-append \
+                    ${test_target}
+    }
+    destroot {
+        xinstall -d -m 755 ${destroot}${qt_plugins_dir}/kf5/kfilemetadata/
+        xinstall -m 755 ${build.dir}/bin/kf5/kfilemetadata/kfilemetadata_popplerextractor.${qt_plugins_ext} \
+                    ${destroot}${qt_plugins_dir}/kf5/kfilemetadata/
+    }
+    test {
+        system "${build.dir}/bin/${test_target}"
     }
 }
 
@@ -1644,6 +1696,8 @@ subport kf5-baloo {
                     solid
     depends_lib-append \
                     port:lmdb
+    depends_run-append \
+                    port:kf5-kfilemetadata-pdf_extractor
     patchfiles-append \
                     baloo/patch-allow-older-qt5.diff
     platform darwin {
@@ -3069,7 +3123,9 @@ if {(${kf5.latest_version} ne ${kf5.version}) && (${revision} ne 0) && ![tbool f
     }
 }
 
-long_description-append "\n(${subport} is a [kf5::tier] framework.)"
+if {[kf5::tier] ne "non"} {
+    long_description-append "\n(${subport} is a [kf5::tier] framework.)"
+}
 
 livecheck.type      regex
 livecheck.version   ${kf5.branch}
