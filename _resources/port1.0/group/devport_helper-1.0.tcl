@@ -84,6 +84,7 @@ namespace eval devport_helper {
                         }
                     }
                 }
+                ui_debug "Parsed ${devport_helper::currentportgroupdir}/devport_db.tcl"
             } else {
                 ui_error "Error reading ${devport_helper::currentportgroupdir}/devport_db.tcl: $err"
                 return -code error "Error reading devport database ${devport_helper::currentportgroupdir}/devport_db.tcl"
