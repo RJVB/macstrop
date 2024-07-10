@@ -1,10 +1,17 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 
 PortSystem      1.0
+PortGroup       active_variants 1.1
 PortGroup       LTO 1.0
+PortGroup       save_configure_cmd 1.0
 
 name            xorg-libxcb
-version         1.15
+version         1.17.0
+
+checksums       rmd160  a5e36fb6d60154354c60c6fe94082f4c2d23e5fd \
+                sha256  599ebf9996710fea71622e6e184f3a8ad5b43d0e5fa8c4e407123c88a59a6d55
+#                size    455208
+
 categories      x11 devel
 license         X11
 maintainers     {jeremyhu @jeremyhu} openmaintainer
@@ -12,13 +19,9 @@ description     X.org libxcb
 homepage        http://xcb.freedesktop.org/
 platforms       darwin macosx
 long_description The X C Binding (XCB) library
-master_sites     ${homepage}dist/
+master_sites     xorg:individual/lib
 
 distname        libxcb-${version}
-
-checksums       rmd160  045aec64dbebbe836db7ba6cff79d11879e747be \
-                sha256  cc38744f817cf6814c847e2df37fcb8997357d72fa4bcbc228ae0fe47219a059
-#                 size    446492
 
 use_xz          yes
 use_parallel_build yes
@@ -28,25 +31,24 @@ depends_build   port:pkgconfig
 platform darwin {
     depends_lib port:xorg-libXau \
                 port:xorg-libXdmcp \
-                port:xorg-xcb-proto \
                 port:xorg-libpthread-stubs
 }
-platform linux {
-    depends_lib port:xorg-xcb-proto
-}
+depends_lib-append \
+                port:xorg-xcb-proto
 
 patch.pre_args  -Np1
 # prevent a sporadic hang situation when querying the mouse position too frequently on a remote display
 patchfiles-append \
                 patch-xcbwaitreply-hang.diff
 
+configure.save_configure_cmd "install log"
 configure.args  --disable-devel-docs \
                 --disable-silent-rules \
                 --enable-ge --enable-xevie --enable-xprint
 
 variant docs description "Install extra documentation" {
     depends_build-append \
-        port:doxygen \
+        path:bin/doxygen:doxygen \
         path:bin/dot:graphviz
 
     depends_skip_archcheck-append \
@@ -70,37 +72,63 @@ variant docs description "Install extra documentation" {
 #
 # [1] https://gitlab.freedesktop.org/xorg/lib/libxcb/blob/1.13.1/configure.ac#L85
 
-variant python27 conflicts python35 python36 python37 python38 description {Use python 2.7} {
-    depends_run-append      port:python27
-    configure.python        ${prefix}/bin/python2.7
+set pythonversions {3.5 3.6 3.7 3.8 3.9 3.10 3.11 3.12}
+foreach pdv ${pythonversions} {
+    set pv [join [lrange [split ${pdv} .] 0 1] ""]
+    set conflist ""
+    foreach v ${pythonversions} {
+        if {${v} ne ${pdv}} {
+            set vv [join [lrange [split ${v} .] 0 1] ""]
+            set conflist "${conflist} python${vv}"
+        }
+    }
+    variant python${pv} conflicts {*}${conflist} description "Use Python ${pdv}" {}
+    if {[variant_isset python${pv}]} {
+        set pyvar_set 1
+    }
 }
 
-variant python35 conflicts python27 python36 python37 python38 description {Use python 3.5} {
-    depends_build-append    port:python35
-    configure.python        ${prefix}/bin/python3.5
+if {![tbool pyvar_set]} {
+    default_variants +python37
 }
 
-variant python36 conflicts python27 python35 python37 python38 description {Use python 3.6} {
-    depends_build-append    port:python36
-    configure.python        ${prefix}/bin/python3.6
+# now check which variant is actually set and take the appropriate action
+foreach pdv ${pythonversions} {
+    set pv [join [lrange [split ${pdv} .] 0 1] ""]
+    if {[variant_isset python${pv}]} {
+        set python_branch   ${pv}
+        set python_version  ${pdv}
+    }
+}
+if {[info exists python_version]} {
+    depends_build-append    port:python${python_branch}
+    depends_skip_archcheck-append \
+                            port:python${python_branch}
+    license_noconflict      python${python_branch}
+    configure.python        ${prefix}/bin/python${python_version}
+
+    require_active_variants xorg-xcb-proto python${python_branch}
+
+    post-destroot {
+        if {![file exists ${destroot}${prefix}/lib/python${python_version}] \
+                && [file exists ${destroot}/usr/lib/python${python_version}]} {
+            ui_msg "Moving Python modules into ${prefix}"
+            file rename ${destroot}/usr/lib/python${python_version} \
+                ${destroot}${prefix}/lib/python${python_version}
+        }
+        if {![file exists ${destroot}${prefix}/lib/python${python_version}/site-packages] \
+                && [file exists ${destroot}${prefix}/lib/python${python_version}/dist-packages]} {
+            ui_msg "Renaming dist-packages to site-packages"
+            file rename ${destroot}${prefix}/lib/python${python_version}/dist-packages \
+                ${destroot}${prefix}/lib/python${python_version}/site-packages
+        }
+    }
+} else {
+    ui_error "${subport} needs a Python variant to be set"
+    return -code error "Missing variant"
 }
 
-variant python37 conflicts python27 python35 python36 python38 description {Use python 3.7} {
-    depends_build-append    port:python37
-    configure.python        ${prefix}/bin/python3.7
-}
-
-variant python38 conflicts python27 python35 python36 python37 description {Use python 3.8} {
-    depends_build-append    port:python38
-    configure.python        ${prefix}/bin/python3.8
-}
-depends_skip_archcheck-append \
-        python27 python35 python36 python37 python38
-
-# if {![variant_isset python27] && ![variant_isset python35] && ![variant_isset python36] && ![variant_isset python37] && ![variant_isset python38]} {
-#     default_variants +python38
-# }
 
 livecheck.type  regex
-livecheck.url   ${master_sites}?C=M&O=D
+livecheck.url   https://xorg.freedesktop.org/archive/individual/lib/?C=M&O=D
 livecheck.regex libxcb-(\\d+(?:\\.\\d+)*)
