@@ -40,7 +40,9 @@ proc configure.save_configure_cmd {{save_log_too ""}} {
                 set docdir ${destroot}${prefix}/share/doc/${subport}
                 xinstall -m 755 -d ${docdir}
                 foreach cfile [glob -nocomplain ${workpath}/.macports.${subport}.configure*] {
-                    xinstall -m 644 ${cfile} ${docdir}/[string map {".macports" "macports"} [file tail ${cfile}]]
+                    if {[file size ${cfile}] > 0} {
+                        xinstall -m 644 ${cfile} ${docdir}/[string map {".macports" "macports"} [file tail ${cfile}]]
+                    }
                 }
             }
         }
