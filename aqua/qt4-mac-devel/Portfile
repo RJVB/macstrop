@@ -4,7 +4,7 @@ PortSystem          1.0
 
 set basename        qt4-mac
 name                ${basename}-devel
-version             4.8.7 ; revision 5
+version             4.8.7 ; revision 7
 
 use_xcode           yes
 
@@ -55,13 +55,6 @@ master_sites        https://download.qt.io/new_archive/qt/${branch}/${version}/
 checksums           rmd160  afb5e5a99388e6429faca59cb5000054feffd166 \
                     sha256  e2882295097e47fe089f8ac741a95fef47e0a73a3f3cdf21b56990638f626ea0
 
-# if {[info exist ::env(MACPORTS_COMPRESS_WORKDIR)] && $::env(MACPORTS_COMPRESS_WORKDIR)} {
-#     # Qt4 is huge. Enable HFS compression if bsdtar (port:libarchive) is already installed
-#     # This only changes the disk footprint for users who build Qt themselves
-#     if {[file exists ${prefix}/bin/bsdtar]} {
-#         extract.post_args "| bsdtar -x -k --hfsCompression"
-#     }
-# }
 # optional support for HFS-compression of the source and build dirs
 PortGroup           compress_workdir 1.0
 
@@ -307,7 +300,9 @@ if {${subport} eq ${name} || ${subport} eq "${basename}"} {
     patchfiles-append       patch-improve-fontweight-support2.diff \
                             patch-fontpanel.diff
     # experimental and flaky support for colour fonts and UTF32 emojis
-    patchfiles-append       patch-font-emojis.diff
+    if {${os.platform} eq "darwin" && [variant_isset emojis]} {
+        patchfiles-append   patch-font-emojis.diff
+    }
 
     # (30) prevent text zooming when pressing the Command key during inertial/passive scrolling (coasting)
     patchfiles-append       patch-avoid-unwanted-fontzooming.diff
@@ -446,6 +441,7 @@ configure.ccache no
 
 ## The main port that installs Qt4:
 if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${name}-x11"} {
+    PortGroup save_configure_cmd 1.0
 
     # find a way to specify the SDK to use; Qt will use the 10.4u by
     # default which won't work on 10.6 since it is not supported.  Allow
@@ -838,6 +834,8 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
         configure.env-append    MAKEFLAGS=-j${build.jobs}
     }
 
+    configure.save_configure_cmd "install log"
+
     post-configure {
 
         # Remove any '-I' and '-L' string from the *FLAGS for SQLITE,
@@ -874,8 +872,20 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
             ${build.dir}/.qmake.cache
         reinplace "/ODBC/s@-L${prefix}/\[^ \]*lib\[^ \]*@@g" \
             ${build.dir}/.qmake.cache
+        # attempt to add our ObjC/++ compiler flags to .qmake.cache
+        if {![catch {set fd [open "${build.dir}/.qmake.cache" "a"]} err]} {
+            puts ${fd} "QMAKE_OBJECTIVE_CFLAGS += ${configure.objcflags}"
+            puts ${fd} "QMAKE_OBJECTIVE_CXXFLAGS += ${configure.objcxxflags}"
+            close ${fd}
+            unset fd
+        } else {
+            ui_warning "Couldn't add our ObjC/++ compiler flags to .qmake.cache!"
+            if {![variant_isset cxx11]} {
+                ui_warning "(The build will probably fail if your compiler uses C++11 or newer by default)"
+            }
+        }
 
-        if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
+        if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.info" "w"]} err]} {
             foreach var [array names ::env] {
                 puts ${fd} "${var}=$::env(${var})"
             }
@@ -889,7 +899,7 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
             if {[file exists "${configure.dir}/.qmake.cache"]} {
                 puts ${fd} "## ${configure.dir}/.qmake.cache:"
                 close ${fd}
-                system "cat \"${configure.dir}/.qmake.cache\" >> \"${workpath}/.macports.${subport}.configure.cmd\""
+                system "cat \"${configure.dir}/.qmake.cache\" >> \"${workpath}/.macports.${subport}.configure.info\""
             } else {
                 close ${fd}
             }
@@ -902,18 +912,6 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
         compiler.cpath [join ${header_path} :]
         compiler.library_path [join ${library_path} :]
     }
-#     if {[info exist ::env(MACPORTS_COMPRESS_WORKDIR)] && $::env(MACPORTS_COMPRESS_WORKDIR)} {
-#         post-build {
-#             if {[file exists ${prefix}/bin/afsctool]} {
-#                 ui_msg "--->  Compressing the build directory ..."
-#                 if {[catch {system "${prefix}/bin/afsctool -cfvv -8 -J${build.jobs} ${build.dir} 2>&1"} result context]} {
-#                     ui_msg "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
-#                 } else {
-#                     ui_debug "Compressing ${build.dir}: ${result}"
-#                 }
-#             }
-#         }
-#     }
 
     # do not use DESTDIR directly in the destroot command; Qt uses DISTDIR
     # internally for other purposes, and instead uses INSTALL_ROOT for the
@@ -1262,7 +1260,7 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
             reinplace "s|@BUNDLEEXEC@|${qt_apps_dir}/${app}/Contents/MacOS/${texe}|g" ${appProxy}
 
         }
-        file delete -force ${qt_apps_dir}/examples
+        file delete -force ${destroot}${qt_apps_dir}/examples
 
         # move tests to ${qt_data_dir}
 
@@ -1379,6 +1377,7 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
     } else {
         compiler.cxx_standard 1998
         configure.cxxflags-append -std=gnu++98
+        configure.objcxxflags-append -std=gnu++98
     }
 
     variant htmldocs description {Install HTML documentation (>200Mb)} {}
@@ -1402,10 +1401,11 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
         configure.args-delete   -no-exceptions
     }
 
-    variant harfbuzz description {Use HarfBuzz to do text layout instead of Core Text when possible.} {
-        depends_lib-append      port:harfbuzz
+    variant harfbuzz conflicts emojis description {Use HarfBuzz to do text layout by default instead of Core Text when possible.} {
+        # Qt uses an internal (tweaked?) copy of harfbuzz
         configure.args-append   -harfbuzz
     }
+    variant emojis conflicts harfbuzz description {Highly experimental, flaky and hardly functional support for colour fonts and emojis} {}
 }
 
 foreach parp ${qtportlist} {
