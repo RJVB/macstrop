@@ -92,11 +92,11 @@ Qt4 must also be installed with +debug.\n"
 ##     variant LTO description {Build with Link-Time Optimisation (LTO) (currently not 100% compatible with SSE4+ and 3DNow intrinsics)} {}
 ## }
 if {![tbool qt4.no_LTO_variant] && ![variant_exists LTO]} {
-    if {[info exists building_qt4]} {
-        variant LTO description {Build with Link-Time Optimisation (LTO) (experimental)} {}
-    } else {
+#     if {[info exists building_qt4]} {
+#         variant LTO description {Build with Link-Time Optimisation (LTO) (experimental)} {}
+#     } else {
         PortGroup LTO 1.0
-    }
+#     }
 }
 
 
@@ -271,18 +271,18 @@ if {![info exists building_qt4]} {
     depends_lib-append  ${qt4_dependency}
 }
 
-if {[variant_exists LTO] && [variant_isset LTO]} {
-    configure.cflags-append     -flto
-    configure.cxxflags-append   -flto
-    configure.objcflags-append  -flto
-    configure.objcxxflags-append  -flto
-    # ${configure.optflags} is a list, and that can lead to strange effects
-    # in certain situations if we don't treat it as such here.
-    foreach opt ${configure.optflags} {
-        configure.ldflags-append ${opt}
-    }
-    configure.ldflags-append    -flto
-}
+# if {[variant_exists LTO] && [variant_isset LTO]} {
+#     configure.cflags-append     -flto
+#     configure.cxxflags-append   -flto
+#     configure.objcflags-append  -flto
+#     configure.objcxxflags-append  -flto
+#     # ${configure.optflags} is a list, and that can lead to strange effects
+#     # in certain situations if we don't treat it as such here.
+#     foreach opt ${configure.optflags} {
+#         configure.ldflags-append ${opt}
+#     }
+#     configure.ldflags-append    -flto
+# }
 
 # standard configure environment, when not building qt4
 
