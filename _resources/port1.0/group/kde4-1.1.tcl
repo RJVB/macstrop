@@ -293,7 +293,7 @@ post-activate {
 }
 
 # create a .macports-$subport-configure.cmd file containing the cmake invocation details
-cmake.save_configure_cmd "log too"
+cmake.save_configure_cmd "install log"
 
 notes-append "
 Don't forget that dbus needs to be started as the local\
