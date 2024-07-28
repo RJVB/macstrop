@@ -49,8 +49,27 @@ namespace eval rustup {
         return
     }
 
+    set setup_build {}
+}
+
+namespace eval rustup {
     proc use_rustup {} {
         return [expr [variant_exists rustup_build] && [variant_isset rustup_build]]
+    }
+
+    proc set_use_configure {{arg {}}} {
+        global use_configure
+        if {${arg} ne {}} {
+            ui_debug "rustup::set_use_configure ${arg}"
+            use_configure ${arg}
+        }
+        if {[tbool use_configure]} {
+            ui_debug "Doing rustup::setup_build in pre-configure"
+            set rustup::setup_build pre-configure
+        } else {
+            ui_debug "Doing rustup::setup_build in pre-build"
+            set rustup::setup_build pre-build
+        }
     }
 
     variant rustup_build conflicts no_rustup description {build this port using a private rust install from rustup.rs} {}
@@ -71,6 +90,14 @@ namespace eval rustup {
 #     options rustup.force_cargo_update
 #     default rustup.force_cargo_update   no
 
+    if {${os.platform} eq "darwin"} {
+        if {${os.major} < 16} {
+            PortGroup legacysupport 1.1
+        } else {
+            set legacysupport.newest_darwin_requires_legacy 16
+        }
+    }
+
     post-fetch {
         if {${subport} ne "rustup"} {
             xinstall -d ${rustup::home}/Cargo/bin
@@ -79,7 +106,6 @@ namespace eval rustup {
             xinstall -d ${rustup::home}
             if {${os.platform} eq "darwin"} {
                 if {${os.major} < 16} {
-                    PortGroup legacysupport 1.1
                     set rinit "https://static.rust-lang.org/rustup/dist/${build_arch}-apple-darwin/rustup-init"
                     ui_msg "Downloading the rustup installer binary directly from ${rinit}"
                     xinstall -d ${rustup::home}/Cargo/bin/
@@ -119,9 +145,11 @@ namespace eval rustup {
             set env(RUSTUP_INIT_SKIP_PATH_CHECK) yes
             if {![file exists ${rustup::home}/Cargo/bin/cargo]} {
                 ui_msg "--->  Doing rustup install"
-#                 if {${os.platform} eq "darwin" && ${os.major} < ${legacysupport.newest_darwin_requires_legacy}} {
-#                     ui_warn "     NB: you may get a notification of a rustc crash at the end of the install: you can ignore this"
-#                 }
+                if {${os.platform} eq "darwin" && ${os.major} < ${legacysupport.newest_darwin_requires_legacy}} {
+                    ui_warn "     NB: you may get a notification of a rustc crash at the end of the install: you can ignore this"
+                    set env(RUSTUP_INIT_SKIP_PATH_CHECK) yes
+                    set env(RUSTUP_DONT_CALL_RUSTC) yes
+                }
                 if {[file exists ${rustup::home}/Cargo/bin/rustup-init]} {
                     platform darwin {
                         # now make certain we use an up-to-date libcurl, or else download failures may occur
@@ -137,7 +165,6 @@ namespace eval rustup {
                     system "${rustup::home}/rustup-install.sh --profile minimal --no-modify-path -y -q"
                 }
                 platform darwin {
-                    ui_msg here
                     # ${rustup::home}/Cargo/bin is populated with hardlinks, so we only need to
                     # fix up a single downloaded for for running on legacy systems
                     # NB NB: for this to work legacysupport.newest_darwin_requires_legacy must be >= 16
@@ -193,17 +220,22 @@ namespace eval rustup {
         }
     }
 
+    # rustup::set_use_configure ${use_configure}
     if {[tbool use_configure]} {
-        set prephase pre-configure
+        ui_debug "Doing rustup::setup_build in pre-configure"
+        set rustup::setup_build pre-configure
     } else {
-        set prephase pre-build
+        ui_debug "Doing rustup::setup_build in pre-build"
+        set rustup::setup_build pre-build
     }
-    ${prephase} {
+    ${rustup::setup_build} {
         ui_debug "PATH=$env(PATH)"
         catch {system -W ${worksrcpath} "${rustup::home}/Cargo/bin/cargo-cache-autoclean"}
         if {![rustup::use_rustup]} {
+            ui_debug "Setting up regular port:cargo + port:rust  build"
             xinstall -m 755 -d ${rustup::home}/Cargo/bin/
         } else {
+            ui_debug "Setting up rustup build"
             xinstall -m 755 -d ${cargo.home}
             if {![tbool rustup.disable_cargo]} {
                 if {[file exists ${cargo.home}/config.toml]} {
@@ -214,9 +246,13 @@ namespace eval rustup {
                 set conf [open "${cargo.home}/config.toml" "w"]
 
                 puts $conf "\[build\]"
-                puts $conf "rustflags = \[\"--remap-path-prefix=[file normalize ${worksrcpath}]=\", \
+                puts -nonewline $conf "rustflags = \[\"--remap-path-prefix=[file normalize ${worksrcpath}]=\", \
                     \"--remap-path-prefix=${cargo.home}=\", \
-                    \"--remap-path-prefix=$env(RUSTUP_HOME)=RUSTUP_HOME\"\]"
+                    \"--remap-path-prefix=$env(RUSTUP_HOME)=RUSTUP_HOME\""
+                foreach la ${configure.ldflags} {
+                    puts -nonewline $conf ",\"-C\", \"link-arg=${la}\""
+                }
+                puts $conf "\]"
                 if {${os.platform} eq "darwin"} {
                     # be sure to include all architectures in case, e.g., a 64-bit Cargo compiles a 32-bit port
                     # note that setting the linker on linux causes weird failures even if the executed wrapper
@@ -229,6 +265,7 @@ namespace eval rustup {
                     }
                 }
                 close $conf
+                system "cat ${cargo.home}/config.toml"
             } else {
                 ui_debug "### Using non cargo build system with \"${configure.cmd}\" and \"${build.cmd}\""
             }
@@ -291,6 +328,13 @@ if {[variant_isset cputuned] || [variant_isset cpucompat]} {
     if {${os.platform} eq "darwin"} {
         configure.ldflags-append    {*}${LTO.cpuflags}
     }
+}
+
+if {[tbool configure.ccache] && [file exists ${prefix}/bin/sccache]} {
+    # Enable sccache for rust caching
+    set ::env(RUSTC_WRAPPER) ${prefix}/bin/sccache
+    set ::env(SCCACHE_CACHE_SIZE) 2G
+    set ::env(SCCACHE_DIR) [string map {".ccache" ".sccache"} ${ccache_dir}]
 }
 
 if {![rustup::use_rustup]} {
@@ -464,6 +508,7 @@ if {![tbool rustup.disable_cargo]} {
         error "destroot phase not implemented"
     }
 }
+
 namespace eval rustup {
     set includecounter [expr ${includecounter} + 1]
 }
