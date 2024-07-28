@@ -74,9 +74,9 @@ platform darwin {
                 set compjobs ""
             }
             # first try compressing in parallel, without backups/verification (this is all "redundant" data)
-            if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} -S -L -n ${target} 2>&1"} result context]} {
+            if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${compjobs} -S -L -n ${target}/ 2>&1"} result context]} {
                 ui_info "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
-                if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${target} 2>&1"} result context]} {
+                if {[catch {system "${prefix}/bin/afsctool -cfvv -8 ${target}/ 2>&1"} result context]} {
                     ui_error "Compression failed: ${result}, ${context}"
                     return -code error "Compression failed"
                 } else {
@@ -99,33 +99,48 @@ platform darwin {
             }
         }
 
-        post-build {
-            if {[file exists ${prefix}/bin/afsctool]} {
-                ui_msg "--->  Compressing the build directory ..."
-                if {${compress.build_dir} ne "${worksrcpath}"} {
-                    set compress.build_dir "${worksrcpath} ${compress.build_dir}"
-                }
-                if {![catch {hfscompress ${compress.build_dir}} result context]} {
-                    if {[tbool configure.ccache]} {
-                        ui_msg "--->  Compressing the ccache directory ..."
-                        catch {hfscompress ${ccache_dir}}
+        proc compress_workdir::callback {} {
+            global prefix compress.build_dir worksrcpath configure.ccache destroot compress.in_applications_dir
+            global workpath
+            post-build {
+                if {[file exists ${prefix}/bin/afsctool]} {
+                    ui_msg "--->  Compressing the build directory ..."
+                    if {${compress.build_dir} ne "${worksrcpath}"} {
+                        set compress.build_dir "${worksrcpath} ${compress.build_dir}"
+                    }
+                    if {![catch {hfscompress ${compress.build_dir}} result context]} {
+                        set extradirs "${workpath}/.home ${workpath}/.tmp"
+                        if {[info exists rustup::home] && [file exists ${rustup::home}]} {
+                            set extradirs "${extradirs} ${rustup::home}"
+                        }
+                        if {[file exists ${workpath}/cargo-cache]} {
+                            set extradirs "${extradirs} ${workpath}/cargo-cache"
+                        }
+                        ui_msg "--->  Compressing additional directories [string map [list ${workpath}/ ""] ${extradirs}] ..."
+                        catch {hfscompress ${extradirs}}
+                        if {[tbool configure.ccache]} {
+                            ui_msg "--->  Compressing the ccache directory ..."
+                            catch {hfscompress ${ccache_dir}}
+                        }
                     }
                 }
             }
-        }
-        post-destroot {
-            set destroots [glob -nocomplain -type d ${destroot}-*]
-            if {[file exists ${prefix}/bin/afsctool] && ${destroots} ne {}} {
-                ui_msg "--->  Compressing auxiliary destroot dirs ..."
-                catch {hfscompress ${destroots}}
+            post-destroot {
+                set destroots [glob -nocomplain -type d ${destroot}-*]
+                if {[file exists ${prefix}/bin/afsctool] && ${destroots} ne {}} {
+                    ui_msg "--->  Compressing auxiliary destroot dirs ..."
+                    catch {hfscompress ${destroots}}
+                }
+            }
+            post-activate {
+                if {[option compress.in_applications_dir] ne {}} {
+                    ui_msg "--->  Compressing ${compress.in_applications_dir} ..."
+                    catch {hfscompress ${compress.in_applications_dir}}
+                }
             }
         }
-        post-activate {
-            if {[option compress.in_applications_dir] ne {}} {
-                ui_msg "--->  Compressing ${compress.in_applications_dir} ..."
-                catch {hfscompress ${compress.in_applications_dir}}
-            }
-        }
+
+        port::register_callback compress_workdir::callback
     }
 
 }
