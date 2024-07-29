@@ -36,6 +36,14 @@ if {${os.platform} eq "darwin"} {
 }
 PortGroup LTO 1.0
 
+if {${os.platform} eq "darwin"} {
+    if {${os.major} < 16} {
+        PortGroup legacysupport 1.1
+    } else {
+        set legacysupport.newest_darwin_requires_legacy 16
+    }
+}
+
 namespace eval rustup {
     # our directory:
     set currentportgroupdir [file dirname [dict get [info frame 0] file]]
@@ -89,14 +97,6 @@ namespace eval rustup {
 
 #     options rustup.force_cargo_update
 #     default rustup.force_cargo_update   no
-
-    if {${os.platform} eq "darwin"} {
-        if {${os.major} < 16} {
-            PortGroup legacysupport 1.1
-        } else {
-            set legacysupport.newest_darwin_requires_legacy 16
-        }
-    }
 
     post-fetch {
         if {${subport} ne "rustup"} {
@@ -237,38 +237,34 @@ namespace eval rustup {
         } else {
             ui_debug "Setting up rustup build"
             xinstall -m 755 -d ${cargo.home}
-            if {![tbool rustup.disable_cargo]} {
-                if {[file exists ${cargo.home}/config.toml]} {
-                    ui_warn "replacing existing ${cargo.home}/config.toml"
-                    ui_debug "config.toml contents:"
-                    ui_debug ">>> [exec cat ${cargo.home}/config.toml] <<<"
-                }
-                set conf [open "${cargo.home}/config.toml" "w"]
+            if {[file exists ${cargo.home}/config.toml]} {
+                ui_warn "replacing existing ${cargo.home}/config.toml"
+                ui_debug "config.toml contents:"
+                ui_debug ">>> [exec cat ${cargo.home}/config.toml] <<<"
+            }
+            set conf [open "${cargo.home}/config.toml" "w"]
 
-                puts $conf "\[build\]"
-                puts -nonewline $conf "rustflags = \[\"--remap-path-prefix=[file normalize ${worksrcpath}]=\", \
-                    \"--remap-path-prefix=${cargo.home}=\", \
-                    \"--remap-path-prefix=$env(RUSTUP_HOME)=RUSTUP_HOME\""
-                foreach la ${configure.ldflags} {
-                    puts -nonewline $conf ",\"-C\", \"link-arg=${la}\""
-                }
-                puts $conf "\]"
-                if {${os.platform} eq "darwin"} {
-                    # be sure to include all architectures in case, e.g., a 64-bit Cargo compiles a 32-bit port
-                    # note that setting the linker on linux causes weird failures even if the executed wrapper
-                    # script is the same...
-                    foreach arch {arm64 x86_64 i386 ppc ppc64} {
-                        if {[option triplet.${arch}] ne "none"} {
-                            puts $conf "\[target.[option triplet.${arch}]\]"
-                            puts $conf "linker = \"[compwrap::wrap_compiler ld]\""
-                        }
+            puts $conf "\[build\]"
+            puts -nonewline $conf "rustflags = \[\"--remap-path-prefix=[file normalize ${worksrcpath}]=\", \
+                \"--remap-path-prefix=${cargo.home}=\", \
+                \"--remap-path-prefix=$env(RUSTUP_HOME)=RUSTUP_HOME\""
+            foreach la ${configure.ldflags} {
+                puts -nonewline $conf ",\"-C\", \"link-arg=${la}\""
+            }
+            puts $conf "\]"
+            if {${os.platform} eq "darwin"} {
+                # be sure to include all architectures in case, e.g., a 64-bit Cargo compiles a 32-bit port
+                # note that setting the linker on linux causes weird failures even if the executed wrapper
+                # script is the same...
+                foreach arch {arm64 x86_64 i386 ppc ppc64} {
+                    if {[option triplet.${arch}] ne "none"} {
+                        puts $conf "\[target.[option triplet.${arch}]\]"
+                        puts $conf "linker = \"[compwrap::wrap_compiler ld]\""
                     }
                 }
-                close $conf
-                system "cat ${cargo.home}/config.toml"
-            } else {
-                ui_debug "### Using non cargo build system with \"${configure.cmd}\" and \"${build.cmd}\""
             }
+            close $conf
+            system "cat ${cargo.home}/config.toml"
         }
         file delete -force \
             ${rustup::home}/Cargo/bin/cc \
@@ -335,6 +331,7 @@ if {[tbool configure.ccache] && [file exists ${prefix}/bin/sccache]} {
     set ::env(RUSTC_WRAPPER) ${prefix}/bin/sccache
     set ::env(SCCACHE_CACHE_SIZE) 2G
     set ::env(SCCACHE_DIR) [string map {".ccache" ".sccache"} ${ccache_dir}]
+    set ::env(SCCACHE_STARTUP_NOTIFY) /tmp/mp-sccache-socket
 }
 
 if {![rustup::use_rustup]} {
