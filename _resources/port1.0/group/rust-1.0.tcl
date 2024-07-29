@@ -33,6 +33,16 @@
 #    baz    author/baz  branch  abcdef12345678...commit...abcdef12345678  fedcba654321...
 #
 
+if {[info exists rust::currentportgroupdir]} {
+    ui_debug "[dict get [info frame 0] file] has already been loaded"
+    return
+}
+
+namespace eval rust {
+    # our directory:
+    variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
+}
+
 PortGroup   muniversal          1.1
 PortGroup   compiler_wrapper    1.0
 # ideally, we would like to add the openssl PG, however
@@ -818,13 +828,13 @@ proc rust::get_sdkroot {sdk_version} {
 
 # Is build caching enabled ?
 # WIP for now ...
-#if {[tbool configure.ccache]} {
-#    # Enable sccache for rust caching
-#    depends_build-append port:sccache
-#    rust::append_envs    RUSTC_WRAPPER=${prefix}/bin/sccache
-#    rust::append_envs    SCCACHE_CACHE_SIZE=2G
-#    rust::append_envs    SCCACHE_DIR=${workpath}/.sccache
-#}
+if {[tbool configure.ccache] && [file exists ${prefix}/bin/sccache]} {
+    # Enable sccache for rust caching
+    rust::append_envs    RUSTC_WRAPPER=${prefix}/bin/sccache
+    rust::append_envs    SCCACHE_CACHE_SIZE=2G
+    rust::append_envs    SCCACHE_DIR=[string map {".ccache" ".sccache"} ${ccache_dir}]
+    rust::append_envs    SCCACHE_STARTUP_NOTIFY=/tmp/mp-sccache-socket
+}
 
 proc rust::set_environment {} {
     global prefix configure.pkg_config_path
