@@ -871,21 +871,30 @@ proc portpatch::patch_main {args} {
     set bzcat "[findBinary bzip2 $portutil::autoconf::bzip2_path] -dc"
     catch {set xzcat "[findBinary xz $portutil::autoconf::xz_path] -dc"}
 
+    global workpath subport
+    set statefile [file join $workpath .macports.${subport}.state]
+    set target_state_fd [open $statefile a+]
+    flush ${target_state_fd}
     foreach patch $patchlist {
-        ui_info "$UI_PREFIX [format [msgcat::mc "Applying %s"] [file tail $patch]]"
-        switch -- [file extension $patch] {
-            .Z -
-            .gz {command_exec patch "$gzcat \"$patch\" | (" ")"}
-            .bz2 {command_exec patch "$bzcat \"$patch\" | (" ")"}
-            .xz {
-                if {[info exists xzcat]} {
-                    command_exec patch "$xzcat \"$patch\" | (" ")"
-                } else {
-                    return -code error [msgcat::mc "xz binary not found; port needs to add 'depends_patch bin:xz:xz'"]
-                }}
-            default {command_exec patch "" "< '$patch'"}
+        set pfile [file tail $patch]
+            if {![check_statefile patch $pfile $target_state_fd]} {
+            ui_info "$UI_PREFIX [format [msgcat::mc "Applying %s"] [file tail $patch]]"
+            switch -- [file extension $patch] {
+                .Z -
+                .gz {command_exec patch "$gzcat \"$patch\" | (" ")"}
+                .bz2 {command_exec patch "$bzcat \"$patch\" | (" ")"}
+                .xz {
+                    if {[info exists xzcat]} {
+                        command_exec patch "$xzcat \"$patch\" | (" ")"
+                    } else {
+                        return -code error [msgcat::mc "xz binary not found; port needs to add 'depends_patch bin:xz:xz'"]
+                    }}
+                default {command_exec patch "" "< '$patch'"}
+            }
+            write_statefile patch $pfile $target_state_fd
         }
     }
+    close ${target_state_fd}
     return 0
 }
 
