@@ -130,6 +130,9 @@ rename      portconfigure::should_add_stdlib  portconfigure::should_add_stdlib_r
 rename      portconfigure::should_add_cxx_abi portconfigure::should_add_cxx_abi_real
 proc        portconfigure::should_add_stdlib  {} {return no}
 proc        portconfigure::should_add_cxx_abi {} {return no}
+pre-configure {
+    ui_debug "rust-1.0 PG overloaded the should_add_stdlib & should_add_cxx_abi procedures!"
+}
 
 # enforce same compiler settings as used by rust
 default     compiler.cxx_standard           2017

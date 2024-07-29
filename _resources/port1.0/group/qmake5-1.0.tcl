@@ -268,6 +268,9 @@ destroot.destdir "INSTALL_ROOT=${destroot}"
 # add debug variant if one does not exist and one is requested via qt5.debug_variant
 # variant is added in eval_variants so that qt5.debug_variant can be set anywhere in the Portfile
 rename ::eval_variants ::real_qmake5_eval_variants
+pre-fetch {
+    ui_debug "qmake5-1.0 PG overloaded the eval_variants  procedure!"
+}
 proc eval_variants {variations} {
     global qt5.debug_variant
     if { ![variant_exists debug] && [tbool qt5.debug_variant] } {

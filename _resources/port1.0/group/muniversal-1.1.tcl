@@ -636,6 +636,9 @@ proc muniversal::merge {base1 base2 base prefixDir arch1 arch2 merger_dont_diff 
 
 # get default supported architectures then further restrict them depending on muniversal options
 rename portconfigure::choose_supported_archs portconfigure::choose_supported_archs_real
+pre-configure {
+    ui_debug "muniversal-1.1 PG overloaded the choose_supported_archs  procedure!"
+}
 proc portconfigure::choose_supported_archs {archs} {
     global  os.arch
 
@@ -834,6 +837,9 @@ proc get_canonical_archflags {{tool cc}} {
 # make use of architecture dependent variations of patch files
 # N.B.: this is a candidate for inclusion in the base code
 rename portpatch::patch_main portpatch::patch_main_real
+pre-patch {
+    ui_debug "muniversal-1.1 PG overloaded the patch_main procedure!"
+}
 proc portpatch::patch_main {args} {
     global UI_PREFIX
 
@@ -1123,6 +1129,9 @@ proc portdestroot::destroot_finish {args} {
     muniversal::merge  ${workpath}/destroot-arm64    ${workpath}/destroot-ppc-intel ${workpath}/destroot           ""  arm64 ppcintel ${muniversal.dont_diff}  ${muniversal.combine} ${muniversal.equivalent} ${diffFormatArmElse}
 
     portdestroot::destroot_finish_real ${args}
+}
+pre-destroot {
+    ui_debug "muniversal-1.1 PG overloaded the destroot_start & destroot_finishprocedures!"
 }
 }
 }
