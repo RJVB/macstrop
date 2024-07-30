@@ -47,7 +47,9 @@ if {${kf5::includecounter} == 0} {
         # let's live dangerously:
         set qt5.prefer_kde  1
     }
-    PortGroup           qt5 1.0
+    if {[info proc qt5.depends_component] eq ""} {
+        PortGroup       qt5 1.0
+    }
     PortGroup           cmake 1.1
     PortGroup           active_variants 1.1
 
