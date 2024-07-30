@@ -259,8 +259,6 @@ proc wxWidgets._set {option action args} {
                 return -code error "incompatible macOS version"
             }
         }
-        # this doesn't work
-        # PortGroup cxx11 1.1
     # temporary(?) port for Audacity
     } elseif {${args} eq "wxWidgets-3.1"} {
         wxWidgets.name      "wxWidgets"
