@@ -1,29 +1,1238 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 098f888..6e1e5c4 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 7dd356c..e0b0fe1 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -35,6 +35,13 @@ set(pavucontrol-qt_SRCS
+     elidinglabel.cc
+ )
+ 
++if (APPLE)
++    set_property(SOURCE
++        pavucontrol.cc
++        mainwindow.cc
++        APPEND PROPERTY COMPILE_DEFINITIONS USE_THREADED_GLLOOP)
++endif()
++
+ set(pavucontrol-qt_UI
+     cardwidget.ui
+     devicewidget.ui
+diff --git a/src/mainwindow.cc b/src/mainwindow.cc
+index 88467152135944fe540870a667832cb0603d8a3d..035e17ba8b7b5cc81ee1f2e8f1ddb73888a70ffa 100644
+--- a/src/mainwindow.cc
++++ b/src/mainwindow.cc
+@@ -22,6 +22,8 @@
+ #include <config.h>
+ #endif
+ 
++#define NEEDS_PCVAPP_FUNCTIONS
++
+ #include <set>
+ 
+ #include "mainwindow.h"
+@@ -34,6 +36,8 @@
+ #include <QIcon>
+ #include <QStyle>
+ #include <QSettings>
++#include <QThread>
++#include <QDebug>
+ 
+ /* Used for profile sorting */
+ struct profile_prio_compare {
+@@ -91,7 +95,7 @@ MainWindow::MainWindow():
+     connect(showVolumeMetersCheckButton, &QCheckBox::toggled, this, &MainWindow::onShowVolumeMetersCheckButtonToggled);
+ 
+     QAction * quit = new QAction{this};
+-    connect(quit, &QAction::triggered, this, &QWidget::close);
++    connect(quit, &QAction::triggered, this, &MainWindow::doQuit);
+     quit->setShortcut(QKeySequence::Quit);
+     addAction(quit);
+ 
+@@ -140,6 +144,19 @@ MainWindow::~MainWindow() {
+     }
+ }
+ 
++void MainWindow::doQuit()
++{
++#ifdef USE_THREADED_GLLOOP
++    if (QThread::currentThread() == pvcApp->mainThread) {
++        close();
++    } else {
++        MAINWINDOW_FUNCTION(this, close());
++    }
++#else
++    close();
++#endif
++}
++
+ class DeviceWidget;
+ static void updatePorts(DeviceWidget *w, std::map<QByteArray, PortInfo> &ports) {
+     std::map<QByteArray, PortInfo>::iterator it;
+@@ -375,19 +392,27 @@ bool MainWindow::updateSink(const pa_sink_info &info) {
+ }
+ 
+ static void suspended_callback(pa_stream *s, void *userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
+ 
++#ifdef USE_THREADED_GLLOOP
++    if (PVCApplication::isQuitting()) {
++        return;
++    }
++#endif
+     if (pa_stream_is_suspended(s))
+-        w->updateVolumeMeter(pa_stream_get_device_index(s), PA_INVALID_INDEX, -1);
++        MAINWINDOW_FUNCTION(userdata, updateVolumeMeter(pa_stream_get_device_index(s), PA_INVALID_INDEX, -1));
+ }
+ 
+ static void read_callback(pa_stream *s, size_t length, void *userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
+     const void *data;
+     double v;
+ 
++#ifdef USE_THREADED_GLLOOP
++    if (PVCApplication::isQuitting()) {
++        return;
++    }
++#endif
+     if (pa_stream_peek(s, &data, &length) < 0) {
+-        show_error(MainWindow::tr("Failed to read data from stream").toUtf8().constData());
++        show_translated_error("Failed to read data from stream");
+         return;
+     }
+ 
+@@ -411,7 +436,7 @@ static void read_callback(pa_stream *s, size_t length, void *userdata) {
+     if (v > 1)
+         v = 1;
+ 
+-    w->updateVolumeMeter(pa_stream_get_device_index(s), pa_stream_get_monitor_stream(s), v);
++    MAINWINDOW_FUNCTION(userdata, updateVolumeMeter(pa_stream_get_device_index(s), pa_stream_get_monitor_stream(s), v));
+ }
+ 
+ pa_stream* MainWindow::createMonitorStreamForSource(uint32_t source_idx, uint32_t stream_idx = -1, bool suspend = false) {
+@@ -421,6 +446,12 @@ pa_stream* MainWindow::createMonitorStreamForSource(uint32_t source_idx, uint32_
+     pa_sample_spec ss;
+     pa_stream_flags_t flags;
+ 
++#ifdef USE_THREADED_GLLOOP
++    // just checking to be certain
++    if (QThread::currentThread() != pvcApp->mainThread) {
++        qWarning() << Q_FUNC_INFO << "thread" << QThread::currentThread() << "!= mainThread" << pvcApp->mainThread;
++    }
++#endif
+     ss.channels = 1;
+     ss.format = PA_SAMPLE_FLOAT32;
+     ss.rate = 25;
+@@ -432,22 +463,22 @@ pa_stream* MainWindow::createMonitorStreamForSource(uint32_t source_idx, uint32_
+     snprintf(t, sizeof(t), "%u", source_idx);
+ 
+     if (!(s = pa_stream_new(get_context(), tr("Peak detect").toUtf8().constData(), &ss, nullptr))) {
+-        show_error(tr("Failed to create monitoring stream").toUtf8().constData());
++        show_translated_error("Failed to create monitoring stream");
+         return nullptr;
+     }
+ 
+     if (stream_idx != (uint32_t) -1)
+         pa_stream_set_monitor_stream(s, stream_idx);
+ 
+-    pa_stream_set_read_callback(s, read_callback, this);
+-    pa_stream_set_suspended_callback(s, suspended_callback, this);
++    pa_stream_set_read_callback(s, ::read_callback, this);
++    pa_stream_set_suspended_callback(s, ::suspended_callback, this);
+ 
+     flags = (pa_stream_flags_t) (PA_STREAM_DONT_MOVE | PA_STREAM_PEAK_DETECT | PA_STREAM_ADJUST_LATENCY |
+                                  (suspend ? PA_STREAM_DONT_INHIBIT_AUTO_SUSPEND : PA_STREAM_NOFLAGS) |
+                                  (!showVolumeMetersCheckButton->isChecked() ? PA_STREAM_START_CORKED : PA_STREAM_NOFLAGS));
+ 
+     if (pa_stream_connect_record(s, t, &attr, flags) < 0) {
+-        show_error(tr("Failed to connect monitoring stream").toUtf8().constData());
++        show_translated_error("Failed to connect monitoring stream");
+         pa_stream_unref(s);
+         return nullptr;
+     }
+@@ -587,7 +618,7 @@ void MainWindow::updateSinkInput(const pa_sink_input_info &info) {
+ 
+     if ((t = pa_proplist_gets(info.proplist, "module-stream-restore.id"))) {
+         if (strcmp(t, "sink-input-by-media-role:event") == 0) {
+-            g_debug("%s", tr("Ignoring sink-input due to it being designated as an event and thus handled by the Event widget").toUtf8().constData());
++            qDebug() << tr("Ignoring sink-input due to it being designated as an event and thus handled by the Event widget");;
+             return;
+         }
+     }
+diff --git a/src/mainwindow.h b/src/mainwindow.h
+index 9a91fb1..c17bca3 100644
+--- a/src/mainwindow.h
++++ b/src/mainwindow.h
+@@ -85,6 +85,7 @@ protected Q_SLOTS:
+     virtual void onSinkTypeComboBoxChanged(int index);
+     virtual void onSourceTypeComboBoxChanged(int index);
+     virtual void onShowVolumeMetersCheckButtonToggled(bool toggled);
++    void doQuit();
+ 
+ public:
+     void setConnectionState(gboolean connected);
+@@ -109,5 +110,16 @@ private:
+     gchar* m_config_filename;
+ };
+ 
++#ifdef USE_THREADED_GLLOOP
++#define MAINWINDOW_FUNCTION(ptr,fnc) { \
++    MainWindow *w = static_cast<MainWindow*>(ptr); \
++    QMetaObject::invokeMethod(w, [=]() { w-> fnc ; }, Qt::BlockingQueuedConnection); \
++}
++#else
++#define MAINWINDOW_FUNCTION(ptr,fnc) { \
++    MainWindow *w = static_cast<MainWindow*>(ptr); \
++    w-> fnc ; \
++}
++#endif
+ 
+ #endif
 diff --git a/src/pavucontrol.cc b/src/pavucontrol.cc
-index 53873c6..29e951a 100644
+index 53873c696326f2355cd504a676aeb92635095ce2..26f4f459a335f39d944de6e62ee664c64467fe69 100644
 --- a/src/pavucontrol.cc
 +++ b/src/pavucontrol.cc
-@@ -50,6 +50,7 @@
+@@ -22,10 +22,16 @@
+ #include <config.h>
+ #endif
+ 
++#define NEEDS_PCVAPP_FUNCTIONS
++
+ #define PACKAGE_VERSION "0.1"
+ 
+ #include <pulse/pulseaudio.h>
++#ifdef USE_THREADED_GLLOOP
++#include <pulse/thread-mainloop.h>
++#else
+ #include <pulse/glib-mainloop.h>
++#endif
+ #include <pulse/ext-stream-restore.h>
+ #include <pulse/ext-device-manager.h>
+ 
+@@ -50,310 +56,516 @@
  #include <QCommandLineParser>
  #include <QCommandLineOption>
  #include <QString>
++#include <QAbstractEventDispatcher>
++#include <QThread>
 +#include <QDebug>
++
++#include <atomic>
  
  static pa_context* context = nullptr;
++#ifdef USE_THREADED_GLLOOP
++static pa_threaded_mainloop *mainloop = nullptr;
++#endif
  static pa_mainloop_api* api = nullptr;
-@@ -581,7 +582,7 @@ void context_state_callback(pa_context *c, void *userdata) {
+-static int n_outstanding = 0;
++static std::atomic<int> n_outstanding = 0;
+ static int default_tab = 0;
+ static bool retry = false;
+-static int reconnect_timeout = 1;
++static std::atomic<int> reconnect_timeout = 1;
+ 
+-void show_error(const char *txt) {
+-    char buf[256];
++PVCApplication* PVCApplication::self = nullptr;
++std::atomic<bool> PVCApplication::quitting = false;
+ 
+-    snprintf(buf, sizeof(buf), "%s: %s", txt, pa_strerror(pa_context_errno(context)));
++void show_translated_error(const char *txt)
++{
++#ifdef USE_THREADED_GLLOOP
++    if (QThread::currentThread() != pvcApp->mainThread) {
++        // we need to execute on the main thread
++        QMetaObject::invokeMethod(pvcApp, [=]() { pvcApp->show_translated_error(txt); }, PVCConnection);
++        return;
++    }
++#endif
++    const auto pa_str = QString::fromUtf8(pa_strerror(pa_context_errno(context)));
++    const auto message = QString(QStringLiteral("%1: %2"))
++        .arg(QObject::tr(txt))
++        .arg(pa_str);
+ 
+-    QMessageBox::critical(nullptr, QObject::tr("Error"), QString::fromUtf8(buf));
++    QMessageBox::critical(nullptr, QObject::tr("Error"), message);
+     qApp->quit();
+ }
+ 
+-static void dec_outstanding(MainWindow *w) {
+-    if (n_outstanding <= 0)
++void show_error(const char *txt) {
++#ifdef USE_THREADED_GLLOOP
++    if (QThread::currentThread() != pvcApp->mainThread) {
++        // we need to execute on the main thread
++        QMetaObject::invokeMethod(pvcApp, [=]() { pvcApp->show_error(txt); }, PVCConnection);
+         return;
+-
+-    if (--n_outstanding <= 0) {
+-        // w->get_window()->set_cursor();
+-        w->setConnectionState(true);
+     }
++#endif
++    const auto pa_str = QString::fromUtf8(pa_strerror(pa_context_errno(context)));
++    const auto message = QString(QStringLiteral("%1: %2"))
++        .arg(QString::fromUtf8(txt))
++        .arg(pa_str);
++
++    QMessageBox::critical(nullptr, QObject::tr("Error"), message);
++    qApp->quit();
+ }
+ 
+-void card_cb(pa_context *, const pa_card_info *i, int eol, void *userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
++void ext_stream_restore_read_cb(
++        pa_context *,
++        const pa_ext_stream_restore_info *i,
++        int eol,
++        void *userdata);
++
++#if HAVE_EXT_DEVICE_RESTORE_API
++void ext_device_restore_read_cb(
++        pa_context *,
++        const pa_ext_device_restore_info *i,
++        int eol,
++        void *userdata);
++#endif
++void ext_device_manager_read_cb(
++        pa_context *,
++        const pa_ext_device_manager_info *,
++        int eol,
++        void *userdata);
++
++    PVCApplication::PVCApplication(int &argc, char **argv)
++        : QApplication(argc, argv)
++        , mainThread(QThread::currentThread())
++    {
++        gContext = g_main_context_default();
++        const auto dispatcher = eventDispatcher();
++        hasGlib = dispatcher && dispatcher->inherits("QEventDispatcherGlib");
++        qDebug() << Q_FUNC_INFO << "eventDispatcher:" << dispatcher << "hasGlib:" << hasGlib;
++        self = this;
++        connect(this, &QCoreApplication::aboutToQuit, this, &PVCApplication::willQuit);
++    }
+ 
+-    if (eol < 0) {
+-        if (pa_context_errno(context) == PA_ERR_NOENTITY)
++#ifdef DEBUG
++    QThread *PVCApplication::currentThread() const
++    {
++        return QThread::currentThread();
++    }
++#endif
++
++    // pure GUI functions:
++
++    void PVCApplication::dec_outstanding()
++    {
++        if (n_outstanding <= 0)
+             return;
+ 
+-        show_error(QObject::tr("Card callback failure").toUtf8().constData());
+-        return;
++        if (--n_outstanding <= 0) {
++            // w->get_window()->set_cursor();
++            w->setConnectionState(true);
++        }
+     }
+ 
+-    if (eol > 0) {
+-        dec_outstanding(w);
+-        return;
++    void PVCApplication::createEventRoleWidget()
++    {
++        w->createEventRoleWidget();
+     }
+ 
+-    w->updateCard(*i);
+-}
++    void PVCApplication::setConnectionState(gboolean state)
++    {
++        w->setConnectionState(state);
++    }
+ 
+-#if HAVE_EXT_DEVICE_RESTORE_API
+-static void ext_device_restore_subscribe_cb(pa_context *c, pa_device_type_t type, uint32_t idx, void *userdata);
+-#endif
++    void PVCApplication::removeAllWidgets()
++    {
++        w->removeAllWidgets();
++    }
+ 
+-void sink_cb(pa_context *c, const pa_sink_info *i, int eol, void *userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
++    void PVCApplication::updateDeviceVisibility()
++    {
++        w->updateDeviceVisibility();
++    }
+ 
+-    if (eol < 0) {
+-        if (pa_context_errno(context) == PA_ERR_NOENTITY)
+-            return;
++    void PVCApplication::reset()
++    {
++        w->setConnectionState(false);
++        w->removeAllWidgets();
++        w->updateDeviceVisibility();
++    }
+ 
+-        show_error(QObject::tr("Sink callback failure").toUtf8().constData());
+-        return;
++    void PVCApplication::willQuit()
++    {
++        qDebug() << Q_FUNC_INFO << "!";
++        quitting = 1;
+     }
+ 
+-    if (eol > 0) {
+-        dec_outstanding(w);
+-        return;
++    // implementations of libpulse callback functions:
++
++    void PVCApplication::card_cb(const pa_card_info *i, int eol)
++    {
++        if (eol < 0) {
++            if (pa_context_errno(context) == PA_ERR_NOENTITY)
++                return;
++
++            show_translated_error("Card callback failure");
++            return;
++        }
++
++        if (eol > 0) {
++            dec_outstanding();
++            return;
++        }
++
++        w->updateCard(*i);
+     }
++
++    void PVCApplication::sink_cb(pa_context *c, const pa_sink_info *i, int eol)
++    {
++        if (eol < 0) {
++            if (pa_context_errno(context) == PA_ERR_NOENTITY)
++                return;
++
++            show_translated_error("Sink callback failure");
++            return;
++        }
++
++        if (eol > 0) {
++            dec_outstanding();
++            return;
++        }
+ #if HAVE_EXT_DEVICE_RESTORE_API
+-    if (w->updateSink(*i))
+-        ext_device_restore_subscribe_cb(c, PA_DEVICE_TYPE_SINK, i->index, w);
++        if (w->updateSink(*i))
++            ext_device_restore_subscribe_cb(c, PA_DEVICE_TYPE_SINK, i->index);
+ #else
+-    w->updateSink(*i);
++        w->updateSink(*i);
+ #endif
+-}
++    }
+ 
+-void source_cb(pa_context *, const pa_source_info *i, int eol, void *userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
++    void PVCApplication::source_cb(const pa_source_info *i, int eol)
++    {
++        if (eol < 0) {
++            if (pa_context_errno(context) == PA_ERR_NOENTITY)
++                return;
+ 
+-    if (eol < 0) {
+-        if (pa_context_errno(context) == PA_ERR_NOENTITY)
++            show_translated_error("Source callback failure");
+             return;
++        }
+ 
+-        show_error(QObject::tr("Source callback failure").toUtf8().constData());
+-        return;
+-    }
++        if (eol > 0) {
++            dec_outstanding();
++            return;
++        }
+ 
+-    if (eol > 0) {
+-        dec_outstanding(w);
+-        return;
++        w->updateSource(*i);
+     }
+ 
+-    w->updateSource(*i);
+-}
++    void PVCApplication::sink_input_cb(const pa_sink_input_info *i, int eol)
++    {
++        if (eol < 0) {
++            if (pa_context_errno(context) == PA_ERR_NOENTITY)
++                return;
+ 
+-void sink_input_cb(pa_context *, const pa_sink_input_info *i, int eol, void *userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
++            show_translated_error("Sink input callback failure");
++            return;
++        }
+ 
+-    if (eol < 0) {
+-        if (pa_context_errno(context) == PA_ERR_NOENTITY)
++        if (eol > 0) {
++            dec_outstanding();
+             return;
++        }
+ 
+-        show_error(QObject::tr("Sink input callback failure").toUtf8().constData());
+-        return;
++        w->updateSinkInput(*i);
+     }
+ 
+-    if (eol > 0) {
+-        dec_outstanding(w);
+-        return;
+-    }
++    void PVCApplication::source_output_cb(const pa_source_output_info *i, int eol)
++    {
++        if (eol < 0) {
++            if (pa_context_errno(context) == PA_ERR_NOENTITY)
++                return;
+ 
+-    w->updateSinkInput(*i);
+-}
++            show_translated_error("Source output callback failure");
++            return;
++        }
+ 
+-void source_output_cb(pa_context *, const pa_source_output_info *i, int eol, void *userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
++        if (eol > 0)  {
++
++            if (n_outstanding > 0) {
++                /* At this point all notebook pages have been populated, so
++                 * let's open one that isn't empty */
++                if (default_tab != -1) {
++                    if (default_tab < 1 || default_tab > w->notebook->count()) {
++                        if (!w->sinkInputWidgets.empty())
++                            w->notebook->setCurrentIndex(0);
++                        else if (!w->sourceOutputWidgets.empty())
++                            w->notebook->setCurrentIndex(1);
++                        else if (!w->sourceWidgets.empty() && w->sinkWidgets.empty())
++                            w->notebook->setCurrentIndex(3);
++                        else
++                            w->notebook->setCurrentIndex(2);
++                    } else {
++                        w->notebook->setCurrentIndex(default_tab - 1);
++                    }
++                    default_tab = -1;
++                }
++            }
+ 
+-    if (eol < 0) {
+-        if (pa_context_errno(context) == PA_ERR_NOENTITY)
++            dec_outstanding();
+             return;
++        }
+ 
+-        show_error(QObject::tr("Source output callback failure").toUtf8().constData());
+-        return;
++        w->updateSourceOutput(*i);
+     }
+ 
+-    if (eol > 0)  {
+-
+-        if (n_outstanding > 0) {
+-            /* At this point all notebook pages have been populated, so
+-             * let's open one that isn't empty */
+-            if (default_tab != -1) {
+-                if (default_tab < 1 || default_tab > w->notebook->count()) {
+-                    if (!w->sinkInputWidgets.empty())
+-                        w->notebook->setCurrentIndex(0);
+-                    else if (!w->sourceOutputWidgets.empty())
+-                        w->notebook->setCurrentIndex(1);
+-                    else if (!w->sourceWidgets.empty() && w->sinkWidgets.empty())
+-                        w->notebook->setCurrentIndex(3);
+-                    else
+-                        w->notebook->setCurrentIndex(2);
+-                } else {
+-                    w->notebook->setCurrentIndex(default_tab - 1);
+-                }
+-                default_tab = -1;
+-            }
++    void PVCApplication::client_cb(const pa_client_info *i, int eol)
++    {
++        if (eol < 0) {
++            if (pa_context_errno(context) == PA_ERR_NOENTITY)
++                return;
++
++            show_translated_error("Client callback failure");
++            return;
+         }
+ 
+-        dec_outstanding(w);
+-        return;
++        if (eol > 0) {
++            dec_outstanding();
++            return;
++        }
++
++        w->updateClient(*i);
+     }
+ 
+-    w->updateSourceOutput(*i);
+-}
++    void PVCApplication::server_info_cb(const pa_server_info *i)
++    {
++        if (!i) {
++            show_translated_error("Server info callback failure");
++            return;
++        }
+ 
+-void client_cb(pa_context *, const pa_client_info *i, int eol, void *userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
++        w->updateServer(*i);
++        dec_outstanding();
++    }
+ 
+-    if (eol < 0) {
+-        if (pa_context_errno(context) == PA_ERR_NOENTITY)
++    void PVCApplication::ext_stream_restore_read_cb(
++            const void *info,
++            int eol)
++    {
++        if (eol < 0) {
++            dec_outstanding();
++            qDebug(tr("Failed to initialize stream_restore extension: %s").toUtf8().constData(), pa_strerror(pa_context_errno(context)));
++            w->deleteEventRoleWidget();
+             return;
++        }
+ 
+-        show_error(QObject::tr("Client callback failure").toUtf8().constData());
+-        return;
++        if (eol > 0) {
++            dec_outstanding();
++            return;
++        }
++
++        const pa_ext_stream_restore_info *i = static_cast<const pa_ext_stream_restore_info*>(info);
++        w->updateRole(*i);
+     }
+ 
+-    if (eol > 0) {
+-        dec_outstanding(w);
+-        return;
++    void PVCApplication::ext_stream_restore_subscribe_cb(pa_context *c)
++    {
++        pa_operation *o;
++
++        // evoke the global ext_stream_restore_read_cb() handler with userdata=nullptr to signal
++        // that we're running on the same thread;
++        if (!(o = pa_ext_stream_restore_read(c, ::ext_stream_restore_read_cb, nullptr))) {
++            show_translated_error("pa_ext_stream_restore_read() failed");
++            return;
++        }
++
++        pa_operation_unref(o);
+     }
+ 
+-    w->updateClient(*i);
+-}
++    void PVCApplication::ext_device_restore_read_cb(
++            const void *info,
++            int eol)
++    {
++#if HAVE_EXT_DEVICE_RESTORE_API
++        if (eol < 0) {
++            dec_outstanding();
++            qDebug(tr("Failed to initialize device restore extension: %s").toUtf8().constData(), pa_strerror(pa_context_errno(context)));
++            return;
++        }
+ 
+-void server_info_cb(pa_context *, const pa_server_info *i, void *userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
++        if (eol > 0) {
++            dec_outstanding();
++            return;
++        }
+ 
+-    if (!i) {
+-        show_error(QObject::tr("Server info callback failure").toUtf8().constData());
+-        return;
++        /* Do something with a widget when this part is written */
++        const pa_ext_device_restore_info *i = static_cast<const pa_ext_device_restore_info*>(info);
++        w->updateDeviceInfo(*i);
++#endif
+     }
+ 
+-    w->updateServer(*i);
+-    dec_outstanding(w);
+-}
++    void PVCApplication::ext_device_restore_subscribe_cb(pa_context *c, pa_device_type_t type, uint32_t idx)
++    {
++#if HAVE_EXT_DEVICE_RESTORE_API
++        pa_operation *o;
+ 
+-void ext_stream_restore_read_cb(
+-        pa_context *,
+-        const pa_ext_stream_restore_info *i,
+-        int eol,
+-        void *userdata) {
++        if (type != PA_DEVICE_TYPE_SINK)
++            return;
+ 
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
++        // evoke the global ext_device_restore_read_cb() handler with userdata=nullptr to signal
++        // that we're running on the same thread;
++        if (!(o = pa_ext_device_restore_read_formats(c, type, idx, ::ext_device_restore_read_cb, nullptr))) {
++            show_translated_error("pa_ext_device_restore_read_sink_formats() failed");
++            return;
++        }
+ 
+-    if (eol < 0) {
+-        dec_outstanding(w);
+-        g_debug(QObject::tr("Failed to initialize stream_restore extension: %s").toUtf8().constData(), pa_strerror(pa_context_errno(context)));
+-        w->deleteEventRoleWidget();
+-        return;
++        pa_operation_unref(o);
++#endif
+     }
+ 
+-    if (eol > 0) {
+-        dec_outstanding(w);
+-        return;
++    void PVCApplication::ext_device_manager_read_cb(int eol)
++    {
++        if (eol < 0) {
++            dec_outstanding();
++            qDebug(tr("Failed to initialize device manager extension: %s").toUtf8().constData(), pa_strerror(pa_context_errno(context)));
++            return;
++        }
++
++        w->canRenameDevices = true;
++
++        if (eol > 0) {
++            dec_outstanding();
++            return;
++        }
++
++        /* Do something with a widget when this part is written */
+     }
+ 
+-    w->updateRole(*i);
+-}
++    void PVCApplication::ext_device_manager_subscribe_cb(pa_context *c)
++    {
++        pa_operation *o;
+ 
+-static void ext_stream_restore_subscribe_cb(pa_context *c, void *userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
+-    pa_operation *o;
++        if (!(o = pa_ext_device_manager_read(c, ::ext_device_manager_read_cb, nullptr))) {
++            show_translated_error("pa_ext_device_manager_read() failed");
++            return;
++        }
+ 
+-    if (!(o = pa_ext_stream_restore_read(c, ext_stream_restore_read_cb, w))) {
+-        show_error(QObject::tr("pa_ext_stream_restore_read() failed").toUtf8().constData());
+-        return;
++        pa_operation_unref(o);
+     }
+ 
+-    pa_operation_unref(o);
+-}
++    void PVCApplication::removeSink(uint32_t index)
++    {
++        w->removeSink(index);
++    }
+ 
+-#if HAVE_EXT_DEVICE_RESTORE_API
+-void ext_device_restore_read_cb(
+-        pa_context *,
+-        const pa_ext_device_restore_info *i,
+-        int eol,
+-        void *userdata) {
++    void PVCApplication::removeSource(uint32_t index)
++    {
++        w->removeSource(index);
++    }
+ 
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
++    void PVCApplication::removeSinkInput(uint32_t index)
++    {
++        w->removeSinkInput(index);
++    }
+ 
+-    if (eol < 0) {
+-        dec_outstanding(w);
+-        g_debug(QObject::tr("Failed to initialize device restore extension: %s").toUtf8().constData(), pa_strerror(pa_context_errno(context)));
+-        return;
++    void PVCApplication::removeSourceOutput(uint32_t index)
++    {
++        w->removeSourceOutput(index);
+     }
+ 
+-    if (eol > 0) {
+-        dec_outstanding(w);
+-        return;
++    void PVCApplication::removeClient(uint32_t index)
++    {
++        w->removeClient(index);
+     }
+ 
+-    /* Do something with a widget when this part is written */
+-    w->updateDeviceInfo(*i);
++    void PVCApplication::removeCard(uint32_t index)
++    {
++        w->removeCard(index);
++    }
++
++
++void card_cb(pa_context *, const pa_card_info *i, int eol, void *userdata) {
++    PVCAPP_FUNCTION(userdata, card_cb(i, eol));
++// PVCAPP_FUNCTION expands to:
++// #ifdef USE_THREADED_GLLOOP
++//     PVCApplication *app = static_cast<PVCApplication*>(userdata);
++//     QMetaObject::invokeMethod(app, [=]() { app->card_cb(i, eol); }, PVCConnection);
++// #else
++//     Q_UNUSED(userdata);
++//     pvcApp->card_cb(i, eol);
++// #endif
+ }
+ 
+-static void ext_device_restore_subscribe_cb(pa_context *c, pa_device_type_t type, uint32_t idx, void *userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
+-    pa_operation *o;
++void sink_cb(pa_context *c, const pa_sink_info *i, int eol, void *userdata) {
++    PVCAPP_FUNCTION(userdata, sink_cb(c, i, eol));
++}
+ 
+-    if (type != PA_DEVICE_TYPE_SINK)
+-        return;
++void source_cb(pa_context *, const pa_source_info *i, int eol, void *userdata) {
++    PVCAPP_FUNCTION(userdata, source_cb(i, eol));
++}
+ 
+-    if (!(o = pa_ext_device_restore_read_formats(c, type, idx, ext_device_restore_read_cb, w))) {
+-        show_error(QObject::tr("pa_ext_device_restore_read_sink_formats() failed").toUtf8().constData());
+-        return;
+-    }
++void sink_input_cb(pa_context *, const pa_sink_input_info *i, int eol, void *userdata) {
++    PVCAPP_FUNCTION(userdata, sink_input_cb(i, eol));
++}
+ 
+-    pa_operation_unref(o);
++void source_output_cb(pa_context *, const pa_source_output_info *i, int eol, void *userdata) {
++    PVCAPP_FUNCTION(userdata, source_output_cb(i, eol));
+ }
+-#endif
+ 
+-void ext_device_manager_read_cb(
++void client_cb(pa_context *, const pa_client_info *i, int eol, void *userdata) {
++    PVCAPP_FUNCTION(userdata, client_cb(i, eol));
++}
++
++void server_info_cb(pa_context *, const pa_server_info *i, void *userdata) {
++    PVCAPP_FUNCTION(userdata, server_info_cb(i));
++}
++
++void ext_stream_restore_read_cb(
+         pa_context *,
+-        const pa_ext_device_manager_info *,
++        const pa_ext_stream_restore_info *i,
+         int eol,
+         void *userdata) {
++    // userdata can be NULL so check for that
++    PVCAPP_FUNCTION_CHECK(userdata, ext_stream_restore_read_cb(i, eol));
++}
+ 
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
+-
+-    if (eol < 0) {
+-        dec_outstanding(w);
+-        g_debug(QObject::tr("Failed to initialize device manager extension: %s").toUtf8().constData(), pa_strerror(pa_context_errno(context)));
+-        return;
+-    }
++static void ext_stream_restore_subscribe_cb(pa_context *c, void *userdata) {
++    PVCAPP_FUNCTION(userdata, ext_stream_restore_subscribe_cb(c));
++}
+ 
+-    w->canRenameDevices = true;
++#if HAVE_EXT_DEVICE_RESTORE_API
++void ext_device_restore_read_cb(
++        pa_context *,
++        const pa_ext_device_restore_info *i,
++        int eol,
++        void *userdata) {
++    // userdata can be NULL so check for that
++    PVCAPP_FUNCTION_CHECK(userdata, ext_device_restore_read_cb(i,eol));
++}
+ 
+-    if (eol > 0) {
+-        dec_outstanding(w);
+-        return;
+-    }
++static void ext_device_restore_subscribe_cb(pa_context *c, pa_device_type_t type, uint32_t idx, void *userdata) {
++    PVCAPP_FUNCTION(userdata, ext_device_restore_subscribe_cb(c, type, idx));
++}
++#endif
+ 
+-    /* Do something with a widget when this part is written */
++void ext_device_manager_read_cb(
++        pa_context *,
++        const pa_ext_device_manager_info *,
++        int eol,
++        void *userdata) {
++    // userdata can be NULL so check for that
++    PVCAPP_FUNCTION_CHECK(userdata, ext_device_manager_read_cb(eol));
+ }
+ 
+ static void ext_device_manager_subscribe_cb(pa_context *c, void *userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
+-    pa_operation *o;
+-
+-    if (!(o = pa_ext_device_manager_read(c, ext_device_manager_read_cb, w))) {
+-        show_error(QObject::tr("pa_ext_device_manager_read() failed").toUtf8().constData());
+-        return;
+-    }
+-
+-    pa_operation_unref(o);
++    PVCAPP_FUNCTION(userdata, ext_device_manager_subscribe_cb(c));
+ }
+ 
++// toplevel subscription/interface callback. It contains more calls into PA code that require
++// callbacks into our own code than calls interacting with the GUI that need to be executed on
++// the main thread. So we keep this function out of PVCApplication and only place those GUI
++// calls via PVCAPP_FUNCTION().
+ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index, void *userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
+-
+     switch (t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK) {
+         case PA_SUBSCRIPTION_EVENT_SINK:
+-            if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE)
+-                w->removeSink(index);
+-            else {
++            if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE) {
++                PVCAPP_FUNCTION(userdata, removeSink(index));
++            } else {
+                 pa_operation *o;
+-                if (!(o = pa_context_get_sink_info_by_index(c, index, sink_cb, w))) {
+-                    show_error(QObject::tr("pa_context_get_sink_info_by_index() failed").toUtf8().constData());
++                if (!(o = pa_context_get_sink_info_by_index(c, index, sink_cb, userdata))) {
++                    show_translated_error("pa_context_get_sink_info_by_index() failed");
+                     return;
+                 }
+                 pa_operation_unref(o);
+@@ -361,12 +573,12 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
+             break;
+ 
+         case PA_SUBSCRIPTION_EVENT_SOURCE:
+-            if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE)
+-                w->removeSource(index);
+-            else {
++            if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE) {
++                PVCAPP_FUNCTION(userdata, removeSource(index));
++            } else {
+                 pa_operation *o;
+-                if (!(o = pa_context_get_source_info_by_index(c, index, source_cb, w))) {
+-                    show_error(QObject::tr("pa_context_get_source_info_by_index() failed").toUtf8().constData());
++                if (!(o = pa_context_get_source_info_by_index(c, index, source_cb, userdata))) {
++                    show_translated_error("pa_context_get_source_info_by_index() failed");
+                     return;
+                 }
+                 pa_operation_unref(o);
+@@ -374,12 +586,12 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
+             break;
+ 
+         case PA_SUBSCRIPTION_EVENT_SINK_INPUT:
+-            if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE)
+-                w->removeSinkInput(index);
+-            else {
++            if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE) {
++                PVCAPP_FUNCTION(userdata, removeSinkInput(index));
++            } else {
+                 pa_operation *o;
+-                if (!(o = pa_context_get_sink_input_info(c, index, sink_input_cb, w))) {
+-                    show_error(QObject::tr("pa_context_get_sink_input_info() failed").toUtf8().constData());
++                if (!(o = pa_context_get_sink_input_info(c, index, sink_input_cb, userdata))) {
++                    show_translated_error("pa_context_get_sink_input_info() failed");
+                     return;
+                 }
+                 pa_operation_unref(o);
+@@ -387,12 +599,12 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
+             break;
+ 
+         case PA_SUBSCRIPTION_EVENT_SOURCE_OUTPUT:
+-            if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE)
+-                w->removeSourceOutput(index);
+-            else {
++            if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE) {
++                PVCAPP_FUNCTION(userdata, removeSourceOutput(index));
++            } else {
+                 pa_operation *o;
+-                if (!(o = pa_context_get_source_output_info(c, index, source_output_cb, w))) {
+-                    show_error(QObject::tr("pa_context_get_sink_input_info() failed").toUtf8().constData());
++                if (!(o = pa_context_get_source_output_info(c, index, source_output_cb, userdata))) {
++                    show_translated_error("pa_context_get_sink_input_info() failed");
+                     return;
+                 }
+                 pa_operation_unref(o);
+@@ -400,12 +612,12 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
+             break;
+ 
+         case PA_SUBSCRIPTION_EVENT_CLIENT:
+-            if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE)
+-                w->removeClient(index);
+-            else {
++            if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE) {
++                PVCAPP_FUNCTION(userdata, removeClient(index));
++            } else {
+                 pa_operation *o;
+-                if (!(o = pa_context_get_client_info(c, index, client_cb, w))) {
+-                    show_error(QObject::tr("pa_context_get_client_info() failed").toUtf8().constData());
++                if (!(o = pa_context_get_client_info(c, index, client_cb, userdata))) {
++                    show_translated_error("pa_context_get_client_info() failed");
+                     return;
+                 }
+                 pa_operation_unref(o);
+@@ -414,8 +626,8 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
+ 
+         case PA_SUBSCRIPTION_EVENT_SERVER: {
+                 pa_operation *o;
+-                if (!(o = pa_context_get_server_info(c, server_info_cb, w))) {
+-                    show_error(QObject::tr("pa_context_get_server_info() failed").toUtf8().constData());
++                if (!(o = pa_context_get_server_info(c, server_info_cb, userdata))) {
++                    show_translated_error("pa_context_get_server_info() failed");
+                     return;
+                 }
+                 pa_operation_unref(o);
+@@ -423,18 +635,21 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
+             break;
+ 
+         case PA_SUBSCRIPTION_EVENT_CARD:
+-            if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE)
+-                w->removeCard(index);
+-            else {
++            if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE) {
++                PVCAPP_FUNCTION(userdata, removeCard(index));
++            } else {
+                 pa_operation *o;
+-                if (!(o = pa_context_get_card_info_by_index(c, index, card_cb, w))) {
+-                    show_error(QObject::tr("pa_context_get_card_info_by_index() failed").toUtf8().constData());
++                if (!(o = pa_context_get_card_info_by_index(c, index, card_cb, userdata))) {
++                    show_translated_error("pa_context_get_card_info_by_index() failed");
+                     return;
+                 }
+                 pa_operation_unref(o);
+             }
+             break;
+-
++        default:
++            qWarning() << Q_FUNC_INFO << "Unhandled subscribed event type" << t
++                << "(" << (t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK) << ")";
++            break;
+     }
+ }
+ 
+@@ -442,7 +657,6 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
+ gboolean connect_to_pulse(gpointer userdata);
+ 
+ void context_state_callback(pa_context *c, void *userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
+ 
+     g_assert(c);
+ 
+@@ -456,12 +670,15 @@ void context_state_callback(pa_context *c, void *userdata) {
+         case PA_CONTEXT_READY: {
+             pa_operation *o;
+ 
++            // all cross-thread calls are executed synchronously so a priori
++            // we do not need to worry about increasing and decreasing global
++            // variables. They're std::atomic to be sure.
+             reconnect_timeout = 1;
+ 
+             /* Create event widget immediately so it's first in the list */
+-            w->createEventRoleWidget();
++            PVCAPP_FUNCTION(userdata, createEventRoleWidget());
+ 
+-            pa_context_set_subscribe_callback(c, subscribe_cb, w);
++            pa_context_set_subscribe_callback(c, subscribe_cb, userdata);
+ 
+             if (!(o = pa_context_subscribe(c, (pa_subscription_mask_t)
+                                            (PA_SUBSCRIPTION_MASK_SINK|
+@@ -471,7 +688,7 @@ void context_state_callback(pa_context *c, void *userdata) {
+                                             PA_SUBSCRIPTION_MASK_CLIENT|
+                                             PA_SUBSCRIPTION_MASK_SERVER|
+                                             PA_SUBSCRIPTION_MASK_CARD), nullptr, nullptr))) {
+-                show_error(QObject::tr("pa_context_subscribe() failed").toUtf8().constData());
++                show_translated_error("pa_context_subscribe() failed");
+                 return;
+             }
+             pa_operation_unref(o);
+@@ -479,116 +696,115 @@ void context_state_callback(pa_context *c, void *userdata) {
+             /* Keep track of the outstanding callbacks for UI tweaks */
+             n_outstanding = 0;
+ 
+-            if (!(o = pa_context_get_server_info(c, server_info_cb, w))) {
+-                show_error(QObject::tr("pa_context_get_server_info() failed").toUtf8().constData());
++            if (!(o = pa_context_get_server_info(c, server_info_cb, userdata))) {
++                show_translated_error("pa_context_get_server_info() failed");
+                 return;
+             }
+             pa_operation_unref(o);
+             n_outstanding++;
+ 
+-            if (!(o = pa_context_get_client_info_list(c, client_cb, w))) {
+-                show_error(QObject::tr("pa_context_client_info_list() failed").toUtf8().constData());
++            if (!(o = pa_context_get_client_info_list(c, client_cb, userdata))) {
++                show_translated_error("pa_context_client_info_list() failed");
+                 return;
+             }
+             pa_operation_unref(o);
+             n_outstanding++;
+ 
+-            if (!(o = pa_context_get_card_info_list(c, card_cb, w))) {
+-                show_error(QObject::tr("pa_context_get_card_info_list() failed").toUtf8().constData());
++            if (!(o = pa_context_get_card_info_list(c, card_cb, userdata))) {
++                show_translated_error("pa_context_get_card_info_list() failed");
+                 return;
+             }
+             pa_operation_unref(o);
+             n_outstanding++;
+ 
+-            if (!(o = pa_context_get_sink_info_list(c, sink_cb, w))) {
+-                show_error(QObject::tr("pa_context_get_sink_info_list() failed").toUtf8().constData());
++            if (!(o = pa_context_get_sink_info_list(c, sink_cb, userdata))) {
++                show_translated_error("pa_context_get_sink_info_list() failed");
+                 return;
+             }
+             pa_operation_unref(o);
+             n_outstanding++;
+ 
+-            if (!(o = pa_context_get_source_info_list(c, source_cb, w))) {
+-                show_error(QObject::tr("pa_context_get_source_info_list() failed").toUtf8().constData());
++            if (!(o = pa_context_get_source_info_list(c, source_cb, userdata))) {
++                show_translated_error("pa_context_get_source_info_list() failed");
+                 return;
+             }
+             pa_operation_unref(o);
+             n_outstanding++;
+ 
+-            if (!(o = pa_context_get_sink_input_info_list(c, sink_input_cb, w))) {
+-                show_error(QObject::tr("pa_context_get_sink_input_info_list() failed").toUtf8().constData());
++            if (!(o = pa_context_get_sink_input_info_list(c, sink_input_cb, userdata))) {
++                show_translated_error("pa_context_get_sink_input_info_list() failed");
+                 return;
+             }
+             pa_operation_unref(o);
+             n_outstanding++;
+ 
+-            if (!(o = pa_context_get_source_output_info_list(c, source_output_cb, w))) {
+-                show_error(QObject::tr("pa_context_get_source_output_info_list() failed").toUtf8().constData());
++            if (!(o = pa_context_get_source_output_info_list(c, source_output_cb, userdata))) {
++                show_translated_error("pa_context_get_source_output_info_list() failed");
+                 return;
+             }
+             pa_operation_unref(o);
+             n_outstanding++;
+ 
+             /* These calls are not always supported */
+-            if ((o = pa_ext_stream_restore_read(c, ext_stream_restore_read_cb, w))) {
++            if ((o = pa_ext_stream_restore_read(c, ext_stream_restore_read_cb, userdata))) {
+                 pa_operation_unref(o);
+                 n_outstanding++;
+ 
+-                pa_ext_stream_restore_set_subscribe_cb(c, ext_stream_restore_subscribe_cb, w);
++                pa_ext_stream_restore_set_subscribe_cb(c, ext_stream_restore_subscribe_cb, userdata);
+ 
+                 if ((o = pa_ext_stream_restore_subscribe(c, 1, nullptr, nullptr)))
+                     pa_operation_unref(o);
+ 
+             } else
+-                g_debug(QObject::tr("Failed to initialize stream_restore extension: %s").toUtf8().constData(), pa_strerror(pa_context_errno(context)));
++                qDebug(QObject::tr("Failed to initialize stream_restore extension: %s").toUtf8().constData(), pa_strerror(pa_context_errno(context)));
+ 
+ #if HAVE_EXT_DEVICE_RESTORE_API
+             /* TODO Change this to just the test function */
+-            if ((o = pa_ext_device_restore_read_formats_all(c, ext_device_restore_read_cb, w))) {
++            if ((o = pa_ext_device_restore_read_formats_all(c, ext_device_restore_read_cb, userdata))) {
+                 pa_operation_unref(o);
+                 n_outstanding++;
+ 
+-                pa_ext_device_restore_set_subscribe_cb(c, ext_device_restore_subscribe_cb, w);
++                pa_ext_device_restore_set_subscribe_cb(c, ext_device_restore_subscribe_cb, userdata);
+ 
+                 if ((o = pa_ext_device_restore_subscribe(c, 1, nullptr, nullptr)))
+                     pa_operation_unref(o);
+ 
+             } else
+-                g_debug(QObject::tr("Failed to initialize device restore extension: %s").toUtf8().constData(), pa_strerror(pa_context_errno(context)));
++                qDebug(QObject::tr("Failed to initialize device restore extension: %s").toUtf8().constData(), pa_strerror(pa_context_errno(context)));
+ #endif
+ 
+-            if ((o = pa_ext_device_manager_read(c, ext_device_manager_read_cb, w))) {
++            if ((o = pa_ext_device_manager_read(c, ext_device_manager_read_cb, userdata))) {
+                 pa_operation_unref(o);
+                 n_outstanding++;
+ 
+-                pa_ext_device_manager_set_subscribe_cb(c, ext_device_manager_subscribe_cb, w);
++                pa_ext_device_manager_set_subscribe_cb(c, ext_device_manager_subscribe_cb, userdata);
+ 
+                 if ((o = pa_ext_device_manager_subscribe(c, 1, nullptr, nullptr)))
+                     pa_operation_unref(o);
+ 
+             } else
+-                g_debug(QObject::tr("Failed to initialize device manager extension: %s").toUtf8().constData(), pa_strerror(pa_context_errno(context)));
++                qDebug(QObject::tr("Failed to initialize device manager extension: %s").toUtf8().constData(), pa_strerror(pa_context_errno(context)));
+ 
+ 
+             break;
+         }
+ 
+         case PA_CONTEXT_FAILED:
+-            w->setConnectionState(false);
+-
+-            w->removeAllWidgets();
+-            w->updateDeviceVisibility();
++            PVCAPP_FUNCTION(userdata, reset());
+             pa_context_unref(context);
              context = nullptr;
  
              if (reconnect_timeout > 0) {
 -                g_debug("%s", QObject::tr("Connection failed, attempting reconnect").toUtf8().constData());
+-                g_timeout_add_seconds(reconnect_timeout, connect_to_pulse, w);
 +                qWarning() << QObject::tr("Connection failed, attempting reconnect").toUtf8().constData();
-                 g_timeout_add_seconds(reconnect_timeout, connect_to_pulse, w);
++                g_timeout_add_seconds(reconnect_timeout, connect_to_pulse, userdata);
              }
              return;
-@@ -617,7 +618,12 @@ gboolean connect_to_pulse(gpointer userdata) {
-     pa_context_set_state_callback(context, context_state_callback, w);
  
-     w->setConnectingMessage();
+         case PA_CONTEXT_TERMINATED:
+         default:
+-            qApp->quit();
++            if (!pvcApp->isQuitting()) {
++                PVCAPP_FUNCTION_CHECK(userdata, quit());
++            }
+             return;
+     }
+ }
+@@ -598,7 +814,6 @@ pa_context* get_context() {
+ }
+ 
+ gboolean connect_to_pulse(gpointer userdata) {
+-    MainWindow *w = static_cast<MainWindow*>(userdata);
+ 
+     if (context)
+         return false;
+@@ -614,12 +829,17 @@ gboolean connect_to_pulse(gpointer userdata) {
+ 
+     pa_proplist_free(proplist);
+ 
+-    pa_context_set_state_callback(context, context_state_callback, w);
++    pa_context_set_state_callback(context, context_state_callback, userdata);
+ 
+-    w->setConnectingMessage();
 -    if (pa_context_connect(context, nullptr, PA_CONTEXT_NOFAIL, nullptr) < 0) {
++    pvcApp->mainWindow()->setConnectingMessage();
 +#ifdef __APPLE__
 +    pa_context_flags_t connectFlags = PA_CONTEXT_NOAUTOSPAWN;
 +#else
@@ -31,25 +1240,257 @@ index 53873c6..29e951a 100644
 +#endif
 +    if (pa_context_connect(context, nullptr, connectFlags, nullptr) < 0) {
          if (pa_context_errno(context) == PA_ERR_INVALID) {
-             w->setConnectingMessage(QObject::tr("Connection to PulseAudio failed. Automatic retry in 5s.<br><br>"
+-            w->setConnectingMessage(QObject::tr("Connection to PulseAudio failed. Automatic retry in 5s.<br><br>"
++            pvcApp->mainWindow()->setConnectingMessage(QObject::tr("Connection to PulseAudio failed. Automatic retry in 5s.<br><br>"
                  "In this case this is likely because PULSE_SERVER in the Environment/X11 Root Window Properties"
-@@ -637,6 +643,19 @@ gboolean connect_to_pulse(gpointer userdata) {
+                 "or default-server in client.conf is misconfigured.<br>"
+                 "This situation can also arrise when PulseAudio crashed and left stale details in the X11 Root Window.<br>"
+@@ -632,21 +852,41 @@ gboolean connect_to_pulse(gpointer userdata) {
+                 reconnect_timeout = -1;
+                 qApp->quit();
+             } else {
+-                g_debug("%s", QObject::tr("Connection failed, attempting reconnect").toUtf8().constData());
++                qDebug("%s", QObject::tr("Connection failed, attempting reconnect").toUtf8().constData());
+                 reconnect_timeout = 5;
                  g_timeout_add_seconds(reconnect_timeout, connect_to_pulse, userdata);
              }
          }
 +    } else {
++#ifndef USE_THREADED_GLLOOP
 +        // pump the GLib context until we've connected, before entering the Qt main loop.
-+        // Not necessary under X11, but the order of events must be different enough under
-+        // Apple's Cocoa QPA that the connection fails (events get lost maybe?)
++        // Not necessary, but eliminates some GUI glitching on opening
 +        auto gContext = g_main_context_default();
 +        for (;;)
 +        {
 +            pa_context_state_t state = pa_context_get_state(context);
-+//             qWarning() << Q_FUNC_INFO << "state=" << state;
 +            if (state == PA_CONTEXT_READY || !PA_CONTEXT_IS_GOOD(state))
 +                break;
 +            g_main_context_iteration(gContext, true);
 +        }
++#endif
      }
  
      return false;
+ }
+ 
++/**
++ * @brief ...
++ * 
++ * @param argc p_argc:...
++ * @param argv p_argv:...
++ * @return int
++ */
+ int main(int argc, char *argv[]) {
+ 
+     signal(SIGPIPE, SIG_IGN);
+ 
+-    QApplication app(argc, argv);
++    PVCApplication app(argc, argv);
+ 
+     app.setOrganizationName(QStringLiteral("pavucontrol-qt"));
+     app.setAttribute(Qt::AA_UseHighDpiPixmaps, true);
+@@ -688,25 +928,49 @@ int main(int argc, char *argv[]) {
+     if(parser.isSet(maximizeOption))
+         mainWindow->showMaximized();
+ 
++    app.setMainWindow(mainWindow);
++
++#ifdef USE_THREADED_GLLOOP
++    mainloop = pa_threaded_mainloop_new();
++    g_assert(mainloop);
++    api = pa_threaded_mainloop_get_api(mainloop);
++    g_assert(api);
++#else
+     pa_glib_mainloop *m = pa_glib_mainloop_new(g_main_context_default());
+     g_assert(m);
+     api = pa_glib_mainloop_get_api(m);
+     g_assert(api);
++#endif
+ 
+-    connect_to_pulse(mainWindow);
++    connect_to_pulse(&app);
+     if (reconnect_timeout >= 0) {
++#ifdef USE_THREADED_GLLOOP
++        pa_threaded_mainloop_start(mainloop);
++#endif
+         mainWindow->show();
+         app.exec();
+     }
+ 
+     if (reconnect_timeout < 0)
+-        show_error(QObject::tr("Fatal Error: Unable to connect to PulseAudio").toUtf8().constData());
++        show_translated_error("Fatal Error: Unable to connect to PulseAudio");
++
++// #ifdef USE_THREADED_GLLOOP
++//     pa_threaded_mainloop_stop(mainloop);
++//     pa_threaded_mainloop_free(mainloop);
++// #endif
+ 
+     delete mainWindow;
+ 
+-    if (context)
++    if (context) {
++        pa_context_disconnect(context);
+         pa_context_unref(context);
++    }
++// Be nice and free the pa_glib_mainloop used with Qt's GLib-based event dispatcher.
++// Don't do the equivalent when using the pa_threaded_mainloop so it can do its own
++// cleanup/housekeeping (and we avoid instabilities on exit).
++#ifndef USE_THREADED_GLLOOP
+     pa_glib_mainloop_free(m);
++#endif
+ 
+     return 0;
+ }
+diff --git a/src/pavucontrol.h b/src/pavucontrol.h
+index 925be4f76b7a3efacf328115619aed88dc43953b..ee05ef093728e1469c3f9c756104ac2216b3bb55 100644
+--- a/src/pavucontrol.h
++++ b/src/pavucontrol.h
+@@ -27,6 +27,8 @@
+ 
+ #include <pulse/pulseaudio.h>
+ 
++#include <QApplication>
++
+ /* Can be removed when PulseAudio 0.9.23 or newer is required */
+ #ifndef PA_VOLUME_UI_MAX
+ # define PA_VOLUME_UI_MAX (pa_sw_volume_from_dB(+11.0))
+@@ -63,5 +65,138 @@ enum SourceType {
+ 
+ pa_context* get_context(void);
+ void show_error(const char *txt);
++void show_translated_error(const char *txt);
++
++// Use blocking signal/slot connections to make them syncronous
++#define PVCConnection   Qt::BlockingQueuedConnection
++#define pvcApp          PVCApplication::instance()
++
++class QThread;
++class MainWindow;
++
++class PVCApplication : public QApplication
++{
++    Q_OBJECT
++public:
++    PVCApplication(int &argc, char **argv);
++    void setMainWindow(MainWindow *window)
++    {
++        w = window;
++    }
++
++    MainWindow *mainWindow()
++    {
++        return w;
++    }
++
++    static auto instance()
++    {
++        return self;
++    }
++
++    static bool isQuitting()
++    {
++        return quitting;
++    }
++
++#ifdef DEBUG
++    QThread *currentThread() const;
++#endif
++
++public slots:
++    // pure GUI functions:
++
++    void show_error(const char *txt)
++    {
++        ::show_error(txt);
++    }
++    void show_translated_error(const char *txt)
++    {
++        ::show_translated_error(txt);
++    }
++
++    void dec_outstanding();
++    void createEventRoleWidget();
++    void setConnectionState(gboolean state);
++    void removeAllWidgets();
++    void updateDeviceVisibility();
++    void reset();
++    void willQuit();
++
++    // implementations of libpulse callback functions:
++
++    void card_cb(const pa_card_info *i, int eol);
++    void sink_cb(pa_context *c, const pa_sink_info *i, int eol);
++    void source_cb(const pa_source_info *i, int eol);
++    void sink_input_cb(const pa_sink_input_info *i, int eol);
++    void source_output_cb(const pa_source_output_info *i, int eol);
++    void client_cb(const pa_client_info *i, int eol);
++    void server_info_cb(const pa_server_info *i);
++    void ext_stream_restore_read_cb(
++            const void *info,
++            int eol);
++    void ext_stream_restore_subscribe_cb(pa_context *c);
++    // the next 2 slots only do something when HAVE_EXT_DEVICE_RESTORE_API
++    void ext_device_restore_read_cb(
++            const void *info,
++            int eol);
++    void ext_device_restore_subscribe_cb(pa_context *c, pa_device_type_t type, uint32_t idx);
++    // end HAVE_EXT_DEVICE_RESTORE_API
++
++    void ext_device_manager_read_cb(int eol);
++    void ext_device_manager_subscribe_cb(pa_context *c);
++    void removeSink(uint32_t index);
++    void removeSource(uint32_t index);
++    void removeSinkInput(uint32_t index);
++    void removeSourceOutput(uint32_t index);
++    void removeClient(uint32_t index);
++    void removeCard(uint32_t index);
++public:
++    const QThread *mainThread = nullptr;
++private:
++    GMainContext *gContext;
++    bool hasGlib;
++
++    MainWindow *w;
++    static PVCApplication *self;
++    static std::atomic<bool> quitting;
++};
++
++#ifdef NEEDS_PCVAPP_FUNCTIONS
++#ifdef USE_THREADED_GLLOOP
++#define PVCAPP_FUNCTION(ptr,fnc) { \
++    PVCApplication *app = static_cast<PVCApplication*>(ptr); \
++    QMetaObject::invokeMethod(app, [=]() { app-> fnc ; }, PVCConnection); \
++}
++#define PVCAPP_FUNCTION_CHECK(ptr,fnc) { \
++    PVCApplication *app = ptr ? static_cast<PVCApplication*>(ptr) : pvcApp; \
++    if (QThread::currentThread() != app->mainThread) { \
++        QMetaObject::invokeMethod(app, [=]() { app-> fnc ; }, PVCConnection); \
++    } else { \
++        app-> fnc ; \
++    } \
++}
++#else
++// A PVCAPP_FUNCTION implementation that can take a PVCApplication* or a MainWindow* or a nullptr:
++/*
++#define PVCAPP_FUNCTION(ptr,fnc) { \
++    PVCApplication *app = dynamic_cast<PVCApplication*>(static_cast<QObject*>(ptr)); \
++    if (app && QThread::currentThread() != app->mainThread) { \
++        qWarning() << Q_FUNC_INFO << "thread" << QThread::currentThread() << "!=" << app->mainThread << "; invokeMethod" << # fnc; \
++        QMetaObject::invokeMethod(app, [=]() { app-> fnc ; }, PVCConnection); \
++    } else { \
++        pvcApp-> fnc ; \
++    } \
++}
++ */
++// The simple implementation that ignores the userdata ptr:
++#define PVCAPP_FUNCTION(ptr,fnc) { \
++    Q_UNUSED(ptr); \
++    pvcApp-> fnc ; \
++}
++#define PVCAPP_FUNCTION_CHECK(ptr,fnc) PVCAPP_FUNCTION(ptr,fnc)
++#endif // USE_THREADED_GLLOOP
++#endif // NEEDS_PCVAPP_FUNCTIONS
++
+ 
+ #endif
