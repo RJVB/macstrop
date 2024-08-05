@@ -1074,4 +1074,22 @@ post-activate {
     qt5.rebuild_mp_qthelp_collection
 }
 
+# (hopefully) override the checking function from the stock Qt5 PG:
+proc qt5pg::check_min_version {} {
+    global qt5.version qt5.min_version
+    # make certain qt5.version is set appropriately
+    set qt5.version [qt5.active_version]
+    if {[vercmp ${qt5.version} ${qt5.min_version}] < 0} {
+        ui_debug "Qt version ${qt5.min_version} or above is required, but Qt version ${qt5.version} is installed"
+        known_fail yes
+        pre-fetch {
+            ui_error "Qt version ${qt5.min_version} or above is required, but Qt version ${qt5.version} is installed"
+            return -code error "Qt version too old"
+        }
+    } else {
+        ui_debug "Qt version ${qt5.version} satifies requirement ${qt5.min_version} or above"
+    }
+}
+port::register_callback qt5pg::check_min_version
+
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;

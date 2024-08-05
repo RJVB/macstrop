@@ -542,6 +542,8 @@ proc qt5pg::check_min_version {} {
             ui_error "Qt version ${qt5.min_version} or above is required, but Qt version ${qt5.version} is installed"
             return -code error "Qt version too old"
         }
+    } else {
+        ui_debug "Qt version ${qt5.version} satifies requirement ${qt5.min_version} or above"
     }
 }
 port::register_callback qt5pg::check_min_version
