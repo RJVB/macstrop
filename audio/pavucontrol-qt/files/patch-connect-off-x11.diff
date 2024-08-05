@@ -158,7 +158,7 @@ index 88467152135944fe540870a667832cb0603d8a3d..035e17ba8b7b5cc81ee1f2e8f1ddb738
          }
      }
 diff --git a/src/mainwindow.h b/src/mainwindow.h
-index 9a91fb1..c17bca3 100644
+index 9a91fb1115ef5aaf420bb913b24b8d28158f433b..608921e78a1e6f5e35d5e9e315dbeff123d8b2b5 100644
 --- a/src/mainwindow.h
 +++ b/src/mainwindow.h
 @@ -85,6 +85,7 @@ protected Q_SLOTS:
@@ -169,15 +169,23 @@ index 9a91fb1..c17bca3 100644
  
  public:
      void setConnectionState(gboolean connected);
-@@ -109,5 +110,16 @@ private:
+@@ -109,5 +110,24 @@ private:
      gchar* m_config_filename;
  };
  
 +#ifdef USE_THREADED_GLLOOP
++#ifdef NEEDS_INVOKE_METHOD_FUNCTOR
++// The PVCApplication class has an invokeMethod() function that accepts lambda
++// expression, so evoke MainWindow::${fun} through PVCApplication::mainWindow().
++#define MAINWINDOW_FUNCTION(ptr,fnc) { \
++    INVOKE_METHOD(pvcApp, [=]() { pvcApp->mainWindow()-> fnc ; }); \
++}
++#else
 +#define MAINWINDOW_FUNCTION(ptr,fnc) { \
 +    MainWindow *w = static_cast<MainWindow*>(ptr); \
 +    QMetaObject::invokeMethod(w, [=]() { w-> fnc ; }, Qt::BlockingQueuedConnection); \
 +}
++#endif
 +#else
 +#define MAINWINDOW_FUNCTION(ptr,fnc) { \
 +    MainWindow *w = static_cast<MainWindow*>(ptr); \
@@ -187,7 +195,7 @@ index 9a91fb1..c17bca3 100644
  
  #endif
 diff --git a/src/pavucontrol.cc b/src/pavucontrol.cc
-index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e973ed0ec27 100644
+index 53873c696326f2355cd504a676aeb92635095ce2..40f179776e3465342ee36ffb79450782a7f7620e 100644
 --- a/src/pavucontrol.cc
 +++ b/src/pavucontrol.cc
 @@ -22,10 +22,16 @@
@@ -207,12 +215,14 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
  #include <pulse/ext-stream-restore.h>
  #include <pulse/ext-device-manager.h>
  
-@@ -50,310 +56,519 @@
+@@ -50,310 +56,521 @@
  #include <QCommandLineParser>
  #include <QCommandLineOption>
  #include <QString>
 +#include <QAbstractEventDispatcher>
++#ifndef NEEDS_INVOKE_METHOD_FUNCTOR
 +#include <QThread>
++#endif
 +#include <QDebug>
 +
 +#include <atomic>
@@ -240,7 +250,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
 +#ifdef USE_THREADED_GLLOOP
 +    if (QThread::currentThread() != pvcApp->mainThread) {
 +        // we need to execute on the main thread
-+        QMetaObject::invokeMethod(pvcApp, [=]() { pvcApp->show_translated_error(txt); }, PVCConnection);
++        INVOKE_METHOD(pvcApp, [=]() { pvcApp->show_translated_error(txt); });
 +        return;
 +    }
 +#endif
@@ -260,7 +270,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
 +#ifdef USE_THREADED_GLLOOP
 +    if (QThread::currentThread() != pvcApp->mainThread) {
 +        // we need to execute on the main thread
-+        QMetaObject::invokeMethod(pvcApp, [=]() { pvcApp->show_error(txt); }, PVCConnection);
++        INVOKE_METHOD(pvcApp, [=]() { pvcApp->show_error(txt); });
          return;
 -
 -    if (--n_outstanding <= 0) {
@@ -312,16 +322,16 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
 +        self = this;
 +        connect(this, &QCoreApplication::aboutToQuit, this, &PVCApplication::willQuit);
 +    }
- 
--    if (eol < 0) {
--        if (pa_context_errno(context) == PA_ERR_NOENTITY)
++
 +#ifdef DEBUG
 +    QThread *PVCApplication::currentThread() const
 +    {
 +        return QThread::currentThread();
 +    }
 +#endif
-+
+ 
+-    if (eol < 0) {
+-        if (pa_context_errno(context) == PA_ERR_NOENTITY)
 +    // pure GUI functions:
 +
 +    void PVCApplication::dec_outstanding()
@@ -922,7 +932,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
                      return;
                  }
                  pa_operation_unref(o);
-@@ -361,12 +576,12 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
+@@ -361,12 +578,12 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
              break;
  
          case PA_SUBSCRIPTION_EVENT_SOURCE:
@@ -940,7 +950,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
                      return;
                  }
                  pa_operation_unref(o);
-@@ -374,12 +589,12 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
+@@ -374,12 +591,12 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
              break;
  
          case PA_SUBSCRIPTION_EVENT_SINK_INPUT:
@@ -958,7 +968,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
                      return;
                  }
                  pa_operation_unref(o);
-@@ -387,12 +602,12 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
+@@ -387,12 +604,12 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
              break;
  
          case PA_SUBSCRIPTION_EVENT_SOURCE_OUTPUT:
@@ -976,7 +986,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
                      return;
                  }
                  pa_operation_unref(o);
-@@ -400,12 +615,12 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
+@@ -400,12 +617,12 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
              break;
  
          case PA_SUBSCRIPTION_EVENT_CLIENT:
@@ -994,7 +1004,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
                      return;
                  }
                  pa_operation_unref(o);
-@@ -414,8 +629,8 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
+@@ -414,8 +631,8 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
  
          case PA_SUBSCRIPTION_EVENT_SERVER: {
                  pa_operation *o;
@@ -1005,7 +1015,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
                      return;
                  }
                  pa_operation_unref(o);
-@@ -423,18 +638,21 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
+@@ -423,18 +640,21 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
              break;
  
          case PA_SUBSCRIPTION_EVENT_CARD:
@@ -1033,7 +1043,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
      }
  }
  
-@@ -442,7 +660,6 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
+@@ -442,7 +662,6 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
  gboolean connect_to_pulse(gpointer userdata);
  
  void context_state_callback(pa_context *c, void *userdata) {
@@ -1041,7 +1051,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
  
      g_assert(c);
  
-@@ -456,12 +673,15 @@ void context_state_callback(pa_context *c, void *userdata) {
+@@ -456,12 +675,15 @@ void context_state_callback(pa_context *c, void *userdata) {
          case PA_CONTEXT_READY: {
              pa_operation *o;
  
@@ -1059,7 +1069,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
  
              if (!(o = pa_context_subscribe(c, (pa_subscription_mask_t)
                                             (PA_SUBSCRIPTION_MASK_SINK|
-@@ -471,7 +691,7 @@ void context_state_callback(pa_context *c, void *userdata) {
+@@ -471,7 +693,7 @@ void context_state_callback(pa_context *c, void *userdata) {
                                              PA_SUBSCRIPTION_MASK_CLIENT|
                                              PA_SUBSCRIPTION_MASK_SERVER|
                                              PA_SUBSCRIPTION_MASK_CARD), nullptr, nullptr))) {
@@ -1068,7 +1078,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
                  return;
              }
              pa_operation_unref(o);
-@@ -479,116 +699,115 @@ void context_state_callback(pa_context *c, void *userdata) {
+@@ -479,116 +701,115 @@ void context_state_callback(pa_context *c, void *userdata) {
              /* Keep track of the outstanding callbacks for UI tweaks */
              n_outstanding = 0;
  
@@ -1214,7 +1224,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
              return;
      }
  }
-@@ -598,7 +817,6 @@ pa_context* get_context() {
+@@ -598,7 +819,6 @@ pa_context* get_context() {
  }
  
  gboolean connect_to_pulse(gpointer userdata) {
@@ -1222,7 +1232,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
  
      if (context)
          return false;
-@@ -614,12 +832,17 @@ gboolean connect_to_pulse(gpointer userdata) {
+@@ -614,12 +834,17 @@ gboolean connect_to_pulse(gpointer userdata) {
  
      pa_proplist_free(proplist);
  
@@ -1244,7 +1254,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
                  "In this case this is likely because PULSE_SERVER in the Environment/X11 Root Window Properties"
                  "or default-server in client.conf is misconfigured.<br>"
                  "This situation can also arrise when PulseAudio crashed and left stale details in the X11 Root Window.<br>"
-@@ -632,21 +855,44 @@ gboolean connect_to_pulse(gpointer userdata) {
+@@ -632,21 +857,44 @@ gboolean connect_to_pulse(gpointer userdata) {
                  reconnect_timeout = -1;
                  qApp->quit();
              } else {
@@ -1291,7 +1301,7 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
  
      app.setOrganizationName(QStringLiteral("pavucontrol-qt"));
      app.setAttribute(Qt::AA_UseHighDpiPixmaps, true);
-@@ -688,25 +934,49 @@ int main(int argc, char *argv[]) {
+@@ -688,25 +936,49 @@ int main(int argc, char *argv[]) {
      if(parser.isSet(maximizeOption))
          mainWindow->showMaximized();
  
@@ -1345,19 +1355,32 @@ index 53873c696326f2355cd504a676aeb92635095ce2..3357ad08820d15a86a2ebf736d8e7e97
      return 0;
  }
 diff --git a/src/pavucontrol.h b/src/pavucontrol.h
-index 925be4f76b7a3efacf328115619aed88dc43953b..6fd8a0b49700bae363a5d4bf16b4a94cf6248355 100644
+index 925be4f76b7a3efacf328115619aed88dc43953b..d26dfeafbe5df3454430ed19b948acd5fd4ad3bc 100644
 --- a/src/pavucontrol.h
 +++ b/src/pavucontrol.h
-@@ -27,6 +27,8 @@
+@@ -27,6 +27,21 @@
  
  #include <pulse/pulseaudio.h>
  
 +#include <QApplication>
++#include <QDebug>
++
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0) && !defined(EXTENDED_QT_5_9_8)
++#define NEEDS_INVOKE_METHOD_FUNCTOR
++#endif
++
++#ifdef NEEDS_INVOKE_METHOD_FUNCTOR
++#include <QThread>
++#include <QSemaphore>
++#else
++class QThread;
++class QSemaphore;
++#endif
 +
  /* Can be removed when PulseAudio 0.9.23 or newer is required */
  #ifndef PA_VOLUME_UI_MAX
  # define PA_VOLUME_UI_MAX (pa_sw_volume_from_dB(+11.0))
-@@ -63,5 +65,139 @@ enum SourceType {
+@@ -63,5 +78,193 @@ enum SourceType {
  
  pa_context* get_context(void);
  void show_error(const char *txt);
@@ -1367,7 +1390,6 @@ index 925be4f76b7a3efacf328115619aed88dc43953b..6fd8a0b49700bae363a5d4bf16b4a94c
 +#define PVCConnection   Qt::BlockingQueuedConnection
 +#define pvcApp          PVCApplication::instance()
 +
-+class QThread;
 +class MainWindow;
 +
 +class PVCApplication : public QApplication
@@ -1394,6 +1416,54 @@ index 925be4f76b7a3efacf328115619aed88dc43953b..6fd8a0b49700bae363a5d4bf16b4a94c
 +    {
 +        return quitting;
 +    }
++
++#ifdef NEEDS_INVOKE_METHOD_FUNCTOR
++// This taken from https://stackoverflow.com/a/21653558/1460868
++// With this alternative to QMetaObject::invokeMethod(obj,Func,type)
++// the application runs under Qt as old as 5.6.3 (and possibly older).
++    template <typename F>
++    struct FEvent : public QEvent
++    {
++    public:
++        using Fun = typename std::decay<F>::type;
++        Fun fun;
++        FEvent(Fun && fun, QSemaphore *sem = nullptr)
++            : QEvent(QEvent::None)
++            , fun(std::move(fun))
++            , semaphore(sem)
++        {}
++        FEvent(const Fun & fun, QSemaphore *sem = nullptr)
++            : QEvent(QEvent::None)
++            , fun(fun)
++            , semaphore(sem)
++        {}
++        ~FEvent()
++        {
++           fun();
++           if (semaphore) {
++               semaphore->release();
++           }
++        }
++    private:
++        QSemaphore *semaphore;
++    };
++
++    template <typename F>
++    void invokeMethod(F && fun)
++    {
++        if (QThread::currentThread() == mainThread) {
++            // we could warn about a deadlock like QMetaObject::invokeMethod() does (and hang),
++            // or we could save on doing the check and possibly hang when used wrongly.
++            // Or we can notify and execute the requested function.
++            qWarning() << Q_FUNC_INFO << "called on the main thread";
++            fun();
++        } else {
++            QSemaphore sem;
++            postEvent(this, new FEvent<F>(std::forward<F>(fun), &sem));
++            sem.acquire();
++        }
++    }
++#endif
 +
 +#ifdef DEBUG
 +    QThread *currentThread() const;
@@ -1460,15 +1530,22 @@ index 925be4f76b7a3efacf328115619aed88dc43953b..6fd8a0b49700bae363a5d4bf16b4a94c
 +};
 +
 +#ifdef NEEDS_PCVAPP_FUNCTIONS
++
++#ifdef NEEDS_INVOKE_METHOD_FUNCTOR
++#define INVOKE_METHOD(app,fnc) app->invokeMethod(fnc)
++#else
++#define INVOKE_METHOD(app,fnc) QMetaObject::invokeMethod(app, fnc, PVCConnection)
++#endif
++
 +#ifdef USE_THREADED_GLLOOP
 +#define PVCAPP_FUNCTION(ptr,fnc) { \
 +    PVCApplication *app = static_cast<PVCApplication*>(ptr); \
-+    QMetaObject::invokeMethod(app, [=]() { app-> fnc ; }, PVCConnection); \
++    INVOKE_METHOD(app, [=]() { app-> fnc ; }); \
 +}
 +#define PVCAPP_FUNCTION_CHECK(ptr,fnc) { \
 +    PVCApplication *app = ptr ? static_cast<PVCApplication*>(ptr) : pvcApp; \
 +    if (QThread::currentThread() != app->mainThread) { \
-+        QMetaObject::invokeMethod(app, [=]() { app-> fnc ; }, PVCConnection); \
++        INVOKE_METHOD(app, [=]() { app-> fnc ; }); \
 +    } else { \
 +        app-> fnc ; \
 +    } \
@@ -1480,7 +1557,7 @@ index 925be4f76b7a3efacf328115619aed88dc43953b..6fd8a0b49700bae363a5d4bf16b4a94c
 +    PVCApplication *app = dynamic_cast<PVCApplication*>(static_cast<QObject*>(ptr)); \
 +    if (app && QThread::currentThread() != app->mainThread) { \
 +        qWarning() << Q_FUNC_INFO << "thread" << QThread::currentThread() << "!=" << app->mainThread << "; invokeMethod" << # fnc; \
-+        QMetaObject::invokeMethod(app, [=]() { app-> fnc ; }, PVCConnection); \
++        INVOKE_METHOD(app, [=]() { app-> fnc ; }); \
 +    } else { \
 +        pvcApp-> fnc ; \
 +    } \
