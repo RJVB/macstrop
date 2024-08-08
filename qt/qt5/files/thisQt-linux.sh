@@ -32,6 +32,8 @@ for d in ${PREFIX} ;do
 	done
 done
 
+export QTBINDIR="${HERE}/bin"
+
 if [ "${LD_LIBRARY_PATH}" != "" ] ;then
 	export LD_LIBRARY_PATH="${LIBDIRS}:${LD_LIBRARY_PATH}"
 else
