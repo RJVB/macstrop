@@ -376,9 +376,10 @@ proc create_devport {dependency} {
                 system "touch ${dev.archdir}/${dev.archname}"
             }
             if {[file exists ${dev.cachedir}/${dev.archname}]} {
-                # remove the entire directory because there's really no justification for anything else
-                ui_info "${subport} is now installed, removing cached content archive ${dev.cachedir}"
-                file delete -force ${dev.cachedir}
+#                 # remove the entire directory because there's really no justification for anything else
+#                 ui_info "${subport} is now installed, removing cached content archive ${dev.cachedir}"
+#                 file delete -force ${dev.cachedir}
+                ui_info "${subport} is now installed, you could delete the cached content archive ${dev.cachedir}"
             }
         }
     }
