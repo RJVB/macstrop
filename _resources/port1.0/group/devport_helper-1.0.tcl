@@ -17,17 +17,18 @@ namespace eval devport_helper {
         proc ui_info {msg} {
             puts stderr ${msg}
         }
+        set ui_debug ui_info
         set ui_error ui_info
     } else {
         set asscript 0
-        # check if the current port has any dependencies at all to
-        # avoid searching for devports when we can.
-        if {[info exists depends_build] || [info exists depends_lib]} {
-            set useportgroup 1
-            if {!([file exists ${currentportgroupdir}/devport_db.tcl]
-                    && [file mtime ${thisfile}] <= [file mtime ${currentportgroupdir}/devport_db.tcl])} {
-                set updatedb 1
-            }
+        # We'd like to check if the current port has any dependencies at all to
+        # avoid searching for devports when we can. But dependency declaration in
+        # variants may not have been done so we always generate the DB and we
+        # always install the callback.
+        set useportgroup 1
+        if {!([file exists ${currentportgroupdir}/devport_db.tcl]
+                && [file mtime ${thisfile}] <= [file mtime ${currentportgroupdir}/devport_db.tcl])} {
+            set updatedb 1
         }
     }
 
@@ -58,6 +59,7 @@ namespace eval devport_helper {
     proc callback {} {
         global depends_lib depends_build
         if {${devport_helper::useportgroup}} { ## this is where we do the actual PortGroup work:
+            ui_debug "Looking for ${devport_helper::currentportgroupdir}/devport_db.tcl"
             if {![catch {source "${devport_helper::currentportgroupdir}/devport_db.tcl"} err] && [info exists devportDB]} {
                 # scan the depends_build and depends_lib lists for ports that have devports
                 if {![info exists depends_build]} {
