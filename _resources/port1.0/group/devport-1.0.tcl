@@ -55,17 +55,15 @@ default devport_variants            {}
 # has to be set in common code or by the main port, NOT exclusively by the devport!!
 default devport_excluded_variants   {}
 
-# namespace eval dev {
+namespace eval dev {}
     # it shouldn't be necessary to record variants in the archive name
     # (NB: the one that's part of the main port!)
-    options dev::archname dev::archdir dev::cachedir
-    default dev::archname   {${mainport_name}@${version}-dev.tar.bz2}
+    default dev.archname   {${mainport_name}@${version}-dev.tar.bz2}
     # this could go into the software images directory
-    default dev::archdir    {${prefix}/var/devcontent}
-    default dev::cachedir   {/tmp/${devport_name}-cache}
+    default dev.archdir    {${prefix}/var/devcontent}
+    default dev.cachedir   {/tmp/${devport_name}-cache}
 
     set dev::mainport_installed no
-# }
 
 proc dev::port_variants {} {
     global PortInfo
@@ -82,7 +80,7 @@ proc dev::port_variants {} {
 
 # create the online devport content archive
 proc create_devport_content_archive {} {
-    global mainport_name devport_name dev::archdir dev::archname devport_excluded_variants
+    global mainport_name devport_name dev.archdir dev.archname dev.cachedir devport_excluded_variants
     global destroot prefix os.major os.platform portbuildpath portpath
     set rawargs [option devport_content]
     set args ""
@@ -90,11 +88,11 @@ proc create_devport_content_archive {} {
     foreach a ${rawargs} {
         set args "${args} .${a}"
     }
-    xinstall -m 755 -d ${destroot}${dev::archdir}
-    ui_debug "Creating devport archive ${destroot}${dev::archdir}/${dev::archname} from \"${args}\""
-    if {[catch {system -W ${destroot} "bsdtar -cjvf ${destroot}${dev::archdir}/${dev::archname} ${args}"} err]} {
-        ui_error "Failure creating ${destroot}${dev::archdir}/${dev::archname} for ${args}: ${err}"
-        file delete -force ${destroot}${dev::archdir}/${dev::archname}
+    xinstall -m 755 -d ${destroot}${dev.archdir}
+    ui_debug "Creating devport archive ${destroot}${dev.archdir}/${dev.archname} from \"${args}\""
+    if {[catch {system -W ${destroot} "bsdtar -cjvf ${destroot}${dev.archdir}/${dev.archname} ${args}"} err]} {
+        ui_error "Failure creating ${destroot}${dev.archdir}/${dev.archname} for ${args}: ${err}"
+        file delete -force ${destroot}${dev.archdir}/${dev.archname}
     } else {
         ui_debug "Deleting archived \"${args}\""
         foreach a ${args} {
@@ -160,10 +158,10 @@ proc create_devport_content_archive {} {
         }
         # Cache the devport archive, just in case someone deletes our carefully
         # constructed devport destroot before the queued install operation terminates!
-        file delete -force ${dev::cachedir}
-        xinstall -m 755 -d ${dev::cachedir}
-        ui_debug "Caching the devport archive \"${dev::archdir}/${dev::archname}\" to ${dev::cachedir}"
-        file rename ${destroot}${dev::archdir}/${dev::archname} ${dev::cachedir}/${dev::archname}
+        file delete -force ${dev.cachedir}
+        xinstall -m 755 -d ${dev.cachedir}
+        ui_debug "Caching the devport archive \"${dev.archdir}/${dev.archname}\" to ${dev.cachedir}"
+        file rename ${destroot}${dev.archdir}/${dev.archname} ${dev.cachedir}/${dev.archname}
         ui_debug "Devport is now ready to be installed."
     }
 }
@@ -224,12 +222,12 @@ proc append_to_devport_standard_content {args} {
 # without having to reinstall/re-activate the main port.
 # Warnings but no errors are raised if this fails.
 proc restore_devport_tarball {baseport} {
-    global dev::archdir dev::archname dev::cachedir
-    if {[file exists ${dev::archdir}/${dev::archname}]
-        && [file size ${dev::archdir}/${dev::archname}] > 0} {
+    global dev.archdir dev.archname dev.cachedir
+    if {[file exists ${dev.archdir}/${dev.archname}]
+        && [file size ${dev.archdir}/${dev.archname}] > 0} {
         return 1
-    } elseif {[file exists ${dev::cachedir}/${dev::archname}]
-        && [file size ${dev::cachedir}/${dev::archname}] > 0} {
+    } elseif {[file exists ${dev.cachedir}/${dev.archname}]
+        && [file size ${dev.cachedir}/${dev.archname}] > 0} {
         return 1
     }
     set ret 1
@@ -245,19 +243,19 @@ proc restore_devport_tarball {baseport} {
         }
         set portimage "${portdbpath}/software/${baseport}/${baseport}-${cVersion}_${cRevision}${cVariants}.${os.platform}_${os.major}.${archs}.${portarchivetype}"
         if {[file exists ${portimage}]} {
-            if {[catch {exec bsdtar -C ${dev::archdir} -tf ${portimage} .${dev::archdir}/${dev::archname}} err]} {
+            if {[catch {exec bsdtar -C ${dev.archdir} -tf ${portimage} .${dev.archdir}/${dev.archname}} err]} {
                 global devport_name
                 ui_debug "port:${devport_name} is not installed from ${portimage}: ${err}"
                 set ret 0
             } else {
-                xinstall -m 755 -d ${dev::archdir}
-                if {[catch {exec sh -c "cd ${dev::archdir} ; bsdtar -xOf ${portimage} .${dev::archdir}/${dev::archname} > ${dev::archname}"} err]} {
-                    ui_warn "Failure restoring ${dev::archdir}/${dev::archname}: ${err}"
+                xinstall -m 755 -d ${dev.archdir}
+                if {[catch {exec sh -c "cd ${dev.archdir} ; bsdtar -xOf ${portimage} .${dev.archdir}/${dev.archname} > ${dev.archname}"} err]} {
+                    ui_warn "Failure restoring ${dev.archdir}/${dev.archname}: ${err}"
                     set ret 0
-                } elseif {![file exists ${dev::archdir}/${dev::archname}]
-                    || [file size ${dev::archdir}/${dev::archname}] == 0} {
-                    ui_warn "Failure restoring ${dev::archdir}/${dev::archname} - did you use sudo?"
-                    system "ls -l ${dev::archdir}/${dev::archname}*"
+                } elseif {![file exists ${dev.archdir}/${dev.archname}]
+                    || [file size ${dev.archdir}/${dev.archname}] == 0} {
+                    ui_warn "Failure restoring ${dev.archdir}/${dev.archname} - did you use sudo?"
+                    system "ls -l ${dev.archdir}/${dev.archname}*"
                     set ret 0
                 }
             }
@@ -277,13 +275,13 @@ proc restore_devport_tarball {baseport} {
 }
 
 proc unpack_devtarball_from_to_for {srcdir destdir portname} {
-    global subport dev::archdir dev::cachedir dev::archname mainport_name
-    if {[file exists ${srcdir}${dev::archdir}/${dev::archname}]
-        && [file size ${srcdir}${dev::archdir}/${dev::archname}] > 0} {
-        set devport_archive ${srcdir}${dev::archdir}/${dev::archname}
-    } elseif {[file exists ${srcdir}${dev::cachedir}/${dev::archname}]
-        && [file size ${srcdir}${dev::cachedir}/${dev::archname}] > 0} {
-        set devport_archive ${srcdir}${dev::cachedir}/${dev::archname}
+    global subport dev.archdir dev.cachedir dev.archname mainport_name
+    if {[file exists ${srcdir}${dev.archdir}/${dev.archname}]
+        && [file size ${srcdir}${dev.archdir}/${dev.archname}] > 0} {
+        set devport_archive ${srcdir}${dev.archdir}/${dev.archname}
+    } elseif {[file exists ${srcdir}${dev.cachedir}/${dev.archname}]
+        && [file size ${srcdir}${dev.cachedir}/${dev.archname}] > 0} {
+        set devport_archive ${srcdir}${dev.cachedir}/${dev.archname}
     }
     if {[file exists ${devport_archive}]} {
         ui_debug "Unpacking \"${devport_archive}\" for ${portname}"
@@ -299,7 +297,7 @@ proc unpack_devtarball_from_to_for {srcdir destdir portname} {
             ui_debug "[exec bsdtar -tvf ${devport_archive}]"
         }
     } else {
-        ui_error "The port's content archive doesn't exists or is empty (${dev::archname} in ${srcdir}${dev::archdir} or ${srcdir}/${dev::cachedir})!"
+        ui_error "The port's content archive doesn't exists or is empty (${dev.archname} in ${srcdir}${dev.archdir} or ${srcdir}/${dev.cachedir})!"
         return -code error "Missing or invalid content archive; try re-activating or reinstalling port:${mainport_name}"
     }
 }
@@ -315,7 +313,7 @@ proc unpack_devport_content {} {
 proc create_devport {dependency} {
     global subport mainport_name devport_name devport_description devport_long_description baseport devport_variants \
             universal_possible portsandbox_profile sandbox_enable portbuildpath \
-            dev::archdir dev::archname \
+            dev.archdir dev.archname dev.cachedir \
             dev::mainport_installed
     # just so we're clear that what port we're talking about (the main port):
     set baseport ${mainport_name}
@@ -351,8 +349,8 @@ proc create_devport {dependency} {
         pre-destroot {
             # try to avoid sandboxing problems (copied from portsandbox.tcl):
             # (doesn't really seem to work though...)
-            append portsandbox_profile " (allow file-write* (subpath \"${dev::archdir}\"))"
-            append portsandbox_profile " (allow file-write* (subpath \"${dev::cachedir}\"))"
+            append portsandbox_profile " (allow file-write* (subpath \"${dev.archdir}\"))"
+            append portsandbox_profile " (allow file-write* (subpath \"${dev.cachedir}\"))"
             ui_debug "sandbox_enable=${sandbox_enable} portsandbox_profile=${portsandbox_profile}"
         }
         destroot {
@@ -370,17 +368,17 @@ proc create_devport {dependency} {
             }
         }
         pre-activate {
-            if {[file exists ${dev::archdir}/${dev::archname}]} {
-                ui_info "${subport} is now installed, removing installed content archive ${dev::archdir}/${dev::archname}"
-                file delete -force ${dev::archdir}/${dev::archname}
+            if {[file exists ${dev.archdir}/${dev.archname}]} {
+                ui_info "${subport} is now installed, removing installed content archive ${dev.archdir}/${dev.archname}"
+                file delete -force ${dev.archdir}/${dev.archname}
                 # make sure the file exists to keep rev-upgrade happy
                 # NB: this c/should be a symlink to the port's image tarball!
-                system "touch ${dev::archdir}/${dev::archname}"
+                system "touch ${dev.archdir}/${dev.archname}"
             }
-            if {[file exists ${dev::cachedir}/${dev::archname}]} {
+            if {[file exists ${dev.cachedir}/${dev.archname}]} {
                 # remove the entire directory because there's really no justification for anything else
-                ui_info "${subport} is now installed, removing cached content archive ${dev::cachedir}"
-                file delete -force ${dev::cachedir}
+                ui_info "${subport} is now installed, removing cached content archive ${dev.cachedir}"
+                file delete -force ${dev.cachedir}
             }
         }
     }
@@ -389,7 +387,7 @@ proc create_devport {dependency} {
             # try to avoid sandboxing problems (copied from portsandbox.tcl):
             # (doesn't really seem to work though...)
             append portsandbox_profile " (allow file-write* (subpath \"${portbuildpath}/${devport_name}/work\"))"
-            append portsandbox_profile " (allow file-write* (subpath \"${dev::cachedir}\"))"
+            append portsandbox_profile " (allow file-write* (subpath \"${dev.cachedir}\"))"
             ui_debug "sandbox_enable=${sandbox_enable} portsandbox_profile=${portsandbox_profile}"
         }
         post-install {
@@ -411,14 +409,16 @@ proc create_devport {dependency} {
                         # check if our (new!) devport archive exists, which means we're
                         # dealing with an older build for which we need to fall back to
                         # cleaning the devport workdir before attempting an install.
-                        if {[file exists ${dev::archdir}/${dev::archname}]
-                            && [file size ${dev::archdir}/${dev::archname}] > 0} {
+                        if {[file exists ${dev.archdir}/${dev.archname}]
+                            && [file size ${dev.archdir}/${dev.archname}] > 0} {
                                 ui_msg "Cleaning ${devport_name}"
                                 system "port -v clean ${devport_name}"
                         }
                         # we need to spawn/fork the actual install or else we'll be waiting
                         # indefinitely to obtain a lock on the registry!
                         # NB: add the compiler definition so we can support the +builtwith variant from the LTO PG!
+                        ### FIXME: drop the "archive instead of install" because doing an uninstall is
+                        ### counterproductive e.g. if the mainport and devport are being pulled in by a dependent.
                         if {![catch {registry_active ${devport_name}}]} {
                             # a version of the devport is already active; we are certain that
                             # we can use the fastest safe solution: `upgrade --force`
@@ -464,7 +464,7 @@ proc is_mainport {} {
     return [expr {${subport} eq "${mainport_name}"}]
 }
 
-# if {[is_mainport] && [file exists ${destroot}${dev::archdir}/${dev::archname}]} {
+# if {[is_mainport] && [file exists ${destroot}${dev.archdir}/${dev.archname}]} {
 #     notes-append "Don't forget to upgrade port:${devport_name} after upgrading port:${mainport_name}"
 # }
 
