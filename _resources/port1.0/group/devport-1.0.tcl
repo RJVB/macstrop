@@ -61,7 +61,7 @@ namespace eval dev {}
     default dev.archname   {${mainport_name}@${version}-dev.tar.bz2}
     # this could go into the software images directory
     default dev.archdir    {${prefix}/var/devcontent}
-    default dev.cachedir   {/tmp/${devport_name}-cache}
+    default dev.cachedir   {/tmp/${devport_name}-cache/${prefix}}
 
     set dev::mainport_installed no
 
@@ -357,7 +357,7 @@ proc create_devport {dependency} {
             if {[restore_devport_tarball ${baseport}]} {
                 unpack_devport_content
             } else {
-                ui_error "The destroot phase of this port is handled by the main port (${mainport_name})!"
+                ui_error "No cached content exists and the destroot phase of this port is handled by the main port (${mainport_name})!"
                 ui_msg "###"
                 ui_msg "### You will need to do (or 'rewind' and redo) the main port's destroot phase"
                 ui_msg "###"
