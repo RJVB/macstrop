@@ -537,13 +537,13 @@ proc cmake.save_configure_cmd {{save_log_too ""}} {
 
     if {${save_log_too} ne ""} {
         pre-configure {
-            configure.pre_args-prepend "-cf '${configure.cmd} "
+            configure.pre_args-prepend "-c '${configure.cmd} "
             if {[info exists configure.build_arch]} {
                 configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure-${configure.build_arch}.log'"
             } else {
                 configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure.log'"
             }
-            configure.cmd "/bin/csh"
+            configure.cmd "bash"
             ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
         }
         if {${save_log_too} eq "install log"} {
