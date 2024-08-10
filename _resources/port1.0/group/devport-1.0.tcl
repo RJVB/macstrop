@@ -58,10 +58,17 @@ default devport_excluded_variants   {}
 namespace eval dev {}
     # it shouldn't be necessary to record variants in the archive name
     # (NB: the one that's part of the main port!)
-    default dev.archname   {${mainport_name}@${version}-dev.tar.bz2}
+    options dev.archname dev.archdir dev.cachedir dev.tar.cmd
+    default dev.archname    {${mainport_name}@${version}-dev.tar.bz2}
     # this could go into the software images directory
-    default dev.archdir    {${prefix}/var/devcontent}
-    default dev.cachedir   {/tmp/${devport_name}-cache/${prefix}}
+    default dev.archdir     {${prefix}/var/devcontent}
+    default dev.cachedir    {/tmp/${devport_name}-cache/${prefix}}
+    if {[file exists ${prefix}/bin/bsdtar]} {
+        default dev.tar.cmd {${prefix}/bin/bsdtar}
+    } else {
+        default dev.tar.cmd {tar}
+    }
+
 
     set dev::mainport_installed no
 
@@ -81,7 +88,7 @@ proc dev::port_variants {} {
 # create the online devport content archive
 proc create_devport_content_archive {} {
     global mainport_name devport_name dev.archdir dev.archname dev.cachedir devport_excluded_variants
-    global destroot prefix os.major os.platform portbuildpath portpath
+    global destroot prefix os.major os.platform portbuildpath portpath dev.tar.cmd
     set rawargs [option devport_content]
     set args ""
     # convert the arguments to local-relative:
@@ -90,7 +97,7 @@ proc create_devport_content_archive {} {
     }
     xinstall -m 755 -d ${destroot}${dev.archdir}
     ui_debug "Creating devport archive ${destroot}${dev.archdir}/${dev.archname} from \"${args}\""
-    if {[catch {system -W ${destroot} "bsdtar -cjvf ${destroot}${dev.archdir}/${dev.archname} ${args}"} err]} {
+    if {[catch {system -W ${destroot} "${dev.tar.cmd} -cjvf ${destroot}${dev.archdir}/${dev.archname} ${args}"} err]} {
         ui_error "Failure creating ${destroot}${dev.archdir}/${dev.archname} for ${args}: ${err}"
         file delete -force ${destroot}${dev.archdir}/${dev.archname}
     } else {
@@ -222,7 +229,7 @@ proc append_to_devport_standard_content {args} {
 # without having to reinstall/re-activate the main port.
 # Warnings but no errors are raised if this fails.
 proc restore_devport_tarball {baseport} {
-    global dev.archdir dev.archname dev.cachedir
+    global dev.archdir dev.archname dev.cachedir dev.tar.cmd
     if {[file exists ${dev.archdir}/${dev.archname}]
         && [file size ${dev.archdir}/${dev.archname}] > 0} {
         return 1
@@ -243,13 +250,13 @@ proc restore_devport_tarball {baseport} {
         }
         set portimage "${portdbpath}/software/${baseport}/${baseport}-${cVersion}_${cRevision}${cVariants}.${os.platform}_${os.major}.${archs}.${portarchivetype}"
         if {[file exists ${portimage}]} {
-            if {[catch {exec bsdtar -C ${dev.archdir} -tf ${portimage} .${dev.archdir}/${dev.archname}} err]} {
+            if {[catch {exec ${dev.tar.cmd} -C ${dev.archdir} -tf ${portimage} .${dev.archdir}/${dev.archname}} err]} {
                 global devport_name
                 ui_debug "port:${devport_name} is not installed from ${portimage}: ${err}"
                 set ret 0
             } else {
                 xinstall -m 755 -d ${dev.archdir}
-                if {[catch {exec sh -c "cd ${dev.archdir} ; bsdtar -xOf ${portimage} .${dev.archdir}/${dev.archname} > ${dev.archname}"} err]} {
+                if {[catch {exec sh -c "cd ${dev.archdir} ; ${dev.tar.cmd} -xOf ${portimage} .${dev.archdir}/${dev.archname} > ${dev.archname}"} err]} {
                     ui_warn "Failure restoring ${dev.archdir}/${dev.archname}: ${err}"
                     set ret 0
                 } elseif {![file exists ${dev.archdir}/${dev.archname}]
@@ -275,7 +282,7 @@ proc restore_devport_tarball {baseport} {
 }
 
 proc unpack_devtarball_from_to_for {srcdir destdir portname} {
-    global subport dev.archdir dev.cachedir dev.archname mainport_name
+    global subport dev.archdir dev.cachedir dev.archname dev.tar.cmd mainport_name
     if {[file exists ${srcdir}${dev.archdir}/${dev.archname}]
         && [file size ${srcdir}${dev.archdir}/${dev.archname}] > 0} {
         set devport_archive ${srcdir}${dev.archdir}/${dev.archname}
@@ -287,14 +294,14 @@ proc unpack_devtarball_from_to_for {srcdir destdir portname} {
         ui_debug "Unpacking \"${devport_archive}\" for ${portname}"
         # `catch` will consider any output from the command as indicative of an error
         # so using `exec` instead of `system` is tricky (and verbose unpacking impossible)!
-        if {[catch {exec -ignorestderr bsdtar -C ${destdir} -xf ${devport_archive} >& /dev/null} err]} {
+        if {[catch {exec -ignorestderr ${dev.tar.cmd} -C ${destdir} -xf ${devport_archive} >& /dev/null} err]} {
             set ls [exec ls -ailsFR ${destdir}/..]
             ui_debug "> ll ${destdir}/..\n${ls}"
             ui_error "Failure unpacking ${devport_archive}: ${err}"
             return -code error "port:${portname} destroot failure"
         } else {
             # list the archive contents upon success, as an alternative to doing a verbose unpack
-            ui_debug "[exec bsdtar -tvf ${devport_archive}]"
+            ui_debug "[exec ${dev.tar.cmd} -tvf ${devport_archive}]"
         }
     } else {
         ui_error "The port's content archive doesn't exists or is empty (${dev.archname} in ${srcdir}${dev.archdir} or ${srcdir}/${dev.cachedir})!"
@@ -336,7 +343,6 @@ proc create_devport {dependency} {
         # we really only have a runtime dependency on the mainport because it
         # expresses itself only when using the port for building a dependent.
         depends_run     ${dependency}
-        depends_extract bin:bsdtar:libarchive
         installs_libs   yes
         distfiles
         fetch {}
