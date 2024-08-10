@@ -102,6 +102,7 @@ set listnewer 0
 set showVersion 0
 set touchHeaders 0
 set _WD_port {}
+set portDir {}
 
 array set ui_options        {}
 array set global_options    {}
@@ -204,7 +205,7 @@ proc url_to_portname {url} {
 
 proc port_workdir {portname} {
     # Operations on the port's directory and Portfile
-    global env boot_env current_portdir
+    global env boot_env portDir
 
     set status 0
 
@@ -225,12 +226,12 @@ proc port_workdir {portname} {
     set portname $portinfo(name)
 
 
-    # Calculate portdir, porturl, and portfile from initial porturl
-    set portdir [file normalize [macports::getportdir $porturl]]
-    set porturl "file://${portdir}";    # Rebuild url so it's fully qualified
-    set portfile "${portdir}/Portfile"
+    # Calculate portDir, porturl, and portfile from initial porturl
+    set portDir [file normalize [macports::getportdir $porturl]]
+    set porturl "file://${portDir}";    # Rebuild url so it's fully qualified
+    set portfile "${portDir}/Portfile"
     # output the path to the port's work directory
-    set workpath [macports::getportworkpath_from_portdir $portdir $portname]
+    set workpath [macports::getportworkpath_from_portdir $portDir $portname]
     if {[file exists $workpath]} {
         return $workpath
     } else {
