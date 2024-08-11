@@ -81,7 +81,7 @@ namespace eval devport_helper {
                                 # where it prints before asking the used to install a dependency
                                 # that may simply have been deactivate (= is installed).
                                 # With my patched "base" the ui_info routine is an acceptable workaround.
-                                ui_info "WARNING: port:${devdep} is installed but not activated."
+                                ui_info "WARNING: port:${devdep} not installed or not activated."
                             }
                         }
                     }
