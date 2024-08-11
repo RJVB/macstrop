@@ -23,12 +23,12 @@
 # stdcxxabi.dependencies_concerned_by_ABI option (a list of port depspecs). The GCC ports do this for
 # the libgcc port they depend on, and port:kf5-kdevelop does it for port:astyle.
 
-platform linux {
+if {${os.platform} eq "linux"} {
 
     namespace eval stdcxxabi {
         # our directory:
         set currentportgroupdir [file dirname [dict get [info frame 0] file]]
-        # ports may (have to) include us more than once
+        # ports may end up including us more than once (or they could, once?!)
         if {![info exists includecounter]} {
             set includecounter  0
         }
