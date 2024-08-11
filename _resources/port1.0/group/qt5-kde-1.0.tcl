@@ -67,7 +67,9 @@ set available_qt5_versions {
 
 if {[tbool just_want_qt5_version_info]} {
     PortGroup           qt5 1.0
-    return
+    # can't return here anymore since "base" now blocks multiple PG inclusion
+    ui_warn "just_want_qt5_version_info is true, but obsolete and ignored nowadays"
+    #return
 }
 
 # Check what Qt5 installation flavour already exists, or if not if the port calling us
