@@ -396,16 +396,19 @@ if {!${private_building_qt5}} {
 
 # add qt5kde variant if one does not exist and one is requested via qt5.kde_variant
 # variant is added in eval_variants so that qt5.kde_variant can be set anywhere in the Portfile
-rename ::eval_variants ::real_qt5_eval_variants
-pre-fetch {
-    ui_debug "qt5-stock-1.0 PG overloaded the eval_variants procedure!"
-}
-proc eval_variants {variations} {
-    global qt5.kde_variant
-    if { ![variant_exists qt5kde] && [tbool qt5.kde_variant] } {
-        variant qt5kde description {use Qt patched for KDE compatibility} {}
+if {[catch {rename ::eval_variants ::real_qt5_eval_variants} err]} {
+    ui_debug "Can't overload the eval_variants procedure: ${err}"
+} else {
+    pre-fetch {
+        ui_debug "qt5-stock-1.0 PG overloaded the eval_variants procedure!"
     }
-    uplevel ::real_qt5_eval_variants $variations
+    proc eval_variants {variations} {
+        global qt5.kde_variant
+        if { ![variant_exists qt5kde] && [tbool qt5.kde_variant] } {
+            variant qt5kde description {use Qt patched for KDE compatibility} {}
+        }
+        uplevel ::real_qt5_eval_variants $variations
+    }
 }
 
 namespace eval qt5pg {
