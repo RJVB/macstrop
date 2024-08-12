@@ -2,7 +2,7 @@ diff --git a/src/port/port.tcl b/src/port/port.tcl
 index 56b2e27dc..e8b19d9fd 100755
 --- a/src/port/port.tcl
 +++ b/src/port/port.tcl
-@@ -3852,6 +3876,73 @@ proc action_portcmds { action portlist opts } {
+@@ -3852,6 +3876,96 @@ proc action_portcmds { action portlist opts } {
                          ui_error [format "No homepage for %s" $portname]
                      }
                  }
@@ -23,13 +23,13 @@ index 56b2e27dc..e8b19d9fd 100755
 +                        result]} {
 +                        ui_debug "$::errorInfo"
 +                        file delete -force $tmpfname
-+                        break_softcontinue "$result - probably not a git repository?" 1 status
++                        break_softcontinue "$result - probably not git repository?" 1 status
 +                    }
-+                    puts "Commit history for port:$portname ($portfile):\n"
 +                    if {[file exists $tmpfname]} {
 +                        if {[catch {set fp [open $tmpfname r]} result]} {
 +                            break_softcontinue "Could not open file $tmpfname: $result" 1 status
 +                        }
++                        puts "Commit history for port:$portname ($portfile):"
 +                        set history [read $fp]
 +                        set history [split $history "\n"]
 +                        foreach line $history {
@@ -49,49 +49,81 @@ index 56b2e27dc..e8b19d9fd 100755
 +                        diff --no-prefix --no-ext-diff $opt HEAD -- .]} \
 +                        result]} {
 +                        ui_debug $::errorInfo
-+                        break_softcontinue "$result - probably not a git repository?" 1 status
++                        break_softcontinue "$result - probably not git repository?" 1 status
 +                    }
-+                    puts "Git diff for port:$portname ($portfile):\n"
-+                    puts ${diffOut}
++                    if {${diffOut} ne ""} {
++                        puts "Git diff for port:$portname ($portfile):"
++                        puts ${diffOut}
++                    }
 +                }
 +                status {
 +                    if {[catch {set statusOut [exec git -C $portdir \
 +                        status .]} \
 +                        result]} {
 +                        ui_debug $::errorInfo
++                        break_softcontinue "$result - probably not git repository?" 1 status
++                    }
++                    if {${statusOut} ne ""} {
++                        puts "Git status for port:$portname ($portfile):"
++                        puts ${statusOut}
++                    }
++                }
++                add {
++                    if {[catch {set addOut [exec git -C $portdir \
++                        add -v .]} \
++                        result]} {
++                        ui_debug $::errorInfo
 +                        break_softcontinue "$result - probably not a git repository?" 1 status
 +                    }
-+                    puts "Git status for port:$portname ($portfile):\n"
-+                    puts ${statusOut}
++                    if {${addOut} ne ""} {
++                        puts "Git add for port:$portname ($portfile):"
++                        puts ${addOut}
++                    }
 +                }
 +                commit {
-+                    puts "Git commit of port:$portname ($portfile):\n"
-+                    if {[catch {exec git  -ignorestderr >@stdout <@stdin -C $portdir \
-+                        commit -vuno .} \
++                    global global_options
++                    if {[info exists global_options(ports_commit_amend)] && $global_options(ports_commit_amend)} {
++                         set amend "--amend"
++                    } else {
++                         set amend ""
++                    }
++                    if {[catch {exec -ignorestderr >@stdout <@stdin git -C $portdir \
++                        commit -vuno ${amend} .} \
 +                        result]} {
 +                        ui_debug $::errorInfo
 +                        break_softcontinue "$result (is there a .gitconfig file in $env(HOME)?)" 1 status
++                    } else {
++                         puts "Git commit of port:$portname ($portfile)"
 +                    }
 +                }
              }
          } else {
              break_softcontinue "Could not read $portfile" 1 status
-@@ -4124,6 +4216,10 @@ set action_array [dict create \
+@@ -4124,6 +4235,11 @@ set action_array [dict create \
      file        [list action_portcmds       [ACTION_ARGS_PORTS]] \
      logfile     [list action_portcmds       [ACTION_ARGS_PORTS]] \
      gohome      [list action_portcmds       [ACTION_ARGS_PORTS]] \
 +    history     [list action_portcmds       [ACTION_ARGS_PORTS]] \
 +    diff        [list action_portcmds       [ACTION_ARGS_PORTS]] \
 +    status      [list action_portcmds       [ACTION_ARGS_PORTS]] \
++    add         [list action_portcmds       [ACTION_ARGS_PORTS]] \
 +    commit      [list action_portcmds       [ACTION_ARGS_PORTS]] \
      \
      fetch       [list action_target         [ACTION_ARGS_PORTS]] \
      checksum    [list action_target         [ACTION_ARGS_PORTS]] \
+@@ -4214,6 +4337,7 @@ proc action_needs_portlist { action } {
+ # Where option is the name of the option and argn specifies how many arguments
+ # this argument takes
+ set cmd_opts_array [dict create {*}{
++    commit      {amend}
+     edit        {{editor 1}}
+     info        {category categories conflicts depends_fetch depends_extract
+                  depends_patch
 diff --git a/doc/port.1 b/doc/port.1
-index 7ee0c39e5c69bbfacc3592ea8d1c0e581b8da04f..b98dc65f9455d969e7304692b2821f022e6f0d7b 100644
+index 7ee0c39e5c69bbfacc3592ea8d1c0e581b8da04f..833fc9cd4b52a491d0aeab299c8d4358ac5f2c64 100644
 --- a/doc/port.1
 +++ b/doc/port.1
-@@ -1268,6 +1268,25 @@ livecheck
+@@ -1268,6 +1268,29 @@ livecheck
  .RS 4
  Check if the software hasn\(cqt been updated since the Portfile was last modified\&.
  .RE
@@ -108,10 +140,14 @@ index 7ee0c39e5c69bbfacc3592ea8d1c0e581b8da04f..b98dc65f9455d969e7304692b2821f02
 +.RS 4
 +Show the git status of \fIportname\fR (if its portdir lives in a git repository)\&.
 +.RE
-+commit
++add
 +.RS 4
-+Commit changes made to \fIportname\fR (if its portdir lives in a git repository). Note that new
-+files have to be added with the usual git command\&.
++Add the untracked files in \fIportname\fR\(cqs portdir (if it lives in a git repository)\&.
++.RE
++commit [--amend]
++.RS 4
++Commit changes made to \fIportname\fR (if its portdir lives in a git repository) or amend the last commit.
++Note that new files can be added with port add\&.
 +.RE
 +
  .SH "PACKAGING ACTIONS"
