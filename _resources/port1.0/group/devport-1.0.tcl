@@ -166,7 +166,9 @@ proc create_devport_content_archive {} {
         # Cache the devport archive, just in case someone deletes our carefully
         # constructed devport destroot before the queued install operation terminates!
         file delete -force ${dev.cachedir}
-        xinstall -m 755 -d ${dev.cachedir}
+        # create the dev.cachedir as fully open, since we could be using as the macports_user
+        # or as root and there is just no easy telling how to ensure write access for both.
+        xinstall -m 777 -d ${dev.cachedir}
         ui_debug "Caching the devport archive \"${dev.archdir}/${dev.archname}\" to ${dev.cachedir}"
         file rename ${destroot}${dev.archdir}/${dev.archname} ${dev.cachedir}/${dev.archname}
         ui_debug "Devport is now ready to be installed."
