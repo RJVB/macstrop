@@ -1,9 +1,10 @@
 #!/usr/bin/env port-tclsh
 
 set t0 [clock clicks -millisec]
+puts -nonewline "Loading      MacPorts ..."
 package require macports 1.0
 package require registry 1.0
-puts "Startup took [expr {([clock clicks -millisec]-$t0)/1000.}] sec"
+puts " done ([expr {([clock clicks -millisec]-$t0)/1000.}] sec)"
 
 array set ui_options        {}
 array set global_options    {}
