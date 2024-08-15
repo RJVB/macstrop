@@ -271,6 +271,7 @@ proc check_licenses {portName variantInfo verbose} {
     if {$verbose} {
         puts "\"$portName\" is distributable"
     }
+    mportshutdown
     return 0
 }
 
@@ -311,9 +312,6 @@ while {[string index [lindex $::argv 0] 0] == "-" } {
     set ::argv [lrange $::argv 1 end]
 }
 
-package require macports
-mportinit
-
 if {$showVersion} {
     puts "Version $MY_VERSION"
     puts "MacPorts version [macports::version]"
@@ -334,5 +332,8 @@ foreach variantSetting $::argv {
     set variantName [string range $variantSetting 1 end]
     set variantInfo($variantName) $flag
 }
+
+package require macports
+mportinit
 
 exit [check_licenses $portName [array get variantInfo] $verbose]

@@ -185,6 +185,7 @@ set args $argv
 
         file delete "$tmpfile"
     }
+    mportshutdown
     return
 # }
 

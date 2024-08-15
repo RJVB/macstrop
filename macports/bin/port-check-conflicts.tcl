@@ -391,12 +391,14 @@ if {[catch {mportinit ui_options global_options global_variations} result]} {
 if {$showVersion} {
     puts "Version ${SCRIPTVERSION}"
     puts "MacPorts version [macports::version]"
+    mportshutdown
     exit 0
 }
 
 if {[llength $::argv] == 0} {
     puts "Error: missing port-name"
     printUsage
+    mportshutdown
     exit 2
 }
 
@@ -591,3 +593,5 @@ for {set i 0} {${i} < ${argc}} {incr i} {
         }
     }
 }
+
+mportshutdown
