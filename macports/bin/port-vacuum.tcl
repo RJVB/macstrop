@@ -1,7 +1,9 @@
 #!/usr/bin/env port-tclsh
 
+set t0 [clock clicks -millisec]
 package require macports 1.0
 package require registry 1.0
+puts "Startup took [expr {([clock clicks -millisec]-$t0)/1000.}] sec"
 
 array set ui_options        {}
 array set global_options    {}
@@ -13,8 +15,9 @@ set ui_options(ports_verbose) yes
 ### init
 puts -nonewline "Initialising MacPorts ..."
 flush stdout
+set t0 [clock clicks -millisec]
 mportinit ui_options global_options global_variations
-puts " done"
+puts " done ([expr {([clock clicks -millisec]-$t0)}] ms)"
 
 ui_msg "MacPorts version [macports::version], registry version [registry::metadata get version]"
 
@@ -28,5 +31,6 @@ if {[catch {registry::set_needs_vacuum}]} {
 
 puts -nonewline "Closing registry and ${maybe}performing vacuum ..."
 flush stdout
+set t0 [clock clicks -millisec]
 mportshutdown
-puts " done"
+puts " done ([expr {([clock clicks -millisec]-$t0)}] ms)"
