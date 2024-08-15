@@ -332,6 +332,17 @@ proc qmake5.save_configure_cmd {{save_log_too ""}} {
             configure.cmd "bash"
             ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
         }
+        if {${save_log_too} eq "install log"} {
+            post-destroot {
+                set docdir ${destroot}${prefix}/share/doc/${subport}
+                xinstall -m 755 -d ${docdir}
+                foreach cfile [glob -nocomplain ${workpath}/.macports.${subport}.configure*] {
+                    if {[file size ${cfile}] > 0} {
+                        xinstall -m 644 ${cfile} ${docdir}/[string map {".macports" "macports"} [file tail ${cfile}]]
+                    }
+                }
+            }
+        }
     }
     post-configure {
         if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
