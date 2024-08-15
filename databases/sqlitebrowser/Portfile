@@ -4,10 +4,13 @@ PortSystem          1.0
 PortGroup           qt5 1.0
 PortGroup           cmake 1.1
 PortGroup           github 1.0
-PortGroup           app 1.0
 
-github.setup        sqlitebrowser sqlitebrowser 3.11.2 v
-revision            0
+github.setup        sqlitebrowser sqlitebrowser 3.13.0 v
+fetch.type          git
+distname            ${name}-git
+set git-commit      5733cb7
+# This line is for displaying commit in about panel only
+revision            1
 
 categories          databases
 platforms           darwin linux
@@ -36,60 +39,93 @@ long_description    SQLite Database Browser is a visual tool used to create, des
 
 homepage            http://sqlitebrowser.org
 
-checksums           rmd160  f1e925b87be61b9badba625b3847dd403860cc28 \
-                    sha256  62d1385c16d771758c7dd36612f5b8c0dffbd37bc40a4c23efc3b0243779291e
-#                     size    2530537
+checksums           rmd160  1932424909f03058d274bb7bb832ff300954bb7e \
+                    sha256  3db72b337e9977da65314e2a8557577e465e07e5d6ddf4a6576247d40487b5ab
+#                     size    4901735
+
+# Exclude pre-release candidates
+github.livecheck.regex \
+                    {([0-9.]+)}
 
 universal_variant   no
 
-depends_lib-append  port:antlr \
-                    port:qscintilla-qt5
+compiler.cxx_standard 2014
 
-qt5.depends_component \
-                    qtmacextras qttools
+# Uses QSysInfo::buildAbi and QSysInfo::currentCpuArchitecture
+qt5.min_version     5.4
 
-patchfiles-append   0001-Changes-for-MacPorts.patch \
-                    patch-nowarn-nonetworkmanager.diff
-patch.pre_args      -p1
+depends_lib-append  port:qscintilla-qt5
 
-if {[info procs cmake.save_configure_cmd] ne ""} {
-    # create a .macports-$subport-configure.cmd file containing the cmake invocation details
-    # (provided by a pending update to cmake-1.1
-    cmake.save_configure_cmd "log too"
+qt5.depends_build_component \
+                    qttools
+if {${os.platform} eq "darwin"} {
+    qt5.depends_component \
+                    qtmacextras
 }
 
-configure.args-append \
-                    -DQSCINTILLA_INCLUDE_DIR=${qt_includes_dir} \
-                    -DQT_LIBRARY_DIR=${qt_frameworks_dir}
+patch.pre_args      -Np1
+patchfiles-append   0001-Changes-for-MacPorts.patch
+
+post-patch {
+    reinplace "s|\"Unknown\"|\"${git-commit}\"|" CMakeLists.txt
+    reinplace "s|/usr/local/opt/qscintilla2/lib|${qt_libs_dir}|g" cmake/FindQScintilla.cmake
+    reinplace "s|/usr/local/opt/qscintilla2/include|${qt_includes_dir}|g" cmake/FindQScintilla.cmake
+}
 
 if {${os.platform} eq "darwin"} {
-    app.executable  ${build.dir}/sqlitebrowser
-    app.icon        ${worksrcpath}/src/icons/sqlitebrowser.png
-
-    post-destroot {
-        set APPNAME "${qt_apps_dir}/SQLiteBrowser.app"
-        xinstall -m 755 -d ${destroot}${qt_apps_dir}
-        # for some reason the app PG capitalises the 1st letter
-        file rename ${destroot}${applications_dir}/Sqlitebrowser.app ${destroot}${APPNAME}
-        file rename ${destroot}${APPNAME}/Contents/MacOS/Sqlitebrowser ${destroot}${APPNAME}/Contents/MacOS/Sqlitebrowser-temp
-        file rename ${destroot}${APPNAME}/Contents/MacOS/Sqlitebrowser-temp ${destroot}${APPNAME}/Contents/MacOS/sqlitebrowser
-        file rename ${destroot}${APPNAME}/Contents/Resources/Sqlitebrowser.icns ${destroot}${APPNAME}/Contents/Resources/Sqlitebrowser.icns-temp
-        file rename ${destroot}${APPNAME}/Contents/Resources/Sqlitebrowser.icns-temp ${destroot}${APPNAME}/Contents/Resources/sqlitebrowser.icns
-        xinstall -m 755 ${worksrcpath}/src/app.plist ${destroot}${APPNAME}/Contents/Info.plist
-        reinplace "s|@EXECUTABLE@|sqlitebrowser|g" ${destroot}${APPNAME}/Contents/Info.plist
-        reinplace "s|@ICON@|sqlitebrowser.icns|g" ${destroot}${APPNAME}/Contents/Info.plist
-
-        if {[info procs qt5.add_app_wrapper] != ""} {
-            file delete ${destroot}${prefix}/bin/sqlitebrowser
-            qt5.add_app_wrapper sqlitebrowser SQLiteBrowser sqlitebrowser
-        }
+    post-patch {
+        system -W ${worksrcpath}/src "/usr/libexec/PlistBuddy -c \"Set :CFBundleGetInfoString ${version}\" app.plist"
+        system -W ${worksrcpath}/src "/usr/libexec/PlistBuddy -c \"Set :CFBundleShortVersionString ${version}\" app.plist"
+        system -W ${worksrcpath}/src "/usr/libexec/PlistBuddy -c \"Set :CFBundleVersion ${version}\" app.plist"
     }
+    configure.args-append \
+                    -DQSCINTILLA_INCLUDE_DIR=${qt_includes_dir}
 } else {
     cmake.install_rpath-prepend \
                     ${qt_libs_dir} ${prefix}/lib
-    configure.args-append \
-                    -DCMAKE_PREFIX_PATH=${prefix}
-    configure.args-replace \
-                    -DQT_LIBRARY_DIR=${qt_frameworks_dir} \
-                    -DQT_LIBRARY_DIR=${qt_libs_dir}
+}
+
+configure.args-append \
+                    -DBUILD_STABLE_VERSION=1
+
+variant sqlite3 conflicts sqlcipher description {Use sqlite3 as db engine} {
+    depends_lib-append port:sqlite3
+}
+
+variant sqlcipher conflicts sqlite3 description {Use sqlcipher as db engine} {
+    depends_lib-append port:sqlcipher
+    configure.args-append -Dsqlcipher=1
+}
+
+if (![variant_isset sqlcipher]) {
+    default_variants  +sqlite3
+}
+
+if {[info procs cmake.save_configure_cmd] ne ""} {
+    cmake.save_configure_cmd "install log"
+}
+
+if {${os.platform} eq "darwin"} {
+    destroot {
+        set appname "DB Browser for SQLite"
+        set contents_folder "${build.dir}/${appname}.app/Contents"
+        set resources_folder "${contents_folder}/Resources/"
+        # steps from ${worksrcpath}/installer/macos/notarize.sh
+        xinstall -m 755 -d ${resources_folder}
+        xinstall -m 644 {*}[glob ${worksrcpath}/LICENSE*] ${resources_folder}
+        xinstall -m 644 ${worksrcpath}/installer/macos/macapp.icns ${resources_folder}
+        system -W ${contents_folder} "/usr/libexec/PlistBuddy -c \"Set :CFBundleIconFile macapp.icns\" Info.plist"
+        system -W ${build.dir} "/usr/bin/codesign --sign - \"${appname}.app\""
+        copy "${build.dir}/${appname}.app" ${destroot}${applications_dir}
+        ln -s "${applications_dir}/${appname}.app/Contents/MacOS/${appname}" ${destroot}${prefix}/bin/${name}
+        if {[info procs qt5.add_app_wrapper] != ""} {
+            file delete -force ${destroot}${prefix}/bin/sqlitebrowser
+            qt5.add_app_wrapper sqlitebrowser "${appname}" sqlitebrowser
+        }
+    }
+} else {
+    post-destroot {
+        file rename ${destroot}${prefix}/bin/sqlitebrowser ${destroot}${prefix}/bin/sqlitebrowser.bin
+        qt5.add_app_wrapper sqlitebrowser sqlitebrowser.bin
+    }
 }
