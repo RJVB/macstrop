@@ -313,14 +313,38 @@ if {[string match *clang* ${configure.compiler}]} {
     }
 } elseif {${os.platform} eq "linux"} {
     if {${configure.compiler} eq "cc"} {
-        default configure.ar "[string map {"cc" "gcc-ar"} ${configure.cc}]"
-        default configure.nm "[string map {"cc" "gcc-nm"} ${configure.cc}]"
-        default configure.ranlib "[string map {"cc" "gcc-ranlib"} ${configure.cc}]"
+        if {[auto_execok gcc-ar] ne ""} {
+            default configure.ar "[string map {"cc" "gcc-ar"} ${configure.cc}]"
+        } else {
+            default configure.ar "ar"
+        }
+        if {[auto_execok gcc-nm] ne ""} {
+            default configure.nm "[string map {"cc" "gcc-nm"} ${configure.cc}]"
+        } else {
+            default configure.nm "nm"
+        }
+        if {[auto_execok gcc-ranlib] ne ""} {
+            default configure.ranlib "[string map {"cc" "gcc-ranlib"} ${configure.cc}]"
+        } else {
+            default configure.ranlib "ranlib"
+        }
         set LTO.custom_binaries 1
     } elseif {${configure.compiler} eq "gcc"} {
-        default configure.ar "[string map {"gcc" "gcc-ar"} ${configure.cc}]"
-        default configure.nm "[string map {"gcc" "gcc-nm"} ${configure.cc}]"
-        default configure.ranlib "[string map {"gcc" "gcc-ranlib"} ${configure.cc}]"
+        if {[auto_execok gcc-ar] ne ""} {
+            default configure.ar "[string map {"gcc" "gcc-ar"} ${configure.cc}]"
+        } else {
+            default configure.ar "ar"
+        }
+        if {[auto_execok gcc-nm] ne ""} {
+            default configure.nm "[string map {"gcc" "gcc-nm"} ${configure.cc}]"
+        } else {
+            default configure.nm "nm"
+        }
+        if {[auto_execok gcc-ranlib] ne ""} {
+            default configure.ranlib "[string map {"gcc" "gcc-ranlib"} ${configure.cc}]"
+        } else {
+            default configure.ranlib "ranlib"
+        }
         set LTO.custom_binaries 1
     } else {
         default configure.ar "[string map {"gcc" "gcc-ar"} ${configure.cc}]"
