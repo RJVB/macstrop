@@ -102,3 +102,85 @@ proc configure.save_configure_cmd {{save_log_too ""}} {
         }
     }
 }
+proc configure.save_build_cmd {{save ""}} {
+    namespace upvar ::configure configure_cmd_saved statevar
+    if {[tbool use_configure]} {
+        ui_error "Port ${subport} should use configure.save_configure_cmd instead of save_build_cmd!"
+        return -code error "design error"
+    }
+    if {${configure::statevar}} {
+        ui_debug "configure.save_build_cmd already called"
+        return;
+    }
+    set configure::statevar yes
+
+    if {![info exists build.args]} {
+        build.args-append
+    }
+    if {![info exists build.post_args]} {
+        build.post_args-append
+    }
+    if {${save} eq "install"} {
+        post-destroot {
+            set docdir ${destroot}${prefix}/share/doc/${subport}
+            xinstall -m 755 -d ${docdir}
+            foreach cfile [glob -nocomplain ${workpath}/.macports.${subport}.build*] {
+                if {[file size ${cfile}] > 0} {
+                    xinstall -m 644 ${cfile} ${docdir}/[string map {".macports" "macports"} [file tail ${cfile}]]
+                }
+            }
+        }
+    }
+    pre-build {
+        if {![catch {set fd [open "${workpath}/.macports.${subport}.build.cmd" "w"]} err]} {
+            puts ${fd} "## Executing: ##"
+            puts ${fd} "\ncd ${worksrcpath}"
+            puts ${fd} "${build.cmd} [join ${build.pre_args}] [join ${build.args}] [join ${build.post_args}]"
+            close ${fd}
+            unset fd
+        }
+    }
+    post-build {
+        if {![catch {set fd [open "${workpath}/.macports.${subport}.build.cmd" "w"]} err]} {
+            foreach var [array names ::env] {
+                puts ${fd} "${var}=$::env(${var})"
+            }
+            puts ${fd} "[join [lrange [split ${configure.env} " "] 0 end] "\n"]"
+            # the following variables are no longer set in the environment at this point:
+            puts ${fd} "CPP=\"${configure.cpp}\""
+            # these are particularly relevant because referenced in the configure.pre_args:
+            puts ${fd} "CC=\"${configure.cc}\""
+            puts ${fd} "CXX=\"${configure.cxx}\""
+            if {${configure.objcxx} ne ${configure.cxx}} {
+                puts ${fd} "OBJCXX=\"${configure.objcxx}\""
+            }
+            puts ${fd} "CFLAGS=\"${configure.cflags}\""
+            puts ${fd} "CXXFLAGS=\"${configure.cxxflags}\""
+            if {${configure.objcflags} ne ${configure.cflags}} {
+                puts ${fd} "OBJCFLAGS=\"${configure.objcflags}\""
+            }
+            if {${configure.objcxxflags} ne ${configure.cxxflags}} {
+                puts ${fd} "OBJCXXFLAGS=\"${configure.objcxxflags}\""
+            }
+            puts ${fd} "LDFLAGS=\"${configure.ldflags}\""
+            puts ${fd} "# Commandline configure options:"
+            if {${configure.optflags} ne ""} {
+                puts -nonewline ${fd} " configure.optflags=\"${configure.optflags}\""
+            }
+            if {${configure.compiler} ne ""} {
+                puts -nonewline ${fd} " configure.compiler=\"${configure.compiler}\""
+            }
+            if {${configureccache} ne ""} {
+                puts -nonewline ${fd} " configureccache=\"${configureccache}\""
+            }
+            if {${configure.cxx_stdlib} ne ""} {
+                puts -nonewline ${fd} " configure.cxx_stdlib=\"${configure.cxx_stdlib}\""
+            }
+            puts ${fd} ""
+            puts ${fd} "\ncd ${worksrcpath}"
+            puts ${fd} "${build.cmd} [join ${build.pre_args}] [join ${build.args}] [join ${build.post_args}]"
+            close ${fd}
+            unset fd
+        }
+    }
+}
