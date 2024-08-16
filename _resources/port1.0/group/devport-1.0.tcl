@@ -319,7 +319,9 @@ proc unpack_devport_content {} {
 # Define (more so than create!) the devport
 # and (231021) add post-installation logic to install/upgrade it after installing/upgrading
 # the main port. See comments in the post-activate procedure for when we do and when we don't.
-proc create_devport {dependency} {
+# 240816: allow auto-generation of the standard content, for ports where a simple call to
+# `register_devport_standard_content` is sufficient to migrate all the developer content.
+proc create_devport {dependency {auto_generate_content {}}} {
     global subport mainport_name devport_name devport_description devport_long_description baseport devport_variants \
             universal_possible portsandbox_profile sandbox_enable portbuildpath \
             dev.archdir dev.archname dev.cachedir \
@@ -390,6 +392,17 @@ proc create_devport {dependency} {
                 ui_info "${subport} is now installed, you could delete the cached content archive ${dev.cachedir}"
             }
         }
+        post-install {
+            ui_debug "${subport} will try to update the devport database"
+            if {[info procs devport_helper::generate_db] ne ""} {
+                devport_helper::generate_db
+            } else {
+                ui_debug "Falling back to loading the devport_helper PortGroup for that"
+                if {[catch {PortGroup devport_helper 1.0} err]} {
+                    ui_warn "Couldn't update the devport database automatically, please run devport_helper-1.0.tcl manually.!"
+                }
+            }
+        }
     }
     if {${subport} eq ${baseport}} {
         pre-destroot {
@@ -398,6 +411,13 @@ proc create_devport {dependency} {
             append portsandbox_profile " (allow file-write* (subpath \"${portbuildpath}/${devport_name}/work\"))"
             append portsandbox_profile " (allow file-write* (subpath \"${dev.cachedir}\"))"
             ui_debug "sandbox_enable=${sandbox_enable} portsandbox_profile=${portsandbox_profile}"
+        }
+        if {${auto_generate_content} eq "auto"} {
+            post-destroot {
+                ui_debug "## Port ${subport} requested automatic migration of the developer content!"
+                register_devport_standard_content
+                create_devport_content_archive
+            }
         }
         post-install {
             # register that we just have installed the main port

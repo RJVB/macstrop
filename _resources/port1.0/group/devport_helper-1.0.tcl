@@ -8,7 +8,8 @@
 
 namespace eval devport_helper {
     # our directory:
-    set thisfile [dict get [info frame 0] file]
+    #set thisfile [dict get [info frame 0] file]
+    set thisfile [info script]
     variable currentportgroupdir [file dirname ${thisfile}]
     set useportgroup 0
     set updatedb 0
@@ -32,13 +33,12 @@ namespace eval devport_helper {
         }
     }
 
-    # check if we're invoked as a standalone script, or if the devport database hasn't been created yet:
-    if {${asscript} || ${updatedb}} {
-        ui_info "Generating the devport database"
+    proc generate_db {} {
+        ui_info "Generating the devport database in ${devport_helper::currentportgroupdir}"
         # use the port driver to find all ports called ${name}-dev
         set devports [exec port -q info --index --line --name "*-dev"]
         # generate a database (array) that maps the main port name to its corresponding devport
-        if {![catch {set fp [open ${currentportgroupdir}/devport_db.tcl "w"]} err]} {
+        if {![catch {set fp [open ${devport_helper::currentportgroupdir}/devport_db.tcl "w"]} err]} {
             puts ${fp} "array unset devportDB"
             puts ${fp} "array set devportDB \[list \\"
             foreach dp ${devports} {
@@ -49,9 +49,14 @@ namespace eval devport_helper {
             puts ${fp} "\]"
             close ${fp}
         } else {
-            ${ui_error} "Error writing ${currentportgroupdir}/devport_db.tcl: $err"
+            ${devport_helper::ui_error} "Error writing ${currentportgroupdir}/devport_db.tcl: $err"
             return -code error "Error writing devport database ${currentportgroupdir}/devport_db.tcl"
         }
+    }
+
+    # check if we're invoked as a standalone script, or if the devport database hasn't been created yet:
+    if {${asscript} || ${updatedb}} {
+        generate_db
     }
     # this PortGroup is included through "base" *after* the Portfile has been parsed, but the callbacks
     # from any other PGs will be executed after we've been read. So, we need to use a callback too in
