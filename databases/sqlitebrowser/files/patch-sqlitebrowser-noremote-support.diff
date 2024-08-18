@@ -1,0 +1,281 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c0c4c1e0..ef96f1ad 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -32,6 +32,8 @@ OPTION(FORCE_INTERNAL_QHEXEDIT "Don't use distribution's QHexEdit even if availa
+ OPTION(ALL_WARNINGS "Enable some useful warning flags" OFF)
+ OPTION(sqlcipher "Build with SQLCipher library" OFF)
+ OPTION(customTap "Using SQLCipher, SQLite and Qt installed through our custom Homebrew tap" OFF)
++#RJVB
++OPTION(HAVE_REMOTE "Remote database support" ON)
+ 
+ set(CMAKE_CXX_STANDARD 14)
+ set(CMAKE_CXX_STANDARD_REQUIRED True)
+@@ -212,10 +216,8 @@ target_sources(${PROJECT_NAME}
+     src/FileDialog.h
+     src/ColumnDisplayFormatDialog.h
+     src/FilterLineEdit.h
+-    src/RemoteDatabase.h
+     src/ForeignKeyEditorDelegate.h
+     src/PlotDock.h
+-    src/RemoteDock.h
+     src/RemoteModel.h
+     src/RemotePushDialog.h
+     src/FindReplaceDialog.h
+@@ -230,11 +232,17 @@ target_sources(${PROJECT_NAME}
+     src/SelectItemsPopup.h
+     src/TableBrowser.h
+     src/ImageViewer.h
+-    src/RemoteLocalFilesModel.h
+     src/RemoteCommitsModel.h
+     src/RemoteNetwork.h
+     src/TableBrowserDock.h
+ )
++if (HAVE_REMOTE)
++    target_sources(${PROJECT_NAME}
++        PRIVATE
++        src/RemoteDatabase.h
++        src/RemoteDock.h
++        src/RemoteLocalFilesModel.h)
++endif()
+ 
+ target_sources(${PROJECT_NAME}
+     PRIVATE
+@@ -271,10 +279,8 @@ target_sources(${PROJECT_NAME}
+     src/FileDialog.cpp
+     src/ColumnDisplayFormatDialog.cpp
+     src/FilterLineEdit.cpp
+-    src/RemoteDatabase.cpp
+     src/ForeignKeyEditorDelegate.cpp
+     src/PlotDock.cpp
+-    src/RemoteDock.cpp
+     src/RemoteModel.cpp
+     src/RemotePushDialog.cpp
+     src/FindReplaceDialog.cpp
+@@ -294,11 +300,18 @@ target_sources(${PROJECT_NAME}
+     src/sql/parser/sqlite3_lexer.cpp
+     src/sql/parser/sqlite3_parser.cpp
+     src/ImageViewer.cpp
+-    src/RemoteLocalFilesModel.cpp
+     src/RemoteCommitsModel.cpp
+     src/RemoteNetwork.cpp
+     src/TableBrowserDock.cpp
+ )
++if (HAVE_REMOTE)
++    add_definitions(-DHAVE_REMOTE)
++    target_sources(${PROJECT_NAME}
++        PRIVATE
++        src/RemoteDatabase.cpp
++        src/RemoteDock.cpp
++        src/RemoteLocalFilesModel.cpp)
++endif()
+ 
+ set(SQLB_FORMS
+     src/AboutDialog.ui
+diff --git a/src/MainWindow.cpp b/src/MainWindow.cpp
+index 4068aff2..713506fc 100644
+--- a/src/MainWindow.cpp
++++ b/src/MainWindow.cpp
+@@ -67,7 +67,9 @@ MainWindow::MainWindow(QWidget* parent)
+       db(),
+       editDock(new EditDialog(this)),
+       plotDock(new PlotDock(this)),
++#ifdef HAVE_REMOTE
+       remoteDock(new RemoteDock(this)),
++#endif
+       currentTableBrowser(nullptr),
+       findReplaceDialog(new FindReplaceDialog(this)),
+       execute_sql_worker(nullptr),
+@@ -95,7 +97,9 @@ void MainWindow::init()
+     // Load window settings
+     tabifyDockWidget(ui->dockLog, ui->dockPlot);
+     tabifyDockWidget(ui->dockLog, ui->dockSchema);
++#ifdef HAVE_REMOTE
+     tabifyDockWidget(ui->dockLog, ui->dockRemote);
++#endif
+ 
+ #ifdef Q_OS_MACX
+     // Add OpenGL Context for macOS
+@@ -160,7 +164,12 @@ void MainWindow::init()
+     // Create docks
+     ui->dockEdit->setWidget(editDock);
+     ui->dockPlot->setWidget(plotDock);
++#ifdef HAVE_REMOTE
+     ui->dockRemote->setWidget(remoteDock);
++#else
++    delete ui->dockRemote;
++    ui->dockRemote = nullptr;
++#endif
+ 
+     // Set up edit dock
+     editDock->setReadOnly(true);
+@@ -294,8 +303,10 @@ void MainWindow::init()
+     ui->viewMenu->actions().at(3)->setShortcut(QKeySequence(tr("Ctrl+E")));
+     ui->viewMenu->actions().at(3)->setIcon(QIcon(":/icons/log_dock"));
+ 
++#ifdef HAVE_REMOTE
+     // Add menu item for plot dock
+     ui->viewMenu->insertAction(ui->viewDBToolbarAction, ui->dockRemote->toggleViewAction());
++#endif
+     ui->viewMenu->actions().at(4)->setIcon(QIcon(":/icons/log_dock"));
+ 
+     // Set checked state if toolbar is visible
+@@ -348,8 +359,10 @@ void MainWindow::init()
+             ui->dockPlot->hide();
+             ui->dockSchema->hide();
+             ui->dockEdit->hide();
++#ifdef HAVE_REMOTE
+             ui->dockRemote->hide();
+-        });
++#endif
++    });
+     QAction* atBottomLayoutAction = layoutMenu->addAction(tr("Dock Windows at Bottom"));
+     connect(atBottomLayoutAction, &QAction::triggered, this, [=]() {
+             moveDocksTo(Qt::BottomDockWidgetArea);
+@@ -424,8 +437,10 @@ void MainWindow::init()
+     connect(editDock, &EditDialog::requestUrlOrFileOpen, this, &MainWindow::openUrlOrFile);
+     connect(ui->dbTreeWidget->selectionModel(), &QItemSelectionModel::selectionChanged, this, &MainWindow::changeTreeSelection);
+     connect(ui->dockEdit, &QDockWidget::visibilityChanged, this, &MainWindow::toggleEditDock);
++#ifdef HAVE_REMOTE
+     connect(remoteDock, SIGNAL(openFile(QString)), this, SLOT(fileOpen(QString)));
+     connect(ui->actionDropSelectQueryCheck, &QAction::toggled, dbStructureModel, &DbStructureModel::setDropSelectQuery);
++#endif
+     connect(ui->actionDropQualifiedCheck, &QAction::toggled, dbStructureModel, &DbStructureModel::setDropQualifiedNames);
+     connect(ui->actionEnquoteNamesCheck, &QAction::toggled, dbStructureModel, &DbStructureModel::setDropEnquotedNames);
+     connect(&db, &DBBrowserDB::databaseInUseChanged, this, &MainWindow::updateDatabaseBusyStatus);
+@@ -496,7 +511,9 @@ void MainWindow::init()
+     ui->dockLog->setWindowTitle(ui->dockLog->windowTitle().remove('&'));
+     ui->dockPlot->setWindowTitle(ui->dockPlot->windowTitle().remove('&'));
+     ui->dockSchema->setWindowTitle(ui->dockSchema->windowTitle().remove('&'));
++#ifdef HAVE_REMOTE
+     ui->dockRemote->setWindowTitle(ui->dockRemote->windowTitle().remove('&'));
++#endif
+ }
+ 
+ bool MainWindow::fileOpen(const QString& fileName, bool openFromProject, bool readOnly)
+@@ -568,8 +585,10 @@ bool MainWindow::fileOpen(const QString& fileName, bool openFromProject, bool re
+ 
+                 refreshTableBrowsers();
+ 
++#ifdef HAVE_REMOTE
+                 // Update remote dock
+                 remoteDock->fileOpened(wFile);
++#endif
+ 
+                 retval = true;
+             } else {
+@@ -615,7 +634,9 @@ void MainWindow::fileNewInMemoryDatabase(bool open_create_dialog)
+     statusEncodingLabel->setText(db.getPragma("encoding"));
+     statusEncryptionLabel->setVisible(false);
+     statusReadOnlyLabel->setVisible(false);
++#ifdef HAVE_REMOTE
+     remoteDock->fileOpened(":memory:");
++#endif
+     refreshTableBrowsers();
+     if(ui->tabSqlAreas->count() == 0)
+         openSqlTab(true);
+@@ -758,9 +779,10 @@ bool MainWindow::fileClose()
+     for(int i=0; i < ui->tabSqlAreas->count(); i++)
+         qobject_cast<SqlExecutionArea*>(ui->tabSqlAreas->widget(i))->getEditor()->reloadKeywords();
+ 
++#ifdef HAVE_REMOTE
+     // Clear remote dock
+     remoteDock->fileOpened(QString());
+-
++#endif
+     return true;
+ }
+ 
+@@ -1927,7 +1949,9 @@ void MainWindow::activateFields(bool enable)
+     if(!enable)
+         ui->actionSqlResultsSave->setEnabled(false);
+ 
++#ifdef HAVE_REMOTE
+     remoteDock->enableButtons();
++#endif
+ 
+     for(const auto& d : allTableBrowserDocks())
+         d->tableBrowser()->setEnabled(enable);
+@@ -2411,11 +2435,13 @@ void MainWindow::reloadSettings()
+     // Hide or show the remote dock as needed
+     bool showRemoteActions = Settings::getValue("remote", "active").toBool();
+     ui->viewMenu->actions().at(4)->setVisible(showRemoteActions);
++#ifdef HAVE_REMOTE
+     if(!showRemoteActions)
+         ui->dockRemote->setHidden(true);
+ 
+     // Reload remote dock settings
+     remoteDock->reloadSettings();
++#endif
+ 
+     sqlb::setIdentifierQuoting(static_cast<sqlb::escapeQuoting>(Settings::getValue("editor", "identifier_quotes").toInt()));
+ 
+@@ -3823,7 +3849,9 @@ void MainWindow::moveDocksTo(Qt::DockWidgetArea area)
+     addDockWidget(area, ui->dockLog);
+     tabifyDockWidget(ui->dockLog, ui->dockPlot);
+     tabifyDockWidget(ui->dockLog, ui->dockSchema);
++#ifdef HAVE_REMOTE
+     tabifyDockWidget(ui->dockLog, ui->dockRemote);
++#endif
+ }
+ 
+ void MainWindow::clearRecentFiles()
+diff --git a/src/RemoteLocalFilesModel.cpp b/src/RemoteLocalFilesModel.cpp
+index 0c7a3420..cf8f75f7 100644
+--- a/src/RemoteLocalFilesModel.cpp
++++ b/src/RemoteLocalFilesModel.cpp
+@@ -13,8 +13,10 @@
+ using json = nlohmann::json;
+ 
+ RemoteLocalFilesModel::RemoteLocalFilesModel(QObject* parent, RemoteDatabase& remote) :
+-    QAbstractItemModel(parent),
+-    remoteDatabase(remote)
++    QAbstractItemModel(parent)
++#ifdef HAVE_REMOTE
++    , remoteDatabase(remote)
++#endif
+ {
+     QStringList header;
+     header << tr("Name") << tr("Branch") << tr("Last modified") << tr("Size") << tr("Commit") << tr("File");
+@@ -29,7 +31,9 @@ RemoteLocalFilesModel::~RemoteLocalFilesModel()
+ void RemoteLocalFilesModel::setIdentity(const QString& cert_filename)
+ {
+     current_cert_filename = cert_filename;
++#ifdef HAVE_REMOTE
+     current_user_name = RemoteNetwork::get().getInfoFromClientCert(cert_filename, RemoteNetwork::CertInfoUser);
++#endif
+     refresh();
+ }
+ 
+@@ -41,6 +45,7 @@ void RemoteLocalFilesModel::refresh()
+     while(rootItem->childCount())
+         delete rootItem->child(0);
+ 
++#ifdef HAVE_REMOTE
+     // Get list of locally checked out databases
+     auto files = remoteDatabase.localGetLocalFiles(current_cert_filename);
+ 
+@@ -81,6 +86,7 @@ void RemoteLocalFilesModel::refresh()
+         file_node->setText(ColumnCommit, QString::fromStdString(file.commit_id));
+         file_node->setText(ColumnFile, QString::fromStdString(file.file));
+     }
++#endif
+ 
+     // Refresh the view
+     endResetModel();
+@@ -166,6 +172,7 @@ int RemoteLocalFilesModel::columnCount(const QModelIndex& /*parent*/) const
+ 
+ bool RemoteLocalFilesModel::removeRows(int row, int count, const QModelIndex& parent)
+ {
++#ifdef HAVE_REMOTE
+     for(int i=0;i<count;i++)
+         remoteDatabase.localDeleteFile(index(row + i, ColumnFile, parent).data().toString());
+ 
+@@ -188,4 +195,7 @@ bool RemoteLocalFilesModel::removeRows(int row, int count, const QModelIndex& pa
+     }
+ 
+     return true;
++#else
++    return false;
++#endif
+ }
