@@ -30,8 +30,8 @@ if {[catch {registry::set_needs_vacuum}]} {
 	ui_msg "Called registry::set_needs_vacuum"
 }
 
-puts -nonewline "Closing registry and ${maybe}performing vacuum ..."
+puts "Closing registry and ${maybe}performing vacuum ..."
 flush stdout
 set t0 [clock clicks -millisec]
 mportshutdown
-puts " done ([expr {([clock clicks -millisec]-$t0)}] ms)"
+puts "All done ([expr {([clock clicks -millisec]-$t0)}] ms)"
