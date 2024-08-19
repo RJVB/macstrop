@@ -552,7 +552,7 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                     set ProviderDict [port_provides ${InstalledDupsList}]
                     set DUPS {}
                     dict for {g provider} ${ProviderDict} {
-                        if {${provider} ne ${portName}} {
+                        if {[string compare -nocase ${provider} ${portName}]} {
                             regsub -all {[ \r\t\n]+} ${g} "" gg
                             if {${g} ne ${gg}} {
                                 puts -nonewline "\"${g}\""
