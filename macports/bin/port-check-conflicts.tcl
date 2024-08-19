@@ -26,7 +26,7 @@ proc printUsage {} {
     puts "  -d    some debug output"
     puts "  -m    list files that will go missing (present in the active named port, not in the version-to-be-installed)"
     puts "  -n    list files that are \"newer\", i.e. have changed content, modification times or attributes (can be combined with -v)"
-    puts "  -N    like -n but do an `ls -l` of the compared files (the new file will show up as \".${macports::prefix}/XXX\")"
+    puts "  -N    like -n but do an `ls -l` of the compared files (the new file will show up as \".\${prefix}/XXX\")"
     puts "  -q    quiet mode"
     puts "  -t    currently ignored"
     puts "  -T    take datestamp of newer but unchanged headerfiles (under a /include/ directory)"
