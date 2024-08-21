@@ -36,6 +36,7 @@ set showVersion 0
 set _WD_port {}
 set portDir {}
 set portFile {}
+set bestGuessPortName {}
 
 array set ui_options        {}
 array set global_options    {}
@@ -84,7 +85,7 @@ proc url_to_portname {url} {
 
 proc port_workdir {portname} {
     # Operations on the port's directory and Portfile
-    global env boot_env portDir portFile
+    global env boot_env portDir portFile bestGuessPortName
 
     set status 0
 
@@ -112,8 +113,12 @@ proc port_workdir {portname} {
     # output the path to the port's work directory
     set workpath [macports::getportworkpath_from_portdir $portDir $portname]
     if {[file exists $workpath]} {
+        # $workpath will be of the form $prefix/path/to..$mainport/$subport/work
+        # where $subport is the official portName as defined in the portFile:
+        set bestGuessPortName [file tail [file dirname ${workpath}]]
         return $workpath
     } else {
+        set bestGuessPortName ${portname}
         return ""
     }
 }
@@ -163,16 +168,17 @@ for {set i 0} {${i} < ${argc}} {incr i} {
             set portFile ${portDir}/Portfile
         } elseif {${narg} ne "" && (![file exists ${narg}] || [file type ${narg}] ne "directory")} {
             # user provided a port name
-            set portName ${narg}
+            set pWD [port_workdir ${narg}]
+            set portName ${bestGuessPortName}
             set _WD_port ${portName}
             incr i
         } else {
             set portName ""
         }
     } elseif {${_WD_port} ne ${arg}} {
-        set portName ${arg}
+        set pWD [port_workdir ${arg}]
+        set portName ${bestGuessPortName}
         set _WD_port ${portName}
-        set pWD [port_workdir ${portName}]
     }
     if {${pWD} ne ""} {
         puts stdout "export portName=${portName}\nexport pWD=${pWD}\nexport _WD_port=${_WD_port}\nPORTDIR=${portDir}\npPFILE=${portFile}"
