@@ -126,8 +126,9 @@ proc macports::normalise { filename } {
 set os.platform [string tolower $tcl_platform(os)]
 
 if {[catch {mportinit ui_options global_options global_variations} result]} {
-    puts \$::errorInfo
-        fatal "Failed to initialise MacPorts, \$result"
+    puts stderr $::errorInfo
+    puts stderr "Failed to initialise MacPorts ($result)"
+    exit -1
 }
 
 if {$showVersion} {
