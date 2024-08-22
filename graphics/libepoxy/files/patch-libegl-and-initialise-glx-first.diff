@@ -1,0 +1,178 @@
+diff --git test/egl_without_glx.c.orig test/egl_without_glx.c
+index 195ef41..cf5c786 100644
+--- test/egl_without_glx.c.orig
++++ test/egl_without_glx.c
+@@ -31,6 +31,7 @@
+  */
+ 
+ #define _GNU_SOURCE
++#define _DARWIN_C_SOURCE
+ 
+ #include <stdio.h>
+ #include <string.h>
+@@ -83,7 +84,11 @@ static EGLenum extra_error = EGL_SUCCESS;
+ static EGLBoolean
+ override_eglBindAPI(EGLenum api)
+ {
++#ifdef __APPLE__
++    void *egl = dlopen("/opt/local/lib/libEGL.1.dylib", RTLD_LAZY | RTLD_LOCAL);
++#else
+     void *egl = dlopen("libEGL.so.1", RTLD_LAZY | RTLD_LOCAL);
++#endif
+     EGLBoolean (*real_eglBindAPI)(EGLenum api) = dlsym(egl, "eglBindAPI");
+ 
+     last_api = api;
+@@ -104,7 +109,11 @@ override_eglBindAPI(EGLenum api)
+ static EGLint
+ override_eglGetError(void)
+ {
++#ifdef __APPLE__
++    void *egl = dlopen("/opt/local/lib/libEGL.1.dylib", RTLD_LAZY | RTLD_LOCAL);
++#else
+     void *egl = dlopen("libEGL.so.1", RTLD_LAZY | RTLD_LOCAL);
++#endif
+     EGLint (*real_eglGetError)(void) = dlsym(egl, "eglGetError");
+ 
+     if (extra_error != EGL_SUCCESS) {
+diff --git src/orig.dispatch_common.c src/dispatch_common.c
+index 6b5384f..086a699 100644
+--- src/orig.dispatch_common.c
++++ src/dispatch_common.c
+@@ -176,8 +176,10 @@
+ #if defined(__APPLE__)
+ #define GLX_LIB "@PREFIX@/lib/libGL.1.dylib"
+ #define OPENGL_LIB "/System/Library/Frameworks/OpenGL.framework/Versions/Current/OpenGL"
+-#define GLES1_LIB "libGLESv1_CM.so"
+-#define GLES2_LIB "libGLESv2.so"
++#define EGL_LIB "@PREFIX@/lib/libEGL.1.dylib"
++#define GLES1_LIB "@PREFIX@/lib/libGLESv1_CM.1.dylib"
++#define GLES2_LIB "@PREFIX@/lib/libGLESv2.2.dylib"
++#include <X11/Xlib.h>
+ #elif defined(__ANDROID__)
+ #define GLX_LIB "libGLESv2.so"
+ #define EGL_LIB "libEGL.so"
+@@ -628,10 +630,91 @@ epoxy_conservative_has_gl_extension(const char *ext)
+     return epoxy_internal_has_gl_extension(ext, true);
+ }
+ 
++#if PLATFORM_HAS_EGL && defined(__APPLE__)
++static XVisualInfo *
++get_glx_visual(Display *dpy)
++{
++	XVisualInfo *visinfo;
++	int attrib[] = {
++		GLX_RGBA,
++		GLX_RED_SIZE, 1,
++		GLX_GREEN_SIZE, 1,
++		GLX_BLUE_SIZE, 1,
++		GLX_DOUBLEBUFFER,
++		None
++	};
++	int screen = DefaultScreen(dpy);
++
++	visinfo = glXChooseVisual(dpy, screen, attrib);
++	return visinfo;
++}
++
++static Window
++get_glx_window(void* libx11, Display *dpy, XVisualInfo *visinfo, bool map)
++{
++	XSetWindowAttributes window_attr;
++	unsigned long mask;
++	int screen = DefaultScreen(dpy);
++	Window root_win = RootWindow(dpy, screen);
++	Window win;
++    Window (*_xcreateWindow)(
++        Display*, Window, int, int, unsigned int, unsigned int, unsigned int, int, unsigned int,
++        Visual*, unsigned long, XSetWindowAttributes*);
++    Colormap (*_xcreateColormap)(Display*, Window, Visual*, int);
++
++
++	window_attr.background_pixel = 0;
++	window_attr.border_pixel = 0;
++    _xcreateColormap= do_dlsym(&libx11, "XCreateColormap", true);
++	window_attr.colormap = _xcreateColormap(dpy, root_win,
++					       visinfo->visual, AllocNone);
++	window_attr.event_mask = StructureNotifyMask | ExposureMask |
++		KeyPressMask;
++	mask = CWBackPixel | CWBorderPixel | CWColormap | CWEventMask;
++    _xcreateWindow= do_dlsym(&libx11, "XCreateWindow", true);
++	win = _xcreateWindow(dpy, root_win, 0, 0,
++			    10, 10, /* width, height */
++			    0, visinfo->depth, InputOutput,
++			    visinfo->visual, mask, &window_attr);
++
++	return win;
++}
++#endif
++
+ bool
+ epoxy_load_egl(bool exit_if_fails, bool load)
+ {
+ #if PLATFORM_HAS_EGL
++#ifdef __APPLE__
++    // this is very experimental and hacky. EGL can be provided through a tweaked Mesa build.
++    // A priori that means it only works for X11 applications, and means it basically
++    // needs GLX to be set up first so that we don't call into libGL.dylib from the OpenGL
++    // native framework but into Mesa's libGL.dylib .
++    if (!api.glx_handle)
++        get_dlopen_handle(&api.glx_handle, GLX_LIB, exit_if_fails, load);
++    static void *libx11 = NULL;
++    static void* (*_xopenDisplay)(const char*) = NULL;
++    if (!libx11) {
++        get_dlopen_handle(&libx11, "libX11.dylib", exit_if_fails, true);
++        if (libx11) {
++            _xopenDisplay= do_dlsym(&libx11, "XOpenDisplay", exit_if_fails);
++        }
++    }
++    Display *dpy = _xopenDisplay(NULL);
++    if (dpy) {
++        GLXContext ctx;
++        XVisualInfo *visinfo = get_glx_visual(dpy);
++        ctx = glXCreateContext(dpy, visinfo, False, True);
++        if (ctx != None) {
++            Window win = get_glx_window(libx11, dpy, visinfo, false);
++            glXMakeCurrent(dpy, win, ctx);
++        } else {
++            return false;
++        }
++    } else {
++        return false;
++    }
++#endif
+     return get_dlopen_handle(&api.egl_handle, EGL_LIB, exit_if_fails, load);
+ #else
+     return false;
+diff --git test/dlwrap.c.orig test/dlwrap.c
+index c0c24c2..461d085 100644
+--- test/dlwrap.c.orig
++++ test/dlwrap.c
+@@ -64,10 +64,16 @@ static struct libwrap {
+     const char *symbol_prefix;
+     void *handle;
+ } wrapped_libs[] = {
++#ifdef __APPLE__
++    { "@PREFIX@/lib/libGL.dylib", "GL", NULL },
++    { "@PREFIX@/lib/libEGL.dylib", "EGL", NULL },
++    { "@PREFIX@/lib/libGLESv2.dylib", "GLES2", NULL },
++#else
+     { "libGL.so", "GL", NULL },
+     { "libEGL.so", "EGL", NULL },
+     { "libGLESv2.so", "GLES2", NULL },
+     { "libOpenGL.so", "GL", NULL},
++#endif
+ };
+ 
+ /* Match 'filename' against an internal list of libraries for which
+@@ -320,6 +326,11 @@ override_EGL_eglGetProcAddress(const char *name)
+             return symbol;
+     }
+ 
++#ifdef __APPLE__
++    return DEFER_TO_GL("@PREFIX@/lib/libEGL.1.dylib", override_EGL_eglGetProcAddress,
++                       "eglGetProcAddress", (name));
++#else
+     return DEFER_TO_GL("libEGL.so.1", override_EGL_eglGetProcAddress,
+                        "eglGetProcAddress", (name));
++#endif
+ }

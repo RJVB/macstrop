@@ -1,0 +1,72 @@
+diff --git src/take1.dispatch_common.c src/dispatch_common.c
+index efab014..b95ae83 100644
+--- src/take1.dispatch_common.c
++++ src/dispatch_common.c
+@@ -179,6 +179,7 @@
+ #define EGL_LIB "@PREFIX@/lib/libEGL.1.dylib"
+ #define GLES1_LIB "@PREFIX@/lib/libGLESv1_CM.1.dylib"
+ #define GLES2_LIB "@PREFIX@/lib/libGLESv2.2.dylib"
++#include <X11/Xlib.h>
+ #elif defined(__ANDROID__)
+ #define GLX_LIB "libGLESv2.so"
+ #define EGL_LIB "libEGL.so"
+@@ -629,10 +630,59 @@ epoxy_conservative_has_gl_extension(const char *ext)
+     return epoxy_internal_has_gl_extension(ext, true);
+ }
+ 
++#if PLATFORM_HAS_EGL && defined(__APPLE__)
++static XVisualInfo *
++get_glx_visual(Display *dpy)
++{
++	XVisualInfo *visinfo;
++	int attrib[] = {
++		GLX_RGBA,
++		GLX_RED_SIZE, 1,
++		GLX_GREEN_SIZE, 1,
++		GLX_BLUE_SIZE, 1,
++		GLX_DOUBLEBUFFER,
++		None
++	};
++	int screen = DefaultScreen(dpy);
++
++	visinfo = glXChooseVisual(dpy, screen, attrib);
++	return visinfo;
++}
++#endif
++
+ bool
+ epoxy_load_egl(bool exit_if_fails, bool load)
+ {
+ #if PLATFORM_HAS_EGL
++#ifdef __APPLE__
++    // this is very experimental and hacky. EGL can be provided through a tweaked Mesa build.
++    // A priori that means it only works for X11 applications, and means it basically
++    // needs GLX to be set up first so that we don't call into libGL.dylib from the OpenGL
++    // native framework but into Mesa's libGL.dylib .
++    if (!api.glx_handle)
++        get_dlopen_handle(&api.glx_handle, GLX_LIB, exit_if_fails, load);
++    static void *libx11 = NULL;
++    static void* (*_xopenDisplay)(const char*) = NULL;
++    if (!libx11) {
++        get_dlopen_handle(&libx11, "libX11.dylib", exit_if_fails, true);
++        if (libx11) {
++            _xopenDisplay= do_dlsym(&libx11, "XOpenDisplay", exit_if_fails);
++        }
++    }
++    Display *dpy = _xopenDisplay(NULL);
++    if (dpy) {
++        GLXContext ctx;
++        XVisualInfo *visinfo = get_glx_visual(dpy);
++        ctx = glXCreateContext(dpy, visinfo, False, True);
++        if (ctx != None) {
++            glXMakeCurrent(dpy, RootWindow(dpy, DefaultScreen(dpy)), ctx);
++        } else {
++            return false;
++        }
++    } else {
++        return false;
++    }
++#endif
+     return get_dlopen_handle(&api.egl_handle, EGL_LIB, exit_if_fails, load);
+ #else
+     return false;
