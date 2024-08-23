@@ -16,8 +16,12 @@ array set portsSeen {}
 
 package require Thread
 package require Tclx
+
+set runner [thread::create -preserved [list thread::wait]]
+thread::send $runner [list after 250 {puts stderr "Loading MacPorts..."}] timerID
 package require macports
 package require Pextlib 1.0
+thread::send -async $runner [list after cancel $timerID]
 
 proc printUsage {} {
     puts "Usage: $::argv0 \[-vV\] port-name\[s\]"
@@ -131,7 +135,6 @@ proc macports::normalise { filename } {
 
 set os.platform [string tolower $tcl_platform(os)]
 
-set runner [thread::create -preserved [list thread::wait]]
 thread::send $runner [list after 250 {puts stderr "Initialising MacPorts..."}] timerID
 if {[catch {mportinit ui_options global_options global_variations} result]} {
     puts stderr $::errorInfo

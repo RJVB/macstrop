@@ -15,9 +15,13 @@ array set portsSeen {}
 # Begin
 
 package require Thread
+
+set runner [thread::create -preserved [list thread::wait]]
+thread::send $runner [list after 250 {puts stderr "Loading MacPorts..."}] timerID
 package require Tclx
 package require macports
 package require Pextlib 1.0
+thread::send -async $runner [list after cancel $timerID]
 
 package require fileutil::traverse
 
@@ -384,7 +388,6 @@ proc du-real {files} {
     }
 }
 
-set runner [thread::create -preserved [list thread::wait]]
 thread::send $runner [list after 250 {puts stderr "Initialising MacPorts..."}] timerID
 
 if {[catch {mportinit ui_options global_options global_variations} result]} {

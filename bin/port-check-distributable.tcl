@@ -333,7 +333,15 @@ foreach variantSetting $::argv {
     set variantInfo($variantName) $flag
 }
 
+package require Threads
+set runner [thread::create -preserved [list thread::wait]]
+thread::send $runner [list after 250 {puts stderr "Loading MacPorts..."}] timerID
 package require macports
+thread::send -async $runner [list after cancel $timerID]
+thread::send $runner [list after 250 {puts stderr "Initialising MacPorts..."}] timerID
 mportinit
+thread::send -async $runner [list after cancel $timerID]
 
-exit [check_licenses $portName [array get variantInfo] $verbose]
+check_licenses $portName [array get variantInfo] $verbose
+
+mportshutdown

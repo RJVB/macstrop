@@ -15,9 +15,13 @@ if {![catch {package require term::ansi::send}]} {
 
 
 package require Thread
+
+set runner [thread::create -preserved [list thread::wait]]
+thread::send $runner [list after 250 {puts stderr "Loading MacPorts..."}] timerID
 package require Tclx
 package require macports 1.0
 package require Pextlib 1.0
+thread::send -async $runner [list after cancel $timerID]
 
 array set ui_options        {}
 array set global_options    {}
@@ -84,7 +88,6 @@ set args $argv
     set files [lrange $args 1 end]
 
     ### init
-    set runner [thread::create -preserved [list thread::wait]]
     thread::send $runner [list after 250 {puts stderr "Initialising MacPorts..."}] timerID
     mportinit ui_options global_options global_variations
     thread::send -async $runner [list after cancel $timerID]
