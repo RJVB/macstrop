@@ -77,6 +77,12 @@ proc configure.save_configure_cmd {{save_log_too ""}} {
             if {${configure.compiler} ne ""} {
                 puts -nonewline ${fd} " configure.compiler=\"${configure.compiler}\""
             }
+            if {${configure.objc} ne "${configure.cc}"} {
+                puts -nonewline ${fd} " configure.objc=\"${configure.objc}\""
+            }
+            if {${configure.objcxx} ne "${configure.cxx}"} {
+                puts -nonewline ${fd} " configure.objcxx=\"${configure.objcxx}\""
+            }
             if {${configureccache} ne ""} {
                 puts -nonewline ${fd} " configureccache=\"${configureccache}\""
             }
