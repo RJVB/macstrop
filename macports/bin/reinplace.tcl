@@ -14,6 +14,7 @@ if {![catch {package require term::ansi::send}]} {
 }
 
 
+package require Thread
 package require Tclx
 package require macports 1.0
 package require Pextlib 1.0
@@ -83,7 +84,10 @@ set args $argv
     set files [lrange $args 1 end]
 
     ### init
+    set runner [thread::create -preserved [list thread::wait]]
+    thread::send $runner [list after 250 {puts stderr "Initialising MacPorts..."}] timerID
     mportinit ui_options global_options global_variations
+    thread::send -async $runner [list after cancel $timerID]
     #set os_platform [string tolower $tcl_platform(os)]
     set os_platform ${macports::os_platform}
     set os_subplatform {}
@@ -185,6 +189,7 @@ set args $argv
 
         file delete "$tmpfile"
     }
+    thread::send $runner [list after 250 {puts stderr "Closing MacPorts..."}] timerID
     mportshutdown
     return
 # }
