@@ -14,6 +14,7 @@ array set portsSeen {}
 
 # Begin
 
+package require Thread
 package require Tclx
 package require macports
 package require Pextlib 1.0
@@ -383,12 +384,17 @@ proc du-real {files} {
     }
 }
 
+set runner [thread::create -preserved [list thread::wait]]
+thread::send $runner [list after 250 {puts stderr "Initialising MacPorts..."}] timerID
+
 if {[catch {mportinit ui_options global_options global_variations} result]} {
     puts stderr $::errorInfo
     puts stderr "Failed to initialise MacPorts ($result)"
     exit -1
 }
+thread::send -async $runner [list after cancel $timerID]
 
+thread::send $runner [list after 250 {puts stderr "Closing MacPorts..."}] timerID
 if {$showVersion} {
     puts "Version ${SCRIPTVERSION}"
     puts "MacPorts version [macports::version]"
@@ -402,6 +408,7 @@ if {[llength $::argv] == 0} {
     mportshutdown
     exit 2
 }
+thread::send -async $runner [list after cancel $timerID]
 
 set argc [llength $::argv]
 
@@ -595,4 +602,5 @@ for {set i 0} {${i} < ${argc}} {incr i} {
     }
 }
 
+thread::send $runner [list after 250 {puts stderr "Closing MacPorts..."}] timerID
 mportshutdown
