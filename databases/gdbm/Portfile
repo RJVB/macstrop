@@ -1,0 +1,136 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
+PortSystem          1.0
+PortGroup           clang_dependency 1.0
+PortGroup           LTO 1.0
+PortGroup           save_configure_cmd 1.0
+PortGroup           preserve_runtime_libraries 1.0
+PortGroup           locale_select 1.0
+
+name                gdbm
+version             1.24
+
+categories          databases
+license             GPL-3+
+maintainers         nomaintainer
+
+description         The GNU database manager
+long_description    The GNU `dbm' is a library of database functions \
+                    that use extendible hashing and works similar to \
+                    the standard UNIX `dbm' functions. These routines \
+                    are provided to a programmer needing to create and \
+                    manipulate a hashed database.
+homepage            https://www.gnu.org/software/gdbm/gdbm.html
+
+depends_build       port:gettext
+
+depends_lib         port:gettext-runtime \
+                    port:readline
+
+master_sites        gnu
+
+checksums           rmd160  7e0935d3c5af3ac55fac5a118233bc50e8876a3a \
+                    sha256  695e9827fdf763513f133910bc7e6cfdb9187943a4fec943e57449723d2b8dbf
+#                     size    1195931
+
+if {${os.platform} eq "darwin" && ${os.major} < 11 && ${cxx_stdlib} eq "libc++"} {
+    # This port is in the dependency chain for clang 3.7 and later
+    clang_dependency.extra_versions 3.7
+}
+
+# https://trac.macports.org/ticket/63393
+patchfiles-append   patch-gdbm.h-tiger-stdio-no-offt.diff
+
+#configure.ccache    no
+
+configure.args      --disable-silent-rules \
+                    --disable-libgdbm-compat \
+                    ac_cv_prog_AWK=awk
+
+configure.save_configure_cmd "install log"
+
+post-destroot {
+    if {[variant_isset compat]} {
+        preserve_libraries ${prefix}/lib "libgdbm.*.dylib libgdbm.so.* libgdbm_compat.*.dylib libgdbm_compat.so.*"
+    } else {
+        preserve_libraries ${prefix}/lib "libgdbm.*.dylib libgdbm.so.*"
+    }
+}
+
+post-install {
+    # gdbm @1.8.3_1 installed files outside the destroot; remove them if found
+    foreach file {share/info/gdbm.info share/man/man3/gdbm.3} {
+        set filepath ${prefix}/${file}
+        if {[file exists ${filepath}] && [registry_file_registered ${filepath}] == "0"} {
+            if {[catch {delete ${filepath}}]} {
+                ui_warn "Cannot delete ${filepath}; please remove it manually"
+            }
+        }
+    }
+}
+
+test.run        yes
+test.target     check
+
+variant compat description {Install dbm/ndbm compatibility files} {}
+
+####################
+PortGroup devport 1.0
+
+create_devport port:${name}
+
+if {${subport} eq "${name}-dev"} {
+    return
+}
+####################
+
+if {[variant_isset compat] && [is_mainport]} {
+    ## libgdbm_compat will be linked against the *installed* libgdbm.$SHLIBEXT, if
+    ## that linker interface is available. That is NOT what we want, so
+    ## we need to make certain that interface file isn't present to ensure
+    ## that libgdbm_compat will be linked against the just built libgdbm .
+    ## 2 cases to be handled:
+    ## 1: libgdbm is not installed or already active at the current version  without +compat
+    ##    We can do the +compat build without worries
+    ## 2: an older version is active.
+    ##    Under normal MacPorts, we have to register a self-build_conflict and tell the user
+    ##    to do a bootstrap build without +compat. Under MacStrop, that's only required in
+    ##    case of +preserve_runtime_libraries and if no gdbm-dev port is installed.
+    if {![catch {set installed [lindex [registry_active ${name}] 0]}]} {
+        set installed_version [lindex $installed 1]
+        ui_debug "Installed gdbm version: ${installed_version}"
+    } else {
+        set installed_version ${version}
+        ui_debug "port:gdbm isn't yet installed, +compat can be built safely"
+    }
+    if {[vercmp ${installed_version} ${version}] < 0} {
+        PortGroup conflicts_build 1.0
+        if {[catch {set installed [lindex [registry_active ${devport_name}] 0]}]} {
+            ui_info "Installed gdbm@${installed_version} and ${devport_name} is not installed"
+            if {[variant_isset preserve_runtime_libraries]} {
+                set msg "port:${subport} cannot be built +preserve_runtime_libraries+compat; install without the compat variant first to bootstrap!"
+                long_description-append "\n${msg}"
+                pre-fetch {
+                    ui_error ${msg}
+                    return -code error "incompatible variant combination"
+                }
+            } else {
+                ui_info "port:${name}+compat build_conflicts with the currently installed version"
+                conflicts_build ${name}
+            }
+        } else {
+            ui_info "port:${name}+compat build_conflicts with the devport of the currently installed version"
+            conflicts_build ${devport_name}
+        }
+    }
+    configure.args-replace \
+                        --disable-libgdbm-compat \
+                        --enable-libgdbm-compat
+}
+
+post-destroot {
+    register_devport_standard_content
+    create_devport_content_archive
+}
+
+livecheck.regex     ${name}-(\\d+(?:\\.\\d+)*)\\.tar
