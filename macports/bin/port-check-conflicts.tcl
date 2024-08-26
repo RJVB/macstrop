@@ -479,9 +479,9 @@ for {set i 0} {${i} < ${argc}} {incr i} {
             set missingFiles {}
             set newFiles {}
             set oldFiles {}
-            set msg "Building file list for ${portName}"
-            ui_debug ${msg}
-            thread::send $runner [list after 500 {puts stderr ${msg}}] timerID
+            set progressmsg "Building file list for ${portName}"
+            ui_debug ${progressmsg}
+            thread::send $runner [list after 750 [list puts stderr ${progressmsg}]] timerID
             Trawler foreach file {
                 if {${missing}} {
                     set FILES [lappend FILES [string map [list "./" "/"] "${file}"]]
