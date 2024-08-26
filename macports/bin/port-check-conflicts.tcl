@@ -515,7 +515,8 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                 foreach f $FILES {
                     set g [string range ${f} 1 end]
                     if {[file exists "${g}"]} {
-                        if {[file type "${f}"] eq "file" && [file type "${g}"] eq "file"} {
+                        if {([file type "${f}"] eq "file" && [file type "${g}"] eq "file") ||
+                            ([file type "${f}"] eq "link" && [file type "${g}"] eq "link")} {
                             if {${newer}} {
                                 # easiest but most expensive check: compare contents.
                                 if {![fileEqual ${f} ${g}]} {
@@ -547,9 +548,11 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                                         puts ""
                                     }
                                 }
-
                             } elseif {!${inverse}} {
                                 # file clash, regardless of content or attributes
+                                if {[file type ${f}] ne [file type ${g}]} {
+                                    puts "New [file type ${f}] ${g} exists as a [file type ${f}]"
+                                }
                                 set InstalledDupsList [lappend InstalledDupsList "${g}"]
                                 set DestrootDupsList [lappend DestrootDupsList "${f}"]
                             }
