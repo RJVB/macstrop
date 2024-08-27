@@ -105,6 +105,10 @@ if {![info exists LTO.allow_ThinLTO]} {
 if {![info exists LTO.allow_UseLLD]} {
     set LTO.allow_UseLLD yes
 }
+# allow to force -fuse_ld=ld with clang
+if {![info exists LTO.maybe_ForceLD]} {
+    set LTO.maybe_ForceLD yes
+}
 
 ## NB: clang also supports -ffat-lto-objects from v17 and up
 if {![info exists LTO.fat_LTO_Objects]} {
@@ -455,7 +459,7 @@ if {[tbool LTO.allow_UseLLD] && ![variant_exists use_lld]} {
     }
 }
 if {![variant_exists use_lld] || ![variant_isset use_lld]} {
-    if {[string match "macports-clang*" ${configure.compiler}]} {
+    if {[tbool LTO.LTO.maybe_ForceLD] && [string match "macports-clang*" ${configure.compiler}]} {
         if {${LTO::mp_compiler_version} >= 5} {
             # simple, unconditional "don't use lld" for clang compilers built to use lld by default
             LTO.configure.flags_append {ldflags} "-fuse-ld=ld"
