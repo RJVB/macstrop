@@ -38,6 +38,9 @@
 variant langselect description "prune translations from ${prefix}/share/locale, leaving only those\
                                 specified in ${prefix}/etc/macports/locales.tcl" {}
 
+# the prefix:
+options langselect_prefix
+default langselect_prefix       {${prefix}}
 # optional directory (list) holding Qt translations (.qm) (fully specified)
 # the _dir and _basename options can both be lists of identical length for projects
 # that install translation files for multiple executables in as many individual dirs.
@@ -92,9 +95,9 @@ if {[variant_isset langselect]} {
         ui_debug "## starting langselect scan/pruning"
         if {[file exists ${langselect_keep_locales_file}] &&
             (${langselect::has_nonstandard_locations} || \
-		  [file exists ${destroot}${prefix}/share/locale] || \
+		  [file exists ${destroot}${langselect_prefix}/share/locale] || \
             [file exists [join ${langselect_qm_dir}]] || \
-            [file exists ${destroot}${prefix}/share/man])
+            [file exists ${destroot}${langselect_prefix}/share/man])
         } {
             ui_debug "Reading local locale prefs from \"${langselect_keep_locales_file}\""
             if {[catch {source "${langselect_keep_locales_file}"} err]} {
@@ -104,7 +107,7 @@ if {[variant_isset langselect]} {
         }
         if {[info exists keep_languages]} {
             langselect_keep_languages ${keep_languages}
-            foreach d [list ${destroot}${prefix}/share/locale ${destroot}${prefix}/share/doc/HTML ${destroot}${prefix}/share/man] {
+            foreach d [list ${destroot}${langselect_prefix}/share/locale ${destroot}${langselect_prefix}/share/doc/HTML ${destroot}${langselect_prefix}/share/man] {
                 foreach l [glob -nocomplain ${d}/*] {
                     set lang [file tail ${l}]
                     if {[lsearch -exact ${keep_languages} ${lang}] eq "-1" && \
