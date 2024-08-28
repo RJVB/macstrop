@@ -39,8 +39,20 @@ use_xz              yes
 master_sites        gnome:sources/${proj_name}/${branch}/
 
 checksums           rmd160  4b48beab01bc1337c5e5120a68c390ab95e9af16 \
-                    sha256  ce11decf018b25bdd8505544a4f87242854ec88be054d9ade5f3a20444dd8ee7 \
-                    size    12398104
+                    sha256  ce11decf018b25bdd8505544a4f87242854ec88be054d9ade5f3a20444dd8ee7
+#                    size    12398104
+
+set gtkPrefix       ${prefix}
+
+subport "${name}-quartz" {
+    description-append \
+                    - Concurrent Quartz build.
+    long_description-append \
+                    Concurrent Quartz build.
+    set gtkPrefix   ${prefix}/libexec/GTQuartz
+    langselect_prefix \
+                    ${gtkPrefix}
+}
 
 minimum_xcodeversions {9 3.1}
 
@@ -98,7 +110,17 @@ patchfiles-append   patch-allow-ignoring-X11errors.diff
 # if building +x11 blacklist comilers that do not support C11
 # (redefinition of typedef ‘GdkX11Monitor’ at gdkscreen-x11.h:33)
 
-if {[variant_isset quartz]} {
+proc variant_isset:quartz {} {
+    global subport name
+    return [expr {[variant_isset quartz] || ${subport} eq "${name}-quartz"}]
+}
+
+proc variant_isset:x11 {} {
+    global subport
+    return [expr {[variant_exists x11] && [variant_isset x11]}]
+}
+
+if {[variant_isset:quartz]} {
     compiler.blacklist  *gcc-3.* *gcc-4.* {clang < 425}
 } else {
     compiler.blacklist  *gcc-3.* *gcc-4.* {clang < 300}
@@ -116,7 +138,7 @@ if {${universal_possible} && [variant_isset universal]} {
 }
 
 pre-configure {
-    if {![variant_isset quartz] && ![variant_isset x11]} {
+    if {![variant_isset:quartz] && ![variant_isset:x11] && ${subport} eq "${name}"} {
         error "Either +x11 or +quartz is required"
     }
 }
@@ -140,33 +162,33 @@ configure.args-append \
                     -Dwayland_backend=false
 
 post-destroot {
-    set docdir ${prefix}/share/doc/${name}
+    set docdir ${gtkPrefix}/share/doc/${name}
     xinstall -d ${destroot}${docdir}
     xinstall -m 644 -W ${worksrcpath} CONTRIBUTING.md COPYING NEWS README.md \
         ${destroot}${docdir}
 
     # avoid conflict with the gtk-update-icon-cache installed by gtk2
-    move ${destroot}${prefix}/bin/gtk-update-icon-cache \
-         ${destroot}${prefix}/bin/gtk-update-icon-cache-3.0
+    move ${destroot}${gtkPrefix}/bin/gtk-update-icon-cache \
+         ${destroot}${gtkPrefix}/bin/gtk-update-icon-cache-3.0
     
     ui_debug "Creating gtk.immodules..."
-    system "DYLD_LIBRARY_PATH=${destroot}${prefix}/lib \
-        ${destroot}${prefix}/bin/gtk-query-immodules-3.0 \
-        ${destroot}${prefix}/lib/gtk-3.0/3.0.0/immodules/*.so \
-        >${destroot}${prefix}/etc/gtk-3.0/gtk.immodules"
-    reinplace "s|${destroot}||" ${destroot}${prefix}/etc/gtk-3.0/gtk.immodules
+    system "DYLD_LIBRARY_PATH=${destroot}${gtkPrefix}/lib \
+        ${destroot}${gtkPrefix}/bin/gtk-query-immodules-3.0 \
+        ${destroot}${gtkPrefix}/lib/gtk-3.0/3.0.0/immodules/*.so \
+        >${destroot}${gtkPrefix}/etc/gtk-3.0/gtk.immodules"
+    reinplace "s|${destroot}||" ${destroot}${gtkPrefix}/etc/gtk-3.0/gtk.immodules
 }
 
 platform darwin {
     if {${os.major} <= 8} {
-        if {[variant_isset quartz] || ![variant_isset x11]} {
+        if {[variant_isset:quartz] || ![variant_isset:x11]} {
             configure.ldflags-append  -framework Cocoa -framework Carbon
         }
     }
 
     if {${os.major} <= 10} {
         # OS X 10.6 and earlier do not supply all cursors specified by gtk3 +quartz (#49391)
-        if {[variant_isset quartz]} {
+        if {[variant_isset:quartz]} {
             patchfiles-append   patch-gdk_quartz_gdkcursor-quartz-10_6_compat.diff
         }
     }
@@ -281,7 +303,8 @@ variant demos description {Build demos and examples} {
                             -Dexamples=true
 }
 
-variant quartz conflicts x11 {
+if {${subport} eq "${name}"} {
+  variant quartz conflicts x11 {
     require_active_variants path:lib/pkgconfig/cairo.pc:cairo quartz
     require_active_variants path:lib/pkgconfig/pango.pc:pango quartz
 
@@ -289,9 +312,9 @@ variant quartz conflicts x11 {
                             -Dx11_backend=false \
                             -Dquartz_backend=true \
                             -Dxinerama=no
-}
+  }
 
-variant x11 conflicts quartz {
+  variant x11 conflicts quartz {
     require_active_variants path:lib/pkgconfig/cairo.pc:cairo x11
     require_active_variants path:lib/pkgconfig/pango.pc:pango x11
 
@@ -311,17 +334,37 @@ variant x11 conflicts quartz {
                             -Dx11_backend=true \
                             -Dquartz_backend=false \
                             -Dxinerama=yes
-}
+  }
 
-if {![variant_isset quartz]} {
+  if {![variant_isset:quartz]} {
     default_variants +x11
+  }
+} else {
+    require_active_variants path:lib/pkgconfig/cairo.pc:cairo quartz
+    require_active_variants path:lib/pkgconfig/pango.pc:pango quartz
+
+    if {[info exists env(PKG_CONFIG_PATH)]} {
+        configure.env-append \
+                            "PKG_CONFIG_PATH=$env(PKG_CONFIG_PATH):${gtkPrefix}/lib/pkgconfig"
+    } else {
+        configure.env-append \
+                            "PKG_CONFIG_PATH=${gtkPrefix}/lib/pkgconfig"
+    }
+
+    configure.pre_args-replace \
+                            --prefix=${prefix} \
+                            --prefix=${gtkPrefix}
+    configure.args-append \
+                            -Dx11_backend=false \
+                            -Dquartz_backend=true \
+                            -Dxinerama=no
 }
 
 post-activate {
     ui_debug "Updating gdk-pixbuf.loaders..."
-    system "${prefix}/bin/gdk-pixbuf-query-loaders >${prefix}/etc/gtk-3.0/gdk-pixbuf.loaders"
+    system "${prefix}/bin/gdk-pixbuf-query-loaders >${gtkPrefix}/etc/gtk-3.0/gdk-pixbuf.loaders"
     ui_debug "Updating GLib schemas..."
-    system "${prefix}/bin/glib-compile-schemas ${prefix}/share/glib-2.0/schemas"
+    system "${prefix}/bin/glib-compile-schemas ${gtkPrefix}/share/glib-2.0/schemas"
 }
 
 livecheck.type      gnome
