@@ -105,6 +105,9 @@ patchfiles-append   patch-relax-atspi-req.diff
 # RJVB : allow user to opt to continue after X11 errors
 patchfiles-append   patch-allow-ignoring-X11errors.diff
 
+# RJVB : allow X11 + quartz backend, preferring X11
+patchfiles-append   patch-gtk3-prefer-x11-over-quartz-and-allow-both.diff
+
 # gtk3 +quartz uses instancetype which is not available
 # before approximately Xcode 4.6 (#49391)
 # if building +x11 blacklist comilers that do not support C11
@@ -138,12 +141,14 @@ if {${universal_possible} && [variant_isset universal]} {
 }
 
 pre-configure {
-    if {![variant_isset:quartz] && ![variant_isset:x11] && ${subport} eq "${name}"} {
-        error "Either +x11 or +quartz is required"
+    if {${subport} eq "${name}"} {
+        if {![variant_isset:quartz] && ![variant_isset:x11]} {
+            error "Either +x11 or +quartz is required"
+        } elseif {[variant_isset:quartz] && [variant_isset:x11]} {
+            ui_warn "The X11 and Quartz backends will BOTH be built; this is experimental!"
+        }
     }
 }
-
-meson.save_configure_cmd "install log"
 
 configure.cppflags-append \
                     -DX_LOCALE
@@ -304,17 +309,18 @@ variant demos description {Build demos and examples} {
 }
 
 if {${subport} eq "${name}"} {
-  variant quartz conflicts x11 {
+  variant quartz description {build the Quartz/native GDK backend} {
     require_active_variants path:lib/pkgconfig/cairo.pc:cairo quartz
     require_active_variants path:lib/pkgconfig/pango.pc:pango quartz
 
+#     configure.args-append \
+#                             -Dx11_backend=false \
+#                             -Dxinerama=no
     configure.args-append \
-                            -Dx11_backend=false \
-                            -Dquartz_backend=true \
-                            -Dxinerama=no
+                            -Dquartz_backend=true
   }
 
-  variant x11 conflicts quartz {
+  variant x11 description {build the X11 GDK backend} {
     require_active_variants path:lib/pkgconfig/cairo.pc:cairo x11
     require_active_variants path:lib/pkgconfig/pango.pc:pango x11
 
@@ -330,14 +336,17 @@ if {${subport} eq "${name}"} {
                             port:xorg-libXcomposite \
                             port:xorg-libXfixes
 
+#     configure.args-append \
+#                             -Dquartz_backend=false
     configure.args-append \
                             -Dx11_backend=true \
-                            -Dquartz_backend=false \
                             -Dxinerama=yes
   }
 
-  if {![variant_isset:quartz]} {
-    default_variants +x11
+  # if neither is set, set both. This way the old behaviour of selection only a
+  # single backend (X11 or Quartz) is preserved.
+  if {![variant_isset:quartz] && ![variant_isset:x11]} {
+    default_variants +x11 +quartz
   }
 } else {
     require_active_variants path:lib/pkgconfig/cairo.pc:cairo quartz
@@ -359,6 +368,10 @@ if {${subport} eq "${name}"} {
                             -Dquartz_backend=true \
                             -Dxinerama=no
 }
+
+meson.save_configure_cmd "install log"
+
+build.pre_args-prepend -k 0
 
 post-activate {
     ui_debug "Updating gdk-pixbuf.loaders..."
