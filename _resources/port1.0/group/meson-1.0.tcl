@@ -176,7 +176,7 @@ proc meson.save_configure_cmd {{save_log_too ""}} {
         }
         if {[meson::logfile] eq "" && ![info exists no_configure_redirection]} {
             pre-configure {
-                configure.pre_args-prepend "-c '${configure.cmd} "
+                configure.pre_args-prepend "-o pipefail -c '${configure.cmd} "
                 configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure.log'"
                 configure.cmd "bash"
                 ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"

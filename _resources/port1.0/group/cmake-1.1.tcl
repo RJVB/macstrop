@@ -537,7 +537,7 @@ proc cmake.save_configure_cmd {{save_log_too ""}} {
 
     if {${save_log_too} ne ""} {
         pre-configure {
-            configure.pre_args-prepend "-c '${configure.cmd} "
+            configure.pre_args-prepend "-o pipefail -c '${configure.cmd} "
             if {[info exists configure.build_arch]} {
                 configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure-${configure.build_arch}.log'"
             } else {

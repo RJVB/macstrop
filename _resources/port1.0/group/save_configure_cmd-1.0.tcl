@@ -29,7 +29,7 @@ proc configure.save_configure_cmd {{save_log_too ""}} {
     if {${save_log_too} ne ""} {
         pre-configure {
             if {${configure::redirect_configure_output} || [configure::logfile] eq ""} {
-                configure.pre_args-prepend "-c '${configure.cmd} "
+                configure.pre_args-prepend "-o pipefail -c '${configure.cmd} "
                 configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure.log'"
                 configure.cmd "bash"
                 ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
