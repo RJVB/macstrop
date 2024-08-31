@@ -405,6 +405,7 @@ if {[variant_isset cpucompat]} {
 }
 pre-configure {
     if {[variant_isset cputuned] || [variant_isset cpucompat]} {
+        ui_debug "LTO/pre-configure: Appending CPU flags to compiler/linker flags: \"${LTO.cpuflags}\""
         LTO.configure.flags_append  {cflags \
                                     cxxflags \
                                     objcflags \
@@ -417,15 +418,26 @@ pre-configure {
 if {[info exists LTO_needs_pre_build]} {
     pre-build {
         if {[variant_isset cputuned] || [variant_isset cpucompat]} {
-		  ui_debug "LTO: Appending CPU flags to compiler/linker flags: \"${LTO.cpuflags}\""
-            LTO.configure.flags_append \
+            # use [string match] on configure.cflags to see if someone already injected the cpuflags,
+            # assuming it/they did it to all. The most likely candidate is the pre-configure block
+            # above, which ALSO GETS EXECUTED if `use_configure == off`! Of course that will only
+            # have happened if the configure and build stages are executed with a single `port` call.
+            if {![string match *${LTO.cpuflags}* ${configure.cflags}]} {
+                ui_debug "LTO/pre-build: Appending CPU flags to compiler/linker flags: \"${LTO.cpuflags}\""
+                LTO.configure.flags_append \
                                     {cflags \
                                     cxxflags \
                                     objcflags \
                                     objcxxflags \
                                     ldflags} \
                                     ${LTO.cpuflags}
+            }
         }
+        build.env-append            "CFLAGS=${configure.cflags}" \
+                                    "CXXFLAGS=${configure.cxxflags}" \
+                                    "OBJCFLAGS=${configure.objcflags}" \
+                                    "OBJCXXFLAGS=${configure.objcxxflags}" \
+                                    "LDFLAGS=${configure.ldflags}"
     }
 }
 
