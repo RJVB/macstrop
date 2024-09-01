@@ -399,9 +399,11 @@ if {![variant_exists cputuned]} {
 
 if {[variant_isset cputuned]} {
     default LTO.cpuflags "-march=native"
+    default configure.march {native}
 }
 if {[variant_isset cpucompat]} {
     default LTO.cpuflags "-march=${LTO.compatcpu} [join ${LTO.compatflags} " "]"
+    default configure.march {[option LTO.compatcpu]}
 }
 pre-configure {
     if {[variant_isset cputuned] || [variant_isset cpucompat]} {
