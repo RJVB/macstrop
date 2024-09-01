@@ -4,18 +4,153 @@ namespace eval configure {
     variable redirect_configure_output no
     variable statevar no
     proc logfile {} {
-        if {[catch {set fn [get_logfile]}]} {
+        if {[catch {set fn [get_logfile]} err]} {
+            ui_debug "get_logfile not defined or returns empty string: $err
             return ""
         } else {
             return $fn
         }
     }
+
+    proc initialise_save_logic {save_log_too} {
+        if {${save_log_too} ne ""} {
+            if {[variant_isset universal] &&
+                ([info exists merger_combine] || [info exists merger_arch_flag])
+            } {
+                # we're using one of the muniversal PortGroups; don't redefine configure.cmd!
+                set no_configure_redirection yes
+            }
+            pre-configure {
+                foreach cfile [glob -nocomplain ${workpath}/.macports.${subport}.configure*.log] {
+                    # clean lingering files
+                    file delete -force ${cfile}
+                }
+                if {(${configure::redirect_configure_output} || [configure::logfile] eq "") && ![info exists no_configure_redirection]} {
+                    configure.pre_args-prepend "-o pipefail -c '${configure.cmd} "
+                    if {[info exists muniversal.current_arch]} {
+                        configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure-${muniversal.current_arch}.log'"
+                    } else {
+                        configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure.log'"
+                    }
+                    configure.cmd "bash"
+                    ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
+                }
+            }
+            if {${save_log_too} eq "install log"} {
+                post-destroot {
+                    set docdir ${destroot}${prefix}/share/doc/${subport}
+                    xinstall -m 755 -d ${docdir}
+                    foreach cfile [glob -nocomplain ${workpath}/.macports.${subport}.configure*] {
+                        if {[file size ${cfile}] > 0} {
+                            xinstall -m 644 ${cfile} ${docdir}/[string map {".macports" "macports"} [file tail ${cfile}]]
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    proc write_configure_cmd {fname} {
+        if {![catch {set fd [open "${fname}" "w"]} err]} {
+            foreach var [array names ::env] {
+                puts ${fd} "${var}=$::env(${var})"
+            }
+            puts ${fd} "[join [lrange [split [option configure.env] " "] 0 end] "\n"]"
+            # the following variables are no longer set in the environment at this point:
+            puts ${fd} "CPP=\"[option configure.cpp]\""
+            # these are particularly relevant because referenced in the configure.pre_args:
+            puts ${fd} "CC=\"[option configure.cc]\""
+            puts ${fd} "CXX=\"[option configure.cxx]\""
+            if {[option configure.objcxx] ne [option configure.cxx]} {
+                puts ${fd} "OBJCXX=\"[option configure.objcxx]\""
+            }
+            puts ${fd} "CPPFLAGS=\"[option configure.cppflags]\""
+            puts ${fd} "CFLAGS=\"[option configure.cflags]\""
+            puts ${fd} "CXXFLAGS=\"[option configure.cxxflags]\""
+            if {[option configure.objcflags] ne [option configure.cflags]} {
+                puts ${fd} "OBJCFLAGS=\"[option configure.objcflags]\""
+            }
+            if {[option configure.objcxxflags] ne [option configure.cxxflags]} {
+                puts ${fd} "OBJCXXFLAGS=\"[option configure.objcxxflags]\""
+            }
+            puts ${fd} "LDFLAGS=\"[option configure.ldflags]\""
+            puts ${fd} "# Commandline configure options:"
+            if {[option configure.optflags] ne ""} {
+                puts -nonewline ${fd} " configure.optflags=\"[option configure.optflags]\""
+            }
+            if {[option configure.compiler] ne ""} {
+                puts -nonewline ${fd} " configure.compiler=\"[option configure.compiler]\""
+            }
+            if {[option configure.objc] ne "[option configure.cc]"} {
+                puts -nonewline ${fd} " configure.objc=\"[option configure.objc]\""
+            }
+            if {[option configure.objcxx] ne "[option configure.cxx]"} {
+                puts -nonewline ${fd} " configure.objcxx=\"[option configure.objcxx]\""
+            }
+            if {[option configureccache] ne ""} {
+                puts -nonewline ${fd} " configureccache=\"[option configureccache]\""
+            }
+            if {[option configure.cxx_stdlib] ne ""} {
+                puts -nonewline ${fd} " configure.cxx_stdlib=\"[option configure.cxx_stdlib]\""
+            }
+            puts ${fd} ""
+            puts ${fd} "\ncd [option worksrcpath]"
+            puts ${fd} "[option configure.cmd] [join [option configure.pre_args]] [join [option configure.args]] [join [option configure.post_args]]"
+            close ${fd}
+            unset fd
+        }
+    }
+
+    proc try_copy_configure_log {fname} {
+        variable redirect_configure_output
+        set logfile [logfile]
+        if {!${redirect_configure_output} && ${logfile} ne ""} {
+            ui_debug "[dict get [info frame 0] proc]: Filtering configure log from ${logfile})"
+            if {![catch {flush_logfile} err]} {
+                ui_debug "Flushed file ${logfile}"
+            } else {
+                ui_debug "Couldn't flush ${logfile}: $err"
+            }
+            exec sync
+            catch {exec fgrep ":info:configure " ${logfile} | sed "s/:info:configure //g" > ${fname}}
+        }
+    }
+
 }
+
+# From: https://wiki.tcl-lang.org/page/proc+alias
+proc configure.alias {alias target} {
+    set fulltarget [uplevel [list namespace which $target]]
+    if {$fulltarget eq {}} {
+        return -code error "configure::alias \"${target}\" for \"${alias}\": no such command"
+    }
+    set save [namespace eval [namespace qualifiers $fulltarget] {
+        namespace export}]
+    namespace eval [namespace qualifiers $fulltarget] {namespace export *}
+    while {[namespace exists [
+        set tmpns [namespace current]::[info cmdcount]]]} {}
+    set code [catch {set newcmd [namespace eval $tmpns [
+        string map [list @{fulltarget} [list $fulltarget]] {
+        namespace import @{fulltarget}
+    }]]} cres copts]
+    namespace eval [namespace qualifiers $fulltarget] [
+        list namespace export {*}$save]
+    if {$code} {
+        return -options $copts $cres
+    }
+    uplevel [list rename ${tmpns}::[namespace tail $target] $alias]
+    namespace delete $tmpns 
+    return [uplevel [list namespace which $alias]]
+}
+
+# proc configure.test {args} {
+# 	ui_msg "[dict get [info frame 0] proc]: ${args}"
+# }
 
 proc configure.save_configure_cmd {{save_log_too ""}} {
     namespace upvar ::configure configure_cmd_saved statevar
     if {${configure::statevar}} {
-        ui_debug "configure.save_configure_cmd already called"
+        ui_warn "[dict get [info frame 0] proc] already called"
         return;
     }
     set configure::statevar yes
@@ -26,88 +161,13 @@ proc configure.save_configure_cmd {{save_log_too ""}} {
     if {![info exists configure.post_args]} {
         configure.post_args-append
     }
-    if {${save_log_too} ne ""} {
-        pre-configure {
-            if {${configure::redirect_configure_output} || [configure::logfile] eq ""} {
-                configure.pre_args-prepend "-o pipefail -c '${configure.cmd} "
-                configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure.log'"
-                configure.cmd "bash"
-                ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
-            }
-        }
-        if {${save_log_too} eq "install log"} {
-            post-destroot {
-                set docdir ${destroot}${prefix}/share/doc/${subport}
-                xinstall -m 755 -d ${docdir}
-                foreach cfile [glob -nocomplain ${workpath}/.macports.${subport}.configure*] {
-                    if {[file size ${cfile}] > 0} {
-                        xinstall -m 644 ${cfile} ${docdir}/[string map {".macports" "macports"} [file tail ${cfile}]]
-                    }
-                }
-            }
-        }
-    }
+    configure::initialise_save_logic "${save_log_too}"
     post-configure {
-        if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
-            foreach var [array names ::env] {
-                puts ${fd} "${var}=$::env(${var})"
-            }
-            puts ${fd} "[join [lrange [split ${configure.env} " "] 0 end] "\n"]"
-            # the following variables are no longer set in the environment at this point:
-            puts ${fd} "CPP=\"${configure.cpp}\""
-            # these are particularly relevant because referenced in the configure.pre_args:
-            puts ${fd} "CC=\"${configure.cc}\""
-            puts ${fd} "CXX=\"${configure.cxx}\""
-            if {${configure.objcxx} ne ${configure.cxx}} {
-                puts ${fd} "OBJCXX=\"${configure.objcxx}\""
-            }
-            puts ${fd} "CFLAGS=\"${configure.cflags}\""
-            puts ${fd} "CXXFLAGS=\"${configure.cxxflags}\""
-            if {${configure.objcflags} ne ${configure.cflags}} {
-                puts ${fd} "OBJCFLAGS=\"${configure.objcflags}\""
-            }
-            if {${configure.objcxxflags} ne ${configure.cxxflags}} {
-                puts ${fd} "OBJCXXFLAGS=\"${configure.objcxxflags}\""
-            }
-            puts ${fd} "LDFLAGS=\"${configure.ldflags}\""
-            puts ${fd} "# Commandline configure options:"
-            if {${configure.optflags} ne ""} {
-                puts -nonewline ${fd} " configure.optflags=\"${configure.optflags}\""
-            }
-            if {${configure.compiler} ne ""} {
-                puts -nonewline ${fd} " configure.compiler=\"${configure.compiler}\""
-            }
-            if {${configure.objc} ne "${configure.cc}"} {
-                puts -nonewline ${fd} " configure.objc=\"${configure.objc}\""
-            }
-            if {${configure.objcxx} ne "${configure.cxx}"} {
-                puts -nonewline ${fd} " configure.objcxx=\"${configure.objcxx}\""
-            }
-            if {${configureccache} ne ""} {
-                puts -nonewline ${fd} " configureccache=\"${configureccache}\""
-            }
-            if {${configure.cxx_stdlib} ne ""} {
-                puts -nonewline ${fd} " configure.cxx_stdlib=\"${configure.cxx_stdlib}\""
-            }
-            puts ${fd} ""
-            puts ${fd} "\ncd ${worksrcpath}"
-            puts ${fd} "${configure.cmd} [join ${configure.pre_args}] [join ${configure.args}] [join ${configure.post_args}]"
-            close ${fd}
-            unset fd
-        }
-        set logfile [configure::logfile]
-        if {!${configure::redirect_configure_output} && ${logfile} ne ""} {
-            ui_debug "Filtering configure log from ${logfile})"
-            if {![catch {flush_logfile} err]} {
-                ui_debug "Flushed file ${logfile}"
-            } else {
-                ui_debug "Couldn't flush ${logfile}: $err"
-            }
-            exec sync
-            catch {exec fgrep ":info:configure " ${logfile} | sed "s/:info:configure //g" > ${workpath}/.macports.${subport}.configure.log}
-        }
+        configure::write_configure_cmd "${workpath}/.macports.${subport}.configure.cmd"
+        configure::try_copy_configure_log "${workpath}/.macports.${subport}.configure.log"
     }
 }
+
 proc configure.save_build_cmd {{save ""}} {
     namespace upvar ::configure configure_cmd_saved statevar
     if {[tbool use_configure]} {

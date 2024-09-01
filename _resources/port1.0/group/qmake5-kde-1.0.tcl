@@ -38,6 +38,8 @@
 # set qt5.prefer_kde            yes
 # PortGroup                     qmake5 1.0
 
+PortGroup                       save_configure_cmd 1.0
+
 # transfer control if qt5.using_kde isn't set, which is the case only
 # when port:qt5-kde is installed and the Qt5 PortGroup has processed
 # that fact.
@@ -325,42 +327,14 @@ proc qmake5.save_configure_cmd {{save_log_too ""}} {
         ui_debug "qmake5.save_configure_cmd : configure.post_args appears to be undefined, setting it to an empty value now"
         configure.post_args {}
     }
-    if {${save_log_too} ne ""} {
-        pre-configure {
-            configure.pre_args-prepend "-o pipefail -c '${configure.cmd} "
-            configure.post_args-append  "|& tee ${workpath}/.macports.${subport}.configure.log'"
-            configure.cmd "bash"
-            ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
-        }
-        if {${save_log_too} eq "install log"} {
-            post-destroot {
-                set docdir ${destroot}${prefix}/share/doc/${subport}
-                xinstall -m 755 -d ${docdir}
-                foreach cfile [glob -nocomplain ${workpath}/.macports.${subport}.configure*] {
-                    if {[file size ${cfile}] > 0} {
-                        xinstall -m 644 ${cfile} ${docdir}/[string map {".macports" "macports"} [file tail ${cfile}]]
-                    }
-                }
-            }
-        }
-    }
+    configure::initialise_save_logic "${save_log_too}"
     post-configure {
-        if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
-            foreach var [array names ::env] {
-                puts ${fd} "${var}=$::env(${var})"
-            }
-            puts ${fd} "[join [lrange [split ${configure.env} " "] 0 end] "\n"]\n"
-            puts ${fd} "cd ${worksrcpath}"
-            puts ${fd} "${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}"
-            if {[file exists "${configure.dir}/.qmake.cache"]} {
-                puts ${fd} "## ${configure.dir}/.qmake.cache:"
-                close ${fd}
-                system "cat \"${configure.dir}/.qmake.cache\" >> \"${workpath}/.macports.${subport}.configure.cmd\""
-            } else {
-                close ${fd}
-            }
-            unset fd
+        configure::write_configure_cmd "${workpath}/.macports.${subport}.configure.cmd"
+        if {[file exists "${configure.dir}/.qmake.cache"]} {
+            system "echo \"## ${configure.dir}/.qmake.cache:\" >> \"${workpath}/.macports.${subport}.configure.cmd\""
+            system "cat \"${configure.dir}/.qmake.cache\" >> \"${workpath}/.macports.${subport}.configure.cmd\""
         }
+        configure::try_copy_configure_log "${workpath}/.macports.${subport}.configure.log"
     }
 }
 

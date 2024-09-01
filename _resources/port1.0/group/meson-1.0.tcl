@@ -7,6 +7,7 @@
 # PortGroup meson 1.0
 #
 
+PortGroup                   save_configure_cmd 1.0
 
 # Wrap mode handling for subprojects.
 # Possible values: default, nofallback, nodownload, forcefallback, nopromote
@@ -28,13 +29,6 @@ default meson.debugopts     {[meson::debugopts]}
 namespace eval meson {
     proc build.dir {} {
         return "[option build_dir]"
-    }
-    proc logfile {} {
-        if {[catch {set fn [get_logfile]}]} {
-            return ""
-        } else {
-            return $fn
-        }
     }
 }
 
@@ -167,93 +161,10 @@ proc meson.save_configure_cmd {{save_log_too ""}} {
     if {![info exists configure.args]} {
         configure.args-append
     }
-    if {${save_log_too} ne ""} {
-        if {[variant_isset universal] &&
-            ([info exists merger_combine] || [info exists merger_arch_flag])
-        } {
-            # we're using one of the muniversal PortGroups; don't redefine configure.cmd!
-            set no_configure_redirection yes
-        }
-        if {[meson::logfile] eq "" && ![info exists no_configure_redirection]} {
-            pre-configure {
-                configure.pre_args-prepend "-o pipefail -c '${configure.cmd} "
-                configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure.log'"
-                configure.cmd "bash"
-                ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
-            }
-        }
-        if {${save_log_too} eq "install log"} {
-            post-destroot {
-                set docdir ${destroot}${prefix}/share/doc/${subport}
-                xinstall -m 755 -d ${docdir}
-                foreach cfile [glob -nocomplain ${workpath}/.macports.${subport}.configure*] {
-                    if {[file size ${cfile}] > 0} {
-                        xinstall -m 644 ${cfile} ${docdir}/[string map {".macports" "macports"} [file tail ${cfile}]]
-                    }
-                }
-            }
-        }
-    }
+    configure::initialise_save_logic "${save_log_too}"
     post-configure {
-        if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
-            foreach var [array names ::env] {
-                puts ${fd} "${var}=$::env(${var})"
-            }
-            puts ${fd} "[join [lrange [split ${configure.env} " "] 0 end] "\n"]"
-            # the following variables are no longer set in the environment at this point:
-            puts ${fd} "CPP=\"${configure.cpp}\""
-            # these are particularly relevant because referenced in the configure.pre_args:
-            puts ${fd} "CC=\"${configure.cc}\""
-            puts ${fd} "CXX=\"${configure.cxx}\""
-            if {${configure.objcxx} ne ${configure.cxx}} {
-                puts ${fd} "OBJCXX=\"${configure.objcxx}\""
-            }
-            puts ${fd} "CPPFLAGS=\"${configure.cppflags}\""
-            puts ${fd} "CFLAGS=\"${configure.cflags}\""
-            puts ${fd} "CXXFLAGS=\"${configure.cxxflags}\""
-            if {${configure.objcflags} ne ${configure.cflags}} {
-                puts ${fd} "OBJCFLAGS=\"${configure.objcflags}\""
-            }
-            if {${configure.objcxxflags} ne ${configure.cxxflags}} {
-                puts ${fd} "OBJCXXFLAGS=\"${configure.objcxxflags}\""
-            }
-            puts ${fd} "LDFLAGS=\"${configure.ldflags}\""
-            puts ${fd} "# Commandline configure options:"
-            if {${configure.optflags} ne ""} {
-                puts -nonewline ${fd} " configure.optflags=\"${configure.optflags}\""
-            }
-            if {${configure.compiler} ne ""} {
-                puts -nonewline ${fd} " configure.compiler=\"${configure.compiler}\""
-            }
-            if {${configure.objc} ne "${configure.cc}"} {
-                puts -nonewline ${fd} " configure.objc=\"${configure.objc}\""
-            }
-            if {${configure.objcxx} ne "${configure.cxx}"} {
-                puts -nonewline ${fd} " configure.objcxx=\"${configure.objcxx}\""
-            }
-            if {${configureccache} ne ""} {
-                puts -nonewline ${fd} " configureccache=\"${configureccache}\""
-            }
-            if {${configure.cxx_stdlib} ne ""} {
-                puts -nonewline ${fd} " configure.cxx_stdlib=\"${configure.cxx_stdlib}\""
-            }
-            puts ${fd} ""
-            puts ${fd} "\ncd ${worksrcpath}"
-            puts ${fd} "${configure.cmd} [join ${configure.pre_args}] [join ${configure.args}] [join ${configure.post_args}]"
-            close ${fd}
-            unset fd
-        }
-        set logfile [meson::logfile]
-        if {${logfile} ne ""} {
-            ui_debug "Filtering configure log from ${logfile})"
-            if {![catch {flush_logfile} err]} {
-                ui_debug "Flushed file ${logfile}"
-            } else {
-                ui_debug "Couldn't flush ${logfile}: $err"
-            }
-            exec sync
-            catch {exec fgrep ":info:configure " ${logfile} | sed "s/:info:configure //g" > ${workpath}/.macports.${subport}.configure.log}
-        }
+        configure::write_configure_cmd "${workpath}/.macports.${subport}.configure.cmd"
+        configure::try_copy_configure_log "${workpath}/.macports.${subport}.configure.log"
     }
 }
 

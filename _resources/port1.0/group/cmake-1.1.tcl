@@ -34,6 +34,8 @@
 # Usage:
 # PortGroup     cmake 1.1
 
+PortGroup save_configure_cmd 1.0
+
 namespace eval cmake {
     # our directory:
     variable currentportgroupdir [file dirname [dict get [info frame 0] file]]
@@ -527,6 +529,16 @@ if {[info exist ::env(MACPORTS_KEEP_BUILDING)] && $::env(MACPORTS_KEEP_BUILDING)
     build.post_args-append  -k
 }
 
+# Ideally I'd just invoke the main function from the save_configure_cmd PG but
+# that has unwanted side-effects with mechanisms from the KF5 PGs...
+#configure.alias cmake.save_configure_cmd configure.save_configure_cmd
+# proc cmake.save_configure_cmd {{save_log_too ""}} {
+#     return [configure.save_configure_cmd "${save_log_too}"]
+# }
+
+# So instead we invoke payload functions from the save_configure_cmd PG
+# but roll our own version of the main function.
+
 proc cmake.save_configure_cmd {{save_log_too ""}} {
     namespace upvar ::cmake configure_cmd_saved statevar
     if {[tbool statevar]} {
@@ -535,77 +547,10 @@ proc cmake.save_configure_cmd {{save_log_too ""}} {
     }
     set statevar yes
 
-    if {${save_log_too} ne ""} {
-        pre-configure {
-            configure.pre_args-prepend "-o pipefail -c '${configure.cmd} "
-            if {[info exists configure.build_arch]} {
-                configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure-${configure.build_arch}.log'"
-            } else {
-                configure.post_args-append "|& tee ${workpath}/.macports.${subport}.configure.log'"
-            }
-            configure.cmd "bash"
-            ui_debug "configure command set to `${configure.cmd} ${configure.pre_args} ${configure.args} ${configure.post_args}`"
-        }
-        if {${save_log_too} eq "install log"} {
-            post-destroot {
-                set docdir ${destroot}${prefix}/share/doc/${subport}
-                xinstall -m 755 -d ${docdir}
-                foreach cfile [glob -nocomplain ${workpath}/.macports.${subport}.configure*] {
-                    if {[file size ${cfile}] > 0} {
-                        xinstall -m 644 ${cfile} ${docdir}/[string map {".macports" "macports"} [file tail ${cfile}]]
-                    }
-                }
-            }
-        }
-    }
+    configure::initialise_save_logic "${save_log_too}"
     post-configure {
-        if {![catch {set fd [open "${workpath}/.macports.${subport}.configure.cmd" "w"]} err]} {
-            foreach var [array names ::env] {
-                puts ${fd} "${var}=$::env(${var})"
-            }
-            puts ${fd} "[join [lrange [split ${configure.env} " "] 0 end] "\n"]"
-            # the following variables are no longer set in the environment at this point:
-            puts ${fd} "CPP=\"${configure.cpp}\""
-            # these are particularly relevant because referenced in the configure.pre_args:
-            puts ${fd} "CC=\"${configure.cc}\""
-            puts ${fd} "CXX=\"${configure.cxx}\""
-            if {${configure.objcxx} ne ${configure.cxx}} {
-                puts ${fd} "OBJCXX=\"${configure.objcxx}\""
-            }
-            puts ${fd} "CFLAGS=\"${configure.cflags}\""
-            puts ${fd} "CXXFLAGS=\"${configure.cxxflags}\""
-            if {${configure.objcflags} ne ${configure.cflags}} {
-                puts ${fd} "OBJCFLAGS=\"${configure.objcflags}\""
-            }
-            if {${configure.objcxxflags} ne ${configure.cxxflags}} {
-                puts ${fd} "OBJCXXFLAGS=\"${configure.objcxxflags}\""
-            }
-            puts ${fd} "LDFLAGS=\"${configure.ldflags}\""
-            puts ${fd} "# Commandline configure options:"
-            if {${configure.optflags} ne ""} {
-                puts -nonewline ${fd} " configure.optflags=\"${configure.optflags}\""
-            }
-            if {${configure.compiler} ne ""} {
-                puts -nonewline ${fd} " configure.compiler=\"${configure.compiler}\""
-            }
-            if {${configure.objc} ne "${configure.cc}"} {
-                puts -nonewline ${fd} " configure.objc=\"${configure.objc}\""
-            }
-            if {${configure.objcxx} ne "${configure.cxx}"} {
-                puts -nonewline ${fd} " configure.objcxx=\"${configure.objcxx}\""
-            }
-            if {${configureccache} ne ""} {
-                puts -nonewline ${fd} " configureccache=\"${configureccache}\""
-            }
-            if {${configure.cxx_stdlib} ne ""} {
-                puts -nonewline ${fd} " configure.cxx_stdlib=\"${configure.cxx_stdlib}\""
-            }
-            puts ${fd} ""
-            puts ${fd} "\ncd ${worksrcpath}"
-            puts ${fd} "${configure.cmd} [join ${configure.pre_args}] [join ${configure.args}] [join ${configure.post_args}]"
-            close ${fd}
-            unset fd
-        }
+        configure::write_configure_cmd "${workpath}/.macports.${subport}.configure.cmd"
+        configure::try_copy_configure_log "${workpath}/.macports.${subport}.configure.log"
         if {[file exists ${build.dir}/CMakeCache.txt]} {
             # keep a backup of the CMake cache file
             file copy -force ${build.dir}/CMakeCache.txt ${build.dir}/CMakeCache-MacPorts.txt
