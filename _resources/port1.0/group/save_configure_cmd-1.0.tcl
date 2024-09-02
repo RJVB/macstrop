@@ -3,6 +3,7 @@
 namespace eval configure {
     variable redirect_configure_output no
     variable statevar no
+    variable statevar2 no
     proc logfile {} {
         if {[catch {set fn [get_logfile]} err]} {
             ui_debug "get_logfile not defined or returns empty string: $err
@@ -55,6 +56,7 @@ namespace eval configure {
             foreach var [array names ::env] {
                 puts ${fd} "${var}=$::env(${var})"
             }
+            puts ${fd} "## configure.env:"
             puts ${fd} "[join [lrange [split [option configure.env] " "] 0 end] "\n"]"
             # the following variables are no longer set in the environment at this point:
             puts ${fd} "CPP=\"[option configure.cpp]\""
@@ -170,15 +172,11 @@ proc configure.save_configure_cmd {{save_log_too ""}} {
 
 proc configure.save_build_cmd {{save ""}} {
     namespace upvar ::configure configure_cmd_saved statevar
-    if {[tbool use_configure]} {
-        ui_error "Port ${subport} should use configure.save_configure_cmd instead of save_build_cmd!"
-        return -code error "design error"
-    }
-    if {${configure::statevar}} {
+    if {${configure::statevar2}} {
         ui_debug "configure.save_build_cmd already called"
         return;
     }
-    set configure::statevar yes
+    set configure::statevar2 yes
 
     if {![info exists build.args]} {
         build.args-append
@@ -200,6 +198,11 @@ proc configure.save_build_cmd {{save ""}} {
     pre-build {
         if {![catch {set fd [open "${workpath}/.macports.${subport}.build.cmd" "w"]} err]} {
             puts ${fd} "## Executing: ##"
+            foreach var [array names ::env] {
+                puts ${fd} "${var}=$::env(${var})"
+            }
+            puts ${fd} "## build.env:"
+            puts ${fd} "[join [lrange [split [option build.env] " "] 0 end] "\n"]"
             puts ${fd} "\ncd ${worksrcpath}"
             puts ${fd} "${build.cmd} [join ${build.pre_args}] [join ${build.args}] [join ${build.post_args}]"
             close ${fd}
@@ -207,11 +210,13 @@ proc configure.save_build_cmd {{save ""}} {
         }
     }
     post-build {
+        # rewrite the file after successful build completion
         if {![catch {set fd [open "${workpath}/.macports.${subport}.build.cmd" "w"]} err]} {
             foreach var [array names ::env] {
                 puts ${fd} "${var}=$::env(${var})"
             }
-            puts ${fd} "[join [lrange [split ${configure.env} " "] 0 end] "\n"]"
+            puts ${fd} "## build.env:"
+            puts ${fd} "[join [lrange [split ${build.env} " "] 0 end] "\n"]"
             # the following variables are no longer set in the environment at this point:
             puts ${fd} "CPP=\"${configure.cpp}\""
             # these are particularly relevant because referenced in the configure.pre_args:
