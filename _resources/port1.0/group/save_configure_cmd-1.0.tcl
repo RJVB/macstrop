@@ -115,7 +115,8 @@ namespace eval configure {
                 ui_debug "Couldn't flush ${logfile}: $err"
             }
             exec sync
-            catch {exec fgrep ":info:configure " ${logfile} | sed "s/:info:configure //g" > ${fname}}
+            catch {exec egrep ":info:configure |:notice:configure |:msg:configure " ${logfile} | \
+                sed "s/:\[^:\]*:configure //g" > ${fname}}
         }
     }
 
