@@ -4,6 +4,7 @@ namespace eval configure {
     variable redirect_configure_output no
     variable statevar no
     variable statevar2 no
+    variable docdir
     proc logfile {} {
         if {[catch {set fn [get_logfile]} err]} {
             ui_debug "get_logfile not defined or returns empty string: $err
@@ -39,11 +40,11 @@ namespace eval configure {
             }
             if {${save_log_too} eq "install log"} {
                 post-destroot {
-                    set docdir ${destroot}${prefix}/share/doc/${subport}
-                    xinstall -m 755 -d ${docdir}
+                    set configure::docdir ${destroot}${prefix}/share/doc/${subport}
+                    xinstall -m 755 -d ${configure::docdir}
                     foreach cfile [glob -nocomplain ${workpath}/.macports.${subport}.configure*] {
                         if {[file size ${cfile}] > 0} {
-                            xinstall -m 644 ${cfile} ${docdir}/[string map {".macports" "macports"} [file tail ${cfile}]]
+                            xinstall -m 644 ${cfile} ${configure::docdir}/[string map {".macports" "macports"} [file tail ${cfile}]]
                         }
                     }
                 }
@@ -186,11 +187,11 @@ proc configure.save_build_cmd {{save ""}} {
     }
     if {${save} eq "install"} {
         post-destroot {
-            set docdir ${destroot}${prefix}/share/doc/${subport}
-            xinstall -m 755 -d ${docdir}
+            set configure::docdir ${destroot}${prefix}/share/doc/${subport}
+            xinstall -m 755 -d ${configure::docdir}
             foreach cfile [glob -nocomplain ${workpath}/.macports.${subport}.build*] {
                 if {[file size ${cfile}] > 0} {
-                    xinstall -m 644 ${cfile} ${docdir}/[string map {".macports" "macports"} [file tail ${cfile}]]
+                    xinstall -m 644 ${cfile} ${configure::docdir}/[string map {".macports" "macports"} [file tail ${cfile}]]
                 }
             }
         }
