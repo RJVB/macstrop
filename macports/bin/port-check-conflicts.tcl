@@ -330,8 +330,20 @@ proc message { filename message } {
 }
 
 # see https://stackoverflow.com/a/29289660/1460868
-proc fileEqual {file1 file2} {
-    if {[file size $file1] == [file size $file2]} {
+proc fileEqual {file1 file2 f1type f2type} {
+    # currently file1 and file2 are either both files or both links
+    # but pretend we don't know that
+    if {${f1type} eq "link" && ${f2type} eq "link"} {
+        return [expr {[file readlink ${file1}] eq [file readlink ${file2}]}]
+    } else {
+        if {[catch {set f1size [file size ${file1}]}]} {
+            set f1size -1
+        }
+        if {[catch {set f2size [file size ${file2}]}]} {
+            set f2size -1
+        }
+    }
+    if {${f1size} == ${f2size}} {
         if {[catch {set f1 [open $file1]} cresult]} {
             puts $::errorInfo
             return 0
@@ -514,12 +526,19 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                 }
                 foreach f $FILES {
                     set g [string range ${f} 1 end]
-                    if {[file exists "${g}"]} {
-                        if {([file type "${f}"] eq "file" && [file type "${g}"] eq "file") ||
-                            ([file type "${f}"] eq "link" && [file type "${g}"] eq "link")} {
+                    # a dangling link will make `file exists` return false so we handle that case:
+                    if {[catch {set ftype [file type ${f}]}]} {
+                        set ftype none
+                    }
+                    if {[catch {set gtype [file type ${g}]}]} {
+                        set gtype none
+                    }
+                    if {[file exists "${g}"] || ${gtype} eq "link"} {
+                        if {(${ftype} eq "file" && ${gtype} eq "file") ||
+                            (${ftype} eq "link" && ${gtype} eq "link")} {
                             if {${newer}} {
                                 # easiest but most expensive check: compare contents.
-                                if {![fileEqual ${f} ${g}]} {
+                                if {![fileEqual ${f} ${g} ${ftype} ${gtype}]} {
                                     message ${g} "will be updated"
                                     if {${listnewer}} {
                                         message "" [exec ls -alsF ${f} ${g}]
@@ -528,30 +547,40 @@ for {set i 0} {${i} < ${argc}} {incr i} {
                                     set oldFiles [lappend oldFiles ${g}]
                                 } else {
                                     set touched 0
-                                    if {[file mtime ${f}] != [file mtime ${g}]} {
-                                        # check if the installed file is probably a headerfile
-                                        if {$touchHeaders && [string first "/include/" ${g}]} {
-                                            file mtime ${f} [file mtime ${g}]
-                                            message-nonewline ${g} "mtime set to that of the installed file"
-                                        } else {
-                                            message-nonewline ${g} "will be touched"
-                                        }
-                                        set touched 1
+                                    # operate on the file or the target of the symlink
+                                    # because we can't get any info about symlinks themselves?!
+                                    if {[catch {set ft [file readlink ${f}]}]} {
+                                        set ft ${f}
                                     }
-                                    if {[file attributes ${f}] != [file attributes ${g}]} {
-                                        if {${touched}} {
-                                            message "" " and attributes will change"
-                                        } else {
-                                            message ${g} "attributes will change"
+                                    if {[catch {set gt [file readlink ${g}]}]} {
+                                        set gt ${g}
+                                    }
+                                    if {[file exists ${ft}] && [file exists ${gt}]} {
+                                        if {[file mtime ${ft}] != [file mtime ${gt}]} {
+                                            # check if the installed file is probably a headerfile
+                                            if {$touchHeaders && ${ftype} ne "link" && [string first "/include/" ${g}]} {
+                                                file mtime ${f} [file mtime ${g}]
+                                                message-nonewline ${g} "mtime set to that of the installed file"
+                                            } else {
+                                                message-nonewline ${gt} "will be touched"
+                                            }
+                                            set touched 1
                                         }
-                                    } elseif {${touched}} {
-                                        puts ""
+                                        if {[file attributes ${ft}] != [file attributes ${gt}]} {
+                                            if {${touched}} {
+                                                message "" " and attributes will change"
+                                            } else {
+                                                message ${gt} "attributes will change"
+                                            }
+                                        } elseif {${touched}} {
+                                            puts ""
+                                        }
                                     }
                                 }
                             } elseif {!${inverse}} {
                                 # file clash, regardless of content or attributes
-                                if {[file type ${f}] ne [file type ${g}]} {
-                                    puts "New [file type ${f}] ${g} exists as a [file type ${f}]"
+                                if {${ftype} ne ${gtype}} {
+                                    puts "New ${gtype} ${g} exists as a ${ftype}"
                                 }
                                 set InstalledDupsList [lappend InstalledDupsList "${g}"]
                                 set DestrootDupsList [lappend DestrootDupsList "${f}"]
