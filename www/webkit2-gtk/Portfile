@@ -11,10 +11,14 @@ PortGroup           locale_select 1.0
 PortGroup           LTO 1.0
 platform darwin {
     PortGroup       legacysupport 1.1
+    PortGroup       compiler_blacklist_versions 1.0
     PortGroup       compress_workdir 1.0
+
+    # clang-12 is the 1st version I have installed that compiles FileSystem.cpp (using std::filesystem) correctly
+    compiler.blacklist {clang < 602} {macports-clang-3.[0-9]} {macports-clang-[4-9].0} {macports-clang-1[0-1]}
 }
 
-compiler.cxx_standard 2017
+compiler.cxx_standard 2020
 
 platform darwin {
     # Fix compilation for Angle subproject: platform.h: error: 'TARGET_OS_OSX' is not defined
@@ -30,11 +34,26 @@ configure.env-append \
 build.env-append    "CCACHE_SLOPPINESS=pch_defines,time_macros"
 
 name                webkit2-gtk
-conflicts           webkit2-gtk-devel
-version             2.28.2 ; revision 9
+set upstream_name   webkitgtk
+version             2.40.1
+platform darwin {
+    ### for disabling EGL and OpenGLES2 in Source/cmake/OptionsGTK.cmake or via disable_cmake_findpackage
+    ### for reverting to using libdispatch as it should, even with GCC (but not yet in the quartz/cocoa codepaths!)
+    revision [expr ${revision} +2]
+}
 
-description         Apple's WebKit2 HTML rendering library for GTK+3
-long_description    ${description}
+if {${subport} eq "${name}"} {
+    conflicts           webkit2-gtk-devel webkit2-gtk-legacy
+    set wkAPIVersion    4.0
+} else {
+    conflicts           webkit2-gtk-devel-4.1
+    set wkAPIVersion    4.1
+                    
+}
+
+description         Apple's WebKit2 HTML rendering library for GTK+3, API=webkit2gtk-${wkAPIVersion}
+
+long_description    {*}${description}
 maintainers         {devans @dbevans} {kencu @kencu}
 categories          www gnome
 platforms           darwin freebsd linux
@@ -43,19 +62,20 @@ homepage            http://webkitgtk.org/
 master_sites        http://webkitgtk.org/releases/
 
 use_xz              yes
-distname            webkitgtk-${version}
+distname            ${upstream_name}-${version}
 
 dist_subdir         webkit-gtk
 
-checksums           rmd160  a626f58cf30b6dd1ef8a63c165ce85770c4da675 \
-                    sha256  b9d23525cfd8d22c37b5d964a9fe9a8ce7583042a2f8d3922e71e6bbc68c30bd
-#                     size    21427772
+checksums           rmd160  953121c65430f89785664d3b9a193ff74943a2f2 \
+                    sha256  64e526984f8cd2161ef03ae949af99c002ff333d615e6386b460164a3c1b7ef6
+#                     size    39599544
 
 depends_build-append \
                     port:gperf \
                     port:perl5 \
                     port:pkgconfig \
-                    port:python27
+                    port:python27 \
+                    port:unifdef
 
 depends_lib-append  port:atk \
                     port:bison \
@@ -63,18 +83,18 @@ depends_lib-append  port:atk \
                     port:flex \
                     port:freetype \
                     path:lib/pkgconfig/glib-2.0.pc:glib2 \
-                    path:lib/pkgconfig/gobject-introspection-1.0.pc:gobject-introspection \
                     port:gstreamer1 \
                     port:gstreamer1-gst-plugins-base \
                     port:gstreamer1-gst-plugins-good \
                     path:lib/pkgconfig/gtk+-3.0.pc:gtk3 \
                     path:lib/pkgconfig/harfbuzz-icu.pc:harfbuzz-icu \
                     path:lib/pkgconfig/icu-uc.pc:icu \
+                    port:libepoxy \
                     path:include/turbojpeg.h:libjpeg-turbo \
                     port:libnotify \
                     port:libpng \
                     port:libsecret \
-                    path:lib/pkgconfig/libsoup-2.4.pc:libsoup \
+                    port:libsoup-2.4 \
                     port:libxml2 \
                     port:libxslt \
                     port:sqlite3 \
@@ -88,6 +108,7 @@ platform darwin {
 
 #                     port:gstreamer1-gst-plugins-bad
     depends_lib-append \
+                    path:lib/pkgconfig/gobject-introspection-1.0.pc:gobject-introspection \
                     port:at-spi2-atk \
                     port:fontconfig \
                     port:geoclue2 \
@@ -124,24 +145,20 @@ platform darwin {
     # runs without this patch.
     patchfiles-append    patch-bundle-link-webcore.diff
 
-    # Fix incompatibility with XCode 12:
-    # https://bugs.webkit.org/show_bug.cgi?id=207871
-    patchfiles-append   patch-WTF-wtf-getVTablePointer.diff \
-                        patch-darwin.diff
 }
 
 # Fix build errors due to -WWc++11-narrowing
 # https://bugs.webkit.org/show_bug.cgi?id=211193
-patchfiles-append    patch-bool_narrowed.diff
+#patchfiles-append    patch-bool_narrowed.diff
 
 platform darwin {
     # Explicitly specify installed dylib paths to g-ir-compile
     # Fixes dlopen errors in apps using webkit2gtk introspection
-    patchfiles-append    patch-webkit2gtk-specify-installed-dylibs.diff
+#     patchfiles-append    patch-webkit2gtk-specify-installed-dylibs.diff
 }
 
 # Backport https://github.com/WebKit/WebKit/commit/b83958928838b8a997c12a8de06f89377df0a903
-patchfiles-append    patch-icu-68-true-false.diff
+#patchfiles-append    patch-icu-68-true-false.diff
 
 # Reduce compilation warnings
 configure.cppflags-append \
@@ -149,17 +166,55 @@ configure.cppflags-append \
 
 # it is preferred to use the WebKit built in bmalloc if it builds on a given os.
 # it has improved security features, but not all systems can build it at present.
+## for WebGL on Mac, see e.g. Source/ThirdParty/ANGLE/src/libANGLE/renderer/gl/apple
+## which should probably not be included in an X11 build. Maybe just ensure that
+## ANGLE_PLATFORM_MACOS doesn't get set, and avoid any APPLE-specific code in the
+## CMake files under the ANGLE directory?
 configure.args-append \
+    -DUSE_APPLE_ICU=OFF \
     -DPORT=GTK \
+    -DENABLE_WEBDRIVER=OFF \
+    -DENABLE_GAMEPAD=OFF \
     -DENABLE_INTROSPECTION=ON \
+    -DENABLE_JOURNALD_LOG=OFF \
     -DENABLE_MINIBROWSER=OFF \
     -DENABLE_VIDEO=ON \
+    -DUSE_GSTREAMER_TRANSCODER=OFF \
     -DUSE_SYSTEM_MALLOC=OFF \
     -DPERL_EXECUTABLE=${prefix}/bin/perl5 \
     -DENABLE_ACCELERATED_2D_CANVAS=ON \
     -DENABLE_ASYNC_SCROLLING=ON \
-    -DENABLE_WEBGL2=ON
-platform linux {
+    -DENABLE_WEBGL=OFF \
+    -DENABLE_DOCUMENTATION=OFF \
+    -DUSE_AVIF=OFF \
+    -DUSE_SOUP2=ON
+
+if {${os.platform} eq "darwin"} {
+    variant webgl requires quartz description {enable WebGL (untested!)} {}
+    if {[variant_exists webgl] && [variant_isset webgl]} {
+        configure.args-replace \
+            -DENABLE_WEBGL=OFF \
+            -DENABLE_WEBGL=ON
+    } else {
+        # not sure if and how ANGLE for +quartz depends on EGL, but in
+        # +x11 mode we cannot have the build system detect it.
+        # EGL is CPU-based anyway on Mac/X11 (Mesa, llvmpipe rasteriser)
+        # TODO: figure out where EGL is initialised in the codebase, so
+        # we can initialise GLX first, as is required on Mac/X11.
+        configure.args-append \
+            -DCMAKE_DISABLE_FIND_PACKAGE_EGL=ON \
+            -DCMAKE_DISABLE_FIND_PACKAGE_OpenGLES2=ON \
+            -DUSE_ANGLE_EGL=OFF
+    }
+} elseif {${os.platform} eq "linux"} {
+    # WEBGL should work here, but the introspect stuff fails to build
+    # and the project is way too complicated to spend more time figuring
+    # out why.
+    configure.args-replace \
+        -DENABLE_WEBGL=OFF \
+        -DENABLE_WEBGL=ON \
+        -DENABLE_INTROSPECTION=ON \
+        -DENABLE_INTROSPECTION=OFF
     configure.args-append \
         -DUSE_WPE_RENDERER=OFF \
         -DENABLE_BUBBLEWRAP_SANDBOX=OFF \
@@ -172,23 +227,30 @@ pre-configure {
     }
 }
 
-if {![variant_isset quartz]} {
+if {${os.platform} ne "darwin" || ![variant_isset quartz]} {
     default_variants-append +x11
 }
 
 # this is nice to have, and should be the default
 default_variants-append +minibrowser
 
+subport ${name}-4.1 {
+    depends_lib-replace \
+        port:libsoup-2.4 \
+        port:libsoup
+    configure.args-replace \
+        -DUSE_SOUP2=ON \
+        -DUSE_SOUP2=OFF
+}
+
 variant quartz conflicts x11 {
     require_active_variants path:lib/pkgconfig/gtk+-3.0.pc:gtk3 quartz
-
-    # TODO: restrict this patch to just Big Sur?
-    patchfiles-append patch-Source_WebKit_Platform_IPC_Connection.cpp.diff
 
     configure.args-append \
         -DENABLE_QUARTZ_TARGET=ON \
         -DENABLE_X11_TARGET=OFF \
-        -DENABLE_OPENGL=OFF
+        -DENABLE_OPENGL=OFF \
+        -DUSE_OPENGL_OR_ES=OFF
 
 # OPENGL does not work with +quartz, eg: https://trac.macports.org/ticket/52495
 # OPENGL must be explicitly turned off, otherwise GLX is found, but X11 is not, and:
@@ -199,25 +261,57 @@ variant quartz conflicts x11 {
 
 variant x11 conflicts quartz {
     require_active_variants path:lib/pkgconfig/gtk+-3.0.pc:gtk3 x11
+    require_active_variants libepoxy x11
 
     configure.args-append \
         -DENABLE_QUARTZ_TARGET=OFF \
         -DENABLE_X11_TARGET=ON \
         -DENABLE_OPENGL=ON
+    platform darwin {
+        configure.args-append \
+            -DUSE_GBM=OFF 
+    }
 
     depends_lib-append \
-        port:mesa \
-        port:xorg-libXt
+        port:mesa
+    platform darwin {
+        depends_lib-append \
+            port:xorg-libXt
+    }
+}
 
-    # RJVB!
-    patchfiles-append patch-Source_WebKit_Platform_IPC_Connection.cpp-X11.diff
+
+variant av1 description {build in AV1 image file support} {
+    depends_lib-append \
+        port:libavif
+    configure.args-replace \
+        -DUSE_AVIF=OFF \
+        -DUSE_AVIF=ON
 }
 
 variant minibrowser description {Build and install MiniBrowser (for testing)} {
     configure.args-delete   -DENABLE_MINIBROWSER=OFF
     configure.args-append   -DENABLE_MINIBROWSER=ON
     platform darwin {
+        depends_build-append port:cctools
         depends_run-append  port:adwaita-icon-theme
+    }
+}
+
+platform linux {
+    variant wayland description {Enable Wayland support} {}
+    if {[variant_isset wayland]} {
+        ui_warn "The Wayland variant has not yet been implemented"
+        pre-fetch {
+            return -code error "Invalid variant requested"
+        }
+        depends_lib-append \
+            port:libwpe
+        configure.args-append \
+            -DENABLE_WAYLAND_TARGET=ON
+    } else {
+        configure.args-append \
+            -DENABLE_WAYLAND_TARGET=OFF
     }
 }
 
@@ -244,7 +338,8 @@ if {${os.platform} eq "darwin" && ${os.major} <= 16} {
     patchfiles-append       patch-source-wtf-wtf-unix-cputimeunix-cpp-darwin-version-restore.diff
 
     # some Darwin versions don't have MAP_JIT; only use it if available
-    patchfiles-append       patch-source-wtf-wtf-osallocatorposix-cpp-map-jit.diff
+    # NEEDS REFACTORING
+    # patchfiles-append       patch-source-wtf-wtf-osallocatorposix-cpp-map-jit.diff
 
     # gl cocoa build continues to fail due to use of API not available on darwin 12 or earlier
     # so gstreamergl is not available at present for darwin 12 or earlier
@@ -277,7 +372,21 @@ if {${os.platform} eq "darwin" && ${os.major} <= 16} {
     }
 
     # there is a missing header that manifests on 10.7 and less
-    patchfiles-append patch-webkit2gtk-source-javascriptcore-jit-executableallocator-missingfcntl-h-older-systems.diff
+    # NEEDS REFACTORING
+    # patchfiles-append patch-webkit2gtk-source-javascriptcore-jit-executableallocator-missingfcntl-h-older-systems.diff
+
+    # include the proper Mach VM header:
+    patchfiles-append       patch-mach_vm.diff
+    patchfiles-append       patch-gigacage.diff \
+                            patch-currenttime.diff \
+                            patch-no-machsendright.diff \
+                            patch-no-cocoa-headers.diff \
+                            patch-mactypes.diff
+    # This is a tricky one and seems related to how CMake's "make" generator
+    # can (sometimes?) forget to generate the Javascript targets.
+    # Add an apparently missing path to a derived headerdir and make explicit copies
+    # therein of headers that shouldn't be necessary...
+    patchfiles-append       patch-fix-jsc_jsch-include.diff
 
     # add dep for newer ruby and spec this for build
     # https://trac.macports.org/ticket/52016
@@ -307,26 +416,68 @@ if {${os.platform} eq "darwin" && ${os.major} <= 16} {
         configure.cxxflags-append -D_GLIBCXX_USE_C99_MATH_TR1=1
         configure.cxxflags-append -include ${filespath}/snowmath.h
     }
+
+    # companion code to patch-mactypes.diff :
+    post-configure {
+# TODO: check if the path exists directly after the configure step or else what other potentially appropriate paths do exist.
+        xinstall -m 755 -d ${build.dir}/JavaScriptCore/Headers/JavaScriptCore/
+        xinstall -m 644 ${filespath}/MacTypes.h ${build.dir}/JavaScriptCore/Headers/JavaScriptCore/
+    }
+    post-destroot {
+        xinstall -m 644 ${filespath}/MacTypes.h ${destroot}${prefix}/include/webkitgtk-${wkAPIVersion}/JavaScriptCore/
+    }
 }
 
 # RJVB
-patchfiles-append   patch-webcore-webgl2.diff \
-                    patch-DateInstance-nullptr-deref.diff \
+patchfiles-append   patch-DateInstance-nullptr-deref.diff \
                     patch-IPC-failure-message.diff \
-                    patch-cmake-summary.diff
-platform linux {
-    # From Debian:
+                    patch-cmake-summary.diff \
+                    patch-cmake-no-colours.diff \
+                    patch-less-gcrypt-oops-msg.diff
+# pull in libdispatch on Mac only when building with clang (blocks support required)
+patchfiles-append   patch-webkit2gtk-libdispatch_with_gcc.diff
+# # No..
+# patchfiles-append   patch-webkit2gtk-ANGLE_no_EGL-on-darwin.diff
+
+# for some reason the JavaScriptCore libspec isn't defined when building the MiniBrowser
+# catch and rectify:
+patchfiles-append   patch-minibrowser-jsc.diff
+
+if {${os.platform} eq "darwin"} {
+    post-patch {
+        reinplace "s|@API@|${wkAPIVersion}|g" ${worksrcpath}/Tools/MiniBrowser/gtk/CMakeLists.txt
+        reinplace "s|@SHEXT@|dylib|g" ${worksrcpath}/Tools/MiniBrowser/gtk/CMakeLists.txt
+    }
+    post-destroot {
+        if {[variant_isset minibrowser]} {
+            system "install_name_tool -change @rpath/libjavascriptcoregtk-4.0.18.dylib \
+                ${prefix}/lib/libjavascriptcoregtk-4.0.18.dylib ${destroot}${prefix}/libexec/webkit2gtk-${wkAPIVersion}/MiniBrowser"
+        }
+    }
+
+    # if ever we're building with (a recent) GCC, we'll need -flax-vector-conversions to avoid errors
+    # about converting 16-bit int. types to __m128i by VecLib headers.
+    # The flag is accepted by clang, which doesn't appear to need it.
+    configure.cxxflags-append \
+                    -flax-vector-conversions
+
+    notes-append "
+    If you are porting new software to use webkit2gtk on Apple systems,\
+    you will likely need to define BUILDING_GTK__ to get the correct\
+    behaviour from WebKitAvailability.h.
+    "
+} else {
     patchfiles-append \
                     prefer-pthread.patch \
-                    patch-reduce-mem-overheads-linux.diff
+                    patch-reduce-mem-overheads-linux.diff \
+                    file-linux-madv_free.diff \
+                    patch-no-introspect-warnerr-linux.diff
+    post-patch {
+        reinplace "s|@API@|${wkAPIVersion}|g" ${worksrcpath}/Tools/MiniBrowser/gtk/CMakeLists.txt
+        reinplace "s|@SHEXT@|so|g" ${worksrcpath}/Tools/MiniBrowser/gtk/CMakeLists.txt
+    }
 }
-
-notes-append "
-If you are porting new software to use webkit2gtk on Apple systems,\
-you will likely need to define BUILDING_GTK__ to get the correct\
-behaviour from WebKitAvailability.h.
-"
 
 livecheck.type      regex
 livecheck.url       http://webkitgtk.org/releases/
-livecheck.regex     "webkitgtk-(\\d+\\.\\d*\[02468\](?:\\.\\d+)*)"
+livecheck.regex     "${upstream_name}-(\\d+\\.\\d*\[02468\](?:\\.\\d+)*)"
