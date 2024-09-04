@@ -1,0 +1,146 @@
+diff --git Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp
+index e011d6191bfc8483512cf676593324165c77d656..8ac6116d6e09b10081740309b119b03315a0a7e1 100644
+--- Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp
++++ Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp
+@@ -31,11 +31,22 @@
+ #include <wtf/Assertions.h>
+ #include <wtf/PageAllocation.h>
+ 
++#include <stdio.h>
++
+ namespace WTF {
+ 
++static double reserved = 0, Nreserved = 0, committed = 0, Ncommitted = 0;
++static bool atx_installed = false;
++
++void atx_summary() {
++    fprintf(stderr, "OSAllocatorPOSIX summary for pid=%lu:\n", getpid());
++    fprintf(stderr, "\tstill reserved   %g Mb[%g]\n", reserved / 1024 / 1024, Nreserved);
++    fprintf(stderr, "\tstill committed  %g Mb[%g]\n", committed / 1024 / 1024, Ncommitted);
++}
++
+ void* OSAllocator::reserveUncommitted(size_t bytes, Usage usage, bool writable, bool executable, bool includesGuardPages)
+ {
+-#if OS(LINUX)
++#if OS(LINUX) || OS(DARWIN)
+     UNUSED_PARAM(usage);
+     UNUSED_PARAM(writable);
+     UNUSED_PARAM(executable);
+@@ -56,6 +67,13 @@ void* OSAllocator::reserveUncommitted(size_t bytes, Usage usage, bool writable,
+ 
+ #endif
+ 
++    reserved += bytes;
++    Nreserved += 1;
++//     fprintf(stderr, "%s pid=%lu: %gMb @ %p ; reserved=%g[%g]\n", __FUNCTION__, getpid(), bytes / 1024.0 / 1024.0, result, reserved, Nreserved);
++    if (!atx_installed) {
++        atexit(atx_summary);
++        atx_installed = true;
++    }
+     return result;
+ }
+ 
+@@ -70,9 +88,11 @@ void* OSAllocator::reserveAndCommit(size_t bytes, Usage usage, bool writable, bo
+ 
+     int flags = MAP_PRIVATE | MAP_ANON;
+ #if OS(DARWIN)
++#if defined(MAP_JIT)
+     if (executable)
+         flags |= MAP_JIT;
+ #endif
++#endif
+ 
+ #if OS(DARWIN)
+     int fd = usage;
+@@ -116,13 +136,25 @@ void* OSAllocator::reserveAndCommit(size_t bytes, Usage usage, bool writable, bo
+         // to the OS.
+         mmap(result, pageSize(), PROT_NONE, MAP_FIXED | MAP_PRIVATE | MAP_ANON, fd, 0);
+         mmap(static_cast<char*>(result) + bytes - pageSize(), pageSize(), PROT_NONE, MAP_FIXED | MAP_PRIVATE | MAP_ANON, fd, 0);
++        reserved += bytes + 2 * pageSize();
++        Nreserved += 3;
++//         fprintf(stderr, "%s pid=%lu: %gMb @ %p; 2x%lu bytes guards ; reserved=%g[%g]\n", __FUNCTION__, getpid(), bytes / 1024.0 / 1024.0,
++//                 result, pageSize(), reserved, Nreserved);
++    } else {
++        reserved += bytes, Nreserved += 1;
++//         fprintf(stderr, "%s pid=%lu: %gMb @ %p ; reserved=%g[%g]\n", __FUNCTION__, getpid(), bytes / 1024.0 / 1024.0,
++//                 result, reserved, Nreserved);
++    }
++    if (!atx_installed) {
++        atexit(atx_summary);
++        atx_installed = true;
+     }
+     return result;
+ }
+ 
+ void OSAllocator::commit(void* address, size_t bytes, bool writable, bool executable)
+ {
+-#if OS(LINUX)
++#if OS(LINUX) || OS(DARWIN)
+     int protection = PROT_READ;
+     if (writable)
+         protection |= PROT_WRITE;
+@@ -142,11 +174,19 @@ void OSAllocator::commit(void* address, size_t bytes, bool writable, bool execut
+     UNUSED_PARAM(writable);
+     UNUSED_PARAM(executable);
+ #endif
++    committed += bytes;
++    Ncommitted += 1;
++//     fprintf(stderr, "%s %lu: committed %gMb at %p ; commited=%g[%g]\n", __FUNCTION__, getpid(), bytes / 1024.0 / 1024.0,
++//             address, committed, Ncommitted);
++    if (!atx_installed) {
++        atexit(atx_summary);
++        atx_installed = true;
++    }
+ }
+ 
+ void OSAllocator::decommit(void* address, size_t bytes)
+ {
+-#if OS(LINUX)
++#if OS(LINUX) || OS(DARWIN)
+     madvise(address, bytes, MADV_DONTNEED);
+     if (mprotect(address, bytes, PROT_NONE))
+         CRASH();
+@@ -160,12 +200,25 @@ void OSAllocator::decommit(void* address, size_t bytes)
+     UNUSED_PARAM(address);
+     UNUSED_PARAM(bytes);
+ #endif
++    committed -= bytes;
++    Ncommitted -= 1;
++//     fprintf(stderr, "%s %lu: decommitted %gMb at %p ; commited=%g[%g]\n", __FUNCTION__, getpid(), bytes / 1024.0 / 1024.0,
++//             address, committed, Ncommitted);
++    if (!atx_installed) {
++        atexit(atx_summary);
++        atx_installed = true;
++    }
+ }
+ 
+ void OSAllocator::hintMemoryNotNeededSoon(void* address, size_t bytes)
+ {
+ #if HAVE(MADV_DONTNEED)
+     while (madvise(address, bytes, MADV_DONTNEED) == -1 && errno == EAGAIN) { }
++//     fprintf(stderr, "%s pid=%lu: marked NotNeededSoon %gMb at %p\n", __FUNCTION__, getpid(), bytes / 1024.0 / 1024.0, address);
++    if (!atx_installed) {
++        atexit(atx_summary);
++        atx_installed = true;
++    }
+ #else
+     UNUSED_PARAM(address);
+     UNUSED_PARAM(bytes);
+@@ -174,9 +227,17 @@ void OSAllocator::hintMemoryNotNeededSoon(void* address, size_t bytes)
+ 
+ void OSAllocator::releaseDecommitted(void* address, size_t bytes)
+ {
++//     fprintf(stderr, "%s pid=%lu: releasing %gMb from %p ; reserved=%g[%g]\n", __FUNCTION__, getpid(), bytes / 1024.0 / 1024.0,
++//             address, reserved, Nreserved);
+     int result = munmap(address, bytes);
+     if (result == -1)
+         CRASH();
++    reserved -= bytes;
++    Nreserved -= 1;
++    if (!atx_installed) {
++        atexit(atx_summary);
++        atx_installed = true;
++    }
+ }
+ 
+ } // namespace WTF
