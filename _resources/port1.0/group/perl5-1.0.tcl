@@ -13,7 +13,9 @@ proc perl5_get_default_branch {} {
     # use whatever ${prefix}/bin/perl5 was chosen, and if none, fall back to 5.34
     if {![catch {set val [lindex [split [exec ${prefix}/bin/perl5 -V:version] {'}] 1]}]} {
         set ret [join [lrange [split $val .] 0 1] .]
+        ui_debug "setting perl5.default_branch to current $prefix/bin/perl5@${ret}"
     } else {
+        ## RJVB NB : keep this value synced with the max_minor arg of perl5.branch_range!
         set ret 5.34
     }
     # if the above default is not supported by this module, use the latest it does support
@@ -56,12 +58,23 @@ default perl5.conflict_variants {true}
 # Control whether a perl variant is required and if true produce an error if a perl variant is not set.
 default perl5.require_variant {false}
 # Create perl variants
+proc perl5.get_variant_names {branches} {
+    set ret {}
+    foreach branch ${branches} {
+        lappend ret "perl[string map {. _} ${branch}]"
+    }
+    return $ret
+}
+
 proc perl5.create_variants {branches} {
     global name perl5.major perl5.default_variant perl5.variant \
            perl5.set_default_variant perl5.conflict_variants \
            perl5.require_variant perl5.variants
 
-    set perl5.variants [lmap branch ${branches} {string map {. _} perl$branch}]
+    if {[catch {set perl5.variants [lmap branch ${branches} {string map {. _} perl$branch}]}]} {
+        # for legacy installs
+        set perl5.variants [perl5.get_variant_names ${branches}]
+    }
     if {${perl5.set_default_variant}} {
         if {${perl5.conflict_variants}} {
             foreach variant ${perl5.variants} {
@@ -102,6 +115,17 @@ proc perl5.create_variants {branches} {
         }
     }
 }
+
+## <RJVB
+proc perl5.branch_range {{min_minor 28} {max_minor 34}} {
+    global perl5.branches
+    perl5.branches "5.${min_minor}"
+    for {set pv [expr ${min_minor} +1]} {$pv <= ${max_minor}} {incr pv 1} {
+        perl5.branches-append 5.${pv}
+    }
+    return [option perl5.branches]
+}
+## RJVB>
 
 # Set some variables.
 options perl5.version perl5.major perl5.arch perl5.lib perl5.bindir perl5.archlib perl5.bin
