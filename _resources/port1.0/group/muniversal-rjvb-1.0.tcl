@@ -711,15 +711,17 @@ variant universal {
                         } else {
                             # Actually try to merge the files
                             # First try lipo, then libtool
-## to help lipo: if arch1 in dir1 -> "-arch arch1", idem for dir2
-                            if {[string last "-${arch1}" ${dir1}] > 0} {
+## to help lipo: if arch1 in dir1 -> "-arch arch1", idem for dir2. But only if the file is a binary or recognised as a static library
+                            if {[string last "-${arch1}" ${dir1}] > 0
+                                && ([fileIsBinary "${dir1}/${fl}"] || [string match *current?ar?archive* [exec file "${dir1}/${fl}"]])} {
                                 ui_debug "arch1 \"${arch1}\" found in \"${dir1}\"; assuming \"-arch ${arch1}\" is a valid lipo option"
                                 set arch1opt "-arch ${arch1}"
                             } else {
                                 ui_debug "arch1 \"${arch1}\" not found in \"${dir1}\""
                                 set arch1opt ""
                             }
-                            if {[string last "-${arch2}" ${dir2}] > 0} {
+                            if {[string last "-${arch2}" ${dir2}] > 0
+                                && ([fileIsBinary "${dir2}/${fl}"] || [string match *current?ar?archive* [exec file "${dir2}/${fl}"]])} {
                                 ui_debug "arch2 \"${arch2}\" found in \"${dir2}\"; assuming \"-arch ${arch2}\" is a valid lipo option"
                                 set arch2opt "-arch ${arch2}"
                             } else {

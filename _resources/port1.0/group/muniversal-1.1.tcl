@@ -477,9 +477,6 @@ proc muniversal::merge {base1 base2 base prefixDir arch1 arch2 merger_dont_diff 
                     if { ! [catch {system "${lipo_cmd} -create \"${dir1}/${fl}\" \"${dir2}/${fl}\" -output \"${dir}/${fl}\""}] } {
                         # lipo worked
                         ui_debug "universal: merge: ${lipo_cmd} created ${prefixDir}/${fl}"
-                    } elseif { ! [catch {system "${lipo_cmd} -create -arch ${arch1} \"${dir1}/${fl}\" -arch ${arch2} \"${dir2}/${fl}\" -output \"${dir}/${fl}\""}] } {
-                        # lipo worked
-                        ui_debug "universal: merge: ${lipo_cmd} created ${prefixDir}/${fl}, using arch. information"
                     } elseif { ! [catch {system "${libtool_cmd} \"${dir1}/${fl}\" \"${dir2}/${fl}\" -o \"${dir}/${fl}\""}] } {
                         # libtool worked
                         ui_debug "universal: merge: ${libtool_cmd} created ${prefixDir}/${fl}"
