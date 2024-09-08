@@ -1,0 +1,285 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index faaf227..57a8cf3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -19,7 +19,7 @@ include(KDECMakeSettings)
+ 
+ include(CheckIncludeFiles)
+ 
+-set(REQUIRED_QT_VERSION 5.14.0)
++set(REQUIRED_QT_VERSION 5.9.8)
+ find_package(Qt${QT_MAJOR_VERSION}Gui ${REQUIRED_QT_VERSION} REQUIRED NO_MODULE)
+ 
+ include(FindPkgConfig)
+diff --git a/src/heif.cpp b/src/heif.cpp
+index a32aa7e1f550feb17f4c74f56946bc0b56ecb3d1..d55194d434dde7cb9f86de2d46dc736d82ec1d34 100644
+--- a/src/heif.cpp
++++ b/src/heif.cpp
+@@ -11,10 +11,14 @@
+ #include "util_p.h"
+ #include <libheif/heif.h>
+ 
++#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+ #include <QColorSpace>
++#endif
+ #include <QDebug>
+ #include <QPointF>
+ #include <QSysInfo>
++#include <QFileDevice>
++#include <QBuffer>
+ #include <limits>
+ #include <string.h>
+ 
+@@ -114,18 +118,32 @@ bool HEIFHandler::write(const QImage &image)
+     return success;
+ }
+ 
++QString fileName(HEIFHandler *that)
++{
++    const auto qfd = qobject_cast<QFileDevice*>(that->device());
++    if (qfd) {
++        return qfd->fileName();
++    } else if (qobject_cast<QBuffer*>(that->device())) {
++        return QStringLiteral("<internal buffer>");
++    }
++    return QStringLiteral("<no filename>");
++}
++
+ bool HEIFHandler::write_helper(const QImage &image)
+ {
+     int save_depth; // 8 or 10bit per channel
+     QImage::Format tmpformat; // format for temporary image
+     const bool save_alpha = image.hasAlphaChannel();
+ 
++#if QT_VERSION >= QT_VERSION_CHECK(5, 12, 0)
+     switch (image.format()) {
+     case QImage::Format_BGR30:
+     case QImage::Format_A2BGR30_Premultiplied:
+     case QImage::Format_RGB30:
+     case QImage::Format_A2RGB30_Premultiplied:
++#if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
+     case QImage::Format_Grayscale16:
++#endif
+     case QImage::Format_RGBX64:
+     case QImage::Format_RGBA64:
+     case QImage::Format_RGBA64_Premultiplied:
+@@ -139,8 +157,16 @@ bool HEIFHandler::write_helper(const QImage &image)
+         }
+         break;
+     }
++#else
++    if (!m_bitdepthWriteWarned) {
++        qWarning() << "HEIFPlugin: Qt < 5.12 only supports writing 8 bit HEIF images (" << fileName(this) << ")";
++        m_bitdepthWriteWarned = true;
++    }
++    save_depth = 8;
++#endif
+ 
+     heif_chroma chroma;
++#if QT_VERSION >= QT_VERSION_CHECK(5, 12, 0)
+     if (save_depth > 8) {
+         if (save_alpha) {
+             tmpformat = QImage::Format_RGBA64;
+@@ -149,7 +175,9 @@ bool HEIFHandler::write_helper(const QImage &image)
+             tmpformat = QImage::Format_RGBX64;
+             chroma = (QSysInfo::ByteOrder == QSysInfo::LittleEndian) ? heif_chroma_interleaved_RRGGBB_LE : heif_chroma_interleaved_RRGGBB_BE;
+         }
+-    } else {
++    } else
++#endif
++    {
+         if (save_alpha) {
+             tmpformat = QImage::Format_RGBA8888;
+             chroma = heif_chroma_interleaved_RGBA;
+@@ -171,12 +199,12 @@ bool HEIFHandler::write_helper(const QImage &image)
+         heif_context_free(context);
+         return false;
+     }
+-
++#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+     QByteArray iccprofile = tmpimage.colorSpace().iccProfile();
+     if (iccprofile.size() > 0) {
+         heif_image_set_raw_color_profile(h_image, "prof", iccprofile.constData(), iccprofile.size());
+     }
+-
++#endif
+     heif_image_add_plane(h_image, heif_channel_interleaved, image.width(), image.height(), save_depth);
+     int stride = 0;
+     uint8_t *const dst = heif_image_get_plane(h_image, heif_channel_interleaved, &stride);
+@@ -246,7 +274,7 @@ bool HEIFHandler::write_helper(const QImage &image)
+         }
+         break;
+     default:
+-        qWarning() << "Unsupported depth:" << save_depth;
++        qWarning() << "Unsupported depth:" << save_depth << "(" << fileName(this) << ")";
+         heif_image_release(h_image);
+         heif_context_free(context);
+         return false;
+@@ -472,16 +500,17 @@ bool HEIFHandler::ensureDecoder()
+         m_parseState = ParseHeicError;
+         heif_image_handle_release(handle);
+         heif_context_free(ctx);
+-        qWarning() << "HEIC image has zero dimension";
++        qWarning() << "HEIC image has zero dimension (" << fileName(this) << ")";
+         return false;
+     }
+ 
+     const bool hasAlphaChannel = heif_image_handle_has_alpha_channel(handle);
+-    const int bit_depth = heif_image_handle_get_luma_bits_per_pixel(handle);
++    int bit_depth = heif_image_handle_get_luma_bits_per_pixel(handle);
+     heif_chroma chroma;
+ 
+     QImage::Format target_image_format;
+ 
++#if QT_VERSION >= QT_VERSION_CHECK(5, 12, 0)
+     if (bit_depth == 10 || bit_depth == 12) {
+         if (hasAlphaChannel) {
+             chroma = (QSysInfo::ByteOrder == QSysInfo::LittleEndian) ? heif_chroma_interleaved_RRGGBBAA_LE : heif_chroma_interleaved_RRGGBBAA_BE;
+@@ -490,7 +519,17 @@ bool HEIFHandler::ensureDecoder()
+             chroma = (QSysInfo::ByteOrder == QSysInfo::LittleEndian) ? heif_chroma_interleaved_RRGGBB_LE : heif_chroma_interleaved_RRGGBB_BE;
+             target_image_format = QImage::Format_RGBX64;
+         }
+-    } else if (bit_depth == 8) {
++    } else
++#else
++    if (bit_depth == 10 || bit_depth == 12) {
++        if (!m_bitdepthRenderWarned) {
++            qWarning() << "HEIFPlugin: rendering" << bit_depth << "bit HEIF image" << fileName(this) << "as 8 bit";
++            m_bitdepthRenderWarned = true;
++        }
++        bit_depth = 8;
++    }
++#endif
++    if (bit_depth == 8) {
+         if (hasAlphaChannel) {
+             chroma = heif_chroma_interleaved_RGBA;
+             target_image_format = QImage::Format_ARGB32;
+@@ -503,9 +542,9 @@ bool HEIFHandler::ensureDecoder()
+         heif_image_handle_release(handle);
+         heif_context_free(ctx);
+         if (bit_depth > 0) {
+-            qWarning() << "Unsupported bit depth:" << bit_depth;
++            qWarning() << "Unsupported bit depth:" << bit_depth << "(" << fileName(this) << ").";
+         } else {
+-            qWarning() << "Undefined bit depth.";
++            qWarning() << "Undefined bit depth" << "(" << fileName(this) << ").";
+         }
+         return false;
+     }
+@@ -541,7 +580,7 @@ bool HEIFHandler::ensureDecoder()
+         heif_image_handle_release(handle);
+         heif_context_free(ctx);
+         m_parseState = ParseHeicError;
+-        qWarning() << "HEIC image size invalid:" << imageSize;
++        qWarning() << "HEIC image size invalid:" << imageSize << "(" << fileName(this) << ")";
+         return false;
+     }
+ 
+@@ -553,7 +592,7 @@ bool HEIFHandler::ensureDecoder()
+         heif_image_handle_release(handle);
+         heif_context_free(ctx);
+         m_parseState = ParseHeicError;
+-        qWarning() << "HEIC data pixels information not valid!";
++        qWarning() << "HEIC data pixels information not valid!" << "(" << fileName(this) << ")";
+         return false;
+     }
+ 
+@@ -563,7 +602,7 @@ bool HEIFHandler::ensureDecoder()
+         heif_image_handle_release(handle);
+         heif_context_free(ctx);
+         m_parseState = ParseHeicError;
+-        qWarning() << "Unable to allocate memory!";
++        qWarning() << "Unable to allocate memory!" << "(" << fileName(this) << ")";
+         return false;
+     }
+ 
+@@ -729,34 +768,35 @@ bool HEIFHandler::ensureDecoder()
+         heif_image_handle_release(handle);
+         heif_context_free(ctx);
+         m_parseState = ParseHeicError;
+-        qWarning() << "Unsupported bit depth:" << bit_depth;
++        qWarning() << "Unsupported bit depth:" << bit_depth << "(" << fileName(this) << ")";
+         return false;
+         break;
+     }
+ 
+     heif_color_profile_type profileType = heif_image_handle_get_color_profile_type(handle);
++#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+     if (profileType == heif_color_profile_type_prof || profileType == heif_color_profile_type_rICC) {
+         size_t rawProfileSize = heif_image_handle_get_raw_color_profile_size(handle);
+         if (rawProfileSize > 0 && rawProfileSize < std::numeric_limits<int>::max()) {
+             QByteArray ba(rawProfileSize, 0);
+             err = heif_image_handle_get_raw_color_profile(handle, ba.data());
+             if (err.code) {
+-                qWarning() << "icc profile loading failed";
++                qWarning() << "icc profile loading failed" << "(" << fileName(this) << ")";
+             } else {
+                 m_current_image.setColorSpace(QColorSpace::fromIccProfile(ba));
+                 if (!m_current_image.colorSpace().isValid()) {
+-                    qWarning() << "HEIC image has Qt-unsupported or invalid ICC profile!";
++                    qWarning() << "HEIC image has Qt-unsupported or invalid ICC profile!" << "(" << fileName(this) << ")";
+                 }
+             }
+         } else {
+-            qWarning() << "icc profile is empty or above limits";
++            qWarning() << "icc profile is empty or above limits" << "(" << fileName(this) << ")";
+         }
+ 
+     } else if (profileType == heif_color_profile_type_nclx) {
+         struct heif_color_profile_nclx *nclx = nullptr;
+         err = heif_image_handle_get_nclx_color_profile(handle, &nclx);
+         if (err.code || !nclx) {
+-            qWarning() << "nclx profile loading failed";
++            qWarning() << "nclx profile loading failed" << "(" << fileName(this) << ")";
+         } else {
+             const QPointF redPoint(nclx->color_primary_red_x, nclx->color_primary_red_y);
+             const QPointF greenPoint(nclx->color_primary_green_x, nclx->color_primary_green_y);
+@@ -783,7 +823,7 @@ bool HEIFHandler::ensureDecoder()
+                 q_trc = QColorSpace::TransferFunction::SRgb;
+                 break;
+             default:
+-                qWarning("CICP color_primaries: %d, transfer_characteristics: %d\nThe colorspace is unsupported by this plug-in yet.",
++                qWarning("CICP color_primaries: %d, transfer_characteristics: %d\nThe colourspace is unsupported by this plug-in yet." << "(" << fileName(this) << ")",
+                          nclx->color_primaries,
+                          nclx->transfer_characteristics);
+                 q_trc = QColorSpace::TransferFunction::SRgb;
+@@ -807,13 +847,23 @@ bool HEIFHandler::ensureDecoder()
+             heif_nclx_color_profile_free(nclx);
+ 
+             if (!m_current_image.colorSpace().isValid()) {
+-                qWarning() << "HEIC plugin created invalid QColorSpace from NCLX!";
++                qWarning() << "HEIC plugin created invalid QColorSpace from NCLX!" << "(" << fileName(this) << ")";
+             }
+         }
+ 
+     } else {
+         m_current_image.setColorSpace(QColorSpace(QColorSpace::SRgb));
+     }
++#else
++    if (!m_iccWarned && (profileType == heif_color_profile_type_prof || profileType == heif_color_profile_type_rICC
++        || profileType == heif_color_profile_type_nclx)) {
++        char fourcc[5];
++        heif_brand_to_fourcc(profileType, fourcc);
++        fourcc[4] = '\0';
++        qWarning() << "HEIFPlugin: colour profile" << fourcc << "from HEIF image" << fileName(this) << "is ignored by Qt < 5.14";
++        m_iccWarned = true;
++    }
++#endif
+ 
+     heif_image_release(img);
+     heif_image_handle_release(handle);
+diff --git a/src/heif_p.h b/src/heif_p.h
+index 8bfafffb78524ae441dc1af6b94d55de75c6ac70..f12f69c493efc35032d75e5843f19f53b41c16de 100644
+--- a/src/heif_p.h
++++ b/src/heif_p.h
+@@ -61,6 +61,10 @@ private:
+     static bool m_hej2_decoder_available;
+ 
+     static QMutex &getHEIFHandlerMutex();
++
++    bool m_iccWarned = false;
++    bool m_bitdepthWriteWarned = false;
++    bool m_bitdepthRenderWarned = false;
+ };
+ 
+ class HEIFPlugin : public QImageIOPlugin
