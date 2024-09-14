@@ -57,8 +57,12 @@ namespace eval configure {
             foreach var [array names ::env] {
                 puts ${fd} "${var}=$::env(${var})"
             }
-            puts ${fd} "## configure.env:"
-            puts ${fd} "[join [lrange [split [option configure.env] " "] 0 end] "\n"]"
+            if {[info exists configure.env]} {
+                puts ${fd} "## configure.env:"
+                foreach assignment [set configure.env] {
+                    puts ${fd} "${assignment}"
+                }
+            }
             # the following variables are no longer set in the environment at this point:
             puts ${fd} "CPP=\"[option configure.cpp]\""
             # these are particularly relevant because referenced in the configure.pre_args:
@@ -203,8 +207,12 @@ proc configure.save_build_cmd {{save ""}} {
             foreach var [array names ::env] {
                 puts ${fd} "${var}=$::env(${var})"
             }
-            puts ${fd} "## build.env:"
-            puts ${fd} "[join [lrange [split [option build.env] " "] 0 end] "\n"]"
+            if {[info exists build.env]} {
+                puts ${fd} "## build.env:"
+                foreach assignment [set build.env] {
+                    puts ${fd} "${assignment}"
+                }
+            }
             puts ${fd} "\ncd ${worksrcpath}"
             puts ${fd} "${build.cmd} [join ${build.pre_args}] [join ${build.args}] [join ${build.post_args}]"
             close ${fd}
@@ -217,8 +225,12 @@ proc configure.save_build_cmd {{save ""}} {
             foreach var [array names ::env] {
                 puts ${fd} "${var}=$::env(${var})"
             }
-            puts ${fd} "## build.env:"
-            puts ${fd} "[join [lrange [split ${build.env} " "] 0 end] "\n"]"
+            if {[info exists build.env]} {
+                puts ${fd} "## build.env:"
+                foreach assignment [set build.env] {
+                    puts ${fd} "${assignment}"
+                }
+            }
             # the following variables are no longer set in the environment at this point:
             puts ${fd} "CPP=\"${configure.cpp}\""
             # these are particularly relevant because referenced in the configure.pre_args:
