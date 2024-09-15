@@ -53,6 +53,7 @@ namespace eval configure {
     }
 
     proc write_configure_cmd {fname} {
+        global configure.env
         if {![catch {set fd [open "${fname}" "w"]} err]} {
             foreach var [array names ::env] {
                 puts ${fd} "${var}=$::env(${var})"
@@ -178,6 +179,7 @@ proc configure.save_configure_cmd {{save_log_too ""}} {
 
 proc configure.save_build_cmd {{save ""}} {
     namespace upvar ::configure configure_cmd_saved statevar
+    global build.env
     if {${configure::statevar2}} {
         ui_debug "configure.save_build_cmd already called"
         return;

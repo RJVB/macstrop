@@ -485,7 +485,7 @@ proc create_devport {dependency {auto_generate_content {}}} {
 
 proc is_devport {} {
     global subport devport_name
-    return [eval {"${subport}" eq "${devport_name}"}]
+    return [expr {"${subport}" eq "${devport_name}"}]
 }
 
 proc is_mainport {} {
