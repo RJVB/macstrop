@@ -8,6 +8,9 @@
 
 namespace eval fromPorts {}
 
+options depends_host
+default depends_host    {}
+
 if {${os.platform} eq "darwin"} {
     ui_debug "from_ports_variant: ${os.platform} does not need a variant 'fromPorts'"
 } elseif { [variant_exists fromPorts] } {
@@ -52,11 +55,12 @@ proc fromPorts::depends {type args} {
         return 1
     }
     if {${os.platform} eq "darwin" || ([variant_exists fromPorts] && [variant_isset fromPorts])} {
-        ui_debug "fromPorts::depends \"${type}\" : platform=${os.platform} and/or +fromPorts=[variant_isset fromPorts]"
-        ui_debug "depends_${type} {*}${args}"
+        ui_debug "fromPorts::depends \"${dependstr}\" : platform=${os.platform} and/or +fromPorts=[variant_isset fromPorts]"
         if {${append}} {
+            ui_debug "depends_${type}-append {*}${args}"
             depends_${type}-append {*}${args}
         } else {
+            ui_debug "depends_${type} {*}${args}"
             depends_${type} {*}${args}
         }
         return 1
@@ -81,8 +85,19 @@ proc fromPorts::depends {type args} {
             if {${installed_or_active}} {
                 ui_debug "port:${d} is installed, adding depends_${type} ${depspec}"
                 depends_${type}-append ${depspec}
+            } else {
+                depends_host-append ${d}
             }
         }
     }
     return 0
 }
+
+proc fromPorts::callback {} {
+    global long_description
+    if {[option depends_host] ne {}} {
+        long_description-append \nDependencies obtained from the host:\n[option depends_host]
+    }
+}
+
+port::register_callback fromPorts::callback
