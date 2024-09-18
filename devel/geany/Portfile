@@ -6,10 +6,21 @@ platform darwin {
 }
 PortGroup           locale_select 1.0
 PortGroup           LTO 1.0
+PortGroup           save_configure_cmd 1.0
 PortGroup           from_ports_variant 1.0
 
 name                geany
-version             1.36
+if {[variant_isset gtk2]} {
+    version         1.37
+    checksums       rmd160  364fe71d4f8772444cd2182137717de6749badf3 \
+                    sha256  dde52584823b769c56704c27dbedddb7a6bbaf4eacb9587d10bbc387816e3d51
+#                    size    4689385
+} else {
+    version         2.0
+    checksums       rmd160  f3f7ffffb6183443119ff775a94d02a3b1790850 \
+                    sha256  565b4cd2f0311c1e3a167ec71c4a32dba642e0fe554ae5bb6b8177b7a74ccc92
+#                     size    6836300
+}
 license             GPL-2+
 categories          devel
 platforms           darwin
@@ -27,10 +38,6 @@ homepage            https://www.geany.org/
 master_sites        http://download.geany.org/
 use_bzip2           yes
 
-checksums           rmd160  e3a2e9e2e4dc1e6662a47f76a51ef12d3bc66c7b \
-                    sha256  9184dd3dd40b7b84fca70083284bb9dbf2ee8022bf2be066bdc36592d909d53e
-#                     size    4644521
-
 depends_build       port:autoconf \
                     port:automake \
                     port:intltool \
@@ -38,20 +45,33 @@ depends_build       port:autoconf \
                     port:pkgconfig
 
 depends_lib         port:atk \
-                    port:gdk-pixbuf2 \
+                    path:lib/pkgconfig/cairo.pc:cairo \
+                    path:lib/pkgconfig/gdk-pixbuf-2.0.pc:gdk-pixbuf2 \
                     port:gettext \
                     path:lib/pkgconfig/glib-2.0.pc:glib2 \
                     path:lib/pkgconfig/pango.pc:pango
-platform darwin {
+
+if {${os.platform} eq "darwin"} {
     depends_lib-append \
-                    path:lib/pkgconfig/cairo.pc:cairo \
                     port:port:desktop-file-utils \
+} else {
+    depends_build-append \
+                    port:slibtool
+    build.env-append "MAKEFLAGS=LIBTOOL=${prefix}/bin/rlibtool"
+    destroot.env-append "MAKEFLAGS=LIBTOOL=${prefix}/bin/rlibtool"
 }
 
-# reconfigure using distributed autogen.sh for intltool 0.51 compatibility
+# configure: error: *** A compiler with support for C++17 language features is required.
+compiler.cxx_standard 2017
 
+# reconfigure using distributed autogen.sh for intltool 0.51 compatibility
 pre-configure {
-    if {![file exists ${worksrcpath}/config.log]} {
+    if {[variant_isset gtk2] && ![file exists ${worksrcpath}/config.log]} {
+        foreach f {codeset.m4 gettext.m4 glibc21.m4 iconv.m4 isc-posix.m4 lcmessage.m4 progtest.m4} {
+            catch {xinstall -m 644 [glob {*}${prefix}/share/aclocal*/${f}] ${worksrcpath}/m4}
+        }
+        xinstall -m 644 {*}[glob ${prefix}/share/automake-*/config.*] ${worksrcpath}/
+        file delete -force ${worksrcpath}/aclocal.m4 ${worksrcpath}/libtool
         configure.cmd ./autogen.sh
     }
 }
@@ -59,12 +79,17 @@ pre-configure {
 configure.args      --disable-silent-rules \
                     --enable-vte \
                     --disable-html-docs \
-                    --disable-api-docs
+                    --disable-pdf-docs \
+                    --disable-api-docs \
+                    --disable-gtkdoc-header \
+                    --disable-dependency-tracking
 
 variant gtk2 conflicts gtk3 description {Use gtk2} {
     fromPorts::depends lib-append \
                     port:gtk2 \
                     path:lib/pkgconfig/vte.pc:vte-gtk2-compat
+    configure.args-append \
+                    --enable-gtk2
 }
 
 variant gtk3 conflicts gtk2 description {Use gtk3} {
@@ -74,13 +99,46 @@ variant gtk3 conflicts gtk2 description {Use gtk3} {
                     port:vte
     fromPorts::depends run-append \
                     port:adwaita-icon-theme
-    configure.args-append \
-                    --enable-gtk3
+#     configure.args-append \
+#                     --enable-gtk3
 }
 
 if {![variant_isset gtk2]} {
     default_variants-append +gtk3
 }
+
+variant python39 conflicts python311 requires gtk3 description {Use Python v3.9} {
+    configure.args-append --with-python-command=${prefix}/bin/python3.9
+    depends_run-append port:python39
+}
+
+variant python310 conflicts python311 requires gtk3 description {Use Python v3.10} {
+    configure.args-append --with-python-command=${prefix}/bin/python3.10
+    depends_run-append port:python310
+}
+
+variant python311 conflicts python310 requires gtk3 description {Use Python v3.11} {
+    configure.args-append --with-python-command=${prefix}/bin/python3.11
+    depends_run-append port:python311
+}
+
+platform darwin {
+    variant quartz conflicts x11 description {Better support Mac interface conventions} {
+        if {[variant_isset gtk3]} {
+             depends_lib-append \
+                    port:gtk-osx-application-gtk3
+        }
+    }
+    
+    variant x11 conflicts quartz description {Interface more consistent with other X11 systems} {}
+
+    if {![variant_isset quartz]} {
+        default_variants-append +x11
+    }
+}
+
+configure.save_configure_cmd "install log"
+configure.save_build_cmd
 
 platform darwin {
     post-destroot {
