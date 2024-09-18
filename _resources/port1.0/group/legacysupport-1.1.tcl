@@ -21,8 +21,8 @@ namespace eval legacysupport {
 }
 
 # Newest Darwin version that requires legacy support.
-# Currently OS X 10.12 ( Sierra, Darwin 16) due to utimensat, fsgetpath, setattrlistat
-set ls_max_darwin_support 16
+# Currently OS X 10.14 ( Mojave, Darwin 18) due to timespec_get
+set ls_max_darwin_support 18
 options legacysupport.newest_darwin_requires_legacy
 default legacysupport.newest_darwin_requires_legacy ${ls_max_darwin_support}
 
@@ -150,11 +150,12 @@ proc legacysupport::relink_libSystem { exe } {
 set ls_cache_incpath  [list]
 set ls_cache_ldflags  [list]
 set ls_cache_cppflags [list]
+set ls_cache_cxxflags [list]
 variable legacysupport::installed_libcxx_port
 
 proc legacysupport::add_legacysupport {} {
     global prefix os.platform os.major
-    global ls_cache_incpath ls_cache_ldflags ls_cache_cppflags
+    global ls_cache_incpath ls_cache_ldflags ls_cache_cppflags ls_cache_cxxflags
     global configure.cxx_stdlib
 
     if { ${os.platform} eq "darwin" && ${os.major} <= [option legacysupport.newest_darwin_requires_legacy] } {
@@ -166,6 +167,7 @@ proc legacysupport::add_legacysupport {} {
         if { ${ls_cache_incpath} ne "" } {
             foreach f ${ls_cache_ldflags}  { configure.ldflags-delete ${f} }
             foreach f ${ls_cache_cppflags} { configure.cppflags-delete ${f} }
+            foreach f ${ls_cache_cxxflags} { configure.cxxflags-delete ${f} }
             foreach lang {C OBJC CPLUS OBJCPLUS} {
                 legacysupport::remove_phase_env_var ${lang}_INCLUDE_PATH=[string map {" " ":"} ${ls_cache_incpath}]
             }
@@ -196,19 +198,22 @@ proc legacysupport::add_legacysupport {} {
             }
             append ls_cache_incpath  " ${prefix}/include/libcxx/v1"
             append ls_cache_ldflags  " -L${prefix}/lib/libcxx"
-            append ls_cache_cppflags " -nostdinc++ -isystem${prefix}/include/libcxx/v1"
+            append ls_cache_cxxflags " -nostdinc++ -isystem${prefix}/include/libcxx/v1"
         }
 
         ui_debug "legacysupport: ldflags  ${ls_cache_ldflags}"
         ui_debug "legacysupport: cppflags ${ls_cache_cppflags}"
         ui_debug "legacysupport: incpath  ${ls_cache_incpath}"
+        ui_debug "legacysupport: cxxflags ${ls_cache_cxxflags}"
 
         # Add the flags
         foreach f ${ls_cache_ldflags} { legacysupport::add_once configure.ldflags append ${f} }
         legacysupport::set_phase_env_var MACPORTS_LEGACY_SUPPORT_LDFLAGS=[join ${ls_cache_ldflags}]
         if {![option compiler.limit_flags]} {
             foreach f ${ls_cache_cppflags} { legacysupport::add_once configure.cppflags prepend ${f} }
+            foreach f ${ls_cache_cxxflags} { legacysupport::add_once configure.cxxflags prepend ${f} }
             legacysupport::set_phase_env_var MACPORTS_LEGACY_SUPPORT_CPPFLAGS=[join ${ls_cache_cppflags}]
+            legacysupport::set_phase_env_var MACPORTS_LEGACY_SUPPORT_CXXFLAGS=[join ${ls_cache_cxxflags}]
         }
 
         # do not use compiler.cpath since it behaves like -I, while ${lang}_INCLUDE_PATH behaves like -isystem
