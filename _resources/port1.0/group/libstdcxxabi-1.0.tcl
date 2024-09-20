@@ -108,7 +108,7 @@ if {${os.platform} eq "linux"} {
 
         proc stdcxxabi::callback {} {
             global stdcxxabi.dependencies_concerned_by_ABI configure.compiler configure.cxx_stdlib \
-                configure.cxxflags configure.cxx
+                configure.cxxflags configure.cxx subport
             if {![variant_exists libcxx] || ![variant_isset libcxx]} {
                 foreach d ${stdcxxabi.dependencies_concerned_by_ABI} {
                     if {[variant_isset oldabi]} {
@@ -127,8 +127,10 @@ if {${os.platform} eq "linux"} {
                             || ${stdcxxabi::_GLIBCXX_USE_DUAL_ABI}
                             || ${configure.cxx_stdlib} eq "libstdc++_macports"
                             || ${configure.cxx_stdlib} eq "macports-libstdc++"} {
-                        depends_lib-append port:libgcc
-                        stdcxxabi.dependencies_concerned_by_ABI-append port:libgcc
+                        if {${subport} ne "libgcc"} {
+                            depends_lib-append port:libgcc
+                            stdcxxabi.dependencies_concerned_by_ABI-append port:libgcc
+                        }
                         if {${configure.cxx_stdlib} ne ""} {
                             set currentABI [stdcxxabi::getABISetter ${configure.cxx} -stdlib=${configure.cxx_stdlib}]
                         } else {
