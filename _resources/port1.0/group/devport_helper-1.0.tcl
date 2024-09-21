@@ -62,7 +62,7 @@ namespace eval devport_helper {
     # from any other PGs will be executed after we've been read. So, we need to use a callback too in
     # order to scan the best possibly definitive depends_lib and depends_build lists.
     proc callback {} {
-        global depends_lib depends_build
+        global depends_lib depends_build conflicts_build conflicts_configure
         if {${devport_helper::useportgroup}} { ## this is where we do the actual PortGroup work:
             ui_debug "Looking for ${devport_helper::currentportgroupdir}/devport_db.tcl"
             if {![catch {source "${devport_helper::currentportgroupdir}/devport_db.tcl"} err] && [info exists devportDB]} {
@@ -79,14 +79,25 @@ namespace eval devport_helper {
                         set devdep $devportDB(${dep})
                         # found one, let's see if the devport is already declared in depends_build:
                         if {[lsearch -regexp ${depends_build} "\[^ \]*:${devdep}"] < 0} {
-                            ui_debug "port:${devdep} is missing from the build dependencies; adding it"
-                            depends_build-append "port:${devdep}"
-                            if {[catch {registry_active ${devdep}}]} {
-                                # it'd be nice if there were a conditional way to use ui_warn here
-                                # where it prints before asking the used to install a dependency
-                                # that may simply have been deactivate (= is installed).
-                                # With my patched "base" the ui_info routine is an acceptable workaround.
-                                ui_info "WARNING: port:${devdep} not installed or not activated."
+                            set blisted -1
+                            if {[info exists conflicts_build]} {
+                                set blisted [lsearch ${conflicts_build} "${devdep}"]
+                            }
+                            if {${blisted} < 0 && [info exists conflicts_configure]} {
+                                set blisted [lsearch ${conflicts_configure} "${devdep}"]
+                            }
+                            if {${blisted} < 0} {
+                                ui_debug "port:${devdep} is missing from the build dependencies; adding it"
+                                depends_build-append "port:${devdep}"
+                                if {[catch {registry_active ${devdep}}]} {
+                                    # it'd be nice if there were a conditional way to use ui_warn here
+                                    # where it prints before asking the used to install a dependency
+                                    # that may simply have been deactivate (= is installed).
+                                    # With my patched "base" the ui_info routine is an acceptable workaround.
+                                    ui_info "WARNING: port:${devdep} not installed or not activated."
+                                }
+                            } else {
+                                ui_debug "port:${devdep} is listed as a configure or build conflict; NOT adding it"
                             }
                         }
                     }
