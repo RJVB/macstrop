@@ -849,7 +849,7 @@ proc compilers::add_gcc_rpath_support {} {
     global prefix os.platform os.major
     set gcc_v [compilers::get_current_gcc_version]
     if { ${gcc_v} >= 10 || ${gcc_v} == "devel" } {
-        if {${os.platform} neN "darwin" || ${os.major} > 8} {
+        if {${os.platform} ne "darwin" || ${os.major} > 8} {
             ui_debug "compilers PG: RPATH added to ldflags as GCC version is ${gcc_v}"
             configure.ldflags-delete  -Wl,-rpath,${prefix}/lib/libgcc
             configure.ldflags-append  -Wl,-rpath,${prefix}/lib/libgcc
