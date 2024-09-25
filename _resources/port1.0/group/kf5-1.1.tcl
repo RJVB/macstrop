@@ -253,20 +253,25 @@ if {${kf5::includecounter} == 0} {
                             -DCMAKE_INSTALL_LIBEXECDIR=${prefix}/libexec \
                             -DKDE_INSTALL_LIBEXECDIR=${kf5.libexec_dir} \
                             -DCMAKE_MACOSX_RPATH=ON
-        if {[string match *g*-mp-7* ${configure.cxx}]} {
+        if {[string match *g*-mp-* ${configure.cxx}]} {
             if {![variant_exists libcxx]} {
-                variant libcxx description {Experimental option to use -stdlib=libc++ with g++-mp-7. \
-                        Requires using port:gcc7+libcxxXY.} {}
+                variant libcxx description {Experimental option to use -stdlib=libc++ with g++-mp. \
+                        Requires using port:gccX?+libcxxXY.} {}
             }
             if {[variant_isset libcxx]} {
                 configure.cxx_stdlib \
                                 libc++
                 configure.ldflags-append \
                                 -stdlib=libc++
+                configure.cxxflags-delete \
+                                -stdlib=libstdc++
+                # configure.cxxflags tries to be clever about the -stdlib= options it accepts, so we need to be smarter.
+                configure.cxxflags-append \
+                                \"-stdlib=libc++\"
             }
         } else {
             if {[variant_isset libcxx]} {
-                ui_warn "+libcxx is supported only with g++ from port:gcc7+libcxxXY!"
+                ui_warn "+libcxx is supported only with g++ from port:gcc+libcxxXY!"
                 pre-configure {
                     return -code error "${subport}: Illegal variant requested"
                 }
@@ -293,23 +298,28 @@ if {${kf5::includecounter} == 0} {
                                     libc++
                 }
             }
-        } elseif {[string match *g*-mp-7* ${configure.cxx}]} {
+        } elseif {[string match *g*-mp-* ${configure.cxx}]} {
             if {![variant_exists libcxx]} {
                 variant libcxx description {highly experimental option to build against libc++. \
-                        Requires using port:gcc7+libcxx and an independently provided libc++ installation.} {}
+                        Requires using port:gccX?+libcxx (7 or up) and an independently provided libc++ installation.} {}
             }
             if {[variant_isset libcxx]} {
                 configure.cxx_stdlib \
                                 libc++
                 configure.ldflags-append \
                                 -stdlib=libc++
+                configure.cxxflags-delete \
+                                -stdlib=libstdc++
+                # configure.cxxflags tries to be clever about the -stdlib= options it accepts, so we need to be smarter.
+                configure.cxxflags-append \
+                                \"-stdlib=libc++\"
             }
         } else {
             if {![variant_exists libcxx]} {
                 variant libcxx description {Not supported. Use libc++ when building with clang or a libc++-enabled GCC port} {}
             }
             if {[variant_isset libcxx]} {
-                ui_warn "+libcxx is supported only with clang or with g++ from port:gcc7+libcxxXY!"
+                ui_warn "+libcxx is supported only with clang or with g++ from port:gccX?+libcxxXY!"
                 pre-configure {
                     return -code error "${subport}: Invalid variant requested"
                 }
