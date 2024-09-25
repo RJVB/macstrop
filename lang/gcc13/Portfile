@@ -22,17 +22,16 @@ long_description    {*}${description}, including front ends for \
                     C, C++, Objective-C, Objective-C++ and Fortran.
 
 # Remember to reset all revision increments below to 0 on new versions
-version             13.2.0
-revision            4
+version             13.3.0
 
 set libgccname      lib${name}
 subport             ${libgccname} { revision [ expr ${revision} + 0 ] }
 
 set libcxxname      ${name}-libcxx
 
-checksums           rmd160  a6d646ed9765f973d3f63ef560edf4a50cf686c3 \
-                    sha256  e275e76442a6067341a27f04c5c6b83d8613144004c0413528863dc6b5c743da \
-                    size    87858592
+checksums           rmd160  a01df0d39af53b8bef8ff42f87469212589984ec \
+                    sha256  0845e9621c9543a13f484e94584a49ffc0129970e9914624235fc1d061a0c083
+#                     size    87909952
 
 # Primary releases
 master_sites        https://ftpmirror.gnu.org/gcc/gcc-${version}/ \
@@ -175,17 +174,17 @@ configure.env-append \
                     OTOOL=${prefix}/bin/otool \
                     OTOOL64=${prefix}/bin/otool
 
-if { ${os.platform} eq "darwin" } {
+#if { ${os.platform} eq "darwin" } {
     # Patch generated from https://github.com/iains/gcc-13-branch
     # git diff --no-prefix releases/gcc-13.1.0 gcc-13.1-darwin-r0
-    patchfiles-append      patch-darwin-gcc-${version}.diff
+    patchfiles-append       patch-darwin-gcc-${version}.diff
     # Do not abort if 'system' headers in /opt/local/include/gcc are missing
     patchfiles-append      patch-disable-sys-header-missing-abort.diff
     # GCC fixinc work-around for sys/ucred.h on OSX10.14.4 no longer seems to work ???
     if { ${os.major} == 18 } {
         patchfiles-append  patch-OSX10.14-ucred-atomic-define.diff
     }
-}
+#}
 
 # Since GCC 7.4.0, during configure, it detects features supported by target-as.
 # On the other hand, MacPorts cctools contain a proxy for 'as' that runs system
@@ -226,7 +225,7 @@ pre-configure {
     # Set package info
     configure.args-append --with-pkgversion="MacPorts ${name} ${version}_${revision}${portvariants}"
 
-    if {${configure.sdkroot} ne ""} {
+    if {${os.platform} eq "darwin" && ${configure.sdkroot} ne ""} {
         # We should be using --with-build-sysroot here.  Using --with-sysroot
         # changes the behavior of the installed gcc to look in that sysroot
         # by default instead of /.  Using --with-build-sysroot is supposed
@@ -315,17 +314,26 @@ if { ${subport} ne ${libcxxname} } {
     set LTO.disable_LTO yes
     PortGroup LTO                   1.0
     PortGroup preserve_runtime_libraries 1.0
-    configure.save_configure_cmd "install log"
 
     LTO.use_archive_helpers no
 ### MacStrop private
 
     # the quick variant simplifies gcc patch development but also decreases the build time by a factor > 4.
-    variant quick description "Build ${name} without the usual 3-stage bootstrap. Much faster but not recommended" {}
+    variant quick description "Build ${name} without the usual 3-stage bootstrap. Much faster but not recommended except for debugging" {}
     if {![variant_exists quick] || ![variant_isset quick]} {
         configure.ccache no
     } else {
         ui_debug "Allowing +quick builds with ccache"
+        configure.cflags-append "-g"
+        configure.cxxflags-append "-g"
+        configure.ldflags-append "-g"
+    }
+
+    variant no_sanit description {don't include the sanitiser libraries} {
+        post-patch {
+            file delete -force ${worksrcpath}/libsanitizer.moved
+            file rename ${worksrcpath}/libsanitizer ${worksrcpath}/libsanitizer.moved
+        }
     }
 
     variant stdlib_flag conflicts libcxx description {Enable stdlib command line flag to select c++ runtime} {
@@ -346,23 +354,22 @@ if { ${subport} ne ${libcxxname} } {
         if {${subport} eq ${name}} {
             depends_build-append \
                 port:libcxx-dev
-            platform darwin {
-                depends_run-append \
-                    port:${libcxxname}
-                require_active_variants port:${libcxxname} libcxx
-                require_active_variants libcxx-dev macports_libcxx
-            }
+            depends_run-append \
+                port:${libcxxname}
+            require_active_variants port:${libcxxname} libcxx
+            require_active_variants libcxx-dev macports_libcxx
+            patchfiles-append \
+                    patch-use-libcxx-by-default.diff
         }
-        patchfiles-append \
-                    patch-use-libcxx-on-linux.diff
         configure.args-append --with-gxx-libcxx-include-dir="[libcxx_incpath]"
     }
 
     # libcxx is unavailable on PPC
     if {${build_arch} ni [list ppc ppc64]} {
-        #default_variants-append +stdlib_flag
-        if {![variant_isset stdlib_flag]} {
+        if {${os.platform} eq "darwin" && ${os.major} >= 13 && ![variant_isset stdlib_flag]} {
             default_variants-append +libcxx
+        } else {
+            default_variants-append +stdlib_flag
         }
     }
 
@@ -545,6 +552,11 @@ if {${subport} eq ${libgccname}} {
 
         move ${destroot}${prefix}/lib/libgcc.merged ${destroot}${prefix}/lib/libgcc
 
+        if {[variant_isset quick]} {
+            ui_msg "--->  Generating the .dSYM bundles because of +quick: find ${destroot}${prefix} -type f '(' -name '*.dylib' -or -name '*.so' ')' -exec dsymutil {} +"
+            system -W ${destroot}${prefix} "find . -type f '(' -name '*.dylib' -or -name '*.so' ')' -exec dsymutil {} +"
+        }
+
         # For binary compatibility with binaries that linked against the old libstdcxx port
         ln -s libgcc/libstdc++.6.dylib ${destroot}${prefix}/lib/libstdc++.6.dylib
 
@@ -602,6 +614,7 @@ if {${subport} eq ${name}} {
 }
 
 if { ${subport} ne ${libcxxname} } {
+# this block is for port:gccXY and port:libgccXY (if libgccXY is not a shim)
 
     post-extract {
         xinstall -m 644 ${worksrcpath}/config/bootstrap-O3.mk ${worksrcpath}/config/bootstrap-Os.mk
@@ -683,7 +696,7 @@ if { ${subport} ne ${libcxxname} } {
             "LDFLAGS_FOR_TARGET=\"-g -stdlib=libstdc++\"" \
             "do-compare=/usr/bin/true" \
             {*}${preargs}
-        depends_build port:gmake
+        depends_build-append port:gmake
         build.cmd ${prefix}/bin/gmake
     }
     configure.cc-append [get_canonical_archflags]
@@ -705,6 +718,9 @@ if { ${subport} ne ${libcxxname} } {
         configure.universal_ldflags
         configure.universal_args
     }
+### MacStrop private
+    configure.save_configure_cmd "install log"
+### MacStrop private
 }
 
 livecheck.type      regex
