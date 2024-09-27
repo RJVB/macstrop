@@ -44,28 +44,28 @@
 options conflicts_configure
 default conflicts_configure {}
 
+options conflicts_configure_badports
+default conflicts_configure_badports {}
 
 proc conflicts_configure._check_for_conflicting_ports {} {
-    global conflicts_configure subport
+    global conflicts_configure subport conflicts_configure_badports
     foreach badport ${conflicts_configure} {
         if {![catch "registry_active ${badport}"]} {
             if {${subport} eq ${badport}} {
                 ui_error "${subport} cannot be configured while another version of ${badport} is active."
-                ui_error "Please forcibly deactivate the existing copy of ${badport}, e.g. by running:"
-                ui_error ""
-                ui_error "    sudo port -f deactivate ${badport}"
-                ui_error ""
-                ui_error "Then try again."
             } else {
                 ui_error "${subport} cannot be configured while ${badport} is active."
-                ui_error "Please forcibly deactivate ${badport}, e.g. by running:"
-                ui_error ""
-                ui_error "    sudo port -f deactivate ${badport}"
-                ui_error ""
-                ui_error "Then try again. You can reactivate ${badport} again later."
             }
-            return -code error "${badport} is active"
+            conflicts_configure_badports-append ${badport}
         }
+    }
+    if {${conflicts_configure_badports} ne {}} {
+        ui_error "Please forcibly deactivate ${conflicts_configure_badports}, e.g. by running:"
+        ui_error ""
+        ui_error "    sudo port -f deactivate ${conflicts_configure_badports}"
+        ui_error ""
+        ui_error "Then try again."
+        return -code error "${conflicts_configure_badports} is/are active"
     }
 }
 

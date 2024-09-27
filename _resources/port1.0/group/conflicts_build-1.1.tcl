@@ -18,27 +18,28 @@ default conflicts_build {}
 options conflicts_destroot_too
 default conflicts_destroot_too {yes}
 
+options conflicts_build_badports
+default conflicts_build_badports {}
+
 proc conflicts_build._check_for_conflicting_ports {} {
-    global conflicts_build subport
+    global conflicts_build subport conflicts_build_badports
     foreach badport ${conflicts_build} {
         if {![catch "registry_active ${badport}"]} {
             if {${subport} eq ${badport}} {
                 ui_error "${subport} cannot be built while another version of ${badport} is active."
-                ui_error "Please forcibly deactivate the existing copy of ${badport}, e.g. by running:"
-                ui_error ""
-                ui_error "    sudo port -f deactivate ${badport}"
-                ui_error ""
-                ui_error "Then try again."
             } else {
                 ui_error "${subport} cannot be built while ${badport} is active."
-                ui_error "Please forcibly deactivate ${badport}, e.g. by running:"
-                ui_error ""
-                ui_error "    sudo port -f deactivate ${badport}"
-                ui_error ""
-                ui_error "Then try again. You can reactivate ${badport} again later."
             }
-            return -code error "${badport} is active"
+            conflicts_build_badports-append ${badport}
         }
+    }
+    if {${conflicts_build_badports} ne {}} {
+        ui_error "Please forcibly deactivate ${conflicts_build_badports}, e.g. by running:"
+        ui_error ""
+        ui_error "    sudo port -f deactivate ${conflicts_build_badports}"
+        ui_error ""
+        ui_error "Then try again."
+        return -code error "${conflicts_build_badports} is/are active"
     }
 }
 
