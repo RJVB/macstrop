@@ -193,6 +193,9 @@ for {set i 0} {${i} < ${argc}} {incr i} {
         puts stdout "export portName=${portName}\nexport pWD=${pWD}\nexport _WD_port=${_WD_port}\nPORTDIR=${portDir}\npPFILE=${portFile}"
     } else {
         puts stderr "Cannot find a workdir for \"${arg}\""
+        if {[file exists ${arg}] && [file type ${arg}] eq "directory"} {
+            puts stderr "\tNB: \"${arg}\" is a directory: [exec ls -ld ${arg}]"
+        }
     }
 }
 
