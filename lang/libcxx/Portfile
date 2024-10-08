@@ -61,8 +61,12 @@ if {[tbool almost_done]} {
 }
 
 PortGroup               compiler_blacklist_versions 1.0
+set LTO.allow_ThinLTO no
 PortGroup               LTO 1.0
 PortGroup               cmake 1.1
+# Do not propagate c/c++ standards as set by base
+cmake.set_c_standard    no
+cmake.set_cxx_standard  no
 
 variant replacemnt_libcxx description {EXPERTS ONLY: Build a replacement libcxxabi and libcxx even if it is already part of the base OS.} {}
 variant macports_libcxx description "EXPERTS ONLY: Install the libcxx library so that MacPorts build will link against it" {}
@@ -84,12 +88,42 @@ epoch                   1
 # everyone not defining the macro.
 # Hence see patch-config-availability+ABIhiding.diff
 
-version                 13.0.1 ; revision 1
+version                 13.0.1 ; revision 2
 set llvm_version        13
+## v17 builds as configured below but for now the result doesn't work with GCC so 
+## we put off the upgrade.
+# version                 17.0.6
+# set llvm_version        17
 
-# some kind of version that should be larger than the current_version Apple gave to this libc++ version
-# could also simply be a version that is based on Apple's libc++ version on the OS version we are building for.
-set version4macports    1300.99.1
+if {${llvm_version} >= 17} {
+    PortGroup           legacysupport 1.1
+    # link legacysupport statically for compilers
+    legacysupport.use_static yes
+    # Sysconf wrapping causes issues so disable
+    legacysupport.disable_function_wrap yes
+
+    set minClang        14
+    set clangVersions   {14 15 16 17 18 19 20}
+
+    # some kind of version that should be larger than the current_version Apple gave to this libc++ version
+    # could also simply be a version that is based on Apple's libc++ version on the OS version we are building for.
+    set version4macports 1700.99.6
+
+    checksums           rmd160  10f44d5a8e3d0d5fc1a1961a8adaac945733ec07 \
+                        sha256  58a8818c60e6627064f312dbf46c02d9949956558340938b71cf731ad8bc0813
+#                         size    127838860
+} else {
+    set minClang        8
+    set clangVersions   {8.0 9.0 10 11 12 13 14 15 16 17 18 19 20}
+
+    # some kind of version that should be larger than the current_version Apple gave to this libc++ version
+    # could also simply be a version that is based on Apple's libc++ version on the OS version we are building for.
+    set version4macports 1300.99.1
+
+    checksums           rmd160  ae542658ad0e97b4bf088b1cfba66fa10b9b52d8 \
+                        sha256  326335a830f2e32d06d0a36393b5455d17dc73e0bd1211065227ee014f92cbf8
+#                         size    97584928
+}
 
 categories              lang
 platforms               darwin
@@ -108,7 +142,6 @@ long_description        ${description} \
 
 homepage                http://libcxx.llvm.org/
 
-# master_sites            http://www.llvm.org/releases/${version}/
 master_sites            https://github.com/llvm/llvm-project/releases/download/llvmorg-${version}
 dist_subdir             llvm
 
@@ -119,32 +152,35 @@ use_xz                  yes
 
 distname                llvm-project-${version}.src
 
-checksums               rmd160  ae542658ad0e97b4bf088b1cfba66fa10b9b52d8 \
-                        sha256  326335a830f2e32d06d0a36393b5455d17dc73e0bd1211065227ee014f92cbf8
-#                         size    97584928
-
-
 set suffix              mp-${llvm_version}
 
 compiler.blacklist-append clang
 # pick the newest available (= installed) port:clang-XY compiler:
-foreach clv {8.0 9.0 10 11 12 13 14 15 16 17 18 19 20} {
+foreach clv ${clangVersions} {
     if {[file exists ${prefix}/bin/clang-mp-${clv}]} {
         compiler.whitelist-prepend macports-clang-${clv}
     }
     compiler.fallback-prepend macports-clang-${clv}
 }
 
-compiler.blacklist-append {clang < 1204} {macports-clang-[5-7].0}
-compiler.fallback         clang macports-clang-11 macports-clang-10 macports-clang-9.0 macports-clang-8.0
-set clangversion [lindex [split ${configure.cc} -] 2]
-if {${clangversion} ne ""} {
-    depends_build-append port:clang-${clangversion}
-    if {${clangversion} < 8} {
-        pre-configure {
-            ui_error "This port requires at least clang 8 to be built!"
-            return -code error "Please install or specify a sufficiently recent compiler"
+if {[string match *clang++-mp-* ${configure.cxx}]} {
+    compiler.blacklist-append {clang < 1204} {macports-clang-[5-9].0} {macports-clang-1[0-3]}
+    compiler.fallback       clang macports-clang-15 macports-clang-14 macports-clang-13 macports-clang-12 \
+                            macports-clang-11 macports-clang-10 macports-clang-9.0 macports-clang-8.0
+    set clangversion [lindex [split ${configure.cc} -] 2]
+    if {${clangversion} ne ""} {
+        depends_build-append port:clang-${clangversion}
+        if {${clangversion} < ${minClang}} {
+            pre-configure {
+                ui_error "This port requires at least clang 14 to be built!"
+                return -code error "Please install or specify a sufficiently recent compiler"
+            }
         }
+    }
+} elseif {![string match macports-gcc* ${configure.compiler}]} {
+    pre-configure {
+        ui_error "This port needs to be built with a gcc or clang compiler from MacPorts (clang >= 8.0)"
+        return -code error "install a MacPorts clang compiler or invoke the install with `configure.compiler=macports-clang-XY`"
     }
 }
 
@@ -187,45 +223,125 @@ depends_build-append \
 depends_skip_archcheck-append git cctools
 
 patch.pre_args -Np1
-patchfiles-append \
-        0010-compiler-rt-cmake-config-ix.cmake-was-Leopard-No-ASA.patch \
-        0011-Fix-missing-long-long-math-prototypes-when-using-the.patch \
-        0012-compiler-rt-add-some-defs-missing-in-older-SDKs.patch \
-        0016-10.10-and-less-compiler-rt-find-macosx-sdk.patch \
-        0017-10.6-and-less-libcxxabi-work-around-no-reexported_symbo.patch \
-        0017-10.6-and-less-libcxx-work-around-no-reexported_symbo.patch \
-        0021-10.6-and-less-libcxx-disable-Availability-tests.patch \
-        0024-10.5-and-less-compiler-rt-work-around-no-libdispatch.patch
-# 240318 : NB: 1 build_type fix moved to patch-benchmarks-cmake-fixes.diff
-patchfiles-append \
-        patch-accept-build_types.diff \
-        patch-config-availability+ABIhiding.diff \
-        patch-experimental-no-lto.diff
-# make benchmarks buildable (incl. not requiring over 2G of RAM to build)
-patchfiles-append \
-        patch-no-universal-or-filesystem-benchmarks.diff \
-        patch-strings-benchmark.diff \
-        patch-cheaper-variant-benchmark.diff
-# clang-13/work/build/include/c++/v1/optional:224:5: error: destructor cannot be marked constexpr
-#     _LIBCPP_CONSTEXPR_AFTER_CXX17 ~__optional_destruct_base()
-patchfiles-append patch-no-const_expr_dtor.diff
-# set our compatibility version and install location:
-patchfiles-append patch-install_location_version_and_name.diff
-# let's see what we gain from supporting ParellelSTL
-# see https://reviews.llvm.org/D129452
-patchfiles-append patch-use-pstl.diff \
-        patch-no_result_of.diff
-# make certain symbols like __gxx_personality_v0 can be found as expected by software
-# built against older libc++ versions.
-patchfiles-append patch-more-exported-symbols.diff
-# allow building with compilers that don't support -nostdlib++ (like GCC 12)
-# (NB: the build still fails ATM, when using g++ -stdlib=libc++)
-patchfiles-append patch-allow-builds-with-gcc.diff
-# Somehow the benchmarks used to build for me, and now they didn't until I came up with:
-patchfiles-append patch-benchmarks-cmake-fixes.diff
+if {${llvm_version} == 13} {
+    patchfiles-append \
+        ${llvm_version}/0010-compiler-rt-cmake-config-ix.cmake-was-Leopard-No-ASA.patch \
+        ${llvm_version}/0011-Fix-missing-long-long-math-prototypes-when-using-the.patch \
+        ${llvm_version}/0012-compiler-rt-add-some-defs-missing-in-older-SDKs.patch \
+        ${llvm_version}/0016-10.10-and-less-compiler-rt-find-macosx-sdk.patch \
+        ${llvm_version}/0017-10.6-and-less-libcxxabi-work-around-no-reexported_symbo.patch \
+        ${llvm_version}/0017-10.6-and-less-libcxx-work-around-no-reexported_symbo.patch \
+        ${llvm_version}/0021-10.6-and-less-libcxx-disable-Availability-tests.patch \
+        ${llvm_version}/0024-10.5-and-less-compiler-rt-work-around-no-libdispatch.patch
+    # 240318 : NB: 1 build_type fix moved to patch-benchmarks-cmake-fixes.diff
+    patchfiles-append \
+        ${llvm_version}/patch-accept-build_types.diff \
+        ${llvm_version}/patch-config-availability+ABIhiding.diff \
+        ${llvm_version}/patch-experimental-no-lto.diff
+    # make benchmarks buildable (incl. not requiring over 2G of RAM to build)
+    patchfiles-append \
+        ${llvm_version}/patch-no-universal-or-filesystem-benchmarks.diff \
+        ${llvm_version}/patch-strings-benchmark.diff \
+        ${llvm_version}/patch-cheaper-variant-benchmark.diff
+    # clang-13/work/build/include/c++/v1/optional:224:5: error: destructor cannot be marked constexpr
+    #     _LIBCPP_CONSTEXPR_AFTER_CXX17 ~__optional_destruct_base()
+    patchfiles-append \
+        ${llvm_version}/patch-no-const_expr_dtor.diff
+    # set our compatibility version and install location:
+    patchfiles-append \
+        ${llvm_version}/patch-install_location_version_and_name.diff
+    # let's see what we gain from supporting ParellelSTL
+    # see https://reviews.llvm.org/D129452
+    patchfiles-append \
+        ${llvm_version}/patch-use-pstl.diff \
+        ${llvm_version}/patch-no_result_of.diff
+    # make certain symbols like __gxx_personality_v0 can be found as expected by software
+    # built against older libc++ versions.
+    patchfiles-append \
+        ${llvm_version}/patch-more-exported-symbols.diff
+    # allow building with compilers that don't support -nostdlib++ (like GCC 12)
+    # (NB: the build still fails ATM, when using g++ -stdlib=libc++)
+    patchfiles-append \
+        ${llvm_version}/patch-allow-builds-with-gcc.diff
+    # Somehow the benchmarks used to build for me, and now they didn't until I came up with:
+    patchfiles-append \
+        ${llvm_version}/patch-benchmarks-cmake-fixes.diff
+    # make the +benchmark_mpstdlibcxx variant possible:
+    patchfiles-append \
+        ${llvm_version}/patch-benchmark_mplibstdcxx.diff
+} else {
+    patchfiles-append \
+		${llvm_version}/0010-compiler-rt-cmake-config-ix.cmake-was-Leopard-No-ASA.patch \
+		${llvm_version}/0011-Fix-missing-long-long-math-prototypes-when-using-the.patch \
+		${llvm_version}/0012-compiler-rt-add-some-defs-missing-in-older-SDKs.patch
+	if {${os.major} < 14} {
+		patchfiles-append \
+			${llvm_version}/0016-10.10-and-less-compiler-rt-find-macosx-sdk.patch
+	}
+	if {${os.major} < 11} {
+		patchfiles-append \
+			${llvm_version}/0017-10.6-and-less-libcxxabi-work-around-no-reexported_symbo.patch \
+			${llvm_version}/0017-10.6-and-less-libcxx-work-around-no-reexported_symbo.patch \
+			${llvm_version}/0021-10.6-and-less-libcxx-disable-Availability-tests.patch
+	}
+	if {${os.major} < 10} {
+		patchfiles-append \
+			${llvm_version}/0024-10.5-and-less-compiler-rt-work-around-no-libdispatch.patch \
+			${llvm_version}/0027-libcxx-link-gcc_s.1-on-macOS-before-10.6.patch \
+			${llvm_version}/0028-libcxx-use-malloc-free-only-on-macOS-before-10.6.patch \
+			${llvm_version}/49d2071572d484a2b5dc356f59050bb173c8c77c-inverse.patch
+	}
+	if {${os.major} <= 16} {
+		# https://github.com/llvm/llvm-project/issues/64226
+		patchfiles-append \
+			${llvm_version}/0042-mbstate_t-not-defined.patch
+	}
+    patchfiles-append \
+        ${llvm_version}/patch-accept-build_types.diff \
+        ${llvm_version}/patch-config-availability+ABIhiding.diff \
+        ${llvm_version}/patch-experimental-no-lto.diff
+    # make benchmarks buildable (incl. not requiring over 2G of RAM to build)
+    patchfiles-append \
+        ${llvm_version}/patch-strings-benchmark.diff \
+        ${llvm_version}/patch-cheaper-variant-benchmark.diff
+    # clang-13/work/build/include/c++/v1/optional:224:5: error: destructor cannot be marked constexpr
+    #     _LIBCPP_CONSTEXPR_AFTER_CXX17 ~__optional_destruct_base()
+    patchfiles-append \
+        ${llvm_version}/patch-no-const_expr_dtor.diff
 
-# make the +benchmark_mpstdlibcxx variant possible:
-patchfiles-append patch-benchmark_mplibstdcxx.diff
+    # set our compatibility version and install location:
+    patchfiles-append \
+        ${llvm_version}/patch-install_location_version_and_name.diff
+    # make certain symbols like __gxx_personality_v0 can be found as expected by software
+    # built against older libc++ versions.
+    patchfiles-append \
+        ${llvm_version}/patch-more-exported-symbols.diff
+    # this one may have to be conditional to older systems only:
+    patchfiles-append \
+        ${llvm_version}/patch-no-reexported-symbols-from-objectfiles.diff
+
+    # make the +benchmark_mpstdlibcxx variant possible:
+    patchfiles-append \
+        ${llvm_version}/patch-benchmark_mplibstdcxx.diff
+
+	# https://trac.macports.org/ticket/67686
+	# revert commit that breaks rpath linkages in clang runtime
+    patchfiles-append \
+        ${llvm_version}/b98da4c71edda3df0a0555b1ab63ec52e92252b4-inverse.patch
+
+    if {${os.major} <= 18} {
+        # on systems that might build i386, we need atomic builtins
+        # https://trac.macports.org/ticket/58712
+        configure.args-append    -DCOMPILER_RT_EXCLUDE_ATOMIC_BUILTIN=OFF
+    }
+
+    # libc++ link step fails on OSX10.10 and older to correctly use static legacy support lib.
+    if {${os.platform} eq "darwin" && ${os.major} <= [option legacysupport.newest_darwin_requires_legacy] } {
+        post-patch {
+            reinplace "s|LIBCXX_LIBRARIES \"\"|LIBCXX_LIBRARIES \"[legacysupport::get_library_link_flags]\"|" ${patch.dir}/libcxx/CMakeLists.txt
+        }
+    }
+}
 
 if {${os.platform} eq "darwin" && ${os.major} < 12} {
     # On OSX10.7 and older revert call to add_security_warnings as fails with
@@ -415,11 +531,16 @@ destroot {
     file rename ${destroot}${prefix}/include/c++ ${destroot}${prefix}/include/libcxx
     if {[variant_isset pstl]} {
         system -W ${build.dir} "${build.cmd} ${build.pre_args} install-pstl/fast ${build.post_args} ${destroot.destdir}"
-        foreach i [glob ${destroot}${prefix}/include/*pstl*] {
-            # move the ParellelSTL headers into the libc++ include dir so they're be found when
-            # that directory is added to the compiler's header search path. Upstream appear to
-            # be making this same merger.
-            file rename ${i} ${destroot}${prefix}/include/libcxx/v1
+        if {${llvm_version} == 13} {
+            ## With libc++ v13 we move the pstl headers into the libc++ header dir but somewhere after that
+            ## version upstream put a modified subsection of the pstl headers there, and kept a larger selection
+            ## in the toplevel include dir. No meddling starting with that future version (<= 17)
+            foreach i [glob ${destroot}${prefix}/include/*pstl*] {
+                # move the ParellelSTL headers into the libc++ include dir so they're be found when
+                # that directory is added to the compiler's header search path. Upstream appear to
+                # be making this same merger.
+                file rename ${i} ${destroot}${prefix}/include/libcxx/v1
+            }
         }
     }
     xinstall -m 755 -d ${destroot}${prefix}/lib/libcxx
