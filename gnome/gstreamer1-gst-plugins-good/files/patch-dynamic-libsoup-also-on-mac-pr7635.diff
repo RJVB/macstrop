@@ -1,0 +1,391 @@
+From 4e8b1966f35034740f7d4f74b5902b968d1d190a Mon Sep 17 00:00:00 2001
+From: Nirbheek Chauhan <nirbheek@centricular.com>
+Date: Thu, 10 Oct 2024 02:07:38 +0530
+Subject: [PATCH] soup: Re-enable libsoup dlopen on macOS
+
+Move from GModule to libdl for loading libraries on all platforms.
+This is necessary due to a macOS bug where dyld uses the incorrect
+@loader_path value for RPATH entries, and fails to find libsoup.
+
+More details here: https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/1171#note_2290789
+
+Fixes https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/3792
+
+Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/7635>
+===
+ .../ext/adaptivedemux2/meson.build            | 60 ++++++-------------
+ subprojects/gst-plugins-good/ext/meson.build  | 56 +++++++++++++++++
+ .../gst-plugins-good/ext/soup/gstsouploader.c | 57 ++++++++++--------
+ .../gst-plugins-good/ext/soup/meson.build     | 53 +++++-----------
+ 4 files changed, 120 insertions(+), 106 deletions(-)
+
+diff --git ext/meson.build ext/meson.build
+index 5b0a6752bf1b..986d21c7ac8d 100644
+--- ext/meson.build
++++ ext/meson.build
+@@ -1,3 +1,59 @@
++# We need libsoup for the soup plugin and for adaptivedemux2, and we can link
++# to either libsoup-2.4 or libsoup-3.0. There's a few cases here:
++#
++# 1. Windows, where we do not support dlopen()
++# 2. UNIX, and we build only a shared library
++# 3. UNIX, and we build only a static library
++# 4. UNIX, and we build both (static and shared)
++#
++# In cases 1,2,3: we look up the dependency
++# In case 1: we create one library() target that always links to libsoup
++# In cases 3,4: we create one static_library() target that links to libsoup
++# In cases 2,4: we create one shared_library() target that dlopen()s libsoup
++
++libsoup2_dep = disabler()
++libsoup3_dep = disabler()
++soup_ver_opt = get_option('soup-version')
++
++default_library = get_option('default_library')
++soup_linked_target = host_system == 'windows' or default_library != 'shared'
++soup_lookup_dep = get_option('soup-lookup-dep') or soup_linked_target
++if soup_ver_opt in ['auto', '3']
++  libsoup3_dep = dependency('libsoup-3.0', allow_fallback: true,
++                            required: soup_ver_opt == '3' and soup_lookup_dep)
++endif
++if soup_ver_opt in ['auto', '2']
++  libsoup2_dep = dependency('libsoup-2.4', version : '>=2.48', allow_fallback: true,
++                            default_options: ['sysprof=disabled'],
++                            required: soup_ver_opt == '2' and soup_lookup_dep)
++endif
++
++if soup_linked_target
++  if libsoup3_dep.found()
++    soup_linked_target_deps = [libsoup3_dep]
++    soup_linked_target_args = ['-DLINK_SOUP=3']
++    message('soup and adaptivedemux2 plugins: linking to libsoup-3.0')
++  elif libsoup2_dep.found()
++    soup_linked_target_deps = [libsoup2_dep]
++    soup_linked_target_args = ['-DLINK_SOUP=2']
++    message('soup and adaptivedemux2 plugins: linking to libsoup-2.4')
++  endif
++endif
++
++# Hack to set the right RPATH for making dlopen() work inside the devenv on
++# macOS when using libsoup as a subproject.
++soup_dlopen_target_kwargs = {}
++if host_system == 'darwin'
++  foreach dep : [libsoup3_dep, libsoup2_dep]
++    if dep.found() and dep.type_name() == 'internal'
++      soup_dlopen_target_kwargs += {
++        'build_rpath': '@loader_path/../../../libsoup-' + dep.version() / 'libsoup',
++      }
++      break
++    endif
++  endforeach
++endif
++
+ subdir('aalib')
+ subdir('adaptivedemux2')
+ subdir('amrnb')
+diff --git ext/adaptivedemux2/meson.build ext/adaptivedemux2/meson.build
+index 711b38a2a90c..a1ec28db7a63 100644
+--- ext/adaptivedemux2/meson.build
++++ ext/adaptivedemux2/meson.build
+@@ -56,13 +56,19 @@ hls_dep = dependency('', required : false)
+ adaptivedemux2_dep = dependency('', required : false)
+ 
+ adaptivedemux2_opt = get_option('adaptivedemux2')
+-soup_opt = get_option('soup')
+-soup_ver_opt = get_option('soup-version')
+ if adaptivedemux2_opt.disabled()
+   message('Not building adaptivedemux2 plugin because it was disabled')
+   subdir_done()
+ endif
+ 
++if soup_lookup_dep and not libsoup3_dep.found() and not libsoup2_dep.found()
++  if adaptivedemux2_opt.enabled()
++    error(f'adaptivedemux2: Either libsoup2 or libsoup3 is needed')
++  endif
++  message(f'Not building adaptivedemux2: must link to either libsoup2 or libsoup3')
++  subdir_done()
++endif
++
+ adaptive_xml2_dep = dependency('libxml-2.0', version : '>= 2.8', allow_fallback: true, required: adaptivedemux2_opt)
+ 
+ if not adaptive_xml2_dep.found()
+@@ -78,35 +84,6 @@ plugin_sources += hls_sources
+ 
+ libdl = cc.find_library('dl', required: false)
+ soup_loader_args = ['-DBUILDING_ADAPTIVEDEMUX2']
+-soup_link_args = []
+-soup_link_deps = []
+-
+-default_library = get_option('default_library')
+-if host_system != 'linux' or default_library in ['static', 'both']
+-  if soup_ver_opt in ['auto', '3']
+-    libsoup3_dep = dependency('libsoup-3.0', allow_fallback: true,
+-                              required: soup_ver_opt == '3' and soup_opt.enabled())
+-  endif
+-  if soup_ver_opt in ['auto', '2']
+-    libsoup2_dep = dependency('libsoup-2.4', version : '>=2.48', allow_fallback: true,
+-                              default_options: ['sysprof=disabled'],
+-                              required: soup_ver_opt == '2' and soup_opt.enabled())
+-  endif
+-
+-  if libsoup3_dep.found()
+-    soup_link_deps += [libsoup3_dep]
+-    soup_link_args = ['-DLINK_SOUP=3']
+-  elif libsoup2_dep.found()
+-    soup_link_deps += [libsoup2_dep]
+-    soup_link_args = ['-DLINK_SOUP=2']
+-  else
+-    if adaptivedemux2_opt.enabled()
+-      error(f'adaptivedemux2: Either libsoup2 or libsoup3 is needed')
+-    endif
+-    message(f'Not building adaptivedemux2 plugin: either libsoup2 or libsoup3 is needed')
+-    subdir_done()
+-  endif
+-endif
+ 
+ # Shared plugin doesn't link to libsoup but dlopen()s it at runtime
+ adaptive_kwargs = {
+@@ -120,26 +97,27 @@ adaptive_deps = [gmodule_dep, gst_dep, gsttag_dep, gstnet_dep, gstbase_dep, gstp
+ adaptive_args = [gst_plugins_good_args, soup_loader_args, hls_cargs,
+     '-DGST_ISOFF_API=G_GNUC_INTERNAL']
+ 
+-if host_system != 'linux'
+-    adaptivedemux2 = library('gstadaptivedemux2',
+-      c_args: [adaptive_args, soup_link_args],
+-      dependencies: [adaptive_deps, soup_link_deps],
+-      kwargs: adaptive_kwargs)
+-    adaptivedemux2_static = adaptivedemux2
+-    adaptivedemux2_shared = adaptivedemux2
++if host_system == 'windows'
++  assert(soup_linked_target)
++  adaptivedemux2 = library('gstadaptivedemux2',
++    c_args: [adaptive_args, soup_linked_target_args],
++    dependencies: [adaptive_deps, soup_linked_target_deps],
++    kwargs: adaptive_kwargs)
++  adaptivedemux2_static = adaptivedemux2
++  adaptivedemux2_shared = adaptivedemux2
+ else
+   if default_library in ['static', 'both']
+     # Static plugin links to libsoup directly at build time
+     adaptivedemux2_static = static_library('gstadaptivedemux2',
+-      c_args: [adaptive_args, soup_link_args],
+-      dependencies: [adaptive_deps, soup_link_deps],
++      c_args: [adaptive_args, soup_linked_target_args],
++      dependencies: [adaptive_deps, soup_linked_target_deps],
+       kwargs: adaptive_kwargs)
+   endif
+   if default_library in ['shared', 'both']
+     adaptivedemux2_shared = shared_library('gstadaptivedemux2',
+       c_args: adaptive_args,
+       dependencies: adaptive_deps,
+-      kwargs: adaptive_kwargs)
++      kwargs: adaptive_kwargs + soup_dlopen_target_kwargs)
+   endif
+ endif
+ 
+diff --git ext/soup/gstsouploader.c ext/soup/gstsouploader.c
+index 9192e4dac5e9..41f3aa378318 100644
+--- ext/soup/gstsouploader.c
++++ ext/soup/gstsouploader.c
+@@ -34,26 +34,36 @@ GST_DEBUG_CATEGORY (gst_soup_debug);
+ 
+ #ifndef LINK_SOUP
+ 
+-#if defined(__APPLE__) || defined(G_OS_WIN32)
+-#error "dlopen of libsoup is only supported on Linux"
++#if !defined(G_OS_UNIX)
++#error "dlopen of libsoup is only supported on UNIX"
+ #endif
+ 
++#ifdef __APPLE__
++#define LIBSOUP_3_SONAME "libsoup-3.0.0.dylib"
++#define LIBSOUP_2_SONAME "libsoup-2.4.1.dylib"
++#else
+ #define LIBSOUP_3_SONAME "libsoup-3.0.so.0"
+ #define LIBSOUP_2_SONAME "libsoup-2.4.so.1"
++#endif
+ 
+ #define LOAD_SYMBOL(name) G_STMT_START {                                \
+-    if (!g_module_symbol (module, G_STRINGIFY (name), (gpointer *) &G_PASTE (vtable->_, name))) { \
+-      GST_ERROR ("Failed to load '%s' from %s, %s", G_STRINGIFY (name), g_module_name (module), g_module_error()); \
++    gpointer sym = NULL;                                                \
++    if (!(sym = dlsym (handle, G_STRINGIFY (name)))) {                  \
++      GST_ERROR ("Failed to load '%s' from %s, %s", G_STRINGIFY (name), \
++          libsoup_sonames[i], dlerror());                               \
+       goto error;                                                       \
+     }                                                                   \
++    G_PASTE (vtable->_, name) = sym;                                    \
+   } G_STMT_END;
+ 
+-#define LOAD_VERSIONED_SYMBOL(version, name) G_STMT_START {             \
+-  if (!g_module_symbol(module, G_STRINGIFY(name), (gpointer *)&G_PASTE(vtable->_, G_PASTE(name, G_PASTE(_, version))))) { \
+-    GST_WARNING ("Failed to load '%s' from %s, %s", G_STRINGIFY(name),  \
+-                g_module_name(module), g_module_error());               \
+-    goto error;                                                         \
+-  }                                                                     \
++#define LOAD_VERSIONED_SYMBOL(version, name) G_STMT_START {               \
++    gpointer sym = NULL;                                                  \
++    if (!(sym = dlsym(handle, G_STRINGIFY(name)))) {                      \
++      GST_WARNING ("Failed to load '%s' from %s, %s", G_STRINGIFY(name),  \
++                   libsoup_sonames[i], dlerror());                        \
++      goto error;                                                         \
++    }                                                                     \
++    G_PASTE(vtable->_, G_PASTE(name, G_PASTE(_, version))) = sym;         \
+   } G_STMT_END;
+ 
+ typedef struct _GstSoupVTable
+@@ -136,19 +146,18 @@ typedef struct _GstSoupVTable
+ 
+ static GstSoupVTable gst_soup_vtable = { 0, };
+ 
++#define SOUP_NAMES 2
++
+ gboolean
+ gst_soup_load_library (void)
+ {
+-  GModule *module;
+   GstSoupVTable *vtable;
+-  const gchar *libsoup_sonames[5] = { 0 };
+-  guint len = 0;
++  const char *libsoup_sonames[SOUP_NAMES + 1] = { 0 };
++  gpointer handle = NULL;
+ 
+   if (gst_soup_vtable.loaded)
+     return TRUE;
+ 
+-  g_assert (g_module_supported ());
+-
+ #ifdef BUILDING_ADAPTIVEDEMUX2
+   GST_DEBUG_CATEGORY_INIT (gst_adaptivedemux_soup_debug, "adaptivedemux2-soup",
+       0, "adaptivedemux2-soup");
+@@ -158,8 +167,6 @@ gst_soup_load_library (void)
+ 
+ #ifdef HAVE_RTLD_NOLOAD
+   {
+-    gpointer handle = NULL;
+-
+     /* In order to avoid causing conflicts we detect if libsoup 2 or 3 is loaded already.
+      * If so use that. Otherwise we will try to load our own version to use preferring 3. */
+ 
+@@ -183,14 +190,12 @@ gst_soup_load_library (void)
+ #endif /* HAVE_RTLD_NOLOAD */
+ 
+   vtable = &gst_soup_vtable;
+-  len = g_strv_length ((gchar **) libsoup_sonames);
+-
+-  for (guint i = 0; i < len; i++) {
+-    module =
+-        g_module_open (libsoup_sonames[i],
+-        G_MODULE_BIND_LAZY | G_MODULE_BIND_LOCAL);
+-    if (module) {
+-      GST_DEBUG ("Loaded %s", g_module_name (module));
++
++  for (guint i = 0; i < SOUP_NAMES; i++) {
++    if (!handle)
++      handle = dlopen (libsoup_sonames[i], RTLD_NOW | RTLD_GLOBAL);
++    if (handle) {
++      GST_DEBUG ("Loaded %s", libsoup_sonames[i]);
+       if (g_strstr_len (libsoup_sonames[i], -1, "soup-2")) {
+         vtable->lib_version = 2;
+         LOAD_VERSIONED_SYMBOL (2, soup_logger_new);
+@@ -251,7 +256,7 @@ gst_soup_load_library (void)
+ 
+     error:
+       GST_DEBUG ("Failed to find all libsoup symbols");
+-      g_clear_pointer (&module, g_module_close);
++      g_clear_pointer (&handle, dlclose);
+       continue;
+     } else {
+       GST_DEBUG ("Module %s not found", libsoup_sonames[i]);
+diff --git ext/soup/meson.build ext/soup/meson.build
+index aaa01dbcf630..67966ae8d70b 100644
+--- ext/soup/meson.build
++++ ext/soup/meson.build
+@@ -13,42 +13,15 @@ if soup_opt.disabled()
+   subdir_done()
+ endif
+ 
+-libdl_dep = cc.find_library('dl', required: false)
+-
+-soup_link_args = []
+-soup_link_deps = []
+-libsoup2_dep = disabler()
+-libsoup3_dep = disabler()
+-default_library = get_option('default_library')
+-soup_lookup_dep = get_option('soup-lookup-dep') and host_system == 'linux'
+-if host_system != 'linux' or default_library in ['static', 'both'] or soup_lookup_dep
+-  if soup_ver_opt in ['auto', '3']
+-    libsoup3_dep = dependency('libsoup-3.0', allow_fallback: true,
+-                              required: soup_ver_opt == '3' and soup_opt.enabled())
+-  endif
+-  if soup_ver_opt in ['auto', '2']
+-    libsoup2_dep = dependency('libsoup-2.4', version : '>=2.48', allow_fallback: true,
+-                              default_options: ['sysprof=disabled'],
+-                              required: soup_ver_opt == '2' and soup_opt.enabled())
++if soup_lookup_dep and not libsoup3_dep.found() and not libsoup2_dep.found()
++  if soup_opt.enabled()
++    error(f'soup: Either libsoup2 or libsoup3 is needed')
+   endif
++  message(f'Not building soup plugin: must link to either libsoup2 or libsoup3')
++  subdir_done()
+ endif
+ 
+-if host_system != 'linux' or default_library in ['static', 'both']
+-  if libsoup3_dep.found()
+-    soup_link_deps += libsoup3_dep
+-    soup_link_args += '-DLINK_SOUP=3'
+-    message('soup plugin: linking to libsoup-3.0')
+-  elif libsoup2_dep.found()
+-    soup_link_deps += libsoup2_dep
+-    soup_link_args += '-DLINK_SOUP=2'
+-    message('soup plugin: linking to libsoup-2.4')
+-  else
+-    if soup_opt.enabled()
+-      error('Either libsoup2 or libsoup3 is needed')
+-    endif
+-    subdir_done()
+-  endif
+-endif
++libdl_dep = cc.find_library('dl', required: false)
+ 
+ soup_library_kwargs = {
+   'sources' : soup_sources,
+@@ -60,19 +33,21 @@ soup_library_kwargs = {
+ soup_library_deps = [gst_dep, gstbase_dep, gsttag_dep, gmodule_dep, gio_dep, libdl_dep]
+ soup_library_c_args = gst_plugins_good_args
+ 
+-if host_system != 'linux'
++if host_system == 'windows'
++  assert(soup_linked_target)
+   gstsouphttpsrc = library('gstsoup',
+-    c_args : soup_library_c_args + soup_link_args,
+-    dependencies : soup_library_deps + soup_link_deps,
++    c_args : soup_library_c_args + soup_linked_target_args,
++    dependencies : soup_library_deps + soup_linked_target_deps,
+     kwargs: soup_library_kwargs,
+   )
+   gstsouphttpsrc_shared = gstsouphttpsrc
+   gstsouphttpsrc_static = gstsouphttpsrc
+ else
+   if default_library in ['static', 'both']
++    assert(soup_linked_target)
+     gstsouphttpsrc_static = static_library('gstsoup',
+-      c_args : soup_library_c_args + soup_link_args,
+-      dependencies : soup_library_deps + soup_link_deps,
++      c_args : soup_library_c_args + soup_linked_target_args,
++      dependencies : soup_library_deps + soup_linked_target_deps,
+       kwargs: soup_library_kwargs,
+     )
+   endif
+@@ -80,7 +55,7 @@ else
+     gstsouphttpsrc_shared = shared_library('gstsoup',
+       c_args : soup_library_c_args,
+       dependencies : soup_library_deps,
+-      kwargs: soup_library_kwargs,
++      kwargs: soup_library_kwargs + soup_dlopen_target_kwargs,
+     )
+   endif
+ endif
+-- 
+GitLab
+
