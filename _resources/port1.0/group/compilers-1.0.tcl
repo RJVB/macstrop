@@ -862,4 +862,52 @@ proc compilers::fortran_legacy_support_proc {option action args} {
     compilers::add_fortran_legacy_support
 }
 
+## RJVB
+## find suitable ObjC and ObjC++ compilers when building with GCC
+proc compilers::get_clang_objc_compilers_for_gcc {} {
+    global configure.compiler configure.objc configure.objcxx prefix LTO.gcc_lto_jobs
+    if {[string match macports-gcc-* ${configure.compiler}]} {
+        set cver 17
+        if {![string match macports-clang* ${configure.objcxx}]
+            || ![string match macports-clang* ${configure.objc}]
+        } {
+            while {![info exists objcxx] && ${cver} >= 5} {
+                if {[file exists ${prefix}/bin/clang++-mp-${cver}]} {
+                    set objcxx ${prefix}/bin/clang++-mp-${cver}
+                    depends_build-append port:[exec port -q provides ${objcxx}]
+                } else {
+                    set cver [expr ${cver} - 1]
+                    if {${cver} < 10} {
+                        set cver ${cver}.0
+                    }
+                }
+            }
+        }
+        if {[info exists objcxx]} {
+            configure.objc   [string map {"++" ""} ${objcxx}]
+            configure.objcxx ${objcxx}
+        } else {
+            configure.objc   clang
+            configure.objcxx clang++
+        }
+        # should be redundant:
+        configure.objcflags-delete \
+                -ftracer
+        configure.objcflags-replace \
+                -flto=${LTO.gcc_lto_jobs} \
+                -flto
+        configure.objcxxflags-delete \
+                -ftracer
+        if {[info exists LTO.gcc_lto_jobs]} {
+            configure.objcxxflags-replace \
+                -flto=${LTO.gcc_lto_jobs} \
+                -flto
+        }
+        pre-configure {
+            ui_warn "Building ${subport} with ${configure.compiler} will use ${configure.objcxx} to compile ObjC++ files"
+            ui_warn "This is experimental and likely to fail."
+        }
+    }
+}
+
 option_proc compilers.allow_arguments_mismatch compilers::fortran_legacy_support_proc
