@@ -1,7 +1,14 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 
 PortSystem          1.0
-PortGroup           qt5 1.0
+platform linux {
+    variant optQt515 description {build against stock Qt 5.15 under /opt/Qt/5/5.15} {}
+}
+if {![variant_exists optQt515] || ![variant_isset optQt515]} {
+    PortGroup       qt5 1.0
+} else {
+    PortGroup       locale_select 1.0
+}
 PortGroup           cmake 1.1
 PortGroup           github 1.0
 PortGroup           compress_workdir 1.0
@@ -70,11 +77,77 @@ post-patch {
     reinplace "s|@PREFIX@|${prefix}|g" ${worksrcpath}/audio/midi/fluid/fluid.cpp
 }
 
-cmake.save_configure_cmd "install log"
-
 if {[variant_exists qt5stock_kde] && [variant_isset qt5stock_kde]} {
     cmake_share_module_dir \
                     "[lindex $qt_cmake_module_dir 0]\;[lindex $cmake_share_module_dir 0]"
+}
+
+platform linux {
+    if {[variant_isset optQt515]} {
+        cmake_share_module_dir \
+                    "/opt/Qt/5/5.15/gcc_64/lib/cmake\;[lindex $cmake_share_module_dir 0]"
+        set qt_qmake_cmd \
+                    /opt/Qt/5/5.15/gcc_64/bin/qmake
+        set qt_libs_dir \
+                    /opt/Qt/5/5.15/gcc_64/lib
+        set qt_apps_dir \
+                    ${prefix}/bin
+        if {[string match *clang* ${configure.compiler}]} {
+            set qt_qmake_spec linux-clang
+        } else {
+            set qt_qmake_spec linux-g++-64
+        }
+        configure.args-append \
+            -DQT_QMAKESPEC=${qt_qmake_spec}
+
+        proc qt5.depends_component {args} {
+        }
+
+        # create a wrapper script in ${prefix}/bin for an application bundle in qt_apps_dir
+        proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""}} {
+            global qt_apps_dir destroot prefix os.platform subport
+            # no app bundles on this platform, but provide the same API by pretending there are.
+            # If unset, use ${subport} to guess the exec. name because evidently we cannot
+            # symlink ${wrappername} onto itself.
+            if {${appdir} eq ""} {
+                set appdir ${prefix}/bin
+            }
+            if {${bundlename} eq ""} {
+                set bundlename ${subport}
+            }
+            if {${bundleexec} eq ""} {
+                set bundleexec ${bundlename}
+            }
+            if {${bundleexec} eq "${prefix}/bin/${wrappername}"
+                    || "${appdir}/${bundleexec}" eq "${prefix}/bin/${wrappername}"} {
+                ui_error "qt5.add_app_wrapper: wrapper ${wrappername} would overwrite executable ${bundleexec}: ignoring!"
+                return;
+            }
+            xinstall -m 755 -d ${destroot}${prefix}/bin
+            if {![catch {set fd [open "${destroot}${prefix}/bin/${wrappername}" "w"]} err]} {
+                # this wrapper exists to a large extent to improve integration of "pure" qt5
+                # apps with KF5 apps, in particular through the use of the KDE platform theme plugin
+                # Hence the reference to KDE things in the preamble.
+                if {[file dirname ${bundleexec}] eq "."} {
+                    puts ${fd} "exec /opt/Qt/5/thisQt5.15.sh \"${appdir}/${bundleexec}\" \"\$\@\""
+                } else {
+                    puts ${fd} "exec /opt/Qt/5/thisQt5.15.sh \"${bundleexec}\" \"\$\@\""
+                }
+                close ${fd}
+                system "chmod 755 ${destroot}${prefix}/bin/${wrappername}"
+            } else {
+                ui_error "Failed to (re)create \"${destroot}${prefix}/bin/${wrappername}\" : ${err}"
+                return -code error ${err}
+            }
+        }
+
+        patchfiles-append \
+                    patch-fix-qtqml515-warnings.diff
+    }
+} elseif {${os.platform} eq "linux"} {
+    post-patch {
+        catch {system -W ${worksrcpath} "patch -Np1 -R -i ${filespath}/patch-fix-qtqml515-warnings.diff"}
+    }
 }
 
 compiler.cxx_standard 2011
@@ -166,7 +239,10 @@ if {[variant_isset qtwebengine]} {
 }
 
 qt5.depends_component \
-                    qtsvg qttools qtdeclarative
+                    qtsvg \
+                    qttools \
+                    qtdeclarative \
+                    qtquickcontrols2
 
 depends_lib-append  port:portaudio \
                     port:libsndfile \
@@ -175,5 +251,7 @@ depends_lib-append  port:portaudio \
                     port:libogg \
                     port:freetype \
                     port:poppler-qt5
+
+cmake.save_configure_cmd "install log"
 
 build.post_args-append -k
