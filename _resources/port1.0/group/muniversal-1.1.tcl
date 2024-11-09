@@ -883,7 +883,8 @@ proc portpatch::patch_main {args} {
     flush ${target_state_fd}
     foreach patch $patchlist {
         set pfile [file tail $patch]
-            if {![check_statefile patch $pfile $target_state_fd]} {
+        set pfile4arch "${arch}:${pfile}"
+        if {![check_statefile patch $pfile4arch $target_state_fd]} {
             ui_info "$UI_PREFIX [format [msgcat::mc "Applying %s"] [file tail $patch]]"
             switch -- [file extension $patch] {
                 .Z -
@@ -897,7 +898,7 @@ proc portpatch::patch_main {args} {
                     }}
                 default {command_exec patch "" "< '$patch'"}
             }
-            write_statefile patch $pfile $target_state_fd
+            write_statefile patch $pfile4arch $target_state_fd
         }
     }
     close ${target_state_fd}
