@@ -157,6 +157,8 @@ proc meson.save_configure_cmd {{save_log_too ""}} {
         return;
     }
     set statevar yes
+    # no-one should call configure.save_configure_cmd either!
+    set configure::statevar yes
 
     if {![info exists configure.args]} {
         configure.args-append

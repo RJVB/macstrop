@@ -546,6 +546,8 @@ proc cmake.save_configure_cmd {{save_log_too ""}} {
         return;
     }
     set statevar yes
+    # no-one should call configure.save_configure_cmd either!
+    set configure::statevar yes
 
     configure::initialise_save_logic "${save_log_too}"
     post-configure {
