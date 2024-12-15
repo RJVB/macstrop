@@ -178,7 +178,7 @@ proc configure.save_configure_cmd {{save_log_too ""}} {
 }
 
 proc configure.save_build_cmd {{save ""}} {
-    namespace upvar ::configure configure_cmd_saved statevar
+    namespace upvar ::configure configure_cmd_saved statevar2
     global build.env
     if {${configure::statevar2}} {
         ui_debug "configure.save_build_cmd already called"
@@ -271,3 +271,27 @@ proc configure.save_build_cmd {{save ""}} {
         }
     }
 }
+
+proc configure::callback {} {
+    global configure.cmd
+    if {${configure::statevar}} {
+        ui_debug "[dict get [info frame 0] proc]: save_configure_cmd  already called directly by Portfile"
+    } else {
+        ui_debug "cmake? ${configure.cmd}"
+        if {[string match *cmake ${configure.cmd}]} {
+            ui_debug "[dict get [info frame 0] proc]: calling `cmake.save_configure_cmd \"install log\"`"
+            cmake.save_configure_cmd "install log"
+        } elseif {[string match *meson ${configure.cmd}]} {
+            ui_debug "[dict get [info frame 0] proc]: calling `meson.save_configure_cmd \"install log\"`"
+            meson.save_configure_cmd "install log"
+        } elseif {[string match *qmake ${configure.cmd}]} {
+            if {![catch {qmake5.save_configure_cmd "install log"}]} {
+                ui_debug "[dict get [info frame 0] proc]: called `qmake5.save_configure_cmd \"install log\"`"
+            }
+        } else {
+            ui_debug "[dict get [info frame 0] proc]: calling `save_configure_cmd \"install log\"`"
+            configure.save_configure_cmd "install log"
+        }
+    }
+}
+port::register_callback configure::callback
