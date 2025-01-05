@@ -276,6 +276,8 @@ proc configure::callback {} {
     global configure.cmd
     if {${configure::statevar}} {
         ui_debug "[dict get [info frame 0] proc]: save_configure_cmd  already called directly by Portfile"
+    } elseif {${configure::statevar2}} {
+        ui_debug "[dict get [info frame 0] proc]: save_build_cmd  already called directly by Portfile"
     } else {
         ui_debug "cmake? ${configure.cmd}"
         if {[string match *cmake ${configure.cmd}]} {
