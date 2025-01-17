@@ -5,6 +5,9 @@ PortSystem          1.0
 set basename        qt4-mac
 name                ${basename}-devel
 version             4.8.7 ; revision 7
+if {${build_arch} eq "ppc"} {
+    revision        [expr ${revision} +1]
+}
 
 use_xcode           yes
 
@@ -29,7 +32,6 @@ if {${subport} eq "${basename}-devel"} {
 set building_qt4    1
 
 PortGroup           qt4 1.0
-
 PortGroup           xcodeversion 1.0
 PortGroup           compiler_blacklist_versions 1.0
 PortGroup           openssl 1.0
@@ -58,31 +60,75 @@ checksums           rmd160  afb5e5a99388e6429faca59cb5000054feffd166 \
 # optional support for HFS-compression of the source and build dirs
 PortGroup           compress_workdir 1.0
 
-
 minimum_xcodeversions   {8 2.5}
+
+depends_lib-append  port:zlib \
+                    path:bin/dbus-daemon:dbus \
+                    port:tiff \
+                    port:libpng \
+                    port:libmng \
+                    path:include/turbojpeg.h:libjpeg-turbo
 
 openssl.configure
 openssl.branch      1.1
 
-depends_lib-append  port:zlib path:bin/dbus-daemon:dbus \
-                    port:tiff \
-                    port:libpng port:libmng \
-                    path:lib/libjpeg.dylib:jpeg
+platform darwin 10 {
+    # Rosetta build fails with macosx_deployment_target 10.6
+    # https://trac.macports.org/ticket/65596
+    if {${build_arch} eq "ppc"} {
+        macosx_deployment_target 10.5
+    }
+}
+
+# easy solution for deprecated font API; see also
+# https://trac.macports.org/ticket/66114
+
+platform darwin 22 {
+     macosx_deployment_target 12.0
+}
+platform darwin 23 {
+     macosx_deployment_target 12.0
+}
 
 # find a way to specify the OS MINOR version.  For OSX 10.X, this
 # value will be X.  The type is this variable is integer, so we can
 # use "==" and so forth for comparison.
 
-global MINOR
+global MINOR, MAJOR
+set MAJOR ""
 set MINOR ""
 
 # hopefully the MACOSX_DEPLOYMENT_TARGET exists and is set by now.  if
 # not, last resort (which is not desirable) is to use the os.version.
 
 if {${macosx_deployment_target} ne ""} {
+    set MAJOR [lindex [split ${macosx_deployment_target} "."] 0]
     set MINOR [lindex [split ${macosx_deployment_target} "."] 1]
 } else {
-    set MINOR [expr [lindex [split ${os.version} "."] 0] - 4]
+    # Do we really need this branch still ??
+    if { ${os.major} < 20 } {
+        set MAJOR 10
+        set MINOR [expr [lindex [split ${os.version} "."] 0] - 4]
+    } else {
+        # Bit of a guess, and will not work once we have macOS 12
+        set MAJOR 11
+        set MINOR [expr [lindex [split ${os.version} "."] 0] - 20]
+    }
+}
+# ui_debug "Deduced OS MAJOR.MINOR = ${MAJOR}.${MINOR}"
+
+# Error out if trying to build on a new macOS version. We do this
+# because this port is so old and thus we want to make sure this
+# port works on these newer macOS versions first.
+platform darwin {
+    if { ${os.major} > 23 } {
+        depends_lib
+        depends_run
+        pre-fetch {
+            ui_error "$name does not currently build on macOS versions later than 13 Ventura."
+            error "unsupported platform"
+        }
+    }
 }
 
 if {${subport} eq ${name} || ${subport} eq "${basename}"} {
@@ -421,6 +467,13 @@ platform darwin {
     }
 }
 
+# the version header file is part of C++20
+# newer versions of Clang find VERSION instead
+post-extract {
+    move \
+        ${worksrcpath}/src/3rdparty/javascriptcore/VERSION \
+        ${worksrcpath}/src/3rdparty/javascriptcore/VERSION.txt
+}
 # we no longer error out if trying to build on a new, untested OS X version.
 # platform darwin {
 #     if {${MINOR} > 11} {
@@ -763,8 +816,9 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
         compiler.library_path [join ${library_path} :]
 
         # for 10.4 or 10.5 32-bit PPC, build as Carbon only, not Cocoa
+        # Same applies to 10.6 Rosetta, plus disable qmake optimization
 
-        if {${MINOR} == 4} {
+        if {${MAJOR} == 10 && ${MINOR} == 4} {
 
             configure.args-append -carbon
 
@@ -773,11 +827,18 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
             configure.ldflags-append -lcrypto -ldbus-1 -ljpeg -llcms \
                 -lssl -lz
 
-        } elseif {${MINOR} == 5 &&
+        } elseif {${MAJOR} == 10 && ${MINOR} == 5 &&
                   [llength ${qt_arch_types}] == 1 &&
                   [lsearch -exact ${qt_arch_types} ppc] == 0} {
 
             configure.args-append -carbon
+
+        } elseif {${MAJOR} == 10 && ${MINOR} == 6 &&
+                  [llength ${qt_arch_types}] == 1 &&
+                  [lsearch -exact ${qt_arch_types} ppc] == 0} {
+
+            configure.args-append -carbon
+            configure.args-delete -optimized-qmake
 
         }
 
@@ -818,6 +879,7 @@ if {${subport} eq "${name}" || ${subport} eq "${basename}" || ${subport} eq "${n
         }
 
         # set the SDK, if it was found and exists
+
         if {[file exists ${SDK}]} {
             configure.args-append -sdk ${SDK}
         }
