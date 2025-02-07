@@ -2,7 +2,7 @@
 
 ## PortGroup for ports that "just need" Python as a build or runtime dependency
 
-set py_ver              3.12
+set py_ver              3.13
 set py_ver_nodot        [string map {. {}} ${py_ver}]
 
 # find the oldest (= fastest) new-enough python version the user already has installed and return its path.
