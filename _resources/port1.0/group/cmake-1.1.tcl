@@ -323,7 +323,8 @@ default configure.pre_args {[list \
                     -DCMAKE_POLICY_DEFAULT_CMP0025=NEW \
                     -DCMAKE_POLICY_DEFAULT_CMP0060=NEW \
                     -DCMAKE_VERBOSE_MAKEFILE=ON \
-                    -DCMAKE_COLOR_MAKEFILE=ON \
+                    -DCMAKE_COLOR_MAKEFILE=OFF \
+                    -DCMAKE_COLOR_DIAGNOSTICS=OFF \
                     -DCMAKE_FIND_FRAMEWORK=LAST \
                     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
                     -DCMAKE_MAKE_PROGRAM=${build.cmd} \
