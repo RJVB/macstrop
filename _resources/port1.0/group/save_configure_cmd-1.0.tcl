@@ -53,7 +53,7 @@ namespace eval configure {
     }
 
     proc write_configure_cmd {fname} {
-        global configure.env
+        global configure.env prefix
         if {![catch {set fd [open "${fname}" "w"]} err]} {
             foreach var [array names ::env] {
                 puts ${fd} "${var}=$::env(${var})"
@@ -82,7 +82,20 @@ namespace eval configure {
                 puts ${fd} "OBJCXXFLAGS=\"[option configure.objcxxflags]\""
             }
             puts ${fd} "LDFLAGS=\"[option configure.ldflags]\""
-            puts ${fd} "# Commandline configure options:"
+            if {[string match ${prefix}* [option configure.cxx]] \
+                    || [string match ${prefix}* [option configure.objcxx]]} {
+                set port [registry_file_registered [option configure.cxx]]
+                if {${port} != 0} {
+                    puts ${fd} "#    C++ compiler provided by: [lrange [lindex [registry_active ${port}] 0] 0 3]"
+                }
+                if {[option configure.objcxx] ne [option configure.cxx]} {
+                    set port [registry_file_registered [option configure.objcxx]]
+                    if {${port} != 0} {
+                        puts ${fd} "# ObjC++ compiler provided by: [lrange [lindex [registry_active ${port}] 0] 0 3]"
+                    }
+                }
+            }
+            puts ${fd} "\n# Commandline configure options:"
             if {[option configure.optflags] ne ""} {
                 puts -nonewline ${fd} " configure.optflags=\"[option configure.optflags]\""
             }
@@ -178,7 +191,7 @@ proc configure.save_configure_cmd {{save_log_too ""}} {
 }
 
 proc configure.save_build_cmd {{save ""}} {
-    namespace upvar ::configure configure_cmd_saved statevar2
+    namespace upvar ::configure configure_cmd_saved statevar2 prefix
     global build.env
     if {${configure::statevar2}} {
         ui_debug "configure.save_build_cmd already called"
@@ -250,6 +263,19 @@ proc configure.save_build_cmd {{save ""}} {
                 puts ${fd} "OBJCXXFLAGS=\"${configure.objcxxflags}\""
             }
             puts ${fd} "LDFLAGS=\"${configure.ldflags}\""
+            if {[string match ${prefix}* [option configure.cxx]] \
+                    || [string match ${prefix}* [option configure.objcxx]]} {
+                set port [registry_file_registered [option configure.cxx]]
+                if {${port} != 0} {
+                    puts ${fd} "#    C++ compiler provided by: [lrange [lindex [registry_active ${port}] 0] 0 3]"
+                }
+                if {[option configure.objcxx] ne [option configure.cxx]} {
+                    set port [registry_file_registered [option configure.objcxx]]
+                    if {${port} != 0} {
+                        puts ${fd} "# ObjC++ compiler provided by: [lrange [lindex [registry_active ${port}] 0] 0 3]"
+                    }
+                }
+            }
             puts ${fd} "# Commandline configure options:"
             if {${configure.optflags} ne ""} {
                 puts -nonewline ${fd} " configure.optflags=\"${configure.optflags}\""
