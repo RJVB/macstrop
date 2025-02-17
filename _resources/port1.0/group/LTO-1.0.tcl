@@ -61,7 +61,17 @@ if {[variant_exists LTO]} {
 options LTO.supports_i386 \
         LTO.gcc_lto_jobs
 default LTO.supports_i386 yes
-default LTO.gcc_lto_jobs {${build.jobs}}
+if {![string match *make ${build.cmd}]} {
+    # "make" has an internal job server that can be used to control the number of
+    # concurrent LTO jobs spawned by each GCC link command, but other build commands
+    # (like Ninja) don't. It is thus best to let GCC spawn only a single LTO subprocess
+    # rather than having N link commands spawning N such processes.
+    default LTO.gcc_lto_jobs 1
+} elseif {[string match *clang* ${configure.compiler}]} {
+    default LTO.gcc_lto_jobs {${build.jobs}}
+} else {
+    default LTO.gcc_lto_jobs "auto"
+}
 
 namespace eval LTO {}
 
@@ -198,19 +208,15 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
             }
             set objc_lto_flags          ${lto_flags}
         } else {
-            # we should probably use -flto=auto when build.cmd=[g]make (forcing it to gmake in that case)
-            # but that would require inserting the lto_flags after the port has had a chance to
-            # set the build.cmd . Catch-22 ...
-            # Easier to define another hook ports can set before including us.
             if {${LTO.gcc_lto_jobs} ne ""} {
                 set LTO::gcc_lto_jobs "=${LTO.gcc_lto_jobs}"
-                if {${LTO.gcc_lto_jobs} eq "auto"} {
+                if {${LTO.gcc_lto_jobs} eq "auto" && [string match *make ${build.cmd}]} {
                     build.cmd           gmake
                     depends_build-append \
                                         port:gmake
                 }
             } else {
-                set LTO::gcc_lto_jobs ""
+                set LTO::gcc_lto_jobs   "auto"
             }
             if {${os.platform} eq "linux"} {
                 set lto_flags           "-ftracer -flto${LTO::gcc_lto_jobs} -fuse-linker-plugin"
@@ -498,7 +504,7 @@ if {[variant_isset builtwith]} {
 
 proc LTO::callback {} {
     # this callback could really also handle the disable and allow switches!
-    global supported_archs LTO.must_be_disabled
+    global supported_archs LTO.must_be_disabled LTO.gcc_lto_jobs build.cmd
     if {[variant_exists use_lld] && [variant_isset use_lld]} {
         # lld doesn't support 32bit architectures
         supported_archs-delete i386 ppc
@@ -507,6 +513,12 @@ proc LTO::callback {} {
     if {[info exists LTO.must_be_disabled] && [variant_exists LTO] && [variant_isset LTO]} {
          ui_warn "Unsetting +LTO!"
          unset ::variations(LTO)
+    } elseif {[variant_isset LTO] && ${LTO.gcc_lto_jobs} eq "auto" && [string match *make ${build.cmd}]} {
+         build.cmd          gmake
+         depends_build-delete \
+                            port:gmake
+         depends_build-append \
+                            port:gmake
     }
 }
 port::register_callback LTO::callback
