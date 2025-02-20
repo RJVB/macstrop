@@ -210,11 +210,6 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
         } else {
             if {${LTO.gcc_lto_jobs} ne ""} {
                 set LTO::gcc_lto_jobs "=${LTO.gcc_lto_jobs}"
-                if {${LTO.gcc_lto_jobs} eq "auto" && [string match *make ${build.cmd}]} {
-                    build.cmd           gmake
-                    depends_build-append \
-                                        port:gmake
-                }
             } else {
                 set LTO::gcc_lto_jobs   "auto"
             }
@@ -504,20 +499,21 @@ if {[variant_isset builtwith]} {
 
 proc LTO::callback {} {
     # this callback could really also handle the disable and allow switches!
-    global supported_archs LTO.must_be_disabled LTO.gcc_lto_jobs build.cmd
+    global supported_archs LTO.must_be_disabled LTO.gcc_lto_jobs build.cmd configure.cmd
     if {[variant_exists use_lld] && [variant_isset use_lld]} {
         # lld doesn't support 32bit architectures
         supported_archs-delete i386 ppc
     }
     # don't allow the Portfile to activate the LTO variant
     if {[info exists LTO.must_be_disabled] && [variant_exists LTO] && [variant_isset LTO]} {
-         ui_warn "Unsetting +LTO!"
-         unset ::variations(LTO)
+        ui_warn "Unsetting +LTO!"
+        unset ::variations(LTO)
     } elseif {[variant_isset LTO] && ${LTO.gcc_lto_jobs} eq "auto" && [string match *make ${build.cmd}]} {
-         build.cmd          gmake
-         depends_build-delete \
+        ui_debug "LTO PG setting build.cmd=gmake!"
+        build.cmd           gmake
+        depends_build-delete \
                             port:gmake
-         depends_build-append \
+        depends_build-append \
                             port:gmake
     }
 }
