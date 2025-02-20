@@ -2,45 +2,61 @@
 
 PortSystem          1.0
 PortGroup           github 1.0
-PortGroup           LTO 1.0
-PortGroup           meson 1.0
 
-# When building universal the meson test for unistd.h fails because
-# clang: error: cannot use 'cpp-output' output with multiple -arch options
-# leading to build failure later when unistd.h doesn't get included if
-# implicit function declarations are not allowed (Xcode 12+).
-PortGroup           muniversal 1.0
-
-github.setup        xkbcommon libxkbcommon 1.5.0 xkbcommon-
-checksums           rmd160  14b0f6183d581d19cb95cfa23e1f005961725101 \
-                    sha256  560f11c4bbbca10f495f3ef7d3a6aa4ca62b4f8fb0b52e7d459d18a26e46e017 \
-                    size    472700
-
-categories          devel
-maintainers         {ryandesign @ryandesign} openmaintainer
-license             MIT
-
-description         library to handle keyboard descriptions
-
-long_description    ${name} is a {*}${description}, including loading them from \
-                    disk, parsing them and handling their state. It's mainly \
-                    meant for client toolkits, window systems, and other \
-                    system applications. It is also used by some XCB \
-                    applications for proper keyboard support.
-
-homepage            https://xkbcommon.org
-master_sites        ${homepage}/download/
-use_xz              yes
-
-# https://trac.macports.org/ticket/67349
-patchfiles          patch-libxkbcommon-mesonbuild-linkages.diff
+github.setup        xkbcommon libxkbcommon 1.8.0 xkbcommon-
 
 platform darwin {
-    variant old_versioning description {Use transparent shared library versioning} {}
+    subport "${name}-x11" {}
+    if {${subport} eq "${name}-x11"} {
+        PortGroup       active_variants 1.1
+        PortGroup       stub 1.0
+        description     shim for the port:libxkbcommon-x11
+        long_description {*}${description}
+
+        depends_lib-append \
+                        port:libxkbcommon
+        require_active_variants libxkbcommon x11
+        return
+    }
+}
+
+PortGroup           meson 1.0
+PortGroup           LTO 1.0
+
+platform darwin {
+    PortGroup       legacysupport 1.1
+
+    # strnlen and static_assert
+    legacysupport.newest_darwin_requires_legacy 14
+
+    # When building universal the meson test for unistd.h fails because
+    # clang: error: cannot use 'cpp-output' output with multiple -arch options
+    # leading to build failure later when unistd.h doesn't get included if
+    # implicit function declarations are not allowed (Xcode 12+).
+    PortGroup       muniversal 1.0
+}
+
+categories          devel
+maintainers         gmail.com:rjvbertin
+license             MIT
+description         A keyboard description library.
+long_description    Xkbcommon is a library to handle keyboard descriptions, including loading them from disk, \
+                    parsing them and handling their state. It's mainly meant for client toolkits, window systems, \
+                    and other system applications. Currently that includes Wayland, Qt, Clutter and more. \
+                    It is also used by some XCB (X11) applications for proper keyboard support.
+homepage            https://xkbcommon.org
+platforms           darwin linux
+
+checksums           rmd160  e58f3a80e8108a30af33a593c368c3b927914a9b \
+                    sha256  ab20ea6fd99bd799b17d43e6ff6e649fb3eea7dd196c408fe1654c4b31682abb
+#                     size    995697
+
+installs_libs       yes
+
+platform darwin {
+    variant old_versioning description {Support non-disruptive upgrading from versions <=1.5.0 that built using autotools} {}
     default_variants-append +old_versioning
     if {[variant_isset old_versioning]} {
-        depends_build-append \
-                    port:cctools
         patchfiles-append \
                     patch-dylib-version-1.0.0.diff
     }
@@ -49,78 +65,63 @@ platform darwin {
 depends_build-append \
                     port:bison \
                     port:pkgconfig \
-                    port:xorg-util-macros
+                    port:xorg-libxcb
+
+depends_run-append  port:libxml2 \
+                    port:xkeyboard-config \
+                    port:icu
 
 compiler.c_standard 2011
 
-configure.args      -Ddefault_library=both \
+configure.args-append \
+                    -Ddefault_library=both \
                     -Denable-docs=false \
                     -Denable-wayland=false \
                     -Denable-x11=false
 
-if {${subport} eq ${name}} {
-    revision        1
-
+variant x11 description {enable support for creating keymaps with the X11 protocol} {
     depends_lib-append \
-                    port:libxml2 \
-                    port:xkeyboard-config
-    if {${os.platform} eq "darwin" && [variant_isset old_versioning]} {
-        post-destroot {
-            file rename ${destroot}${prefix}/lib/libxkbcommon.1.dylib \
-                ${destroot}${prefix}/lib/libxkbcommon.0.dylib
-            system -W ${destroot}${prefix}/lib/ "install_name_tool -id ${prefix}/lib/libxkbcommon.0.dylib libxkbcommon.0.dylib"
-            ln -sf libxkbcommon.0.dylib ${destroot}${prefix}/lib/libxkbcommon.dylib
+                    port:xorg-libxcb
+    configure.args-replace \
+                    -Denable-x11=false \
+                    -Denable-x11=true
+}
 
-            foreach b {bin/xkbcli libexec/xkbcommon/xkbcli-compile-keymap libexec/xkbcommon/xkbcli-how-to-type} {
-                system -W ${destroot}${prefix} "install_name_tool \
-                    -change ${prefix}/lib/libxkbcommon.1.dylib ${prefix}/lib/libxkbcommon.0.dylib \
-                    ${b}"
-            }
-        }
+variant docs description {} {
+    configure.args-replace \
+                    -Denable-docs=false \
+                    -Denable-docs=true
+}
+
+variant wayland description {} {
+    depends_lib-append \
+                    port:wayland \
+                    port:wayland-protocols
+    configure.args-replace \
+                    -Denable-wayland=false \
+                    -Denable-wayland=true
+}
+
+if {${os.platform} eq "linux" || [file exists ${prefix}/lib/pkgconfig/xkbcommon-x11.pc]} {
+    default_variants-append +x11
+}
+
+if {${subport} eq ${name}} {
+    if {[file exists ${destroot}/usr/share/bash-completion]} {
+        file rename ${destroot}/usr/share/bash-completion ${destroot}${prefix}/share/
     }
 }
 
-subport ${name}-x11 {
-    revision        1
+build.pre_args-prepend -k 0
 
-    PortGroup       legacysupport 1.0
-
-    # strnlen
-    legacysupport.newest_darwin_requires_legacy 10
-
-    depends_lib-append \
-                    port:${name} \
-                    port:xorg-libxcb
-
-    configure.args-replace \
-                    -Denable-x11=false -Denable-x11=true
-
-    post-destroot {
-        # Upstream wants packagers to package libxkbcommon-x11 separately
-        # from libxkbcommon (see PACKAGING) yet refuses to provide a way
-        # to do so, so we have to delete everything libxkbcommon already
-        # provides manually.
-        # https://github.com/xkbcommon/libxkbcommon/issues/75
-        fs-traverse item ${destroot} {
-            if {![file isdirectory ${item}] && ![string match *x11* [file tail ${item}]]} {
-                delete ${item}
-            }
-        }
-        if {${os.platform} eq "darwin" && [variant_isset old_versioning]} {
-            file rename ${destroot}${prefix}/lib/libxkbcommon-x11.1.dylib \
-                ${destroot}${prefix}/lib/libxkbcommon-x11.0.dylib
-            system -W ${destroot}${prefix}/lib/ "install_name_tool -id ${prefix}/lib/libxkbcommon-x11.0.dylib \
-                libxkbcommon-x11.0.dylib"
-            system -W ${destroot}${prefix}/lib/ "install_name_tool \
-                -change ${prefix}/lib/libxkbcommon.1.dylib ${prefix}/lib/libxkbcommon.0.dylib \
-                libxkbcommon-x11.0.dylib"
-            ln -sf libxkbcommon-x11.0.dylib ${destroot}${prefix}/lib/libxkbcommon-x11.dylib
-            system -W ${destroot}${prefix} "install_name_tool \
-                -change ${prefix}/lib/libxkbcommon-x11.1.dylib ${prefix}/lib/libxkbcommon-x11.0.dylib \
-                libexec/xkbcommon/xkbcli-interactive-x11"
-            system -W ${destroot}${prefix} "install_name_tool \
-                -change ${prefix}/lib/libxkbcommon.1.dylib ${prefix}/lib/libxkbcommon.0.dylib \
-                libexec/xkbcommon/xkbcli-interactive-x11"
+pre-activate {
+    # upstream would like to see us provide the x11 (and presumably wayland) bits in separate port(s) ...
+    # we'll talk about that when they provide a way to build and install just those components, against
+    # the installed "common" bits.
+    if {![catch {lindex [registry_active libxkbcommon-x11] 0} installed]} {
+        set _version [lindex $installed 1]
+        if {[vercmp $_version 1.8.0] < 0} {
+            registry_deactivate_composite libxkbcommon-x11 "" [list ports_nodepcheck 1]
         }
     }
 }
