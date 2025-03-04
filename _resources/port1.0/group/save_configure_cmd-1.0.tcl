@@ -115,7 +115,7 @@ namespace eval configure {
                 puts -nonewline ${fd} " configure.cxx_stdlib=\"[option configure.cxx_stdlib]\""
             }
             puts ${fd} ""
-            puts ${fd} "\ncd [option worksrcpath]"
+            puts ${fd} "\ncd [option configure.dir]"
             puts ${fd} "[option configure.cmd] [join [option configure.pre_args]] [join [option configure.args]] [join [option configure.post_args]]"
             close ${fd}
             unset fd
@@ -228,7 +228,7 @@ proc configure.save_build_cmd {{save ""}} {
                     puts ${fd} "${assignment}"
                 }
             }
-            puts ${fd} "\ncd ${worksrcpath}"
+            puts ${fd} "\ncd ${build.dir}"
             puts ${fd} "${build.cmd} [join ${build.pre_args}] [join ${build.args}] [join ${build.post_args}]"
             close ${fd}
             unset fd
@@ -290,7 +290,7 @@ proc configure.save_build_cmd {{save ""}} {
                 puts -nonewline ${fd} " configure.cxx_stdlib=\"${configure.cxx_stdlib}\""
             }
             puts ${fd} ""
-            puts ${fd} "\ncd ${worksrcpath}"
+            puts ${fd} "\ncd ${build.dir}"
             puts ${fd} "${build.cmd} [join ${build.pre_args}] [join ${build.args}] [join ${build.post_args}]"
             close ${fd}
             unset fd
