@@ -6,6 +6,7 @@ PortGroup           muniversal 1.0
 PortGroup           LTO 1.0
 PortGroup           compress_workdir 1.0
 PortGroup           meson 1.0
+PortGroup           conflicts_build 1.0
 
 platform darwin {
     # May need clock_gettime()
@@ -15,7 +16,7 @@ platform darwin {
 
 name                mesa
 epoch               1
-version             19.0.8 ; revision 3
+version             19.0.8 ; revision 4
 categories          x11 graphics
 maintainers         {jeremyhu @jeremyhu} openmaintainer
 license             MIT
@@ -47,6 +48,8 @@ depends_lib         port:expat \
                     port:xorg-libXi \
                     port:xorg-libXmu \
                     port:xorg-libXxf86vm
+
+conflicts_build     valgrind
 
 patch.pre_args      -p1
 patchfiles          0001-applegl-Provide-requirements-of-_SET_DrawBuffers.patch \
@@ -88,7 +91,7 @@ if {[string match *meson* ${configure.cmd}]} {
 
 # mesa builds with -std=c99 but uses timespec_get() which was added in c11, so this works around that bug
 configure.env-append \
-                    export ac_cv_func_timespec_get=no
+                    ac_cv_func_timespec_get=no
 
 configure.env-append \
                     INDENT=${prefix}/bin/gindent \
@@ -187,7 +190,11 @@ configure.cxxflags-append -std=c++11
 
 variant python27 description {Use python 2.7} {
     depends_build-append \
-        port:py27-libxml2
+        port:py27-libxml2 \
+        port:python27
+    depends_skip_archcheck-append \
+        py27-libxml2 \
+        python27
     configure.env-append \
         PYTHON2="${prefix}/bin/python2.7"
 }
@@ -216,6 +223,49 @@ platform darwin {
                             --with-gallium-drivers=swrast
         }
         patchfiles-append   patch-support-egl_dri2.diff
+    }
+
+    variant wayland conflicts wayland64bit requires egl description {enable highly experimental wayland support} {}
+    variant wayland64bit conflicts wayland requires egl requires universal description {enable highly experimental wayland support in the 64 slices only} {}
+    if {[variant_isset wayland]} {
+        depends_lib-append  port:wayland
+        patchfiles-append \
+                    patch-support-wayland.diff
+        if {[string match *meson* ${configure.cmd}]} {
+            configure.args-replace \
+                    -Dplatforms=x11 \
+                    -Dplatforms=x11,wayland
+        } else {
+            configure.args-replace \
+                    --with-platforms=x11 \
+                    --with-platforms=x11,wayland
+        }
+    } elseif {[variant_isset wayland64bit]} {
+        depends_lib-append  port:wayland
+        # see the explanation under llvm64bit
+        depends_skip_archcheck-append \
+                    wayland
+        patchfiles-append \
+                    patch-support-wayland.diff
+        if {[string match *meson* ${configure.cmd}]} {
+            configure.args-delete \
+                    -Dplatforms=x11
+            lappend merger_configure_args(x86_64) \
+                    -Dplatforms=x11,wayland
+            lappend merger_configure_args(arm64) \
+                    -Dplatforms=x11,wayland
+            lappend merger_configure_args(i386) \
+                    -Dplatforms=x11
+        } else {
+            configure.args-delete \
+                    --with-platforms=x11
+            lappend merger_configure_args(x86_64) \
+                    --with-platforms==x11,wayland
+            lappend merger_configure_args(arm64) \
+                    --with-platforms==x11,wayland
+            lappend merger_configure_args(i386) \
+                    --with-platforms==x11
+        }
     }
 
     variant llvm64bit requires universal description {The +llvm and +opencl variants are effective for the 64bit components of universal builds only} {}
@@ -248,30 +298,36 @@ platform darwin {
     foreach ldv ${lldversions} {
         set llv [join [lrange [split ${ldv} .] 0 1] ""]
         if {[variant_isset llvm${llv}]} {
-            if {![variant_isset llvm64bit]} {
-                # LLVMPipe links against a static library
-                depends_build-append \
+            # LLVMPipe links against a static library
+            depends_build-append \
                     port:llvm-${ldv} port:clang-${ldv}
-            } else {
+            if {[variant_isset llvm64bit]} {
                 # This is a hack; build (and runtime) dependencies are agnostic of the +universal variant
                 # *if depends_skip_archcheck is also set* and
                 # so the only way to register some kind of dependency on the required LLVM ports
                 # without forcing them to be installed +universal too.
-                depends_build-append \
-                    port:llvm-${ldv} port:clang-${ldv}
+                # We still disable LLVM use in the 32bit build though
                 depends_skip_archcheck-append \
                     llvm-${ldv} clang-${ldv}
             }
             if {[string match *meson* ${configure.cmd}]} {
                 if {[variant_isset llvm64bit]} {
+                    # arch-specific arguments and environment settings. Also set
+                    # the build.env because meson can decide to re-execute the configure step.
                     lappend merger_configure_args(x86_64) \
                         -Dllvm=true
                     lappend merger_configure_env(x86_64) \
+                        PATH=${prefix}/libexec/llvm-${ldv}/bin:$env(PATH)
+                    lappend merger_build_env(x86_64) \
                         PATH=${prefix}/libexec/llvm-${ldv}/bin:$env(PATH)
                     lappend merger_configure_args(arm64) \
                         -Dllvm=true
                     lappend merger_configure_env(arm64) \
                         PATH=${prefix}/libexec/llvm-${ldv}/bin:$env(PATH)
+                    lappend merger_build_env(arm64) \
+                        PATH=${prefix}/libexec/llvm-${ldv}/bin:$env(PATH)
+                    lappend merger_configure_args(i386) \
+                        -Dllvm=false
                 } else {
                     configure.args-append \
                         -Dllvm=true
@@ -286,6 +342,8 @@ platform darwin {
                     lappend merger_configure_args(arm64) \
                         --enable-llvm \
                         --with-llvm-prefix=${prefix}/libexec/llvm-${ldv}
+                    lappend merger_configure_args(i386) \
+                        --disable-llvm
                 } else {
                     configure.args-append \
                         --enable-llvm \
@@ -360,15 +418,17 @@ destroot.env-append "NM=${configure.nm}"
 
 if {[string match *meson* ${configure.cmd}]} {
     post-destroot {
-        # align the lib versioning with the autoconf build (the changes making this possible are in patch-meson.diff)
-        # not required if you accept to require a revbump in all dependents
-        file rename ${destroot}${prefix}/lib/libGL.4.dylib ${destroot}${prefix}/lib/libGL.1.dylib
-        file delete -force  ${destroot}${prefix}/lib/libGL.dylib
-        ln -s libGL.1.dylib  ${destroot}${prefix}/lib/libGL.dylib
-        if {[variant_isset egl]} {
-            file rename ${destroot}${prefix}/lib/libEGL.2.dylib ${destroot}${prefix}/lib/libEGL.1.dylib
-            file delete -force  ${destroot}${prefix}/lib/libEGL.dylib
-            ln -s libEGL.1.dylib  ${destroot}${prefix}/lib/libEGL.dylib
+        if {![string match *meson* ${configure.cmd}]} {
+            # align the lib versioning with the autoconf build (the changes making this possible are in patch-meson.diff)
+            # not required if you accept to require a revbump in all dependents
+            file rename ${destroot}${prefix}/lib/libGL.4.dylib ${destroot}${prefix}/lib/libGL.1.dylib
+            file delete -force  ${destroot}${prefix}/lib/libGL.dylib
+            ln -s libGL.1.dylib  ${destroot}${prefix}/lib/libGL.dylib
+            if {[variant_isset egl]} {
+                file rename ${destroot}${prefix}/lib/libEGL.2.dylib ${destroot}${prefix}/lib/libEGL.1.dylib
+                file delete -force  ${destroot}${prefix}/lib/libEGL.dylib
+                ln -s libEGL.1.dylib  ${destroot}${prefix}/lib/libEGL.dylib
+            }
         }
 
         # fix some rpath & ID issues
@@ -392,6 +452,15 @@ if {[string match *meson* ${configure.cmd}]} {
 
 if {[string match *meson* ${configure.cmd}]} {
     build.post_args-append     -k 0
+    pre-build {
+        ui_debug "Adding configure.env to build.env"
+        foreach keyval [set configure.env] {
+            ui_debug "${keyval}"
+            build.env-append ${keyval}
+        }
+        ui_debug "build.env:"
+        ui_debug "${build.env}"
+    }
 } else {
 #     pre-build {
 #         build.env-append "MAKEFLAGS=LIBTOOL=rlibtool"
@@ -399,7 +468,7 @@ if {[string match *meson* ${configure.cmd}]} {
 #         build.env-append "SLIBTOOL_NM=${configure.nm}"
 #         build.env-append "SLIBTOOL_RANLIB=${configure.ranlib}"
 #     }
-    build.post_args-append     -k
+    build.post_args-append     -wk
 }
 
 livecheck.type  regex
@@ -408,7 +477,7 @@ livecheck.regex {relnotes/([0-9.]+)\.html}
 
 
 if {[string match *meson* ${configure.cmd}]} {
-    meson.save_configure_cmd "log too"
+    meson.save_configure_cmd "install log"
 } else {
     configure.post_args-append "|& tee -a ${workpath}/.macports.${subport}.configure.log'"
     pre-configure {
