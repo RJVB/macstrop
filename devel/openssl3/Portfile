@@ -4,6 +4,7 @@ PortSystem          1.0
 PortGroup           compiler_blacklist_versions 1.0
 PortGroup           muniversal 1.0
 PortGroup           legacysupport 1.1
+PortGroup           github 1.0
 PortGroup           LTO 1.0
 PortGroup           compress_workdir 1.0
 PortGroup           save_configure_cmd 1.0
@@ -12,10 +13,15 @@ PortGroup           save_configure_cmd 1.0
 legacysupport.newest_darwin_requires_legacy 8
 
 set major_v         3
-name                openssl$major_v
-# For rolling back to 3.1.4 release where needed. Must now stay.
+# For former rollback to 3.1.x release where needed. Must now stay.
 epoch               1
-version             ${major_v}.2.1 ; revision 1
+github.setup        openssl openssl ${major_v}.4.1 openssl-
+name                openssl3
+
+github.tarball_from releases
+checksums           rmd160  0ed35dcf4a93ad96e1844c03e655c89e08fe3340 \
+                    sha256  002a2d6b30b58bf4bea46c43bdd96365aaf8daa6c428782aa4feee06da197df3 \
+                    size    18346056
 dist_subdir         openssl
 
 # Please revbump these ports when updating the openssl3 version/revision
@@ -25,7 +31,7 @@ dist_subdir         openssl
 #  - openssl (to rebuild the shim links).
 
 categories          devel security
-platforms           darwin
+platforms           darwin linux
 license             Apache-2
 maintainers         {larryv @larryv} {cal @neverpanic} openmaintainer
 
@@ -37,7 +43,7 @@ long_description    The OpenSSL Project is a collaborative effort to \
                     Security (TLS v1) protocols as well as \
                     a full-strength general purpose cryptography \
                     library.
-homepage            https://www.openssl.org
+homepage            https://www.openssl-library.org
 
 variant tests description {build the tests} {}
 
@@ -61,21 +67,7 @@ depends_lib         port:zlib
 
 distname            openssl-${version}
 
-# See https://www.openssl.org/source/mirror.html
-master_sites        ${homepage}/source \
-                    ftp://gd.tuwien.ac.at/infosys/security/openssl/source/ \
-                    http://mirror.switch.ch/ftp/mirror/openssl/source/ \
-                    ftp://ftp.fi.muni.cz/pub/openssl/source/ \
-                    ftp://ftp.pca.dfn.de/pub/tools/net/openssl/source/ \
-                    http://artfiles.org/openssl.org/source/ \
-                    ftp://ftp.linux.hr/pub/openssl/source/ \
-                    ftp://guest.kuria.katowice.pl/pub/openssl/source/
 
-checksums           rmd160  0182f83617754e1a2b0f6864679a7cd9c088e172 \
-                    sha256  83c7329fe52c850677d75e5d0b0ca245309b97e8ecbcfdc1dfdc4ab9fac35b39
-#                     size    17733249
-
-patchfiles          e9d7083e241670332e0443da0f0d4ffb52829f08.patch
 if {[string match macports-gcc* ${configure.compiler}]} {
     # macports-gcc compilers would be assumed not to support -M
     # and `makedepend` would be used, increasing the build time immensely.
@@ -84,41 +76,75 @@ if {[string match macports-gcc* ${configure.compiler}]} {
 }
 
 # 3.2.0 is currently broken for OS < 10.14, see #68766
-set is_broken no
+# https://github.com/macports/macports-ports/pull/26250#issuecomment-2437709579
+# OpenSSL 3.4.0 implements new intrinsic code that increases compiler
+# requirements.
 platform darwin {
-    if {[variant_isset universal]} {
+    set is_broken no
+    if {[variant_isset universal] && ${os.major} < 18} {
         set is_broken yes
     } else {
         if {[string match macports-clang* ${configure.compiler}] && ${LTO::mp_compiler_version} >= 11} {
             set is_broken no
         } elseif {[string match macports-gcc* ${configure.compiler}]} {
-            set is_broken no
-        } else {
+            if {![variant_isset universal]} {
+                set is_broken yes
+            } else {
+                set is_broken no
+            }
+        } elseif {${os.major} < 18 && ${os.major} > 8} {
             set is_broken yes
         }
     }
-}
-if {[tbool is_broken] && ${os.major} < 18} {
-
-    subport ${name}-devel {
-        conflicts           ${name}
+    if {[tbool is_broken]} {
+        # We can only use bootstrap Clang because the newer
+        # one depends on openssl by default and causes a dependency cycle.
+        if {${os.major} < 18 && ${os.major} > 8} {
+            if {${configure.build_arch} in {"x86_64" "i386"}} {
+                depends_build-append port:clang-11-bootstrap
+                depends_skip_archcheck-append clang-11-bootstrap
+                configure.cc ${prefix}/libexec/clang-11-bootstrap/bin/clang
+                configure.cxx ${prefix}/libexec/clang-11-bootstrap/bin/clang++
+                # https://trac.macports.org/ticket/71201
+                # https://trac.macports.org/ticket/71246
+                # cctools is only needed for Snow Leopard i386/x86_64 and older.
+                # On Yosemite and newer systems it triggers the dependency cycle again.
+                if {${os.major} < 11} {
+                    depends_build-append port:cctools
+                }
+                set is_broken no
+            }
+        }
     }
-
-    if {$subport eq $name} {
-        conflicts           ${name}-devel
-        version             ${major_v}.1.5 ; revision 1
-
-        distname            openssl-${version}
-
-        checksums           rmd160  9c3e80f27e0b15b6b46774a944d75cf034358474 \
-                            sha256  6ae015467dabf0469b139ada93319327be24b98251ffaeceda0221848dc09262
-#                             size    15663524
-
-        patchfiles-delete   e9d7083e241670332e0443da0f0d4ffb52829f08.patch
-        patchfiles-append   7e4d731b1c07201ad9374c1cd9ac5263bdf35bce.patch
+    if {[tbool is_broken]} {
+        # bring back the fallback
     }
-
 }
+
+# Use timegm() in crypto/asn1/a_time.c
+# Fixes build on 10.4, and is generally preferable, anyway
+#
+# Since v3.2.0, crypto/asin1/a_time.c has included timezone compensation
+# which uses timegm() in some cases, or localtime() adjusted for the
+# timezone in others.  Since timegm() is considered nonstandard, it uses
+# it in an opt-in basis, which currently includes only FreeBSD and
+# WebAssembly.  On the Mac (at least) the 'timezone' variable which it
+# otherwise relies on is a variable when __DARWIN_UNIX03 is set, and is
+# a function when not, which is incompatible with this use.  By
+# default, __DARWIN_UNIX03 is set on 10.5+ but not on 10.4, leading to a
+# build failure on 10.4.  Meanwhile, timegm() is available on all Mac
+# versions, and is preferable when available.  This fix adds __APPLE__ to
+# the conditions for using timegm(), thereby building successfully on all
+# OS versions with slightly less code.
+#
+patchfiles-append   patch-use-timegm.diff
+
+# https://github.com/openssl/openssl/pull/26690
+# https://github.com/openssl/openssl/pull/26747
+# remove these patches in the next release
+patchfiles-append   0001-revert-rcu.diff \
+                    0002-use-atomic-relaxed.diff \
+                    0003-dont-use-atomic-acq-rel.diff
 
 if {${os.platform} eq "darwin" && ${os.major} < 11} {
     # Having the stdlib set to libc++ on 10.6 causes a dependency on a
@@ -130,6 +156,7 @@ set my_name         openssl-${major_v}
 set my_prefix       ${prefix}/libexec/${name}
 
 configure.save_configure_cmd "install log"
+
 # configure.ccache    no
 if {${os.platform} eq "darwin"} {
     configure.perl  /usr/bin/perl
@@ -137,6 +164,7 @@ if {${os.platform} eq "darwin"} {
 } else {
     configure.cmd   ./config
 }
+
 configure.pre_args  --prefix=${my_prefix}
 configure.args      -L${prefix}/lib \
                     --openssldir=${my_prefix}/etc/openssl \
@@ -148,6 +176,7 @@ if {${os.platform} eq "darwin" && ${configure.sdkroot} ne ""} {
     configure.args-append   '-isysroot ${configure.sdkroot}' \
                             -Wl,-syslibroot,${configure.sdkroot}
 }
+
 platform linux {
     # don't let it use lib64!
     configure.args-append \
@@ -155,6 +184,7 @@ platform linux {
     configure.ldflags-prepend \
                     -Wl,-rpath,${my_prefix}/lib
 }
+
 platform darwin {
     set merger_arch_compiler no
     array set merger_configure_args {
@@ -178,6 +208,7 @@ platform darwin {
         configure.perl          ${prefix}/bin/perl5
     }
 }
+
 # Don't pass --host to configure.
 array set merger_host {ppc {} i386 {} ppc64 {} x86_64 {} arm64 {}}
 
@@ -185,6 +216,7 @@ if {(!${universal_possible} || ![variant_isset universal])
         && [info exists merger_configure_args(${configure.build_arch})]} {
     configure.args-append $merger_configure_args(${configure.build_arch})
 }
+
 configure.universal_args-delete --disable-dependency-tracking
 
 # https://github.com/openssl/openssl/issues/16551
@@ -304,6 +336,4 @@ if {![variant_isset docs]} {
     configure.args-append  -no-docs
 }
 
-livecheck.type      regex
-livecheck.url       [lindex ${master_sites} 0]
-livecheck.regex     openssl-(${major_v}.\[0-9.\]+\[a-z\]?)\\.tar\\.gz
+livecheck.regex      "archive/refs/tags/openssl-((?!.*(alpha|beta))\[^\"]+)\\.tar\\.gz"
