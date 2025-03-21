@@ -65,7 +65,7 @@ proc compwrap::comp_flags {tag} {
     }
     if { ![option compwrap.append_arch_flags] ||
          [catch {get_canonical_archflags ${tag}} flags] } {
-        set flags [join ""]
+        set flags ""
     }
     global configure.${ftag}flags
     if { [info exists configure.${ftag}flags] } {
@@ -109,7 +109,10 @@ proc compwrap::wrap_compiler {tag} {
     return ${wrapcomp}
 }
 
-post-extract {
+# RJVB : try to support rewinding the configure phase in order to change compilers
+# NB : if ever this leads to problems, use post-patch and have the redo-install-phase
+# script rewind to the patch phase automatically if the compwrap directory exists.
+pre-configure {
     foreach tag [option compwrap.compilers_to_wrap] {
 
         # Get the underlying compiler
