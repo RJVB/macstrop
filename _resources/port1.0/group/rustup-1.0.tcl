@@ -313,9 +313,9 @@ if {${os.platform} eq "darwin"} {
     } else {
         set env(LD_PRELOAD)         "${prefix}/lib/libwrapped_syscalls.so"
     }
-    extract.env-append              "COPY_FILE_RANGE_VERBOSE=1"
-    configure.env-append            "COPY_FILE_RANGE_VERBOSE=1"
-    build.env-append                "COPY_FILE_RANGE_VERBOSE=1"
+    extract.env-append              COPY_FILE_RANGE_VERBOSE=1 RENAME_VERBOSE=1 RENAME_ACROSS_DEVICES=1
+    configure.env-append            COPY_FILE_RANGE_VERBOSE=1 RENAME_VERBOSE=1 RENAME_ACROSS_DEVICES=1
+    build.env-append                COPY_FILE_RANGE_VERBOSE=1 RENAME_VERBOSE=1 RENAME_ACROSS_DEVICES=1
 }
 
 if {[variant_isset cputuned] || [variant_isset cpucompat]} {
@@ -364,13 +364,14 @@ if {![rustup::use_rustup]} {
 } else {
     # too tricky to remove the port:rust and port:cargo deps
    # that are added by the rust PG so we don't include it...
-    PortGroup openssl 1.0
     PortGroup compiler_wrapper 1.0
 
     PortGroup muniversal 1.1
 
     if {${subport} ne "rustup"} {
         # we're not building port:rustup itself so we can depend on it
+        # and use the openssl PG
+        PortGroup openssl 1.0
         depends_build-append        port:rustup
     }
     if {${os.platform} eq "darwin"} {
