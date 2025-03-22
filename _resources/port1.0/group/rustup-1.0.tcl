@@ -105,8 +105,9 @@ namespace eval rustup {
         } elseif {![file exists ${rustup::home}/rustup-install.sh]} {
             xinstall -d ${rustup::home}
             if {${os.platform} eq "darwin"} {
-                if {${os.major} < 16} {
-                    set rinit "https://static.rust-lang.org/rustup/dist/${build_arch}-apple-darwin/rustup-init"
+                if {${os.major} < ${legacysupport.newest_darwin_requires_legacy}} {
+                    #set rinit "https://static.rust-lang.org/rustup/dist/${build_arch}-apple-darwin/rustup-init"
+                    set rinit "https://static.rust-lang.org/rustup/archive/1.26.0/${build_arch}-apple-darwin/rustup-init"
                     ui_msg "Downloading the rustup installer binary directly from ${rinit}"
                     xinstall -d ${rustup::home}/Cargo/bin/
                     curl fetch --progress ui_progress_download \
@@ -145,10 +146,12 @@ namespace eval rustup {
             set env(RUSTUP_INIT_SKIP_PATH_CHECK) yes
             if {![file exists ${rustup::home}/Cargo/bin/cargo]} {
                 ui_msg "--->  Doing rustup install"
+                set deftoolchain ""
                 if {${os.platform} eq "darwin" && ${os.major} < ${legacysupport.newest_darwin_requires_legacy}} {
                     ui_warn "     NB: you may get a notification of a rustc crash at the end of the install: you can ignore this"
                     set env(RUSTUP_INIT_SKIP_PATH_CHECK) yes
                     set env(RUSTUP_DONT_CALL_RUSTC) yes
+                    set deftoolchain "--default-toolchain none"
                 }
                 if {[file exists ${rustup::home}/Cargo/bin/rustup-init]} {
                     platform darwin {
@@ -156,30 +159,37 @@ namespace eval rustup {
                         # (the first replace is superfluous if we're using port:rustup)
                         system "install_name_tool -change /usr/lib/libcurl.4.dylib ${prefix}/lib/libcurl.4.dylib ${rustup::home}/Cargo/bin/rustup-init"
                     }
-                    system "${rustup::home}/Cargo/bin/rustup-init --profile minimal --no-modify-path -y -q"
+                    system "${rustup::home}/Cargo/bin/rustup-init --profile minimal --no-modify-path ${deftoolchain} -y -q"
                 } else {
-#                     if {${os.platform} eq "darwin" && ${os.major} < 14} {
-#                         ui_warn "--->    downloading the older rustup 1.25.2"
-#                         set env(RUSTUP_UPDATE_ROOT) "https://static.rust-lang.org/rustup/archive/1.25.2"
-#                     }
-                    system "${rustup::home}/rustup-install.sh --profile minimal --no-modify-path -y -q"
+                    if {${os.platform} eq "darwin" && ${os.major} < ${legacysupport.newest_darwin_requires_legacy}} {
+                        ui_warn "--->    downloading the older rustup 1.26.0"
+                        set env(RUSTUP_UPDATE_ROOT) "https://static.rust-lang.org/rustup/archive/1.26.0"
+                    }
+                    system "${rustup::home}/rustup-install.sh --profile minimal --no-modify-path ${deftoolchain} -y -q"
                 }
                 platform darwin {
+                    if {${os.platform} eq "darwin" && ${os.major} < ${legacysupport.newest_darwin_requires_legacy}} {
+                        set toolchain_version 1.80.1
+                        system "${rustup::home}/Cargo/bin/rustup install --profile minimal --no-self-update ${toolchain_version}"
+                        system "${rustup::home}/Cargo/bin/rustup default ${toolchain_version}"
+                    } else {
+                        set toolchain_version stable
+                    }
                     # ${rustup::home}/Cargo/bin is populated with hardlinks, so we only need to
                     # fix up a single downloaded for for running on legacy systems
                     # NB NB: for this to work legacysupport.newest_darwin_requires_legacy must be >= 16
                     system "install_name_tool -change /usr/lib/libcurl.4.dylib ${prefix}/lib/libcurl.4.dylib ${rustup::home}/Cargo/bin/cargo"
                     legacysupport::relink_libSystem ${rustup::home}/Cargo/bin/cargo
-                    foreach c [glob ${rustup::home}/toolchains/stable-*-apple-darwin/bin/cargo] {
+                    foreach c [glob ${rustup::home}/toolchains/${toolchain_version}-*-apple-darwin/bin/cargo] {
                         system "install_name_tool -change /usr/lib/libcurl.4.dylib ${prefix}/lib/libcurl.4.dylib ${c}"
                         legacysupport::relink_libSystem ${c}
                     }
                     foreach d {rustc rustdoc} {
-                        foreach c [glob ${rustup::home}/toolchains/stable-*-apple-darwin/bin/${d}] {
+                        foreach c [glob ${rustup::home}/toolchains/${toolchain_version}-*-apple-darwin/bin/${d}] {
                             legacysupport::relink_libSystem ${c}
                         }
                     }
-                    foreach c [glob ${rustup::home}/toolchains/stable-*-apple-darwin/lib/*.dylib] {
+                    foreach c [glob ${rustup::home}/toolchains/${toolchain_version}-*-apple-darwin/lib/*.dylib] {
                         legacysupport::relink_libSystem ${c}
                     }
                     if {${os.major} < ${legacysupport.newest_darwin_requires_legacy}} {
