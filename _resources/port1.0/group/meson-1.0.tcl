@@ -129,6 +129,32 @@ pre-configure {
     # no guarantee it won't ever if we do use the override trick).
     configure.pre_args-append \
                             --buildtype ${meson.build_type}
+
+    # inject the debug options here, before setting c_args and family; otherwise they get lost!!
+    if {[variant_isset debug]} {
+        configure.cflags-replace         -O2 -O0
+        configure.cxxflags-replace       -O2 -O0
+        configure.objcflags-replace      -O2 -O0
+        configure.objcxxflags-replace    -O2 -O0
+        configure.ldflags-replace        -O2 -O0
+        configure.cflags-replace         -Os -O0
+        configure.cxxflags-replace       -Os -O0
+        configure.objcflags-replace      -Os -O0
+        configure.objcxxflags-replace    -Os -O0
+        configure.ldflags-replace        -Os -O0
+
+        if {${meson.debugopts} ne [meson::debugopts]} {
+            ui_debug "+debug variant uses custom meson.debugopts=\"${meson.debugopts}\""
+        } else {
+            ui_debug "+debug variant uses default meson.debugopts=\"${meson.debugopts}\""
+        }
+        configure.cflags-append         {*}${meson.debugopts}
+        configure.cxxflags-append       {*}${meson.debugopts}
+        configure.objcflags-append      {*}${meson.debugopts}
+        configure.objcxxflags-append    {*}${meson.debugopts}
+        configure.ldflags-append        {*}${meson.debugopts}
+    }
+
     # the proper way to pass compiler/linker arguments, which we prefer not to use
     # in universal mode as it is not (?!) possible to know what arch we're building
     # for here in a pre-configure block.
@@ -172,28 +198,5 @@ proc meson.save_configure_cmd {{save_log_too ""}} {
 
 variant debug description "Enable debug binaries" {
     default meson.build_type            debug
-    pre-configure {
-        configure.cflags-replace         -O2 -O0
-        configure.cxxflags-replace       -O2 -O0
-        configure.objcflags-replace      -O2 -O0
-        configure.objcxxflags-replace    -O2 -O0
-        configure.ldflags-replace        -O2 -O0
-        configure.cflags-replace         -Os -O0
-        configure.cxxflags-replace       -Os -O0
-        configure.objcflags-replace      -Os -O0
-        configure.objcxxflags-replace    -Os -O0
-        configure.ldflags-replace        -Os -O0
-
-        if {${meson.debugopts} ne [meson::debugopts]} {
-            ui_debug "+debug variant uses custom meson.debugopts=\"${meson.debugopts}\""
-        } else {
-            ui_debug "+debug variant uses default meson.debugopts=\"${meson.debugopts}\""
-        }
-        configure.cflags-append         ${meson.debugopts}
-        configure.cxxflags-append       ${meson.debugopts}
-        configure.objcflags-append      ${meson.debugopts}
-        configure.objcxxflags-append    ${meson.debugopts}
-        configure.ldflags-append        ${meson.debugopts}
-    }
 }
 port::register_callback meson::add_depends
