@@ -169,7 +169,14 @@ namespace eval rustup {
                 }
                 platform darwin {
                     if {${os.platform} eq "darwin" && ${os.major} < ${legacysupport.newest_darwin_requires_legacy}} {
-                        set toolchain_version 1.80.1
+                        if {[catch {exec nm -U ${prefix}/lib/libMacportsLegacySupport.dylib | fgrep -q clonefile} err result]} {
+                            ui_debug "port:legacy-support does NOT provide the clonefile functions; installing the stable rust toolchain"
+                            set toolchain_version 1.80.1
+                        } else {
+                            ui_debug "port:legacy-support provides the clonefile functions; installing the stable rust toolchain"
+                            # as of 250328, that is Rust 1.85.1 (250315).
+                            set toolchain_version stable
+                        }
                         system "${rustup::home}/Cargo/bin/rustup install --profile minimal --no-self-update ${toolchain_version}"
                         system "${rustup::home}/Cargo/bin/rustup default ${toolchain_version}"
                     } else {
@@ -261,17 +268,34 @@ namespace eval rustup {
             foreach la ${configure.ldflags} {
                 puts -nonewline $conf ",\"-C\", \"link-arg=${la}\""
             }
+            # puts -nonewline $conf ",\"-v\""
             puts $conf "\]"
             if {${os.platform} eq "darwin"} {
                 # be sure to include all architectures in case, e.g., a 64-bit Cargo compiles a 32-bit port
                 # note that setting the linker on linux causes weird failures even if the executed wrapper
                 # script is the same...
+                set has_triplets no
                 foreach arch {arm64 x86_64 i386 ppc ppc64} {
                     if {[option triplet.${arch}] ne "none"} {
                         puts $conf "\[target.[option triplet.${arch}]\]"
                         puts $conf "linker = \"[compwrap::wrap_compiler ld]\""
+                        set has_triplets yes
                     }
                 }
+#                 if {[tbool has_triplets]} {
+#                     puts $conf "\[env\]"
+#                     foreach arch {arm64 x86_64 i386 ppc ppc64} {
+#                         if {[option triplet.${arch}] ne "none"} {
+#                             if {${compwrap.ccache_supported_compilers} eq {}} {
+#                                 puts $conf "CC_[option triplet.${arch}] = \{ value = \"ccache [compwrap::wrap_compiler cc]\", force = true \}"
+#                                 puts $conf "CXX_[option triplet.${arch}] = \{ value = \"ccache [compwrap::wrap_compiler cxx]\", force = true \}"
+#                             } else {
+#                                 puts $conf "CC_[option triplet.${arch}] = \{ value = \"[compwrap::wrap_compiler cc]\", force = true \}"
+#                                 puts $conf "CXX_[option triplet.${arch}] = \{ value = \"[compwrap::wrap_compiler cxx]\", force = true \}"
+#                             }
+#                         }
+#                     }
+#                 }
             }
             close $conf
             system "cat ${cargo.home}/config.toml"
