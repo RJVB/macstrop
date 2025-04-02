@@ -2,10 +2,9 @@
 
 PortSystem      1.0
 PortGroup       compiler_blacklist_versions 1.0
-PortGroup       gitlab 1.0
+PortGroup       github 1.0
 PortGroup       code_sign 1.0
-## the meson build system isn't finished for XQuartz in this release
-# PortGroup       meson 1.0
+PortGroup       meson 1.0
 set LTO.LTO.maybe_ForceLD yes
 PortGroup       LTO 1.0
 PortGroup       save_configure_cmd 1.0
@@ -21,15 +20,13 @@ platform darwin {
     }
 }
 
-gitlab.instance https://gitlab.freedesktop.org
-default gitlab.master_sites \
-                {${gitlab.homepage}/-/releases/${git.branch}/downloads}
+github.setup    XQuartz xorg-server bc1e869799b620888deee051e9bec602555e0ceb
+# it's a mess but I counted 14 commits after the one bumping the server version to
+# 21.1.8 , which is reported by the server as 1.21.1.8 (so we use that version!)
+version         1.21.1.8.14
+set xq_version  2.8.6-beta2
 fetch.type      git
 epoch           1
-gitlab.setup    xorg xserver 17c61dee835edc0604306e00b50e6ca37c7efa2a
-# xorg-server-1.20.10 is #bc111a2e67e16d4e6d4f3196ab86c22c1e278c45
-# 17c61dee835edc0604306e00b50e6ca37c7efa2a is xorg-server-1.20.14-12
-version         1.20.14.12
 
 name            xorg-server-devel
 conflicts       xorg-server xorg-server-1.18
@@ -40,7 +37,8 @@ maintainers     {jeremyhu @jeremyhu} openmaintainer
 description     The X.org / Xquartz X server.
 homepage        https://www.x.org
 platforms       darwin macosx
-long_description The X.org X server allows you to run X11 applications on your computer.
+long_description The X.org X server allows you to run X11 applications on your computer. \
+                This is XQuartz version ${xq_version}
 
 worksrcdir      ${my_name}-git
 distname        ${my_name}-git
@@ -93,18 +91,25 @@ if {[string match *meson ${configure.cmd}]} {
     set use_meson yes
 }
 
+# keep the autoconf code for a bit
 if {[tbool use_meson]} {
-    configure.cppflags-append \
-        "-DBUNDLE_ID_PREFIX=\"org.macports\""
     configure.args-append \
+        -Dapple-applications-dir=${applications_dir} \
+        -Dbundle-id-prefix=org.macports \
+        -Ddtrace=false \
+        -Ddocs=false \
         -Dxephyr=false \
+        -Dsha1=CommonCrypto \
+        -Dxpbproxy=true \
         -Dglamor=true \
         -Dlisten_tcp=true \
         -Dlisten_unix=true \
         -Dlisten_local=true \
         -Dipv6=true \
         -Dudev=false \
-        -Dsecure-rpc=false
+        -Dsecure-rpc=false \
+        -Dinput_thread=true \
+        -Dxnest=true
 } else {
     configure.args \
         --with-apple-applications-dir=${applications_dir} \
@@ -142,17 +147,37 @@ if {[tbool use_meson]} {
             --enable-composite
     }
 
-    variant docs description "Install extra documentation" {
-        depends_build-append \
-            port:doxygen \
+    platform darwin 8 {
+        configure.args-append --disable-dependency-tracking
+    }
+    pre-configure {
+        use_autoreconf [expr ![file exists ${worksrcpath}/config.log]]
+    }
+    autoreconf.args -fvi
+}
+
+variant docs description "Install extra documentation" {
+    depends_build-append \
             port:fop \
             port:xmlto \
             port:xorg-sgml-doctools
 
-        depends_skip_archcheck-append \
-            doxygen \
+    depends_skip_archcheck-append \
             xmlto
 
+    if {[tbool use_meson]} {
+        depends_build-append \
+            port:libxslt
+        depends_skip_archcheck-append \
+            libxslt
+        configure.args-replace \
+            -Ddocs=false \
+            -Ddocs=true
+    } else {
+        depends_build-append \
+            port:doxygen
+        depends_skip_archcheck-append \
+            doxygen \
         configure.args-delete \
             --without-doxygen \
             --without-fop \
@@ -170,22 +195,17 @@ if {[tbool use_meson]} {
             FOP="${prefix}/bin/fop" \
             XMLTO="${prefix}/bin/xmlto"
     }
-
-    platform darwin 8 {
-        configure.args-append --disable-dependency-tracking
-    }
-    pre-configure {
-        use_autoreconf [expr ![file exists ${worksrcpath}/config.log]]
-    }
-    autoreconf.args -fvi
 }
 
-variant xephyr description {build the Xephyr nested server} {
+variant xephyr description {build the Xephyr nested server instead of XNest} {
     depends_lib-append \
         port:xorg-libxcb
     patchfiles-append \
         patch-enable-xephyr.diff
     if {[tbool use_meson]} {
+        configure.args-replace \
+            -Dxnest=true \
+            -Dxnest=false
         configure.args-replace \
             -Dxephyr=false \
             -Dxephyr=true
@@ -200,7 +220,7 @@ variant xephyr description {build the Xephyr nested server} {
 }
 
 # GL/internal/dri_interface.h is missing in prefix (provided by libdrm for the xorg DDX... not helpful for us)
-configure.cppflags-append -I/usr/include -I${filespath}/dri -F${configure.sdkroot}/System/Library/Frameworks/ApplicationServices.framework/Frameworks
+# configure.cppflags-append -I/usr/include -I${filespath}/dri -F${configure.sdkroot}/System/Library/Frameworks/ApplicationServices.framework/Frameworks
 
 # Debugging ...
 #configure.cppflags-append  -g -fsanitize=address -fno-omit-frame-pointer
@@ -211,37 +231,6 @@ configure.cppflags-append -I/usr/include -I${filespath}/dri -F${configure.sdkroo
 configure.env-append \
         RAWCPP=${configure.cpp}
 
-patchfiles \
-        0002-randr-Initialize-RandR-even-if-there-are-currently-n.patch \
-        0003-glx-Initialize-glx-even-if-there-are-currently-no-sc.patch \
-        5000-sdksyms.sh-Use-CPPFLAGS-not-CFLAGS.patch \
-        5001-Revert-dix-Restore-PaintWindow-screen-hook.patch \
-        5002-Workaround-the-GC-clipping-problem-in-miPaintWindow-.patch \
-        5003-Use-old-miTrapezoids-and-miTriangles-routines.patch \
-        5004-fb-Revert-fb-changes-that-broke-XQuartz.patch \
-        5005-fb-Revert-fb-changes-that-broke-XQuartz.patch
-
-# the following two patches avoid redefinition errors on pre-C11 compilers
-# https://trac.macports.org/ticket/57333
-# another approach would be to update the port to build with gcc6+
-# patches to do that are in the above noted ticket/57333.
-# Edit: 5007 patch no longer needed with xorgproto 2019.1
-patchfiles-append \
-        5006-patch-xorg-server-dont-redefine-GLXscreen.diff
-
-# enables the automake option "subdir-objects" so that automake
-# doesn't complain about subdirectory *.in replacement files usage.
-# RJVB: this breaks the XINERAMA extension by causing it to be improperly initialised
-patchfiles-append   2001-enable-automake-subdir-objects.patch
-patchfiles-append   patch-pseudoramix.diff
-
-# Workaround for Darwin19+
-# :info:build X11Application.m:431:17: error: use of undeclared identifier '_appFlags'
-# :info:build                 _appFlags._active = YES;
-# :info:build                 ^
-if {${os.major} >= 19} {
-    patchfiles-append Darwin19-Remove-AppFlags-Active-Hack.patch
-}
 patchfiles-append patch-fix-xpbproxy.diff
 
 # RJVB: enable some features that are experimental on Mac: DRI(2) and the DPMS and Composite extensions
@@ -253,6 +242,7 @@ patchfiles-append   patch-aquamenubar-debug.diff \
                     patch-log-screendimensions.diff
 patchfiles-append   patch-bundleprefix-fallback.diff
 
+patchfiles-append   patch-no-qos-pre-1010.diff
 if {${os.major} < 14} {
     patchfiles-append \
                     patch-objc-pre-1010.diff
@@ -261,15 +251,12 @@ if {${os.major} < 14} {
 patch.pre_args -Np1
 
 depends_build-append \
-	port:xorg-util-macros
-if {![variant_isset xquartz]} {
-    depends_build-append \
-        port:xorg-font-util
-}
+	port:xorg-util-macros \
+    port:xorg-font-util
 
 post-destroot {
     ln -s Xquartz ${destroot}${prefix}/bin/X
-    if {[variant_isset xquartz]} {
+    if {[variant_isset xquartz] && [file exists /opt/X11/bin/mkfontdir]} {
         ln -s /opt/X11/bin/mkfontdir ${destroot}${prefix}/bin
         ln -s /opt/X11/bin/mkfontscale ${destroot}${prefix}/bin
     }
@@ -307,6 +294,7 @@ platform macosx {
         sign
     }
 }
+
 variant xcsecurity description "Enable Security Extensions" {
     if {[tbool use_meson]} {
         configure.args-append \
@@ -326,5 +314,4 @@ if {[tbool use_meson]} {
     configure.save_configure_cmd "install log"
 }
 
-ui_msg ${configure.args}
 livecheck.type none
