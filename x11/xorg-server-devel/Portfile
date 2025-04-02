@@ -4,6 +4,8 @@ PortSystem      1.0
 PortGroup       compiler_blacklist_versions 1.0
 PortGroup       gitlab 1.0
 PortGroup       code_sign 1.0
+## the meson build system isn't finished for XQuartz in this release
+# PortGroup       meson 1.0
 set LTO.LTO.maybe_ForceLD yes
 PortGroup       LTO 1.0
 PortGroup       save_configure_cmd 1.0
@@ -87,33 +89,95 @@ platform darwin {
     }
 }
 
-configure.args --with-apple-applications-dir=${applications_dir} \
-    --with-bundle-id-prefix=org.macports \
-    --without-dtrace \
-    --without-doxygen \
-    --without-fop \
-    --without-xmlto \
-    --disable-devel-docs \
-    --with-sha1=CommonCrypto \
-    --disable-dri2 \
-    --disable-dri3 \
-    --disable-composite \
-    --disable-kdrive \
-    --disable-xnest \
-    --disable-xephyr \
-    --enable-standalone-xpbproxy \
-    --enable-glamor \
-    --enable-listen-tcp \
-    --enable-unix-transport \
-    --enable-tcp-transport \
-    --enable-ipv6 \
-    --enable-local-transport \
-    --enable-input-thread
+if {[string match *meson ${configure.cmd}]} {
+    set use_meson yes
+}
 
-variant dri2 description {enable DRI2 support (experimental)} {
-    configure.args-replace \
+if {[tbool use_meson]} {
+    configure.cppflags-append \
+        "-DBUNDLE_ID_PREFIX=\"org.macports\""
+    configure.args-append \
+        -Dxephyr=false \
+        -Dglamor=true \
+        -Dlisten_tcp=true \
+        -Dlisten_unix=true \
+        -Dlisten_local=true \
+        -Dipv6=true \
+        -Dudev=false \
+        -Dsecure-rpc=false
+} else {
+    configure.args \
+        --with-apple-applications-dir=${applications_dir} \
+        --with-bundle-id-prefix=org.macports \
+        --without-dtrace \
+        --without-doxygen \
+        --without-fop \
+        --without-xmlto \
+        --disable-devel-docs \
+        --with-sha1=CommonCrypto \
         --disable-dri2 \
-        --enable-dri2
+        --disable-dri3 \
+        --disable-composite \
+        --disable-kdrive \
+        --disable-xnest \
+        --disable-xephyr \
+        --enable-standalone-xpbproxy \
+        --enable-glamor \
+        --enable-listen-tcp \
+        --enable-unix-transport \
+        --enable-tcp-transport \
+        --enable-ipv6 \
+        --enable-local-transport \
+        --enable-input-thread
+
+    variant dri2 description {enable DRI2 support (experimental)} {
+        configure.args-replace \
+            --disable-dri2 \
+            --enable-dri2
+    }
+
+    variant composite description {build the COMPOSITE extension (experimental)} {
+        configure.args-replace \
+            --disable-composite \
+            --enable-composite
+    }
+
+    variant docs description "Install extra documentation" {
+        depends_build-append \
+            port:doxygen \
+            port:fop \
+            port:xmlto \
+            port:xorg-sgml-doctools
+
+        depends_skip_archcheck-append \
+            doxygen \
+            xmlto
+
+        configure.args-delete \
+            --without-doxygen \
+            --without-fop \
+            --without-xmlto \
+            --disable-devel-docs 
+
+        configure.args-append \
+            --with-doxygen \
+            --with-fop \
+            --with-xmlto \
+            --enable-devel-docs
+
+        configure.env-append \
+            DOXYGEN="${prefix}/bin/doxygen" \
+            FOP="${prefix}/bin/fop" \
+            XMLTO="${prefix}/bin/xmlto"
+    }
+
+    platform darwin 8 {
+        configure.args-append --disable-dependency-tracking
+    }
+    pre-configure {
+        use_autoreconf [expr ![file exists ${worksrcpath}/config.log]]
+    }
+    autoreconf.args -fvi
 }
 
 variant xephyr description {build the Xephyr nested server} {
@@ -121,18 +185,18 @@ variant xephyr description {build the Xephyr nested server} {
         port:xorg-libxcb
     patchfiles-append \
         patch-enable-xephyr.diff
-    configure.args-replace \
-        --disable-kdrive \
-        --enable-kdrive=yes
-    configure.args-replace \
-        --disable-xephyr \
-        --enable-xephyr=yes
-}
-
-variant composite description {build the COMPOSITE extension (experimental)} {
-    configure.args-replace \
-        --disable-composite \
-        --enable-composite
+    if {[tbool use_meson]} {
+        configure.args-replace \
+            -Dxephyr=false \
+            -Dxephyr=true
+    } else {
+        configure.args-replace \
+            --disable-kdrive \
+            --enable-kdrive=yes
+        configure.args-replace \
+            --disable-xephyr \
+            --enable-xephyr=yes
+    }
 }
 
 # GL/internal/dri_interface.h is missing in prefix (provided by libdrm for the xorg DDX... not helpful for us)
@@ -196,16 +260,6 @@ if {${os.major} < 14} {
 
 patch.pre_args -Np1
 
-platform darwin 8 {
-    configure.args-append --disable-dependency-tracking
-}
-pre-configure {
-    use_autoreconf [expr ![file exists ${worksrcpath}/config.log]]
-}
-autoreconf.args -fvi
-
-build.args V=1
-
 depends_build-append \
 	port:xorg-util-macros
 if {![variant_isset xquartz]} {
@@ -254,40 +308,23 @@ platform macosx {
     }
 }
 variant xcsecurity description "Enable Security Extensions" {
-    configure.args-append  --enable-xcsecurity
+    if {[tbool use_meson]} {
+        configure.args-append \
+            -Dxcsecurity=true
+    } else {
+        configure.args-append \
+            --enable-xcsecurity
+    }
 }
 
-variant docs description "Install extra documentation" {
-    depends_build-append \
-        port:doxygen \
-        port:fop \
-        port:xmlto \
-        port:xorg-sgml-doctools
 
-    depends_skip_archcheck-append \
-        doxygen \
-        xmlto
-
-    configure.args-delete \
-        --without-doxygen \
-        --without-fop \
-        --without-xmlto \
-        --disable-devel-docs 
-
-    configure.args-append \
-        --with-doxygen \
-        --with-fop \
-        --with-xmlto \
-        --enable-devel-docs
-
-    configure.env-append \
-        DOXYGEN="${prefix}/bin/doxygen" \
-        FOP="${prefix}/bin/fop" \
-        XMLTO="${prefix}/bin/xmlto"
+if {[tbool use_meson]} {
+    build.pre_args-prepend -k 0
+} else {
+    build.post_args-append -wk
+    build.args V=1
+    configure.save_configure_cmd "install log"
 }
 
-configure.save_configure_cmd "install log"
-
-build.post_args-append -wk
-
+ui_msg ${configure.args}
 livecheck.type none
