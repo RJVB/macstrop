@@ -316,6 +316,15 @@ if {[string match *clang* ${configure.compiler}]} {
         configure.objcxxflags-replace -Os -O2
         configure.ldflags-replace -Os -O2
     }
+} elseif {[string match macports-gcc* ${configure.compiler}]} {
+    if {![variant_isset universal] || [info exists universal_archs_supported]} {
+        default configure.ar "[string map {"gcc" "gcc-ar"} ${configure.cc}]"
+        default configure.nm "[string map {"gcc" "gcc-nm"} ${configure.cc}]"
+#         default configure.ranlib "[string map {"gcc" "gcc-ranlib"} ${configure.cc}]"
+        # done by gcc-ar
+        default configure.ranlib "/bin/echo"
+        set LTO.custom_binaries 1
+    }
 } elseif {${os.platform} eq "linux"} {
     if {${configure.compiler} eq "cc"} {
         if {[auto_execok gcc-ar] ne ""} {
