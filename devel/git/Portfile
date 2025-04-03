@@ -1,106 +1,170 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
 
 PortSystem          1.0
-PortGroup           perl5 1.0
-set LTO.allow_ThinLTO no
-PortGroup           LTO 1.0
+PortGroup           perl5           1.0
+PortGroup           conflicts_build 1.0
 
+platform darwin {
+    PortGroup       legacysupport   1.1
+    legacysupport.newest_darwin_requires_legacy 11
+}
+
+set LTO.allow_ThinLTO no
+set LTO_needs_pre_build yes
+PortGroup           LTO 1.0
+PortGroup           save_configure_cmd 1.0
+PortGroup           locale_select 1.0
+
+# RELEASE VERSION
 name                git
-version             2.24.0
+# NOTE: Update the DEVEL version first before updating this RELEASE version,
+#       to verify that the intended version builds on all platforms.
+version             2.49.0
 revision            0
 
 description         A fast version control system
+
 long_description    Git is a fast, scalable, distributed open source version \
                     control system focusing on speed and efficiency.
-maintainers         {ciserlohn @ci42} openmaintainer
+
+maintainers         {ciserlohn @ci42} \
+                    {gmail.com:herby.gillot @herbygillot} \
+                    openmaintainer
+
 categories          devel
 license             GPL-2 LGPL-2.1+
-platforms           darwin
-homepage            https://git-scm.com/
-master_sites        https://www.kernel.org/pub/software/scm/git/ \
+installs_libs       no
+platforms           darwin linux
+
+patch.pre_args-replace  -p0 -Np1
+
+    # RELEASE VERSION
+
+    homepage        https://git-scm.com/
+
+    master_sites    https://www.kernel.org/pub/software/scm/git/ \
                     https://cdn.kernel.org/pub/software/scm/git/
-distname            git-${version}
-use_xz              yes
-distfiles           git-${version}${extract.suffix} \
+
+    distname        git-${version}
+    use_xz          yes
+    distfiles-append \
+                    git-${version}${extract.suffix} \
                     git-manpages-${version}${extract.suffix}
 
-checksums           git-2.24.0.tar.xz \
-                    rmd160  28b19ca928fcf8182f27031b3e2ec3e08a2b0584 \
-                    sha256  9f71d61973626d8b28c4cdf8e2484b4bf13870ed643fed982d68b2cfd754371b \
-                    git-manpages-2.24.0.tar.xz \
-                    rmd160  3eb3ee81ff26b8536459e349eb43df173d1a7f6b \
-                    sha256  b0c872c16f22942c1cb6c90ec07f395a931f7c2f9fb920d2ec926674265c04a6
+    checksums       git-${version}${extract.suffix} \
+                    rmd160  c58750cb16f5b483567cbb24937ddd992cce5f56 \
+                    sha256  618190cf590b7e9f6c11f91f23b1d267cd98c3ab33b850416d8758f8b5a85628 \
+                    size    7771796 \
+                    git-manpages-${version}${extract.suffix} \
+                    rmd160  a9cc76d3444cba65824cf8c2fdfcd7dbc81e5dee \
+                    sha256  2e4743168c4fba9729a50a1d7e52a5c94bc134a55df2e1bcee90762ebac2c4d7 \
+                    size    594760
+
+    extract.only    git-${version}${extract.suffix} \
+                    git-manpages-${version}${extract.suffix}
+
+    conflicts       git-devel
+
+    # Reverts breakage introduced by 51c15ac1b6ab15d8e29651d0bd364d8f62dc6509
+    # and later commits.
+    # TODO: consider convising upstream to restore fallback code.
+    if {${os.platform} eq "darwin" && ${os.major} < 11} {
+        patchfiles-append patch-Revert-breaking-osxkeychain.diff
+    }
+
+    livecheck.type  regexm
+    livecheck.regex {<span class="version">.*?(\d+\.\d+\.\d+).*?</span>}
 
 perl5.require_variant   yes
 perl5.conflict_variants yes
-#perl5.branches          5.24 5.26 5.28
+# perl5.branches          5.24 5.26 5.28 5.30 5.32 5.34
+# perl5.default_branch    5.34
 perl5.branch_range      24
 perl5.create_variants   ${perl5.branches}
 
+conflicts_build     libuuid
+
+depends_build-append \
+                    port:gettext
+
 depends_lib-append  port:curl \
                     port:zlib \
-                    path:lib/libssl.dylib:openssl \
                     port:expat \
-                    port:libiconv \
-                    port:python27
+                    port:gettext-runtime \
+                    port:libiconv
 
-depends_run-append  port:p${perl5.major}-authen-sasl \
-                    port:p${perl5.major}-error \
-                    port:p${perl5.major}-net-smtp-ssl \
-                    port:p${perl5.major}-term-readkey \
-                    port:p${perl5.major}-cgi \
-                    port:rsync
+depends_run-append  path:bin/rsync:rsync
 
-patchfiles          git-subtree.1.diff
+patchfiles          patch-git-subtree.1.diff
 platform darwin {
     patchfiles-append \
                     patch-Makefile.diff \
                     patch-sha1dc-older-apple-gcc-versions.diff
-    use_configure   no
 }
-patch.pre_args      -p1
 
-extract.only        git-${version}${extract.suffix} \
-                    git-manpages-${version}${extract.suffix}
+# Git 2.36.0 implements a new FSEvent listener that uses
+# the API available in Yosemite and newer.
+if {${os.platform} eq "darwin" && ${os.major} < 14} {
+    patchfiles-append   patch-ignore-fsmonitor-daemon-backend.diff
+}
+
+# Git 2.40.0 fails to build on macOS 10.6 & 10.7 unless
+# USE_ENHANCED_BASIC_REGULAR_EXPRESSIONS is disabled.
+# See: https://trac.macports.org/ticket/67091
+if {${os.platform} eq "darwin" && ${os.major} < 12} {
+    patchfiles-append   patch-disable-enhanced-basic-regex.diff
+}
+
+# Fix an extraction failure with some old versions of tar.
+# https://superuser.com/questions/1219214/permissions-cannot-be-restored-for-a-tar
+if {${os.platform} eq "darwin" && ${os.major} < 11} {
+    extract.post_args-append \
+                    -m --touch --no-overwrite-dir
+}
+
+use_configure       no
+
+compiler.c_standard 1999
 
 variant universal   {}
 
-set CFLAGS          "-I. -Wall -O2 -I${prefix}/include [get_canonical_archflags cc] ${configure.optflags}"
-set LDFLAGS         "-L${prefix}/lib [get_canonical_archflags ld] ${configure.ldflags}"
+set CFLAGS          "${configure.cflags} -std=gnu99 [get_canonical_archflags cc]"
+set LDFLAGS         "${configure.ldflags} [get_canonical_archflags ld]"
 
-if {[variant_isset pcre]} {
-    depends_build-append \
-                    port:pkgconfig
-    pre-configure {
-        if {![file exists ${prefix}/bin/pkg-config]} {
-            ui_error "Please re-run this command after installing port:pkgconfig"
-            return -code error "Please re-run this command after installing port:pkgconfig"
-        }
-    }
-    if {[file exists ${prefix}/bin/pkg-config]} {
-        # fetch the flags required for building with the local pcre2 install
-        set pcreflags "[exec ${prefix}/bin/pkg-config --cflags libpcre2-8]"
-        configure.cflags-append \
-                    ${pcreflags}
-        set CFLAGS  "${CFLAGS} ${pcreflags}"
-    }
-}
-
-build.env           CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}"
-build.args          CFLAGS="${CFLAGS}" \
-                    LDFLAGS="${LDFLAGS}" \
+build.args          CFLAGS="${CFLAGS} ${LTO.cpuflags}" \
+                    LDFLAGS="${LDFLAGS} ${LTO.cpuflags}" \
                     CC=${configure.cc} \
                     prefix=${prefix} \
                     CURLDIR=${prefix} \
                     OPENSSLDIR=${prefix} \
                     ICONVDIR=${prefix} \
-                    PERL_PATH="${prefix}/bin/perl${perl5.major}" \
-                    PYTHON_PATH="${prefix}/bin/python2.7" \
                     NO_FINK=1 \
                     NO_DARWIN_PORTS=1 \
                     NO_R_TO_GCC_LINKER=1 \
-                    NO_PERL_CPAN_FALLBACK=1 \
+                    NO_PERL=1 \
                     V=1
+
+if {[variant_isset ${perl5.variant}]} {
+    depends_lib-delete  port:perl${perl5.major}
+    depends_run-append \
+                    port:perl${perl5.major} \
+                    port:p${perl5.major}-authen-sasl \
+                    port:p${perl5.major}-error \
+                    port:p${perl5.major}-net-smtp-ssl \
+                    port:p${perl5.major}-term-readkey \
+                    port:p${perl5.major}-cgi
+
+    build.args-delete \
+                    NO_PERL=1
+
+    build.args-append \
+                    PERL_PATH="${perl5.bin}" \
+                    NO_PERL_CPAN_FALLBACK=1
+} elseif {[variant_isset svn]} {
+    pre-configure {
+        return -code error "+svn does not work without +perl5_xx"
+    }
+}
 
 test.run            yes
 test.cmd            make
@@ -113,18 +177,25 @@ pre-test {
 destroot.target     install
 pre-destroot {
     destroot.args  {*}${build.args}
-    xinstall -m 644 ${worksrcpath}/contrib/subtree/git-subtree.1 ${workpath}/man1
+    xinstall -m 0644 \
+        ${worksrcpath}/contrib/subtree/git-subtree.1 ${workpath}/man1
 }
 
-set docdestroot ${destroot}${prefix}/share/doc/git-doc
+set docdestroot         ${destroot}${prefix}/share/doc/git-doc
+set guidir              ${prefix}/share/git-gui/lib/Git\ Gui.app/Contents
+set system_gitconfig    ${prefix}/etc/gitconfig
 
 post-destroot {
+
     foreach f {1 5 7} {
         xinstall -d ${destroot}${prefix}/share/man/man${f}
+
+        # RELEASE man pages
         foreach m [glob -directory ${workpath} man${f}/*.${f}] {
             xinstall ${m} ${destroot}${prefix}/share/man/man${f}
         }
     }
+
     if {![variant_isset svn]} {
         system "rm ${destroot}${prefix}/libexec/git-core/git-svn*"
     }
@@ -140,28 +211,32 @@ post-destroot {
 
     set completions_path ${destroot}${prefix}/share/bash-completion/completions
     xinstall -d ${completions_path}
-    xinstall -m 644 ${worksrcpath}/contrib/completion/git-completion.bash \
+    xinstall -m 0644 ${worksrcpath}/contrib/completion/git-completion.bash \
         ${completions_path}/git
 
     set share_path ${destroot}${prefix}/share/${name}
     xinstall -d ${share_path}
-    xinstall -m 644 ${worksrcpath}/contrib/completion/git-prompt.sh \
+    xinstall -m 0644 ${worksrcpath}/contrib/completion/git-prompt.sh \
         ${share_path}/git-prompt.sh
 
     xinstall -d ${destroot}${prefix}/libexec/git-core
-    xinstall -m 755 ${worksrcpath}/contrib/subtree/git-subtree.sh \
+    xinstall -m 0755 ${worksrcpath}/contrib/subtree/git-subtree.sh \
         ${destroot}${prefix}/libexec/git-core/git-subtree
+
+    # Tiger doesn't build the GUI, so check for its existence before mucking with it
+    if {[file exists "${destroot}${guidir}"]} {
+        # The executable could be "Wish" or "Wish Shell", depending on the OS version
+        set wish_executable [exec defaults read ${destroot}${guidir}/Info CFBundleExecutable]
+        # The system-provided Tk is now deprecated, so use the MacPorts version if available.
+        system "echo exec wish \"'${guidir}/Resources/Scripts/AppMain.tcl'\" '\"$@\"' > \
+            '${destroot}${guidir}/MacOS/${wish_executable}'"
+    }
 
     file delete -force ${share_path}/contrib
     copy ${worksrcpath}/contrib ${share_path}
-
-    xinstall -m 755 -d ${destroot}${prefix}/share/emacs/site-lisp/
-    xinstall -m 644 {*}[glob ${worksrcpath}/contrib/emacs/*.el] \
-        ${destroot}${prefix}/share/emacs/site-lisp/
-
 }
 
-variant pcre {
+variant pcre description {Use pcre} {
     platform darwin {
         build.args-append   LIBPCREDIR=${prefix} USE_LIBPCRE2=1
     }
@@ -169,39 +244,43 @@ variant pcre {
 }
 
 variant doc description {Install HTML and plaintext documentation} {
-    distfiles-append        git-htmldocs-${version}${extract.suffix}
-    checksums-append        git-htmldocs-2.24.0.tar.xz \
-                            rmd160  3b406a15dfb06fa04baaf090f0e1698e80e44be8 \
-                            sha256  05b6ed0719d5e29d5c60dd7d0a5469f4a0514008a64f6084ac26335d1b37f73b
+        # RELEASE
+        distfiles-append    git-htmldocs-${version}${extract.suffix}
+        checksums-append    git-htmldocs-${version}${extract.suffix} \
+                            rmd160  84168b8156a8ec60934aff52df61e5d018f3a548 \
+                            sha256  949e0392c749fd6265e5b040df07cc3226d0ea300c2c166171295881e7070671 \
+                            size    1602472
 
-    patchfiles-append       git-subtree.html.diff
+        patchfiles-append   patch-git-subtree.html.diff
 
-    post-extract {
-        file mkdir ${workpath}/htmldocs
-        system -W ${workpath}/htmldocs "${extract.cmd} ${extract.pre_args} \
-            '${distpath}/git-htmldocs-${version}${extract.suffix}' \
-            ${extract.post_args}"
-    }
-
-    pre-destroot {
-        xinstall -m 644 ${worksrcpath}/contrib/subtree/git-subtree.html ${workpath}/htmldocs
-    }
-
-    post-destroot {
-        foreach f [glob ${workpath}/htmldocs/*] {
-            file delete -force "${docdestroot}/[file tail ${f}]"
-            file attribute ${f} -permissions ugo+r
-            copy ${f} ${docdestroot}
+        post-extract {
+            file mkdir ${workpath}/htmldocs
+            system -W ${workpath}/htmldocs "${extract.cmd} ${extract.pre_args} \
+                '${distpath}/git-htmldocs-${version}${extract.suffix}' \
+                ${extract.post_args}"
         }
 
-        fs-traverse f [list ${docdestroot}/howto ${docdestroot}/technical ${docdestroot}/RelNotes] {
-            if [file isdirectory ${f}] {
-                file attribute ${f} -permissions ugo+rx
-            } else {
+        pre-destroot {
+            xinstall -m 0644 \
+                ${worksrcpath}/contrib/subtree/git-subtree.html \
+                ${workpath}/htmldocs
+        }
+
+        post-destroot {
+            foreach f [glob ${workpath}/htmldocs/*] {
+                file delete -force "${docdestroot}/[file tail ${f}]"
                 file attribute ${f} -permissions ugo+r
+                copy ${f} ${docdestroot}
+            }
+
+            fs-traverse f [list ${docdestroot}/howto ${docdestroot}/technical ${docdestroot}/RelNotes] {
+                if {[file isdirectory ${f}]} {
+                    file attribute ${f} -permissions ugo+rx
+                } else {
+                    file attribute ${f} -permissions ugo+r
+                }
             }
         }
-    }
 }
 
 variant gitweb description {Install gitweb.cgi} {
@@ -214,14 +293,14 @@ variant gitweb description {Install gitweb.cgi} {
         xinstall -W ${worksrcpath}/gitweb \
             gitweb.cgi \
             ${destroot}${prefix}/share/${name}/gitweb
-        xinstall -m 444 -W ${worksrcpath}/gitweb/static \
+        xinstall -m 0444 -W ${worksrcpath}/gitweb/static \
             gitweb.css \
             gitweb.js \
             git-favicon.png \
             git-logo.png \
             ${destroot}${prefix}/share/${name}/gitweb
         xinstall -d ${docdestroot}/gitweb
-        xinstall -m 444 -W ${worksrcpath}/gitweb README INSTALL \
+        xinstall -m 0444 -W ${worksrcpath}/gitweb README INSTALL \
             ${docdestroot}/gitweb
     }
 }
@@ -232,70 +311,133 @@ variant svn description {Bi-directional subversion repository support} {
                         port:p${perl5.major}-svn-simple
 }
 
-variant credential_osxkeychain description {Install git credential-osxkeychain utility from contrib} {
+platform darwin {
+  variant credential_osxkeychain description {Install git credential-osxkeychain utility from contrib} {
 
     post-build {
         system -W "${worksrcpath}/contrib/credential/osxkeychain" "make [join ${build.args}]"
     }
 
     post-destroot {
-        xinstall -m 755 "${worksrcpath}/contrib/credential/osxkeychain/git-credential-osxkeychain" \
+        xinstall -m 0755 \
+            "${worksrcpath}/contrib/credential/osxkeychain/git-credential-osxkeychain" \
             "${destroot}${prefix}/libexec/git-core/"
     }
+
+    pre-activate {
+        set osxkc_config        "\[credential]\n\thelper = osxkeychain"
+
+        # Ensure the osxkeychain credential helper is configured in the
+        # system-wide gitconfig.  If the gitconfig file already exists,
+        # then append the configuration to the pre-existing file only
+        # if the file is currently missing the desired config.
+
+        if { ![file exists ${system_gitconfig}] } {
+            set f [open ${system_gitconfig} w 0644]
+            puts ${f} ${osxkc_config}
+            close ${f}
+        } else {
+            if { [catch {exec grep "helper = osxkeychain" ${system_gitconfig}} result] } {
+                set f [open ${system_gitconfig} a]
+                puts ${f} ${osxkc_config}
+                close ${f}
+            }
+        }
+    }
+
+    notes "
+Configuration to enable the osxkeychain credential helper has been added to
+the system-wide gitconfig at ${system_gitconfig}. If you do not wish to use
+this credential helper, you can override this setting in your own personal
+git config file \(\$HOME/.gitconfig\) with e.g.
+
+    \[credential]
+            helper = some_other_credential_helper
+
+For more information, run
+
+    git help credentials
+"
+  }
 }
 
 variant diff_highlight description {Install git diff-highlight utility from contrib} {
-
-    patchfiles-append   patch-contrib-diff-highlight-Makefile.diff
-
-    post-patch {
-        reinplace "s|%PREFIX%|${prefix}|" \
-        ${worksrcpath}/contrib/diff-highlight/Makefile
-    }
 
     post-build {
         system -W "${worksrcpath}/contrib/diff-highlight" "make [join ${build.args}]"
     }
 
     post-destroot {
-        xinstall -m 755 "${worksrcpath}/contrib/diff-highlight/diff-highlight" \
+        xinstall -m 0755 \
+            "${worksrcpath}/contrib/diff-highlight/diff-highlight" \
             "${destroot}${prefix}/bin/"
     }
 }
 
+# Python is only needed to enable certain tools for interacting with other
+# version control systems, such as git-p4 (for interfacing with Perforce).
+# This variant enables git to use MacPorts' Python as it builds these
+# additional tools.
+variant python description {Build with Python support} {}
+if {[variant_isset python]} {
+    PortGroup           python-required 1.0
+    build.args-append   PYTHON_PATH="[find_new_enough_python3 6]"
+    depends_lib-append  port:python${py_ver_nodot}
+}
+
+platform darwin 11 {
+    # Add additional headers for open() on 10.7
+    patchfiles-append    patch-osxkeychain-10.7.diff
+}
+
 platform darwin 8 {
+    # https://trac.macports.org/ticket/66480
+    depends_build-append port:gmake-apple
+    build.cmd  ${prefix}/bin/gmake-apple
+
     build.args-append   NO_APPLE_COMMON_CRYPTO=1
     build.args-append   CC_LD_DYNPATH=-R
 }
 
 default_variants    +doc +pcre +diff_highlight
 platform darwin {
-    default_variants \
-                    +doc +pcre +credential_osxkeychain
+    default_variants-append \
+                    +credential_osxkeychain
 }
 
+configure.save_build_cmd "install"
+
 platform linux {
-#     PortGroup conflicts_build 1.0
-#     conflicts_build gettext-dev
-    depends_lib-append \
-                    port:gettext
     use_configure   yes
+    depends_lib-append \
+                    path:lib/libssl.so:openssl
     pre-configure {
-        # recreate the configure script with the build.args collected above
-        system -W ${worksrcpath} "make ${build.args} configure"
+        if {![file exists ${worksrcpath}/configure]} {
+            ui_msg "--->   Creating configure script"
+            # recreate the configure script with the build.args collected above
+            system -W ${worksrcpath} "make ${build.args} configure"
+        }
     }
-    configure.args  --prefix=${prefix} --with-curl --with-openssl --with-iconv=${prefix} --with-perl="${prefix}/bin/perl${perl5.major}"
+    configure.args  --prefix=${prefix} \
+                    --with-curl \
+                    --with-openssl \
+                    --with-iconv=${prefix} \
+                    --with-perl="${prefix}/bin/perl${perl5.major}" \
+                    --with-tcltk=${prefix}/bin/port-tclsh
     if {[variant_isset pcre]} {
         configure.args-append \
                     --with-libpcre2
     }
-    configure.args-append \
-                    --with-python="${prefix}/bin/python2.7"
+    if {[variant_isset python]} {
+        configure.args-append \
+                    --with-python="${prefix}/bin/python${py_ver}"
+    }
     configure.env-append \
                     "LIBS=-L${prefix}/lib -lintl"
     configure.ldflags-append \
                     -lintl
     build.args      V=1
+    configure.save_configure_cmd "install log"
 }
 
 build.post_args-append  -wk
