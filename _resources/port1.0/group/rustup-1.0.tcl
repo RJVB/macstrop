@@ -98,45 +98,49 @@ namespace eval rustup {
 #     options rustup.force_cargo_update
 #     default rustup.force_cargo_update   no
 
-    post-fetch {
-        if {${subport} ne "rustup"} {
-            xinstall -d ${rustup::home}/Cargo/bin
-            xinstall ${prefix}/bin/rustup ${rustup::home}/Cargo/bin/rustup-init
-        } elseif {![file exists ${rustup::home}/rustup-install.sh]} {
-            xinstall -d ${rustup::home}
-            if {${os.platform} eq "darwin"} {
-                if {${os.major} < ${legacysupport.newest_darwin_requires_legacy}} {
-                    #set rinit "https://static.rust-lang.org/rustup/dist/${build_arch}-apple-darwin/rustup-init"
-                    set rinit "https://static.rust-lang.org/rustup/archive/1.26.0/${build_arch}-apple-darwin/rustup-init"
-                    ui_msg "Downloading the rustup installer binary directly from ${rinit}"
+    if {[rustup::use_rustup]} {
+        post-fetch {
+            if {${subport} ne "rustup"} {
+                xinstall -d ${rustup::home}/Cargo/bin
+                if {[file exists ${prefix}/bin/rustup]} {
+                    xinstall ${prefix}/bin/rustup ${rustup::home}/Cargo/bin/rustup-init
+                }
+            } elseif {![file exists ${rustup::home}/rustup-install.sh]} {
+                xinstall -d ${rustup::home}
+                if {${os.platform} eq "darwin"} {
+                    if {${os.major} < ${legacysupport.newest_darwin_requires_legacy}} {
+                        #set rinit "https://static.rust-lang.org/rustup/dist/${build_arch}-apple-darwin/rustup-init"
+                        set rinit "https://static.rust-lang.org/rustup/archive/1.26.0/${build_arch}-apple-darwin/rustup-init"
+                        ui_msg "Downloading the rustup installer binary directly from ${rinit}"
+                        xinstall -d ${rustup::home}/Cargo/bin/
+                        curl fetch --progress ui_progress_download \
+                            ${rinit} \
+                            ${rustup::home}/Cargo/bin/rustup-init
+                        legacysupport::relink_libSystem ${rustup::home}/Cargo/bin/rustup-init
+                        file attributes ${rustup::home}/Cargo/bin/rustup-init -permissions ugo+x
+                    }
+                } elseif {${os.platform} eq "linux"} {
+                    # the script downloads the rustup-init binary and installs it as
+                    # $CARGO_HOME/bin/rustup ; on my Linux this can generate an EAGAIN
+                    # error, apparently because I'm running a ZFS version that doesn't
+                    # work nicely with copy_file_range(2). So, we download that
+                    # binary ourselves...
+                    ui_debug "Downloading the rustup installer binary directly"
                     xinstall -d ${rustup::home}/Cargo/bin/
                     curl fetch --progress ui_progress_download \
-                        ${rinit} \
+                        https://static.rust-lang.org/rustup/dist/[exec uname -m]-unknown-linux-gnu/rustup-init \
                         ${rustup::home}/Cargo/bin/rustup-init
-                    legacysupport::relink_libSystem ${rustup::home}/Cargo/bin/rustup-init
                     file attributes ${rustup::home}/Cargo/bin/rustup-init -permissions ugo+x
                 }
-            } elseif {${os.platform} eq "linux"} {
-                # the script downloads the rustup-init binary and installs it as
-                # $CARGO_HOME/bin/rustup ; on my Linux this can generate an EAGAIN
-                # error, apparently because I'm running a ZFS version that doesn't
-                # work nicely with copy_file_range(2). So, we download that
-                # binary ourselves...
-                ui_debug "Downloading the rustup installer binary directly"
-                xinstall -d ${rustup::home}/Cargo/bin/
-                curl fetch --progress ui_progress_download \
-                    https://static.rust-lang.org/rustup/dist/[exec uname -m]-unknown-linux-gnu/rustup-init \
-                    ${rustup::home}/Cargo/bin/rustup-init
-                file attributes ${rustup::home}/Cargo/bin/rustup-init -permissions ugo+x
-            }
-            if {![file exists ${rustup::home}/Cargo/bin/rustup-init]} {
-                curl fetch --remote-time --progress ui_progress_download \
-                    https://sh.rustup.rs \
-                    ${rustup::home}/rustup-install.sh
-                platform darwin {
-                    reinplace "s|mktemp|gmktemp|g" ${rustup::home}/rustup-install.sh
+                if {![file exists ${rustup::home}/Cargo/bin/rustup-init]} {
+                    curl fetch --remote-time --progress ui_progress_download \
+                        https://sh.rustup.rs \
+                        ${rustup::home}/rustup-install.sh
+                    platform darwin {
+                        reinplace "s|mktemp|gmktemp|g" ${rustup::home}/rustup-install.sh
+                    }
+                    file attributes ${rustup::home}/rustup-install.sh -permissions ug+x
                 }
-                file attributes ${rustup::home}/rustup-install.sh -permissions ug+x
             }
         }
     }
@@ -175,6 +179,7 @@ namespace eval rustup {
                         } else {
                             ui_debug "port:legacy-support provides the clonefile functions; installing the stable rust toolchain"
                             # as of 250328, that is Rust 1.85.1 (250315).
+                            # as of 250408, that is Rust 1.86.0 (250331).
                             set toolchain_version stable
                         }
                         system "${rustup::home}/Cargo/bin/rustup install --profile minimal --no-self-update ${toolchain_version}"
@@ -517,11 +522,14 @@ if {![tbool rustup.disable_cargo]} {
 #     foreach arch {arm64 x86_64 i386 ppc ppc64} {
 #         ui_debug "triplet.${arch}=[option triplet.${arch}]"
 #     }
-foreach stage {configure build destroot} {
-    foreach arch [option muniversal.architectures] {
-        if {[option triplet.${arch}] ne "none"} {
-            ${stage}.env.${arch}-append "CARGO_BUILD_TARGET=[option triplet.${arch}]"
-            ui_debug "${stage}.env.${arch}-append \"CARGO_BUILD_TARGET=[option triplet.${arch}]\""
+
+platform darwin {
+    foreach stage {configure build destroot} {
+        foreach arch [option muniversal.architectures] {
+            if {[option triplet.${arch}] ne "none"} {
+                ${stage}.env.${arch}-append "CARGO_BUILD_TARGET=[option triplet.${arch}]"
+                ui_debug "${stage}.env.${arch}-append \"CARGO_BUILD_TARGET=[option triplet.${arch}]\""
+            }
         }
     }
 }
