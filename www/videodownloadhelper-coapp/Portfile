@@ -4,8 +4,10 @@ PortSystem          1.0
 PortGroup           github 1.0
 
 PortGroup           save_configure_cmd 1.0
-if {${os.platform} eq "darwin" && ${os.major} < 20} {
-    PortGroup       code_sign 1.0
+if {${os.platform} eq "darwin"} {
+    if {${os.major} < 20} {
+        PortGroup   code_sign 1.0
+    }
 }
 
 github.setup        aclap-dev vdhcoapp f8cc614622eb70e78c575dcbdeb3e0b4b947497f
@@ -29,12 +31,16 @@ use_configure       no
 
 maintainers         nomaintainer
 
+variant upstream_nodejs_pkg description {for recent OS versions (>= 10.13 for Mac): let the build download the upstream patched node18 instead of having to do the expensive local build} {}
+
 configure.save_build_cmd "install"
 
 depends_build-append \
                     port:esbuild \
                     port:nodejs18 \
                     port:npm9 \
+                    port:yq \
+                    port:coreutils \
                     port:filepicker
 
 depends_lib-append  port:ffmpeg6
@@ -42,12 +48,22 @@ depends_lib-append  port:ffmpeg6
 patch.pre_args      -Np1
 
 if {${os.platform} ne "darwin"} {
+    # let's just use our own patched nodejs18 instead of hoping the upstream one works!
+    if {[variant_isset upstream_nodejs_pkg]} {
+        patchfiles-append \
+                    patch-build-@PREFIX@.diff
+    } else {
+        depends_patch-append \
+                    port:nodejs18-pkg
+        depends_build-append \
+                    port:nodejs18-pkg
+        patchfiles-append \
+                    patch-build-@PREFIX@+@PKG_NODE_PATH@.diff
+    }
     # we're not making an app-bundle here but installing directly into $prefix 
     depends_run-append \
                     port:filepicker
-    patchfiles-append \
-                    patch-build-@PREFIX@.diff
-} elseif {${os.major} < 17} {
+} elseif {${os.major} < 17 && ![variant_isset upstream_nodejs_pkg]} {
     # current minimum supported Darwin version by @yao-pkg/pkg is 17 (10.13)
     # so there we need to use a self-built patched node18 to create a standalone executable.
     depends_patch-append \
@@ -56,6 +72,12 @@ if {${os.platform} ne "darwin"} {
                     port:nodejs18-pkg
     patchfiles-append \
                     patch-build-@PREFIX@+@PKG_NODE_PATH@.diff
+} else {
+    if {${os.major} < 17} {
+        ui_warn "The build is bound to fail OR the resulting application will be crippled!"
+    }
+    patchfiles-append \
+                    patch-build-@PREFIX@.diff
 }
 
 patchfiles-append   patch-@VERSION@.diff
@@ -66,9 +88,15 @@ post-patch {
     # the browser add-on only supports M.m.p version strings
     set supported_version [join [lrange [split ${version} "."] 0 2] "."]
     reinplace "s|@VERSION@|${supported_version}|g" ${worksrcpath}/config.toml
-    set njsp [glob ${prefix}/libexec/nodejs-pkg/built-v18*-macos-${build_arch}]
-    ui_info "--->  Using patched node18 ${njsp}"
-    reinplace -q "s|@PKG_NODE_PATH@|${njsp}|g" ${worksrcpath}/build.sh
+    if {![variant_isset upstream_nodejs_pkg]} {
+        if {${os.platform} eq "darwin"} {
+            set njsp [glob ${prefix}/libexec/nodejs-pkg/built-v18*-macos-${build_arch}]
+        } else {
+            set njsp [glob ${prefix}/libexec/nodejs-pkg/built-v18*-${os.platform}-${build_arch}]
+        }
+        ui_info "--->  Using patched node18 ${njsp}"
+        reinplace -q "s|@PKG_NODE_PATH@|${njsp}|g" ${worksrcpath}/build.sh
+    }
     # install the older icon that works on older Mac OS versions too
     xinstall -m 644 ${filespath}/icon.icns ${worksrcpath}/assets/mac/
 }
@@ -93,7 +121,7 @@ destroot {
     } else {
         xinstall -m 755 ${worksrcpath}/dist/${os.platform}/${build_arch}/vdhcoapp \
             ${destroot}${prefix}/bin/
-        xinstall -m 755 ${worksrcpath}/dist/${os.platform}/${build_arch}/xdg-open \
+        xinstall -m 755 ${worksrcpath}/dist/${os.platform}/${build_arch}/deb/opt/vdhcoapp/xdg-open \
             ${destroot}${prefix}/bin/
     }
 }
