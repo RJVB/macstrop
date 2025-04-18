@@ -1,0 +1,173 @@
+diff --git a/document-portal/document-portal-fuse.c b/document-portal/document-portal-fuse.c
+index ad8f39a..09950bb 100644
+--- a/document-portal/document-portal-fuse.c
++++ b/document-portal/document-portal-fuse.c
+@@ -14,7 +14,25 @@
+ #include <glib/gprintf.h>
+ #include <gio/gio.h>
+ #include <pthread.h>
++
++#ifdef linux
+ #include <sys/statfs.h>
++#else
++#include <sys/mount.h>
++#include <sys/xattr.h>
++#define O_PATH 0
++#define O_DIRECT 0
++#define O_LARGEFILE 0
++#define O_NOATIME 0
++#define O_TMPFILE 0
++#define AT_EMPTY_PATH 0
++
++#define   setxattr(A, B, C, D, E) setxattr(A, B, C, D, E, 0)
++#define   getxattr(A, B, C, D) getxattr(A, B, C, D, 0, 0)
++#define   listxattr(A, B, C) listxattr(A, B, C, 0)
++#define   removexattr(A, B) removexattr(A, B, 0)
++#endif
++
+ #include <sys/types.h>
+ #include <sys/xattr.h>
+ #include <sys/time.h>
+@@ -1421,12 +1439,20 @@ xdp_fuse_setattr (fuse_req_t             req,
+       if (to_set & FUSE_SET_ATTR_ATIME_NOW)
+         times[0].tv_nsec = UTIME_NOW;
+       else if (to_set & FUSE_SET_ATTR_ATIME)
++#ifdef linux
+         times[0] = attr->st_atim;
++#else
++        times[0] = attr->st_atimespec;
++#endif
+ 
+       if (to_set & FUSE_SET_ATTR_MTIME_NOW)
+         times[1].tv_nsec = UTIME_NOW;
+       else if (to_set & FUSE_SET_ATTR_MTIME)
++#ifdef linux
+         times[1] = attr->st_mtim;
++#else
++        times[0] = attr->st_mtimespec;
++#endif
+ 
+       if (inode->physical)
+         {
+@@ -1965,7 +1991,12 @@ xdp_fuse_fallocate (fuse_req_t req,
+ 
+   g_debug ("FALLOCATE %lx", ino);
+ 
++#ifdef linux
+   res = fallocate (file->fd, mode, offset, length);
++#else
++  res = -1;
++  errno = ENOSYS;
++#endif
+ 
+   if (res == 0)
+     xdp_reply_err (op, req, 0);
+diff --git a/document-portal/document-portal.c b/document-portal/document-portal.c
+index 04c4b8d..debecff 100644
+--- a/document-portal/document-portal.c
++++ b/document-portal/document-portal.c
+@@ -21,7 +21,11 @@
+ #include "file-transfer.h"
+ #include "document-portal.h"
+ 
++#ifdef linux
+ #include <sys/eventfd.h>
++#else
++#define O_PATH 0
++#endif
+ 
+ #define TABLE_NAME "documents"
+ 
+diff --git a/document-portal/file-transfer.c b/document-portal/file-transfer.c
+index 2f5087d..e0bb372 100644
+--- a/document-portal/file-transfer.c
++++ b/document-portal/file-transfer.c
+@@ -41,6 +41,10 @@
+ #include "document-portal.h"
+ #include "document-portal-fuse.h"
+ 
++#ifndef linux
++#define O_PATH 0
++#endif
++
+ static XdpDbusFileTransfer *file_transfer;
+ 
+ typedef struct
+diff --git a/document-portal/permission-db.c b/document-portal/permission-db.c
+index 69db267..84e3572 100644
+--- a/document-portal/permission-db.c
++++ b/document-portal/permission-db.c
+@@ -25,7 +25,11 @@
+ #include <fcntl.h>
+ #include <stdio.h>
+ #include <stdlib.h>
++#ifdef linux
+ #include <sys/statfs.h>
++#else
++#include <sys/mount.h>
++#endif
+ 
+ #include "permission-db.h"
+ #include "gvdb/gvdb-reader.h"
+diff --git a/src/documents.c b/src/documents.c
+index 2488838..d470990 100644
+--- a/src/documents.c
++++ b/src/documents.c
+@@ -37,6 +37,10 @@
+ static XdpDocuments *documents = NULL;
+ static char *documents_mountpoint = NULL;
+ 
++#ifndef linux
++#define O_PATH 0
++#endif
++
+ void
+ init_document_proxy (GDBusConnection *connection)
+ {
+diff --git a/src/xdp-utils.c b/src/xdp-utils.c
+index 9b8607b..72c6de9 100644
+--- a/src/xdp-utils.c
++++ b/src/xdp-utils.c
+@@ -29,7 +29,11 @@
+ #include <fcntl.h>
+ #include <errno.h>
+ #include <stdio.h>
++#ifdef linux
+ #include <sys/vfs.h>
++#else
++#include <sys/mount.h>
++#endif
+ 
+ #include <gio/gdesktopappinfo.h>
+ 
+@@ -1055,6 +1059,7 @@ xdp_app_info_get_path_for_fd (XdpAppInfo *app_info,
+   if (path == NULL)
+     return NULL;
+ 
++#ifdef O_PATH
+   if ((fd_flags & O_PATH) == O_PATH)
+     {
+       int read_access_mode;
+@@ -1104,6 +1109,7 @@ xdp_app_info_get_path_for_fd (XdpAppInfo *app_info,
+         writable = TRUE;
+     }
+   else /* Regular file with no O_PATH */
++#endif
+     {
+       int accmode = fd_flags & O_ACCMODE;
+ 
+diff --git a/tests/test-doc-portal.c b/tests/test-doc-portal.c
+index f2f4c01..2a24e43 100644
+--- a/tests/test-doc-portal.c
++++ b/tests/test-doc-portal.c
+@@ -18,6 +18,10 @@
+ #include "can-use-fuse.h"
+ #include "utils.h"
+ 
++#ifndef linux
++#define O_PATH 0
++#endif
++
+ char outdir[] = "/tmp/xdp-test-XXXXXX";
+ 
+ char fuse_status_file[] = "/tmp/test-xdp-fuse-XXXXXX";
