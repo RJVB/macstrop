@@ -1,5 +1,5 @@
 diff --git a/document-portal/document-portal-fuse.c b/document-portal/document-portal-fuse.c
-index ad8f39a..09950bb 100644
+index ad8f39a..03e2b72 100644
 --- a/document-portal/document-portal-fuse.c
 +++ b/document-portal/document-portal-fuse.c
 @@ -14,7 +14,25 @@
@@ -49,15 +49,21 @@ index ad8f39a..09950bb 100644
  
        if (inode->physical)
          {
-@@ -1965,7 +1991,12 @@ xdp_fuse_fallocate (fuse_req_t req,
+@@ -1965,7 +1991,18 @@ xdp_fuse_fallocate (fuse_req_t req,
  
    g_debug ("FALLOCATE %lx", ino);
  
-+#ifdef linux
-   res = fallocate (file->fd, mode, offset, length);
++#ifdef __APPLE__
++  // borrowed from an old osxfuse implementation
++  fstore_t fstore;
++
++  fstore.fst_flags = 0;
++  fstore.fst_offset = offset;
++  fstore.fst_length = length;
++
++  res = fcntl(file->fd, F_PREALLOCATE, &fstore);
 +#else
-+  res = -1;
-+  errno = ENOSYS;
+   res = fallocate (file->fd, mode, offset, length);
 +#endif
  
    if (res == 0)
@@ -125,7 +131,7 @@ index 2488838..d470990 100644
  init_document_proxy (GDBusConnection *connection)
  {
 diff --git a/src/xdp-utils.c b/src/xdp-utils.c
-index 9b8607b..72c6de9 100644
+index 9b8607b..018fc2e 100644
 --- a/src/xdp-utils.c
 +++ b/src/xdp-utils.c
 @@ -29,7 +29,11 @@
@@ -140,7 +146,79 @@ index 9b8607b..72c6de9 100644
  
  #include <gio/gdesktopappinfo.h>
  
-@@ -1055,6 +1059,7 @@ xdp_app_info_get_path_for_fd (XdpAppInfo *app_info,
+@@ -638,6 +642,7 @@ xdp_get_app_info_from_pid (pid_t pid,
+   g_autoptr(XdpAppInfo) app_info = NULL;
+   g_autoptr(GError) local_error = NULL;
+ 
++#ifdef linux
+   app_info = parse_app_info_from_flatpak_info (pid, &local_error);
+   if (app_info == NULL && local_error)
+     {
+@@ -654,6 +659,7 @@ xdp_get_app_info_from_pid (pid_t pid,
+           return NULL;
+         }
+     }
++#endif
+ 
+   if (app_info == NULL)
+     app_info = xdp_app_info_new_host ();
+@@ -689,6 +695,7 @@ xdp_connection_lookup_app_info_sync (GDBusConnection       *connection,
+   g_autoptr(XdpAppInfo) app_info = NULL;
+   GVariant *body;
+   guint32 pid = 0;
++  gboolean pidset = FALSE;
+ 
+   app_info = lookup_cached_app_info_by_sender (sender);
+   if (app_info)
+@@ -711,12 +718,43 @@ xdp_connection_lookup_app_info_sync (GDBusConnection       *connection,
+ 
+   if (g_dbus_message_get_message_type (reply) == G_DBUS_MESSAGE_TYPE_ERROR)
+     {
+-      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "Can't find peer app id");
+-      return NULL;
++      g_autoptr(GDBusMessage) reply2 = NULL;
++	 // let's see if we're running a KDE portal daemon that's been taught to tell its own PID
++      msg = g_dbus_message_new_method_call ("org.freedesktop.impl.portal.desktop.kde",
++                                            "/org/freedesktop/portal/desktop",
++                                            "org.freedesktop.impl.portal.daemon",
++                                            "getPId");
++      reply2 = g_dbus_connection_send_message_with_reply_sync (connection, msg,
++                                                              G_DBUS_SEND_MESSAGE_FLAGS_NONE,
++                                                              30000,
++                                                              NULL,
++                                                              cancellable,
++                                                              error);
++      if (reply2 && g_dbus_message_get_message_type (reply2) != G_DBUS_MESSAGE_TYPE_ERROR) {
++        GVariant *gpid = NULL;
++        body = g_dbus_message_get_body (reply2);
++        g_debug ("daemon response body: \"%s\" [%s]\n", g_variant_print(body, TRUE), g_variant_get_type_string(body));
++        gpid = g_variant_get_child_value(body, 0);
++        if (gpid) {
++          g_debug ("gpid: \"%s\" [%s]\n", g_variant_print(gpid, TRUE), g_variant_get_type_string(gpid));
++          g_variant_lookup(gpid, "pid", "i", &pid);
++          pidset = TRUE;
++          g_variant_unref(gpid);
++        }
++        g_debug ("Obtained daemon pid=%u ; reply2=%s\n", pid, g_dbus_message_print(reply2,2));
++      } else if (error) {
++        fprintf(stderr, "Error obtaining daemon pid also via org.freedesktop.impl.portal.daemon.getPId : %s\n", (*error)->message);
++      }
++      if (!pidset) {
++        g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "Can't find peer app id");
++        return NULL;
++      }
+     }
+ 
+-  body = g_dbus_message_get_body (reply);
+-  g_variant_get (body, "(u)", &pid);
++  if (!pidset) {
++    body = g_dbus_message_get_body (reply);
++    g_variant_get (body, "(u)", &pid);
++  }
+ 
+   app_info = xdp_get_app_info_from_pid (pid, error);
+   if (app_info == NULL)
+@@ -1055,6 +1093,7 @@ xdp_app_info_get_path_for_fd (XdpAppInfo *app_info,
    if (path == NULL)
      return NULL;
  
@@ -148,7 +226,7 @@ index 9b8607b..72c6de9 100644
    if ((fd_flags & O_PATH) == O_PATH)
      {
        int read_access_mode;
-@@ -1104,6 +1109,7 @@ xdp_app_info_get_path_for_fd (XdpAppInfo *app_info,
+@@ -1104,6 +1143,7 @@ xdp_app_info_get_path_for_fd (XdpAppInfo *app_info,
          writable = TRUE;
      }
    else /* Regular file with no O_PATH */
