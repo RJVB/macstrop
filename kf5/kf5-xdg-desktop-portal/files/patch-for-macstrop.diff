@@ -1,0 +1,1824 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 2f4923c..bb84cb5 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -5,8 +5,8 @@ project(xdg-desktop-portal-kde)
+ set(PROJECT_VERSION "5.19.80")
+ set(PROJECT_VERSION_MAJOR 5)
+ 
+-set(QT_MIN_VERSION "5.14.0")
+-set(KF5_MIN_VERSION "5.66.0")
++set(QT_MIN_VERSION "5.9.8")
++set(KF5_MIN_VERSION "5.60.0")
+ 
+ ################# set KDE specific information #################
+ 
+@@ -20,6 +20,36 @@ include(KDEClangFormat)
+ 
+ include(FeatureSummary)
+ 
++option(ENABLE_PIPEWIRE "Enable PipeWire support. PipeWire is needed for screen sharing and remote desktop" ON)
++if(ENABLE_PIPEWIRE)
++    set(HAVE_PIPEWIRE_SUPPORT 1)
++else()
++    message(STATUS "Disabling PipeWire support")
++    set(HAVE_PIPEWIRE_SUPPORT 0)
++endif()
++add_definitions(-DHAVE_PIPEWIRE_SUPPORT=${HAVE_PIPEWIRE_SUPPORT})
++
++if(HAVE_PIPEWIRE_SUPPORT)
++    find_package(PipeWire)
++    set_package_properties(PipeWire PROPERTIES
++        TYPE REQUIRED
++        PURPOSE "Required for screencast portal"
++    )
++
++    find_package(GBM)
++    set_package_properties(GBM PROPERTIES
++        TYPE REQUIRED
++        PURPOSE "Required for screencast portal"
++    )
++
++    find_package(Epoxy)
++    set_package_properties(Epoxy PROPERTIES DESCRIPTION "libepoxy"
++        URL "https://github.com/anholt/libepoxy"
++        TYPE REQUIRED
++        PURPOSE "Required for screencast portal"
++    )
++endif()
++
+ find_package(Qt5 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS
+     Core
+     Concurrent
+@@ -28,6 +58,7 @@ find_package(Qt5 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS
+     QuickWidgets
+     Widgets
+ )
++option(ENABLE_WAYLAND "Enable Wayland support" ON)
+ 
+ find_package(KF5 ${KF5_MIN_VERSION} REQUIRED
+     CoreAddons
+@@ -35,16 +66,27 @@ find_package(KF5 ${KF5_MIN_VERSION} REQUIRED
+     I18n
+     Declarative
+     KIO
+-    Kirigami2
+     Notifications
+     Plasma
+-    Wayland
+     WidgetsAddons
+     WindowSystem
+ )
+-find_package(Wayland 1.15 REQUIRED COMPONENTS Client)
+-find_package(PlasmaWaylandProtocols REQUIRED)
+-find_package(QtWaylandScanner REQUIRED)
++
++if (ENABLE_WAYLAND)
++    find_package(Wayland 1.15 REQUIRED COMPONENTS Client)
++    # find_package(PlasmaWaylandProtocols REQUIRED)
++    find_package(QtWaylandScanner REQUIRED)
++    find_package(KF5 ${KF5_MIN_VERSION} REQUIRED Wayland)
++    set(HAVE_WAYLAND_SUPPORT 1)
++else()
++    if (ENABLE_PIPEWIRE)
++        message(FATAL_ERROR "PipeWire support requires Wayland")
++    endif()
++    message(STATUS "Disabling Wayland support")
++    set(HAVE_WAYLAND_SUPPORT 0)
++endif()
++add_definitions(-DHAVE_WAYLAND_SUPPORT=${HAVE_WAYLAND_SUPPORT})
++
+ 
+ if (EXISTS "${CMAKE_SOURCE_DIR}/.git")
+    add_definitions(-DQT_DISABLE_DEPRECATED_BEFORE=0x060000)
+diff --git a/data/CMakeLists.txt b/data/CMakeLists.txt
+index d62c4b3..f7ef514 100644
+--- a/data/CMakeLists.txt
++++ b/data/CMakeLists.txt
+@@ -1,6 +1,10 @@
+ configure_file(org.freedesktop.impl.portal.desktop.kde.desktop.in org.freedesktop.impl.portal.desktop.kde.desktop @ONLY)
+ configure_file(org.freedesktop.impl.portal.desktop.kde.cmake.in org.freedesktop.impl.portal.desktop.kde.service @ONLY)
+ 
+-install(FILES kde.portal DESTINATION ${DATA_INSTALL_DIR}/xdg-desktop-portal/portals)
+ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.freedesktop.impl.portal.desktop.kde.service DESTINATION ${KDE_INSTALL_DBUSSERVICEDIR})
++if(HAVE_PIPEWIRE_SUPPORT)
++    install(FILES kde.portal DESTINATION ${DATA_INSTALL_DIR}/xdg-desktop-portal/portals)
++else()
++    install(FILES kde-no-pipewire.portal DESTINATION ${DATA_INSTALL_DIR}/xdg-desktop-portal/portals RENAME kde.portal)
++endif()
+ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.freedesktop.impl.portal.desktop.kde.desktop DESTINATION ${XDG_APPS_INSTALL_DIR})
+diff --git a/data/org.freedesktop.impl.portal.desktop.kde.desktop.in b/data/org.freedesktop.impl.portal.desktop.kde.desktop.in
+index 26942c6..082f625 100644
+--- a/data/org.freedesktop.impl.portal.desktop.kde.desktop.in
++++ b/data/org.freedesktop.impl.portal.desktop.kde.desktop.in
+@@ -1,6 +1,6 @@
+ [Desktop Entry]
+ Type=Application
+ Exec=@CMAKE_INSTALL_FULL_LIBEXECDIR@/xdg-desktop-portal-kde
+-X-KDE-Wayland-Interfaces=org_kde_kwin_fake_input,org_kde_plasma_window_management,zkde_screencast_unstable_v1
++X-KDE-Wayland-Interfaces=org_kde_kwin_fake_input,org_kde_kwin_remote_access_manager,org_kde_plasma_window_management
+ NoDisplay=true
+ Icon=kde
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 7dcf586..020683e 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-add_subdirectory(kirigami-filepicker)
++# add_subdirectory(kirigami-filepicker)
+ 
+ add_definitions(-DTRANSLATION_DOMAIN="xdg-desktop-portal-kde")
+ 
+@@ -25,27 +25,33 @@ set(xdg_desktop_portal_kde_SRCS
+     settings.cpp
+     utils.cpp
+     userinfodialog.cpp
+-    waylandintegration.cpp
+-    screencast.cpp
+-    screencasting.cpp
+-    screencastwidget.cpp
+-    screenchooserdialog.cpp
+-    remotedesktop.cpp
+-    remotedesktopdialog.cpp
+ )
++if (HAVE_WAYLAND_SUPPORT)
++    set (xdg_desktop_portal_kde_SRCS
++         ${xdg_desktop_portal_kde_SRCS}
++        waylandintegration.cpp)
++endif()
++
++if(HAVE_PIPEWIRE_SUPPORT)
++    set (xdg_desktop_portal_kde_SRCS
++         ${xdg_desktop_portal_kde_SRCS}
++         screencast.cpp
++         screencaststream.cpp
++         screencastwidget.cpp
++         screenchooserdialog.cpp
++         remotedesktop.cpp
++         remotedesktopdialog.cpp)
++
++    ki18n_wrap_ui(xdg_desktop_portal_kde_SRCS
++                  screenchooserdialog.ui
++                  remotedesktopdialog.ui)
++endif()
+ 
+ ki18n_wrap_ui(xdg_desktop_portal_kde_SRCS
+     accessdialog.ui
+     appchooserdialog.ui
+     screenshotdialog.ui
+     userinfodialog.ui
+-    screenchooserdialog.ui
+-    remotedesktopdialog.ui
+-)
+-
+-ecm_add_qtwayland_client_protocol(xdg_desktop_portal_kde_SRCS
+-    PROTOCOL ${PLASMA_WAYLAND_PROTOCOLS_DIR}/screencast.xml
+-    BASENAME zkde-screencast-unstable-v1
+ )
+ 
+ set_source_files_properties(../data/org.freedesktop.Accounts.User.xml PROPERTIES NO_NAMESPACE TRUE)
+@@ -67,12 +73,20 @@ target_link_libraries(xdg-desktop-portal-kde
+     KF5::I18n
+     KF5::KIOFileWidgets
+     KF5::Notifications
+-    KF5::WaylandClient
+     KF5::WidgetsAddons
+     KF5::WindowSystem
+-    KirigamiFilepicker
+-    Wayland::Client
+ )
++if (HAVE_WAYLAND_SUPPORT)
++    target_link_libraries(xdg-desktop-portal-kde
++        KF5::WaylandClient
++        Wayland::Client)
++endif()
++if (HAVE_PIPEWIRE_SUPPORT)
++    target_link_libraries(xdg-desktop-portal-kde
++                          PipeWire::PipeWire
++                          ${Epoxy_LIBRARIES}
++                          GBM::GBM)
++endif()
+ 
+ install(TARGETS xdg-desktop-portal-kde DESTINATION ${KDE_INSTALL_LIBEXECDIR})
+ 
+diff --git a/src/background.cpp b/src/background.cpp
+index 8c93d29..3e69eeb 100644
+--- a/src/background.cpp
++++ b/src/background.cpp
+@@ -19,7 +19,9 @@
+ 
+ #include "background.h"
+ #include "utils.h"
++#if HAVE_WAYLAND_SUPPORT
+ #include "waylandintegration.h"
++#endif
+ 
+ #include <QDBusMetaType>
+ #include <QDBusContext>
+@@ -40,13 +42,16 @@
+ #include <KNotification>
+ #include <KShell>
+ 
++#if HAVE_WAYLAND_SUPPORT
+ #include <KWayland/Client/plasmawindowmanagement.h>
++#endif
+ 
+ Q_LOGGING_CATEGORY(XdgDesktopPortalKdeBackground, "xdp-kde-background")
+ 
+ BackgroundPortal::BackgroundPortal(QObject *parent)
+     : QDBusAbstractAdaptor(parent)
+ {
++#if HAVE_WAYLAND_SUPPORT
+     connect(WaylandIntegration::waylandIntegration(), &WaylandIntegration::WaylandIntegration::plasmaWindowManagementInitialized, this, [=] () {
+         connect(WaylandIntegration::plasmaWindowManagement(), &KWayland::Client::PlasmaWindowManagement::windowCreated, this, [this] (KWayland::Client::PlasmaWindow *window) {
+             addWindow(window);
+@@ -57,6 +62,7 @@ BackgroundPortal::BackgroundPortal(QObject *parent)
+             addWindow(window);
+         }
+     });
++#endif
+ }
+ 
+ BackgroundPortal::~BackgroundPortal()
+@@ -83,7 +89,10 @@ uint BackgroundPortal::NotifyBackground(const QDBusObjectPath &handle,
+ 
+     // If KWayland::Client::PlasmaWindowManagement hasn't been created, we would be notified about every
+     // application, which is not what we want. This will be mostly happening on X11 session.
+-    if (!WaylandIntegration::plasmaWindowManagement()) {
++#if HAVE_WAYLAND_SUPPORT
++    if (!WaylandIntegration::plasmaWindowManagement())
++#endif
++    {
+         results.insert(QStringLiteral("result"), static_cast<uint>(BackgroundPortal::Ignore));
+         return 0;
+     }
+@@ -202,6 +211,7 @@ bool BackgroundPortal::EnableAutostart(const QString &app_id,
+     return true;
+ }
+ 
++#if HAVE_WAYLAND_SUPPORT
+ void BackgroundPortal::addWindow(KWayland::Client::PlasmaWindow *window)
+ {
+     const QString appId = window->appId();
+@@ -216,7 +226,7 @@ void BackgroundPortal::addWindow(KWayland::Client::PlasmaWindow *window)
+         const QString appId = window->appId();
+         const auto plasmaWindows = WaylandIntegration::plasmaWindowManagement()->windows();
+         for (KWayland::Client::PlasmaWindow *otherWindow : plasmaWindows) {
+-            if (otherWindow->appId() == appId && otherWindow->uuid() != window->uuid()) {
++            if (otherWindow->appId() == appId && otherWindow->internalId() != window->internalId()) {
+                 windows++;
+             }
+         }
+@@ -229,6 +239,7 @@ void BackgroundPortal::addWindow(KWayland::Client::PlasmaWindow *window)
+ 
+     Q_EMIT RunningApplicationsChanged();
+ }
++#endif
+ 
+ void BackgroundPortal::setActiveWindow(const QString &appId, bool active)
+ {
+diff --git a/src/background.h b/src/background.h
+index 8a4b848..9f48b1a 100644
+--- a/src/background.h
++++ b/src/background.h
+@@ -24,11 +24,13 @@
+ #include <QDBusAbstractAdaptor>
+ #include <QDBusObjectPath>
+ 
++#if HAVE_WAYLAND_SUPPORT
+ namespace KWayland {
+     namespace Client {
+         class PlasmaWindow;
+     }
+ }
++#endif
+ 
+ class BackgroundPortal : public QDBusAbstractAdaptor
+ {
+@@ -72,11 +74,15 @@ Q_SIGNALS:
+     void RunningApplicationsChanged();
+ 
+ private:
++#if HAVE_WAYLAND_SUPPORT
+     void addWindow(KWayland::Client::PlasmaWindow *window);
++#endif
+     void setActiveWindow(const QString &appId, bool active);
+ 
+     uint m_notificationCounter = 0;
++#if HAVE_WAYLAND_SUPPORT
+     QList<KWayland::Client::PlasmaWindow*> m_windows;
++#endif
+     QVariantMap m_appStates;
+ };
+ Q_DECLARE_OPERATORS_FOR_FLAGS(BackgroundPortal::AutostartFlags)
+diff --git a/src/desktopportal.cpp b/src/desktopportal.cpp
+index 76b6bcc..febdeb5 100644
+--- a/src/desktopportal.cpp
++++ b/src/desktopportal.cpp
+@@ -39,10 +39,14 @@ DesktopPortal::DesktopPortal(QObject *parent)
+     const QByteArray xdgCurrentDesktop = qgetenv("XDG_CURRENT_DESKTOP").toUpper();
+     if (xdgCurrentDesktop == "KDE") {
+         m_background = new BackgroundPortal(this);
++#if HAVE_PIPEWIRE_SUPPORT
+         m_screenCast = new ScreenCastPortal(this);
+         m_remoteDesktop = new RemoteDesktopPortal(this);
++#endif
+         m_screenshot = new ScreenshotPortal(this);
++#if HAVE_WAYLAND_SUPPORT
+         WaylandIntegration::init();
++#endif
+     }
+ }
+ 
+diff --git a/src/desktopportal.h b/src/desktopportal.h
+index 23948f9..c85dacf 100644
+--- a/src/desktopportal.h
++++ b/src/desktopportal.h
+@@ -35,10 +35,14 @@
+ #include "print.h"
+ #include "screenshot.h"
+ #include "settings.h"
++#if HAVE_WAYLAND_SUPPORT
+ #include "waylandintegration.h"
++#endif
+ 
++#if HAVE_PIPEWIRE_SUPPORT
+ #include "screencast.h"
+ #include "remotedesktop.h"
++#endif
+ 
+ class DesktopPortal : public QObject, public QDBusContext
+ {
+@@ -59,8 +63,11 @@ private:
+     PrintPortal *m_print;
+     ScreenshotPortal *m_screenshot;
+     SettingsPortal *m_settings;
++#if HAVE_PIPEWIRE_SUPPORT
+     ScreenCastPortal *m_screenCast;
+     RemoteDesktopPortal *m_remoteDesktop;
++#endif
+ };
+ 
+ #endif // XDG_DESKTOP_PORTAL_KDE_DESKTOP_PORTAL_H
++
+diff --git a/src/filechooser.cpp b/src/filechooser.cpp
+index 3b2f863..94fe67c 100644
+--- a/src/filechooser.cpp
++++ b/src/filechooser.cpp
+@@ -38,7 +38,7 @@
+ #include <KFileFilterCombo>
+ #include <KFileWidget>
+ 
+-#include <mobilefiledialog.h>
++// #include <mobilefiledialog.h>
+ 
+ Q_LOGGING_CATEGORY(XdgDesktopPortalKdeFileChooser, "xdp-kde-file-chooser")
+ 
+@@ -141,7 +141,7 @@ const QDBusArgument &operator >> (const QDBusArgument &arg, FileChooserPortal::O
+ 
+ FileDialog::FileDialog(QDialog *parent, Qt::WindowFlags flags)
+     : QDialog(parent, flags)
+-    , m_fileWidget(new KFileWidget(QUrl(), this))
++    , m_fileWidget(new KFileWidget(QUrl(QStringLiteral("kfiledialog:///xdg-desktop-portal?global")), this))
+ {
+     setLayout(new QVBoxLayout);
+     layout()->addWidget(m_fileWidget);
+@@ -237,6 +237,7 @@ uint FileChooserPortal::OpenFile(const QDBusObjectPath &handle,
+         }
+     }
+ 
++#if 0
+     if (isMobile()) {
+         if (!m_mobileFileDialog) {
+             qCDebug(XdgDesktopPortalKdeFileChooser) << "Creating file dialog";
+@@ -270,6 +271,7 @@ uint FileChooserPortal::OpenFile(const QDBusObjectPath &handle,
+ 
+         return retCode;
+     }
++#endif
+ 
+     // for handling of options - choices
+     QScopedPointer<QWidget> optionsWidget;
+@@ -300,7 +302,11 @@ uint FileChooserPortal::OpenFile(const QDBusObjectPath &handle,
+     }
+ 
+     if (optionsWidget) {
++#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+         fileDialog->m_fileWidget->setCustomWidget({}, optionsWidget.get());
++#else
++        fileDialog->m_fileWidget->setCustomWidget({}, optionsWidget.data());
++#endif
+     }
+ 
+     if (fileDialog->exec() == QDialog::Accepted) {
+@@ -404,6 +410,7 @@ uint FileChooserPortal::SaveFile(const QDBusObjectPath &handle,
+         }
+     }
+ 
++#if 0
+     if (isMobile()) {
+         if (!m_mobileFileDialog) {
+             qCDebug(XdgDesktopPortalKdeFileChooser) << "Creating file dialog";
+@@ -444,6 +451,7 @@ uint FileChooserPortal::SaveFile(const QDBusObjectPath &handle,
+ 
+         return retCode;
+     }
++#endif
+ 
+     // for handling of options - choices
+     QScopedPointer<QWidget> optionsWidget;
+@@ -489,7 +497,11 @@ uint FileChooserPortal::SaveFile(const QDBusObjectPath &handle,
+     }
+ 
+     if (optionsWidget) {
++#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+         fileDialog->m_fileWidget->setCustomWidget(optionsWidget.get());
++#else
++        fileDialog->m_fileWidget->setCustomWidget(optionsWidget.data());
++#endif
+     }
+ 
+     if (fileDialog->exec() == QDialog::Accepted) {
+@@ -632,6 +644,7 @@ void FileChooserPortal::ExtractFilters(const QVariantMap &options, QStringList &
+ 
+ bool FileChooserPortal::isMobile() const
+ {
+-    QByteArray mobile = qgetenv("QT_QUICK_CONTROLS_MOBILE");
+-    return mobile == "true" || mobile == "1";
++//     QByteArray mobile = qgetenv("QT_QUICK_CONTROLS_MOBILE");
++//     return mobile == "true" || mobile == "1";
++    return false;
+ }
+diff --git a/src/remotedesktop.cpp b/src/remotedesktop.cpp
+index 4b067a1..22e0748 100644
+--- a/src/remotedesktop.cpp
++++ b/src/remotedesktop.cpp
+@@ -55,8 +55,8 @@ uint RemoteDesktopPortal::CreateSession(const QDBusObjectPath &handle,
+         return 2;
+     }
+ 
+-    connect(session, &Session::closed, [] () {
+-        WaylandIntegration::stopAllStreaming();
++    connect(session, &Session::closed, [this] () {
++        WaylandIntegration::stopStreaming();
+     });
+ 
+     if (!WaylandIntegration::isStreamingAvailable()) {
+@@ -133,7 +133,7 @@ uint RemoteDesktopPortal::Start(const QDBusObjectPath &handle,
+ 
+     if (remoteDesktopDialog->exec()) {
+         if (session->screenSharingEnabled()) {
+-            if (!WaylandIntegration::startStreamingOutput(remoteDesktopDialog->selectedScreens().first(), Screencasting::Hidden)) {
++            if (!WaylandIntegration::startStreaming(remoteDesktopDialog->selectedScreens().first())) {
+                 return 2;
+             }
+ 
+diff --git a/src/remotedesktopdialog.cpp b/src/remotedesktopdialog.cpp
+index 1131082..dba27ad 100644
+--- a/src/remotedesktopdialog.cpp
++++ b/src/remotedesktopdialog.cpp
+@@ -44,9 +44,6 @@ RemoteDesktopDialog::RemoteDesktopDialog(const QString &appName, RemoteDesktopPo
+         }
+     }
+ 
+-
+-    m_dialog->screenCastWidget->itemAt(0, 0)->setSelected(true);
+-
+     m_dialog->keyboardCheckbox->setChecked(deviceTypes.testFlag(RemoteDesktopPortal::Keyboard));
+     m_dialog->pointerCheckbox->setChecked(deviceTypes.testFlag(RemoteDesktopPortal::Pointer));
+     m_dialog->touchScreenCheckbox->setChecked(deviceTypes.testFlag(RemoteDesktopPortal::TouchScreen));
+diff --git a/src/screencast.cpp b/src/screencast.cpp
+index 2e4f622..9c77904 100644
+--- a/src/screencast.cpp
++++ b/src/screencast.cpp
+@@ -62,8 +62,8 @@ uint ScreenCastPortal::CreateSession(const QDBusObjectPath &handle,
+         return 2;
+     }
+ 
+-    connect(session, &Session::closed, [] () {
+-        WaylandIntegration::stopAllStreaming();
++    connect(session, &Session::closed, [this] () {
++        WaylandIntegration::stopStreaming();
+     });
+ 
+     return 0;
+@@ -83,6 +83,8 @@ uint ScreenCastPortal::SelectSources(const QDBusObjectPath &handle,
+     qCDebug(XdgDesktopPortalKdeScreenCast) << "    app_id: " << app_id;
+     qCDebug(XdgDesktopPortalKdeScreenCast) << "    options: " << options;
+ 
++    uint types = Monitor;
++
+     ScreenCastSession *session = qobject_cast<ScreenCastSession*>(Session::getSession(session_handle.path()));
+ 
+     if (!session) {
+@@ -90,7 +92,18 @@ uint ScreenCastPortal::SelectSources(const QDBusObjectPath &handle,
+         return 2;
+     }
+ 
+-    session->setMultipleSources(options.value(QStringLiteral("multiple")).toBool());
++    if (options.contains(QStringLiteral("multiple"))) {
++        session->setMultipleSources(options.value(QStringLiteral("multiple")).toBool());
++    }
++
++    if (options.contains(QStringLiteral("types"))) {
++        types = (SourceType)(options.value(QStringLiteral("types")).toUInt());
++    }
++
++    if (types == Window) {
++        qCWarning(XdgDesktopPortalKdeScreenCast) << "Screen cast of a window is not implemented";
++        return 2;
++    }
+ 
+     // Might be also a RemoteDesktopSession
+     if (session->type() == Session::RemoteDesktop) {
+@@ -131,28 +144,19 @@ uint ScreenCastPortal::Start(const QDBusObjectPath &handle,
+         return 2;
+     }
+ 
++    if (!WaylandIntegration::isEGLInitialized()) {
++        qCWarning(XdgDesktopPortalKdeScreenCast) << "EGL is not properly initialized";
++        return 2;
++    }
++
+     QScopedPointer<ScreenChooserDialog, QScopedPointerDeleteLater> screenDialog(new ScreenChooserDialog(app_id, session->multipleSources()));
+     Utils::setParentWindow(screenDialog.data(), parent_window);
+ 
+-    if (options.contains(QStringLiteral("types"))) {
+-        screenDialog->setSourceTypes(SourceTypes(options.value(QStringLiteral("types")).toUInt()));
+-    }
+-
+     connect(session, &Session::closed, screenDialog.data(), &ScreenChooserDialog::reject);
+ 
+     if (screenDialog->exec()) {
+-        const auto selectedScreens = screenDialog->selectedScreens();
+-        for (quint32 outputid : selectedScreens) {
+-            if (!WaylandIntegration::startStreamingOutput(outputid, Screencasting::Hidden)) {
+-                return 2;
+-            }
+-        }
+-        const auto selectedWindows = screenDialog->selectedWindows();
+-        for (const QByteArray &winid : selectedWindows) {
+-            if (!WaylandIntegration::startStreamingWindow(winid)) {
+-                return 2;
+-            }
+-        }
++        if (!WaylandIntegration::startStreaming(screenDialog->selectedScreens().first())) {
++            return 2;
+ 
+         QVariant streams = WaylandIntegration::streams();
+ 
+diff --git a/src/screencasting.cpp b/src/screencasting.cpp
+deleted file mode 100644
+index 6d60abd..0000000
+--- a/src/screencasting.cpp
++++ /dev/null
+@@ -1,120 +0,0 @@
+-/*
+-    SPDX-FileCopyrightText: 2020 Aleix Pol Gonzalez <aleixpol@kde.org>
+-
+-    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
+-*/
+-
+-#include "screencasting.h"
+-#include "qwayland-zkde-screencast-unstable-v1.h"
+-#include <QRect>
+-#include <QDebug>
+-#include <KWayland/Client/registry.h>
+-#include <KWayland/Client/output.h>
+-#include <KWayland/Client/plasmawindowmanagement.h>
+-
+-using namespace KWayland::Client;
+-
+-class ScreencastingStreamPrivate : public QtWayland::zkde_screencast_stream_unstable_v1
+-{
+-public:
+-    ScreencastingStreamPrivate(ScreencastingStream* q) : q(q) {}
+-    ~ScreencastingStreamPrivate() {
+-        close();
+-        q->deleteLater();
+-    }
+-
+-    void zkde_screencast_stream_unstable_v1_created(uint32_t node) override {
+-        m_nodeid = node;
+-        Q_EMIT q->created(node);
+-    }
+-
+-    void zkde_screencast_stream_unstable_v1_closed() override {
+-        Q_EMIT q->closed();
+-    }
+-
+-    void zkde_screencast_stream_unstable_v1_failed(const QString &error) override {
+-        Q_EMIT q->failed(error);
+-    }
+-
+-    uint m_nodeid = 0;
+-    QPointer<ScreencastingStream> q;
+-};
+-
+-ScreencastingStream::ScreencastingStream(QObject* parent)
+-    : QObject(parent)
+-    , d(new ScreencastingStreamPrivate(this))
+-{
+-}
+-
+-ScreencastingStream::~ScreencastingStream() = default;
+-
+-quint32 ScreencastingStream::nodeid() const
+-{
+-    return d->m_nodeid;
+-}
+-
+-class ScreencastingPrivate : public QtWayland::zkde_screencast_unstable_v1
+-{
+-public:
+-    ScreencastingPrivate(Registry *registry, int id, int version, Screencasting *q)
+-        : QtWayland::zkde_screencast_unstable_v1(*registry, id, version)
+-        , q(q)
+-    {
+-    }
+-
+-    ScreencastingPrivate(::zkde_screencast_unstable_v1* screencasting, Screencasting *q)
+-        : QtWayland::zkde_screencast_unstable_v1(screencasting)
+-        , q(q)
+-    {
+-    }
+-
+-    ~ScreencastingPrivate()
+-    {
+-        destroy();
+-    }
+-
+-    Screencasting *const q;
+-};
+-
+-Screencasting::Screencasting(QObject* parent)
+-    : QObject(parent)
+-{}
+-
+-Screencasting::Screencasting(Registry *registry, int id, int version, QObject* parent)
+-    : QObject(parent)
+-    , d(new ScreencastingPrivate(registry, id, version, this))
+-{}
+-
+-Screencasting::~Screencasting() = default;
+-
+-ScreencastingStream* Screencasting::createOutputStream(Output* output, CursorMode mode)
+-{
+-    auto stream = new ScreencastingStream(this);
+-    stream->setObjectName(output->model());
+-    stream->d->init(d->stream_output(*output, mode));
+-    return stream;
+-}
+-
+-ScreencastingStream* Screencasting::createWindowStream(PlasmaWindow *window, CursorMode mode)
+-{
+-    auto stream = createWindowStream(QString::fromUtf8(window->uuid()), mode);
+-    stream->setObjectName(window->appId());
+-    return stream;
+-}
+-
+-ScreencastingStream* Screencasting::createWindowStream(const QString &uuid, CursorMode mode)
+-{
+-    auto stream = new ScreencastingStream(this);
+-    stream->d->init(d->stream_window(uuid, mode));
+-    return stream;
+-}
+-
+-void Screencasting::setup(::zkde_screencast_unstable_v1* screencasting)
+-{
+-    d.reset(new ScreencastingPrivate(screencasting, this));
+-}
+-
+-void Screencasting::destroy()
+-{
+-    d.reset(nullptr);
+-}
+diff --git a/src/screencasting.h b/src/screencasting.h
+deleted file mode 100644
+index 1019749..0000000
+--- a/src/screencasting.h
++++ /dev/null
+@@ -1,77 +0,0 @@
+-/*
+-    SPDX-FileCopyrightText: 2020 Aleix Pol Gonzalez <aleixpol@kde.org>
+-
+-    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
+-*/
+-
+-#pragma once
+-
+-#include <QVector>
+-#include <QObject>
+-#include <QSharedPointer>
+-#include <optional>
+-
+-struct zkde_screencast_unstable_v1;
+-
+-namespace KWayland
+-{
+-namespace Client
+-{
+-class PlasmaWindow;
+-class Registry;
+-class Output;
+-}
+-}
+-
+-class ScreencastingPrivate;
+-class ScreencastingSourcePrivate;
+-class ScreencastingStreamPrivate;
+-class ScreencastingStream : public QObject
+-{
+-    Q_OBJECT
+-public:
+-    ScreencastingStream(QObject* parent);
+-    ~ScreencastingStream() override;
+-
+-    quint32 nodeid() const;
+-
+-Q_SIGNALS:
+-    void created(quint32 nodeid);
+-    void failed(const QString &error);
+-    void closed();
+-
+-private:
+-    friend class Screencasting;
+-    QScopedPointer<ScreencastingStreamPrivate> d;
+-};
+-
+-class Screencasting : public QObject
+-{
+-    Q_OBJECT
+-public:
+-    explicit Screencasting(QObject *parent = nullptr);
+-    explicit Screencasting(KWayland::Client::Registry *registry, int id, int version, QObject *parent = nullptr);
+-    ~Screencasting() override;
+-
+-    enum CursorMode {
+-        Hidden = 1,
+-        Embedded = 2,
+-        Metadata = 4,
+-    };
+-    Q_ENUM(CursorMode);
+-
+-    ScreencastingStream* createOutputStream(KWayland::Client::Output* output, CursorMode mode);
+-    ScreencastingStream* createWindowStream(KWayland::Client::PlasmaWindow* window, CursorMode mode);
+-    ScreencastingStream* createWindowStream(const QString &uuid, CursorMode mode);
+-
+-    void setup(zkde_screencast_unstable_v1* screencasting);
+-    void destroy();
+-
+-Q_SIGNALS:
+-    void initialized();
+-    void removed();
+-    void sourcesChanged();
+-
+-private:
+-    QScopedPointer<ScreencastingPrivate> d;
+-};
+diff --git a/src/screencastwidget.cpp b/src/screencastwidget.cpp
+index 52c6132..3496858 100644
+--- a/src/screencastwidget.cpp
++++ b/src/screencastwidget.cpp
+@@ -42,6 +42,8 @@ ScreenCastWidget::ScreenCastWidget(QWidget *parent)
+             widgetItem->setText(i18n("Manufacturer: %1\nModel: %2", it.value().manufacturer(), it.value().model()));
+         }
+     }
++
++    itemAt(0, 0)->setSelected(true);
+ }
+ 
+ ScreenCastWidget::~ScreenCastWidget()
+diff --git a/src/screenchooserdialog.cpp b/src/screenchooserdialog.cpp
+index 96b906f..3ba7883 100644
+--- a/src/screenchooserdialog.cpp
++++ b/src/screenchooserdialog.cpp
+@@ -20,61 +20,27 @@
+ 
+ #include "screenchooserdialog.h"
+ #include "ui_screenchooserdialog.h"
+-#include "waylandintegration.h"
+ 
+ #include <KLocalizedString>
+ #include <QPushButton>
+ #include <QStandardPaths>
+ #include <QSettings>
+-#include <QSortFilterProxyModel>
+-#include <KWayland/Client/plasmawindowmodel.h>
+-#include <KWayland/Client/plasmawindowmanagement.h>
+-
+-class FilteredWindowModel : public QSortFilterProxyModel
+-{
+-public:
+-    FilteredWindowModel(QObject* parent) : QSortFilterProxyModel(parent)
+-    {}
+-
+-    bool filterAcceptsRow(int source_row, const QModelIndex & source_parent) const override {
+-        if (source_parent.isValid())
+-            return false;
+-
+-        const auto idx = sourceModel()->index(source_row, 0);
+-        using KWayland::Client::PlasmaWindowModel;
+-
+-        return !idx.data(PlasmaWindowModel::SkipTaskbar).toBool()
+-            && !idx.data(PlasmaWindowModel::SkipSwitcher).toBool()
+-            && idx.data(PlasmaWindowModel::Pid) != QCoreApplication::applicationPid();
+-    }
+-};
+ 
+ ScreenChooserDialog::ScreenChooserDialog(const QString &appName, bool multiple, QDialog *parent, Qt::WindowFlags flags)
+     : QDialog(parent, flags)
+-    , m_multiple(multiple)
+     , m_dialog(new Ui::ScreenChooserDialog)
+ {
+     m_dialog->setupUi(this);
+ 
+-    const auto selection = multiple ? QAbstractItemView::ExtendedSelection : QAbstractItemView::SingleSelection;
+-    m_dialog->screenView->setSelectionMode(selection);
+-    m_dialog->windowsView->setSelectionMode(selection);
+-
+-    auto model = new KWayland::Client::PlasmaWindowModel(WaylandIntegration::plasmaWindowManagement());
+-    auto proxy = new FilteredWindowModel(this);
+-    proxy->setSourceModel(model);
+-    m_dialog->windowsView->setModel(proxy);
++    if (multiple) {
++        m_dialog->screenView->setSelectionMode(QAbstractItemView::ExtendedSelection);
++    }
+ 
+     connect(m_dialog->buttonBox, &QDialogButtonBox::accepted, this, &ScreenChooserDialog::accept);
+     connect(m_dialog->buttonBox, &QDialogButtonBox::rejected, this, &ScreenChooserDialog::reject);
+-    connect(m_dialog->screenView->selectionModel(), &QItemSelectionModel::selectionChanged, this, &ScreenChooserDialog::selectionChanged);
+-    connect(m_dialog->windowsView->selectionModel(), &QItemSelectionModel::selectionChanged, this, &ScreenChooserDialog::selectionChanged);
+-    connect(m_dialog->screenView, &QListWidget::doubleClicked, this, &ScreenChooserDialog::accept);
+-    connect(m_dialog->windowsView, &QListView::doubleClicked, this, &ScreenChooserDialog::accept);
++    connect(m_dialog->screenView, &QListWidget::itemDoubleClicked, this, &ScreenChooserDialog::accept);
+ 
+-    auto okButton = m_dialog->buttonBox->button(QDialogButtonBox::Ok);
+-    okButton->setText(i18n("Share"));
+-    okButton->setEnabled(false);
++    m_dialog->buttonBox->button(QDialogButtonBox::Ok)->setText(i18n("Share"));
+ 
+     QString applicationName;
+     const QString desktopFile = appName + QLatin1String(".desktop");
+@@ -105,40 +71,7 @@ ScreenChooserDialog::~ScreenChooserDialog()
+     delete m_dialog;
+ }
+ 
+-void ScreenChooserDialog::selectionChanged(const QItemSelection &selected)
+-{
+-    if (!m_multiple && !selected.isEmpty()) {
+-        if (selected.constFirst().model() == m_dialog->windowsView->model())
+-            m_dialog->screenView->clearSelection();
+-        else
+-            m_dialog->windowsView->clearSelection();
+-    }
+-
+-    auto okButton = m_dialog->buttonBox->button(QDialogButtonBox::Ok);
+-    const auto count = m_dialog->screenView->selectionModel()->hasSelection()
+-                     + m_dialog->windowsView->selectionModel()->hasSelection();
+-    okButton->setEnabled(m_multiple ? count > 0 : count == 1);
+-}
+-
+-void ScreenChooserDialog::setSourceTypes(ScreenCastPortal::SourceTypes types)
+-{
+-    m_dialog->windowsTab->setEnabled(types & ScreenCastPortal::Window);
+-    m_dialog->screensTab->setEnabled(types & ScreenCastPortal::Monitor);
+-}
+-
+ QList<quint32> ScreenChooserDialog::selectedScreens() const
+ {
+     return m_dialog->screenView->selectedScreens();
+ }
+-
+-QList<QByteArray> ScreenChooserDialog::selectedWindows() const
+-{
+-    const auto idxs = m_dialog->windowsView->selectionModel()->selectedIndexes();
+-
+-    QList<QByteArray> ret;
+-    ret.reserve(idxs.count());
+-    for (const auto &idx : idxs) {
+-        ret += idx.data(KWayland::Client::PlasmaWindowModel::Uuid).toByteArray();
+-    }
+-    return ret;
+-}
+diff --git a/src/screenchooserdialog.h b/src/screenchooserdialog.h
+index 8ee91ef..ff44dc5 100644
+--- a/src/screenchooserdialog.h
++++ b/src/screenchooserdialog.h
+@@ -22,13 +22,11 @@
+ #define XDG_DESKTOP_PORTAL_KDE_SCREENCHOOSER_DIALOG_H
+ 
+ #include <QDialog>
+-#include "screencast.h"
+ 
+ namespace Ui
+ {
+ class ScreenChooserDialog;
+ }
+-class QItemSelection;
+ 
+ class ScreenChooserDialog : public QDialog
+ {
+@@ -37,15 +35,9 @@ public:
+     ScreenChooserDialog(const QString &appName, bool multiple, QDialog *parent = nullptr, Qt::WindowFlags flags = {});
+     ~ScreenChooserDialog();
+ 
+-    void setSourceTypes(ScreenCastPortal::SourceTypes types);
+-
+     QList<quint32> selectedScreens() const;
+-    QList<QByteArray> selectedWindows() const;
+ 
+ private:
+-    void selectionChanged(const QItemSelection &selected);
+-
+-    const bool m_multiple;
+     Ui::ScreenChooserDialog *m_dialog;
+ };
+ 
+diff --git a/src/screenchooserdialog.ui b/src/screenchooserdialog.ui
+index 6acb939..c3b0cdb 100644
+--- a/src/screenchooserdialog.ui
++++ b/src/screenchooserdialog.ui
+@@ -15,44 +15,25 @@
+   </property>
+   <layout class="QGridLayout" name="gridLayout">
+    <item row="0" column="0">
+-    <widget class="QTabWidget" name="tabWidget">
+-     <property name="currentIndex">
+-      <number>0</number>
++    <layout class="QHBoxLayout" name="horizontalLayout"/>
++   </item>
++   <item row="1" column="0">
++    <widget class="ScreenCastWidget" name="screenView">
++     <property name="selectionMode">
++      <enum>QAbstractItemView::SingleSelection</enum>
++     </property>
++     <property name="iconSize">
++      <size>
++       <width>48</width>
++       <height>48</height>
++      </size>
++     </property>
++     <property name="uniformItemSizes">
++      <bool>false</bool>
+      </property>
+-     <widget class="QWidget" name="screensTab">
+-      <attribute name="title">
+-       <string>Screens</string>
+-      </attribute>
+-      <layout class="QHBoxLayout" name="horizontalLayout">
+-       <item>
+-        <widget class="ScreenCastWidget" name="screenView">
+-         <property name="iconSize">
+-          <size>
+-           <width>48</width>
+-           <height>48</height>
+-          </size>
+-         </property>
+-        </widget>
+-       </item>
+-      </layout>
+-     </widget>
+-     <widget class="QWidget" name="windowsTab">
+-      <attribute name="title">
+-       <string>Windows</string>
+-      </attribute>
+-      <layout class="QHBoxLayout" name="horizontalLayout_2">
+-       <item>
+-        <widget class="QListView" name="windowsView">
+-         <property name="wordWrap">
+-          <bool>true</bool>
+-         </property>
+-        </widget>
+-       </item>
+-      </layout>
+-     </widget>
+     </widget>
+    </item>
+-   <item row="1" column="0">
++   <item row="2" column="0">
+     <widget class="QDialogButtonBox" name="buttonBox">
+      <property name="standardButtons">
+       <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
+diff --git a/src/utils.cpp b/src/utils.cpp
+index 583041b..bfcf44a 100644
+--- a/src/utils.cpp
++++ b/src/utils.cpp
+@@ -26,6 +26,7 @@ void Utils::setParentWindow(QWidget *w, const QString &parent_window)
+ {
+     if (parent_window.startsWith(QLatin1String("x11:"))) {
+         w->setAttribute(Qt::WA_NativeWindow, true);
+-        KWindowSystem::setMainWindow(w->windowHandle(), parent_window.midRef(4).toULongLong(nullptr, 16));
++//         KWindowSystem::setMainWindow(w->windowHandle(), parent_window.midRef(4).toULongLong(nullptr, 16));
++        KWindowSystem::setMainWindow(w, parent_window.midRef(4).toULongLong(nullptr, 16));
+     }
+ }
+diff --git a/src/waylandintegration.cpp b/src/waylandintegration.cpp
+index ec396ec..95b861c 100644
+--- a/src/waylandintegration.cpp
++++ b/src/waylandintegration.cpp
+@@ -20,8 +20,7 @@
+ 
+ #include "waylandintegration.h"
+ #include "waylandintegration_p.h"
+-#include "screencasting.h"
+-#include "screencast.h"
++
+ 
+ #include <QDBusArgument>
+ #include <QDBusMetaType>
+@@ -30,7 +29,6 @@
+ #include <QLoggingCategory>
+ #include <QThread>
+ #include <QTimer>
+-#include <KNotification>
+ 
+ #include <QImage>
+ 
+@@ -46,30 +44,38 @@
+ #include <fcntl.h>
+ #include <unistd.h>
+ 
++#if HAVE_PIPEWIRE_SUPPORT
++#include "screencast.h"
++#include "screencaststream.h"
++
+ #include <KWayland/Client/fakeinput.h>
+ #include <KWayland/Client/output.h>
++#include <KWayland/Client/remote_access.h>
++#endif
+ 
+ Q_LOGGING_CATEGORY(XdgDesktopPortalKdeWaylandIntegration, "xdp-kde-wayland-integration")
+ 
+ Q_GLOBAL_STATIC(WaylandIntegration::WaylandIntegrationPrivate, globalWaylandIntegration)
+ 
+-static QDebug operator<<(QDebug dbg, const WaylandIntegration::WaylandIntegrationPrivate::Stream &c)
+-{
+-    dbg.nospace() << "Stream("<< c.map << ", " << c.nodeId << ")";
+-    return dbg.space();
+-
+-}
+-
+ void WaylandIntegration::init()
+ {
++#if HAVE_PIPEWIRE_SUPPORT
++    globalWaylandIntegration->initDrm();
++#endif
+     globalWaylandIntegration->initWayland();
+ }
+ 
++#if HAVE_PIPEWIRE_SUPPORT
+ void WaylandIntegration::authenticate()
+ {
+     globalWaylandIntegration->authenticate();
+ }
+ 
++bool WaylandIntegration::isEGLInitialized()
++{
++    return globalWaylandIntegration->isEGLInitialized();
++}
++
+ bool WaylandIntegration::isStreamingEnabled()
+ {
+     return globalWaylandIntegration->isStreamingEnabled();
+@@ -85,19 +91,14 @@ void WaylandIntegration::startStreamingInput()
+     globalWaylandIntegration->startStreamingInput();
+ }
+ 
+-bool WaylandIntegration::startStreamingOutput(quint32 outputName, Screencasting::CursorMode mode)
++bool WaylandIntegration::startStreaming(quint32 outputName)
+ {
+-    return globalWaylandIntegration->startStreamingOutput(outputName, mode);
++    return globalWaylandIntegration->startStreaming(outputName);
+ }
+ 
+-bool WaylandIntegration::startStreamingWindow(const QByteArray &winid)
++void WaylandIntegration::stopStreaming()
+ {
+-    return globalWaylandIntegration->startStreamingWindow(winid);
+-}
+-
+-void WaylandIntegration::stopAllStreaming()
+-{
+-    globalWaylandIntegration->stopAllStreaming();
++    globalWaylandIntegration->stopStreaming();
+ }
+ 
+ void WaylandIntegration::requestPointerButtonPress(quint32 linuxButton)
+@@ -130,6 +131,11 @@ void WaylandIntegration::requestKeyboardKeycode(int keycode, bool state)
+     globalWaylandIntegration->requestKeyboardKeycode(keycode, state);
+ }
+ 
++WaylandIntegration::EGLStruct WaylandIntegration::egl()
++{
++    return globalWaylandIntegration->egl();
++}
++
+ QMap<quint32, WaylandIntegration::WaylandOutput> WaylandIntegration::screens()
+ {
+     return globalWaylandIntegration->screens();
+@@ -140,6 +146,28 @@ QVariant WaylandIntegration::streams()
+     return globalWaylandIntegration->streams();
+ }
+ 
++const char * WaylandIntegration::formatGLError(GLenum err)
++{
++    switch(err) {
++    case GL_NO_ERROR:
++        return "GL_NO_ERROR";
++    case GL_INVALID_ENUM:
++        return "GL_INVALID_ENUM";
++    case GL_INVALID_VALUE:
++        return "GL_INVALID_VALUE";
++    case GL_INVALID_OPERATION:
++        return "GL_INVALID_OPERATION";
++    case GL_STACK_OVERFLOW:
++        return "GL_STACK_OVERFLOW";
++    case GL_STACK_UNDERFLOW:
++        return "GL_STACK_UNDERFLOW";
++    case GL_OUT_OF_MEMORY:
++        return "GL_OUT_OF_MEMORY";
++    default:
++        return (QLatin1String("0x") + QString::number(err, 16)).toLocal8Bit().constData();
++    }
++}
++
+ // Thank you kscreen
+ void WaylandIntegration::WaylandOutput::setOutputType(const QString &type)
+ {
+@@ -149,7 +177,7 @@ void WaylandIntegration::WaylandOutput::setOutputType(const QString &type)
+                                    QLatin1String("LCD") };
+ 
+     for (const QLatin1String &pre : embedded) {
+-        if (type.startsWith(pre, Qt::CaseInsensitive)) {
++        if (type.toUpper().startsWith(pre)) {
+             m_outputType = OutputType::Laptop;
+             return;
+         }
+@@ -197,6 +225,7 @@ const QDBusArgument &operator << (QDBusArgument &arg, const WaylandIntegration::
+ 
+ Q_DECLARE_METATYPE(WaylandIntegration::WaylandIntegrationPrivate::Stream)
+ Q_DECLARE_METATYPE(WaylandIntegration::WaylandIntegrationPrivate::Streams)
++#endif
+ 
+ KWayland::Client::PlasmaWindowManagement * WaylandIntegration::plasmaWindowManagement()
+ {
+@@ -214,18 +243,39 @@ WaylandIntegration::WaylandIntegrationPrivate::WaylandIntegrationPrivate()
+     , m_connection(nullptr)
+     , m_queue(nullptr)
+     , m_registry(nullptr)
++#if HAVE_PIPEWIRE_SUPPORT
+     , m_fakeInput(nullptr)
+-    , m_screencasting(nullptr)
++    , m_remoteAccessManager(nullptr)
++#endif
+ {
++#if HAVE_PIPEWIRE_SUPPORT
+     qDBusRegisterMetaType<WaylandIntegrationPrivate::Stream>();
+     qDBusRegisterMetaType<WaylandIntegrationPrivate::Streams>();
++#endif
++}
++
++WaylandIntegration::WaylandIntegrationPrivate::~WaylandIntegrationPrivate()
++{
++#if HAVE_PIPEWIRE_SUPPORT
++    if (m_remoteAccessManager) {
++        m_remoteAccessManager->destroy();
++    }
++
++    if (m_gbmDevice) {
++        gbm_device_destroy(m_gbmDevice);
++    }
++#endif
+ }
+ 
+-WaylandIntegration::WaylandIntegrationPrivate::~WaylandIntegrationPrivate() = default;
++#if HAVE_PIPEWIRE_SUPPORT
++bool WaylandIntegration::WaylandIntegrationPrivate::isEGLInitialized() const
++{
++    return m_eglInitialized;
++}
+ 
+ bool WaylandIntegration::WaylandIntegrationPrivate::isStreamingEnabled() const
+ {
+-    return !m_streams.isEmpty();
++    return m_streamingEnabled;
+ }
+ 
+ bool WaylandIntegration::WaylandIntegrationPrivate::isStreamingAvailable() const
+@@ -245,89 +295,89 @@ void WaylandIntegration::WaylandIntegrationPrivate::startStreamingInput()
+     m_streamInput = true;
+ }
+ 
+-bool WaylandIntegration::WaylandIntegrationPrivate::startStreamingWindow(const QByteArray &winid)
++bool WaylandIntegration::WaylandIntegrationPrivate::startStreaming(quint32 outputName)
+ {
+-    return startStreaming(m_screencasting->createWindowStream(QString::fromUtf8(winid), Screencasting::Hidden), {});
+-}
++    WaylandOutput output = m_outputMap.value(outputName);
++    m_streamedScreenPosition = output.globalPosition();
+ 
+-bool WaylandIntegration::WaylandIntegrationPrivate::startStreamingOutput(quint32 outputName, Screencasting::CursorMode mode)
+-{
+-    auto output = m_outputMap.value(outputName).output();
+-
+-    return startStreaming(m_screencasting->createOutputStream(output.data(), mode), output);
+-}
++    m_stream = new ScreenCastStream(output.resolution());
++    m_stream->init();
+ 
+-bool WaylandIntegration::WaylandIntegrationPrivate::startStreaming(ScreencastingStream *stream, QSharedPointer<KWayland::Client::Output> output)
+-{
+-    QEventLoop loop;
+-    bool streamReady = false;
+-    connect(stream, &ScreencastingStream::failed, this, [&] (const QString &error) {
+-        qCWarning(XdgDesktopPortalKdeWaylandIntegration) << "failed to start streaming" << stream << error;
++    connect(m_stream, &ScreenCastStream::startStreaming, this, [this, output] {
++        m_streamingEnabled = true;
++        startStreamingInput();
++        bindOutput(output.waylandOutputName(), output.waylandOutputVersion());
++    });
+ 
+-        KNotification *notification = new KNotification(QStringLiteral("screencastfailure"), KNotification::CloseOnTimeout);
+-        notification->setTitle(i18n("Failed to start screencasting"));
+-        notification->setText(error);
+-        notification->setIconName(QStringLiteral("dialog-error"));
+-        notification->sendEvent();
++    connect(m_stream, &ScreenCastStream::stopStreaming, this, &WaylandIntegrationPrivate::stopStreaming);
+ 
+-        streamReady = false;
++    bool streamReady = false;
++    QEventLoop loop;
++    connect(m_stream, &ScreenCastStream::streamReady, this, [&loop, &streamReady] {
+         loop.quit();
+-    });
+-    connect(stream, &ScreencastingStream::created, this, [&] (uint32_t nodeid) {
+-        Stream s;
+-        s.stream = stream;
+-        s.nodeId = nodeid;
+-        if (output) {
+-            m_streamedScreenPosition = output->globalPosition();
+-            s.map = {
+-                {QLatin1String("size"), output->pixelSize()},
+-                {QLatin1String("source_type"), static_cast<uint>(ScreenCastPortal::Monitor)}
+-            };
+-        } else {
+-            s.map = {
+-                {QLatin1String("source_type"), static_cast<uint>(ScreenCastPortal::Window)}
+-            };
+-        }
+-        m_streams.append(s);
+-        startStreamingInput();
+-
+-        connect(stream, &ScreencastingStream::closed, this, [this, nodeid] { stopStreaming(nodeid); });
+         streamReady = true;
+-        loop.quit();
+     });
++
++    // HACK wait for stream to be ready
+     QTimer::singleShot(3000, &loop, &QEventLoop::quit);
+     loop.exec();
+ 
+-    return streamReady;
+-}
++    disconnect(m_stream, &ScreenCastStream::streamReady, this, nullptr);
+ 
+-void WaylandIntegration::WaylandIntegrationPrivate::Stream::close()
+-{
+-    stream->deleteLater();
+-}
++    if (!streamReady) {
++        if (m_stream) {
++            delete m_stream;
++            m_stream = nullptr;
++        }
++        return false;
++    }
+ 
+-void WaylandIntegration::WaylandIntegrationPrivate::stopAllStreaming()
+-{
+-    for (auto & stream : m_streams) {
+-        stream.close();
++    // TODO support multiple outputs
++
++    if (m_registry->hasInterface(KWayland::Client::Registry::Interface::RemoteAccessManager)) {
++        KWayland::Client::Registry::AnnouncedInterface interface = m_registry->interface(KWayland::Client::Registry::Interface::RemoteAccessManager);
++        if (!interface.name && !interface.version) {
++            qCWarning(XdgDesktopPortalKdeWaylandIntegration) << "Failed to start streaming: remote access manager interface is not initialized yet";
++            return false;
++        }
++        m_remoteAccessManager = m_registry->createRemoteAccessManager(interface.name, interface.version);
++        connect(m_remoteAccessManager, &KWayland::Client::RemoteAccessManager::bufferReady, this, [this] (const void *output, const KWayland::Client::RemoteBuffer * rbuf) {
++            Q_UNUSED(output);
++            connect(rbuf, &KWayland::Client::RemoteBuffer::parametersObtained, this, [this, rbuf] {
++                processBuffer(rbuf);
++            });
++        });
++        m_output = output.waylandOutputName();
++        return true;
+     }
+-    m_streams.clear();
+ 
+-    m_streamInput = false;
+-    // First unbound outputs and destroy remote access manager so we no longer receive buffers
++    if (m_stream) {
++        delete m_stream;
++        m_stream = nullptr;
++    }
++
++    qCWarning(XdgDesktopPortalKdeWaylandIntegration) << "Failed to start streaming: no remote access manager interface";
++    return false;
+ }
+ 
+-void WaylandIntegration::WaylandIntegrationPrivate::stopStreaming(uint32_t nodeid)
++void WaylandIntegration::WaylandIntegrationPrivate::stopStreaming()
+ {
+-    for(auto it = m_streams.begin(), itEnd = m_streams.end(); it != itEnd; ++it) {
+-        if (it->nodeId == nodeid) {
+-            m_streams.erase(it);
+-            break;
++    m_streamInput = false;
++    if (m_streamingEnabled) {
++        m_streamingEnabled = false;
++
++        // First unbound outputs and destroy remote access manager so we no longer receive buffers
++        if (m_remoteAccessManager) {
++            m_remoteAccessManager->release();
++            m_remoteAccessManager->destroy();
+         }
+-    }
++        qDeleteAll(m_bindOutputs);
++        m_bindOutputs.clear();
+ 
+-    if (m_streams.isEmpty()) {
+-        stopAllStreaming();
++        if (m_stream) {
++            delete m_stream;
++            m_stream = nullptr;
++        }
+     }
+ }
+ 
+@@ -370,13 +420,18 @@ void WaylandIntegration::WaylandIntegrationPrivate::requestKeyboardKeycode(int k
+ {
+     if (m_streamInput && m_fakeInput) {
+         if (state) {
+-            m_fakeInput->requestKeyboardKeyPress(keycode);
++//             m_fakeInput->requestKeyboardKeyPress(keycode);
+         } else {
+-            m_fakeInput->requestKeyboardKeyRelease(keycode);
++//             m_fakeInput->requestKeyboardKeyRelease(keycode);
+         }
+     }
+ }
+ 
++WaylandIntegration::EGLStruct WaylandIntegration::WaylandIntegrationPrivate::egl()
++{
++    return m_egl;
++}
++
+ QMap<quint32, WaylandIntegration::WaylandOutput> WaylandIntegration::WaylandIntegrationPrivate::screens()
+ {
+     return m_outputMap;
+@@ -384,7 +439,84 @@ QMap<quint32, WaylandIntegration::WaylandOutput> WaylandIntegration::WaylandInte
+ 
+ QVariant WaylandIntegration::WaylandIntegrationPrivate::streams()
+ {
+-    return QVariant::fromValue<WaylandIntegrationPrivate::Streams>(m_streams);
++    Stream stream;
++    stream.nodeId = m_stream->nodeId();
++    stream.map = QVariantMap({{QLatin1String("size"), m_outputMap.value(m_output).resolution()},
++                              // FIXME: We currently support only screen sharing. This will need to be
++                              // changed based on the source type once window sharing is supported
++                              {QLatin1String("source_type"), static_cast<uint>(ScreenCastPortal::Monitor)}});
++    return QVariant::fromValue<WaylandIntegrationPrivate::Streams>({stream});
++}
++
++void WaylandIntegration::WaylandIntegrationPrivate::initDrm()
++{
++    m_drmFd = open("/dev/dri/renderD128", O_RDWR);
++
++    if (m_drmFd == -1) {
++        qCWarning(XdgDesktopPortalKdeWaylandIntegration) << "Cannot open render node: " << strerror(errno);
++        return;
++    }
++
++    m_gbmDevice = gbm_create_device(m_drmFd);
++
++    if (!m_gbmDevice) {
++        qCWarning(XdgDesktopPortalKdeWaylandIntegration) << "Cannot create GBM device: " << strerror(errno);
++    }
++
++    initEGL();
++}
++
++void WaylandIntegration::WaylandIntegrationPrivate::initEGL()
++{
++   // Get the list of client extensions
++    const char* clientExtensionsCString = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
++    const QByteArray clientExtensionsString = QByteArray::fromRawData(clientExtensionsCString, qstrlen(clientExtensionsCString));
++    if (clientExtensionsString.isEmpty()) {
++        // If eglQueryString() returned NULL, the implementation doesn't support
++        // EGL_EXT_client_extensions. Expect an EGL_BAD_DISPLAY error.
++        qCWarning(XdgDesktopPortalKdeWaylandIntegration) << "No client extensions defined! " << formatGLError(eglGetError());
++        return;
++    }
++
++    m_egl.extensions = clientExtensionsString.split(' ');
++
++    // Use eglGetPlatformDisplayEXT() to get the display pointer
++    // if the implementation supports it.
++    if (!m_egl.extensions.contains(QByteArrayLiteral("EGL_EXT_platform_base")) ||
++            !m_egl.extensions.contains(QByteArrayLiteral("EGL_MESA_platform_gbm"))) {
++        qCWarning(XdgDesktopPortalKdeWaylandIntegration) << "One of required EGL extensions is missing";
++        return;
++    }
++
++    m_egl.display = eglGetPlatformDisplayEXT(EGL_PLATFORM_GBM_MESA, m_gbmDevice, nullptr);
++
++    if (m_egl.display == EGL_NO_DISPLAY) {
++        qCWarning(XdgDesktopPortalKdeWaylandIntegration) << "Error during obtaining EGL display: " << formatGLError(eglGetError());
++        return;
++    }
++
++    EGLint major, minor;
++    if (eglInitialize(m_egl.display, &major, &minor) == EGL_FALSE) {
++        qCWarning(XdgDesktopPortalKdeWaylandIntegration) << "Error during eglInitialize: " << formatGLError(eglGetError());
++        return;
++    }
++
++    if (eglBindAPI(EGL_OPENGL_API) == EGL_FALSE) {
++        qCWarning(XdgDesktopPortalKdeWaylandIntegration) << "bind OpenGL API failed";
++        return;
++    }
++
++    m_egl.context = eglCreateContext(m_egl.display, nullptr, EGL_NO_CONTEXT, nullptr);
++
++    if (m_egl.context == EGL_NO_CONTEXT) {
++        qCWarning(XdgDesktopPortalKdeWaylandIntegration) << "Couldn't create EGL context: " << formatGLError(eglGetError());
++        return;
++    }
++
++    qCDebug(XdgDesktopPortalKdeWaylandIntegration) << "Egl initialization succeeded";
++    qCDebug(XdgDesktopPortalKdeWaylandIntegration) << QStringLiteral("EGL version: %1.%2").arg(major).arg(minor);
++
++    m_eglInitialized = true;
+ }
+ 
+ void WaylandIntegration::WaylandIntegrationPrivate::authenticate()
+@@ -395,6 +527,8 @@ void WaylandIntegration::WaylandIntegrationPrivate::authenticate()
+     }
+ }
+ 
++#endif
++
+ KWayland::Client::PlasmaWindowManagement * WaylandIntegration::WaylandIntegrationPrivate::plasmaWindowManagement()
+ {
+     return m_windowManagement;
+@@ -435,23 +569,30 @@ void WaylandIntegration::WaylandIntegrationPrivate::initWayland()
+     m_connection->initConnection();
+ }
+ 
++#if HAVE_PIPEWIRE_SUPPORT
+ void WaylandIntegration::WaylandIntegrationPrivate::addOutput(quint32 name, quint32 version)
+ {
+-    QSharedPointer<KWayland::Client::Output> output(new KWayland::Client::Output(this));
++    KWayland::Client::Output *output = new KWayland::Client::Output(this);
+     output->setup(m_registry->bindOutput(name, version));
+ 
+-    connect(output.data(), &KWayland::Client::Output::changed, this, [this, name, version, output] () {
++    connect(output, &KWayland::Client::Output::changed, this, [this, name, version, output] () {
+         qCDebug(XdgDesktopPortalKdeWaylandIntegration) << "Adding output:";
+         qCDebug(XdgDesktopPortalKdeWaylandIntegration) << "    manufacturer: " << output->manufacturer();
+         qCDebug(XdgDesktopPortalKdeWaylandIntegration) << "    model: " << output->model();
+         qCDebug(XdgDesktopPortalKdeWaylandIntegration) << "    resolution: " << output->pixelSize();
+ 
+         WaylandOutput portalOutput;
+-        portalOutput.setOutput(output);
++        portalOutput.setManufacturer(output->manufacturer());
++        portalOutput.setModel(output->model());
++        portalOutput.setOutputType(output->model());
++        portalOutput.setGlobalPosition(output->globalPosition());
++        portalOutput.setResolution(output->pixelSize());
+         portalOutput.setWaylandOutputName(name);
+         portalOutput.setWaylandOutputVersion(version);
+ 
+         m_outputMap.insert(name, portalOutput);
++
++        delete output;
+     });
+ }
+ 
+@@ -463,6 +604,54 @@ void WaylandIntegration::WaylandIntegrationPrivate::removeOutput(quint32 name)
+     qCDebug(XdgDesktopPortalKdeWaylandIntegration) << "    model: " << output.model();
+ }
+ 
++void WaylandIntegration::WaylandIntegrationPrivate::processBuffer(const KWayland::Client::RemoteBuffer* rbuf)
++{
++    QScopedPointer<const KWayland::Client::RemoteBuffer> guard(rbuf);
++
++    auto gbmHandle = rbuf->fd();
++    auto width = rbuf->width();
++    auto height = rbuf->height();
++    auto stride = rbuf->stride();
++    auto format = rbuf->format();
++
++    qCDebug(XdgDesktopPortalKdeWaylandIntegration) << QStringLiteral("Incoming GBM fd %1, %2x%3, stride %4, fourcc 0x%5").arg(gbmHandle).arg(width).arg(height).arg(stride).arg(QString::number(format, 16));
++
++    if (!m_streamingEnabled) {
++        qCDebug(XdgDesktopPortalKdeWaylandIntegration) << "Streaming is disabled";
++        close(gbmHandle);
++        return;
++    }
++
++    if (m_lastFrameTime.isValid() &&
++        m_lastFrameTime.msecsTo(QDateTime::currentDateTime()) < (1000 / m_stream->framerate())) {
++        close(gbmHandle);
++        return;
++    }
++
++    if (!gbm_device_is_format_supported(m_gbmDevice, format, GBM_BO_USE_SCANOUT)) {
++        qCWarning(XdgDesktopPortalKdeWaylandIntegration) << "Failed to process buffer: GBM format is not supported by device!";
++        close(gbmHandle);
++        return;
++    }
++
++    // import GBM buffer that was passed from KWin
++    gbm_import_fd_data importInfo = {gbmHandle, width, height, stride, format};
++    gbm_bo *imported = gbm_bo_import(m_gbmDevice, GBM_BO_IMPORT_FD, &importInfo, GBM_BO_USE_SCANOUT);
++    if (!imported) {
++        qCWarning(XdgDesktopPortalKdeWaylandIntegration) << "Failed to process buffer: Cannot import passed GBM fd - " << strerror(errno);
++        close(gbmHandle);
++        return;
++    }
++
++    if (m_stream->recordFrame(imported, width, height, stride)) {
++        m_lastFrameTime = QDateTime::currentDateTime();
++    }
++
++    gbm_bo_destroy(imported);
++    close(gbmHandle);
++}
++#endif
++
+ void WaylandIntegration::WaylandIntegrationPrivate::setupRegistry()
+ {
+     m_queue = new KWayland::Client::EventQueue(this);
+@@ -470,17 +659,14 @@ void WaylandIntegration::WaylandIntegrationPrivate::setupRegistry()
+ 
+     m_registry = new KWayland::Client::Registry(this);
+ 
++#if HAVE_PIPEWIRE_SUPPORT
+     connect(m_registry, &KWayland::Client::Registry::fakeInputAnnounced, this, [this] (quint32 name, quint32 version) {
+         m_fakeInput = m_registry->createFakeInput(name, version, this);
+     });
+     connect(m_registry, &KWayland::Client::Registry::outputAnnounced, this, &WaylandIntegrationPrivate::addOutput);
+     connect(m_registry, &KWayland::Client::Registry::outputRemoved, this, &WaylandIntegrationPrivate::removeOutput);
++#endif
+ 
+-    connect(m_registry, &KWayland::Client::Registry::interfaceAnnounced, this, [this] (const QByteArray &interfaceName, quint32 name, quint32 version) {
+-        if (interfaceName != "zkde_screencast_unstable_v1")
+-            return;
+-        m_screencasting = new Screencasting(m_registry, name, version, this);
+-    });
+     connect(m_registry, &KWayland::Client::Registry::plasmaWindowManagementAnnounced, this, [this] (quint32 name, quint32 version) {
+         m_windowManagement = m_registry->createPlasmaWindowManagement(name, version, this);
+         Q_EMIT waylandIntegration()->plasmaWindowManagementInitialized();
+diff --git a/src/waylandintegration.h b/src/waylandintegration.h
+index 13680da..234265d 100644
+--- a/src/waylandintegration.h
++++ b/src/waylandintegration.h
+@@ -26,18 +26,26 @@
+ #include <QSize>
+ #include <QVariant>
+ 
+-#include <KWayland/Client/output.h>
+-#include <screencasting.h>
++#if HAVE_PIPEWIRE_SUPPORT
++#include <gbm.h>
++#include <epoxy/egl.h>
++#include <epoxy/gl.h>
++#endif
+ 
+ namespace KWayland {
+     namespace Client {
+         class PlasmaWindowManagement;
+-        class ScreencastingSource;
+     }
+ }
+ 
+ namespace WaylandIntegration
+ {
++#if HAVE_PIPEWIRE_SUPPORT
++struct EGLStruct {
++    QList<QByteArray> extensions;
++    EGLDisplay display = EGL_NO_DISPLAY;
++    EGLContext context = EGL_NO_CONTEXT;
++};
+ 
+ class WaylandOutput
+ {
+@@ -47,17 +55,20 @@ public:
+         Monitor,
+         Television
+     };
+-    QString manufacturer() const { return m_output->manufacturer(); }
+-    QString model() const { return m_output->model(); }
+-    QPoint globalPosition() const { return m_output->globalPosition(); }
+-    QSize resolution() const { return m_output->pixelSize(); }
+-    OutputType outputType() const { return m_outputType; }
++    void setManufacturer(const QString &manufacturer) { m_manufacturer = manufacturer; }
++    QString manufacturer() const { return m_manufacturer; }
+ 
+-    QSharedPointer<KWayland::Client::Output> output() const { return m_output; }
+-    void setOutput(const QSharedPointer<KWayland::Client::Output> &output) {
+-        m_output = output;
+-        setOutputType(output->model());
+-    }
++    void setModel(const QString &model) { m_model = model; }
++    QString model() const { return m_model; }
++
++    void setGlobalPosition(const QPoint &pos) { m_globalPosition = pos; }
++    QPoint globalPosition() const { return m_globalPosition; }
++
++    void setResolution(const QSize &resolution) { m_resolution = resolution; }
++    QSize resolution() const { return m_resolution; }
++
++    void setOutputType(const QString &type);
++    OutputType outputType() const { return m_outputType; }
+ 
+     void setWaylandOutputName(int outputName) { m_waylandOutputName = outputName; }
+     int waylandOutputName() const { return m_waylandOutputName; }
+@@ -66,32 +77,40 @@ public:
+     int waylandOutputVersion() const { return m_waylandOutputVersion; }
+ 
+ private:
+-    void setOutputType(const QString &model);
+-    OutputType m_outputType = Monitor;
+-    QSharedPointer<KWayland::Client::Output> m_output;
++    QString m_manufacturer;
++    QString m_model;
++    QPoint m_globalPosition;
++    QSize m_resolution;
++    OutputType m_outputType;
+ 
+     // Needed for later output binding
+     int m_waylandOutputName;
+     int m_waylandOutputVersion;
+ };
++#endif
+ 
+ class WaylandIntegration : public QObject
+ {
+     Q_OBJECT
+ Q_SIGNALS:
++#if HAVE_PIPEWIRE_SUPPORT
+     void newBuffer(uint8_t *screenData);
++#endif
+     void plasmaWindowManagementInitialized();
+ };
+ 
++#if HAVE_PIPEWIRE_SUPPORT
++    const char * formatGLError(GLenum err);
++
+     void authenticate();
+ 
++    bool isEGLInitialized();
+     bool isStreamingEnabled();
+     bool isStreamingAvailable();
+ 
+     void startStreamingInput();
+-    bool startStreamingOutput(quint32 outputName, Screencasting::CursorMode mode);
+-    bool startStreamingWindow(const QByteArray &winid);
+-    void stopAllStreaming();
++    bool startStreaming(quint32 outputName);
++    void stopStreaming();
+ 
+     void requestPointerButtonPress(quint32 linuxButton);
+     void requestPointerButtonRelease(quint32 linuxButton);
+@@ -101,9 +120,10 @@ Q_SIGNALS:
+ 
+     void requestKeyboardKeycode(int keycode, bool state);
+ 
++    EGLStruct egl();
+     QMap<quint32, WaylandOutput> screens();
+     QVariant streams();
+-
++#endif
+     void init();
+ 
+     KWayland::Client::PlasmaWindowManagement *plasmaWindowManagement();
+diff --git a/src/waylandintegration_p.h b/src/waylandintegration_p.h
+index d8bf357..01bd37a 100644
+--- a/src/waylandintegration_p.h
++++ b/src/waylandintegration_p.h
+@@ -25,10 +25,10 @@
+ 
+ #include <QDateTime>
+ #include <QMap>
+-#include <QVector>
+ 
+-class Screencasting;
+-class ScreencastingStream;
++#if HAVE_PIPEWIRE_SUPPORT
++class ScreenCastStream;
++#endif
+ 
+ namespace KWayland {
+     namespace Client {
+@@ -37,9 +37,12 @@ namespace KWayland {
+         class Registry;
+         class PlasmaWindow;
+         class PlasmaWindowManagement;
++#if HAVE_PIPEWIRE_SUPPORT
+         class FakeInput;
+         class RemoteBuffer;
+         class Output;
++        class RemoteAccessManager;
++#endif
+     }
+ }
+ 
+@@ -69,28 +72,27 @@ private:
+     KWayland::Client::Registry *m_registry = nullptr;
+     KWayland::Client::PlasmaWindowManagement *m_windowManagement = nullptr;
+ 
++#if HAVE_PIPEWIRE_SUPPORT
+ public:
+-    struct Stream {
+-        ScreencastingStream *stream = nullptr;
++    typedef struct {
+         uint nodeId;
+         QVariantMap map;
+-
+-        void close();
+-    };
+-    typedef QVector<Stream> Streams;
++    } Stream;
++    typedef QList<Stream> Streams;
+ 
+     void authenticate();
+ 
++    void initDrm();
++    void initEGL();
++ 
++    bool isEGLInitialized() const;
+     bool isStreamingEnabled() const;
+     bool isStreamingAvailable() const;
+ 
++    void bindOutput(int outputName, int outputVersion);
+     void startStreamingInput();
+-
+-    bool startStreaming(ScreencastingStream *stream, QSharedPointer<KWayland::Client::Output> output);
+-    bool startStreamingOutput(quint32 outputName, Screencasting::CursorMode mode);
+-    bool startStreamingWindow(const QByteArray &winid);
+-    void stopStreaming(uint32_t nodeid);
+-    void stopAllStreaming();
++    bool startStreaming(quint32 outputName);
++    void stopStreaming();
+ 
+     void requestPointerButtonPress(quint32 linuxButton);
+     void requestPointerButtonRelease(quint32 linuxButton);
+@@ -98,22 +100,25 @@ public:
+     void requestPointerMotionAbsolute(const QPointF &pos);
+     void requestPointerAxisDiscrete(Qt::Orientation axis, qreal delta);
+     void requestKeyboardKeycode(int keycode, bool state);
+-    void bindOutput(int outputName, int outputVersion);
+ 
++    EGLStruct egl();
+     QMap<quint32, WaylandOutput> screens();
+     QVariant streams();
+ 
+ protected Q_SLOTS:
+     void addOutput(quint32 name, quint32 version);
+     void removeOutput(quint32 name);
++    void processBuffer(const KWayland::Client::RemoteBuffer *rbuf);
+ 
+ private:
++    bool m_eglInitialized = false;
++    bool m_streamingEnabled = false;
+     bool m_streamInput = false;
+     bool m_waylandAuthenticationRequested = false;
+ 
+     quint32 m_output;
+     QDateTime m_lastFrameTime;
+-    QVector<Stream> m_streams;
++    ScreenCastStream *m_stream = nullptr;
+ 
+     QPoint m_streamedScreenPosition;
+ 
+@@ -121,7 +126,13 @@ private:
+     QList<KWayland::Client::Output*> m_bindOutputs;
+ 
+     KWayland::Client::FakeInput *m_fakeInput = nullptr;
+-    Screencasting *m_screencasting = nullptr;
++    KWayland::Client::RemoteAccessManager *m_remoteAccessManager = nullptr;
++
++    qint32 m_drmFd = 0; // for GBM buffer mmap
++    gbm_device *m_gbmDevice = nullptr; // for passed GBM buffer retrieval
++
++    EGLStruct m_egl;
++#endif
+ };
+ 
+ }
