@@ -606,7 +606,7 @@ proc kf5.set_project {project} {
     categories-append       ${kf5::cat}
     distname                ${project}-${version}
     if {[info exists kf5.category]} {
-        homepage            http://www.kde.org/${kf5.virtualPath}/${kf5.category}/${project}
+        homepage            http://apps.kde.org/categories/${kf5.category}/
     } else {
         homepage            http://projects.kde.org/projects/${kf5.virtualPath}/${project}
     }

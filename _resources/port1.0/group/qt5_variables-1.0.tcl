@@ -428,5 +428,11 @@ namespace eval qt5pg {
             lib/pkgconfig/Qt5X11Extras.pc
             ""
         }
+        set qt5_component_lib(qtwayland) {
+            5.2
+            6.0
+            lib/pkgconfig/Qt5WaylandClient.pc
+            ""
+        }
     }
 }

@@ -523,7 +523,7 @@ set qt5.kde_stubports \
             qtlocation qtxmlpatterns qtcanvas3d qtgraphicaleffects qtmultimedia \
             qtscript qt3d qtconnectivity qttools qtquickcontrols qtquickcontrols2 \
             qtenginio qtwebkit-examples qtwebsockets qttranslations mysql-plugin \
-            sqlite-plugin \
+            sqlite-plugin qtwayland \
             docs
 }
 # new in 5.7.1: qtcharts qtdatavis3d qtgamepad qtpurchasing qtscxml
