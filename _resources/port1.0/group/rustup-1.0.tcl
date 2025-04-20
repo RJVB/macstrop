@@ -210,9 +210,9 @@ namespace eval rustup {
                 }
             }
             file delete -force ${rustup::home}/Cargo/bin/rustup-init
-        }
-        if {[file exists ${prefix}/bin/cargo-cache-autoclean]} {
-            ln -sf ${prefix}/bin/cargo-cache-autoclean ${rustup::home}/Cargo/bin/
+            if {[file exists ${prefix}/bin/cargo-cache-autoclean]} {
+                ln -sf ${prefix}/bin/cargo-cache-autoclean ${rustup::home}/Cargo/bin/
+            }
         }
 #         platform linux {
 #             # rust builds can link libgcc_s explicitly but there isn't always a libgcc_s.so on the linker path
