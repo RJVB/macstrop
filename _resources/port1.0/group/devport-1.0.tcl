@@ -39,7 +39,7 @@ default mainport_name               {${name}}
 default devport_name                {${mainport_name}-dev}
 default devport_content             ""
 default devport_description         {"Development headers and libraries for ${mainport_name}"}
-default devport_long_description    {"${long_description}\nThis installs the development headers and libraries."}
+default devport_long_description    {"${long_description}\nThis installs the development headers and linker/static libraries."}
 # an optionvar to declare variants that would otherwise be missing from the devport
 # because the devport doesn't parse the entire Portfile, e.g. because of
 ## create_devport port:${name}
@@ -176,36 +176,39 @@ proc create_devport_content_archive {} {
 }
 
 # registers content that standard devports will contain
-proc register_devport_standard_content {} {
+proc register_devport_standard_content {{thePrefix {}}} {
     global subport destroot prefix mainport_name devport_name
+    if {${thePrefix} eq {}} {
+        set thePrefix ${prefix}
+    }
     if {${subport} eq "${mainport_name}"} {
         ui_msg "---->  Transferring developer content to port:${devport_name}"
         ui_debug "Finding and registering standard content for the devport"
-        foreach h [glob -nocomplain ${destroot}${prefix}/include/*] {
+        foreach h [glob -nocomplain ${destroot}${thePrefix}/include/*] {
             ui_debug "\theader: ${h}"
             devport_content-append [string map [list ${destroot} ""] ${h}]
         }
-        foreach h [glob -nocomplain ${destroot}${prefix}/lib/lib*.a] {
+        foreach h [glob -nocomplain ${destroot}${thePrefix}/lib/lib*.a] {
             ui_debug "\tstatic library: ${h}"
             devport_content-append [string map [list ${destroot} ""] ${h}]
         }
-        foreach h [glob -nocomplain ${destroot}${prefix}/lib/lib*.la] {
+        foreach h [glob -nocomplain ${destroot}${thePrefix}/lib/lib*.la] {
             ui_debug "\t.la library: ${h}"
             devport_content-append [string map [list ${destroot} ""] ${h}]
         }
-        foreach h [glob -nocomplain ${destroot}${prefix}/lib/lib*.dylib] {
+        foreach h [glob -nocomplain ${destroot}${thePrefix}/lib/lib*.dylib] {
             if {![string match -nocase {lib*.[0-9.]*.dylib} [file tail ${h}]] && [file type ${h}] eq "link"} {
                 ui_debug "\tMac shared linker library: ${h}"
                 devport_content-append [string map [list ${destroot} ""] ${h}]
             }
         }
-        foreach h [glob -nocomplain ${destroot}${prefix}/lib/lib*.so] {
+        foreach h [glob -nocomplain ${destroot}${thePrefix}/lib/lib*.so] {
             if {[file type ${h}] eq "link"} {
                 ui_debug "\tstandard Unix shared linker library: ${h}"
                 devport_content-append [string map [list ${destroot} ""] ${h}]
             }
         }
-        foreach h [glob -nocomplain ${destroot}${prefix}/lib/pkgconfig/*] {
+        foreach h [glob -nocomplain ${destroot}${thePrefix}/lib/pkgconfig/*] {
             ui_debug "\tpkg-config file: ${h}"
             devport_content-append [string map [list ${destroot} ""] ${h}]
         }
