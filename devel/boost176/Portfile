@@ -11,8 +11,7 @@ platform darwin {
 }
 PortGroup       save_configure_cmd 1.0
 
-# TODO: I will probably need to add an rpath specification to the LDFLAGS in the boost PG, on Linux
-version         1.71.0
+version         1.76.0
 
 set branch      [join [lrange [split ${version} .] 0 1] .]
 set tag         [string map {. {}} ${branch}]
@@ -23,9 +22,9 @@ dist_subdir     boost
 
 # Revision is set below in the `if {$subport eq $name} { ... }` statement
 # The boost-numpy subport has its own revision number
-checksums       rmd160 a46b886ca26993610c84615fca4340ad3f955f81 \
-                sha256 d73a8da01e8bf8c7eda40b4c84915071a8c8a0df4a6734537ddde4a8580524ee
-#                 size   100124647
+checksums       rmd160  b1da5df10d7e0fd07d864973f106d4376b7e375b \
+                sha256  f0397ba6e982c4450f27bf32a2a83292aba035b827a5623a14636ea583318c41
+#                 size    110073117
 
 license         Boost-1
 categories      devel
@@ -115,34 +114,46 @@ patchfiles-append patch-export_serialization_explicit_template_instantiations.di
 # p64, p32).
 patchfiles-append patch-revert-lib-name-tagged.diff
 
-# see https://trac.macports.org/wiki/UsingTheRightCompiler
-patchfiles-append patch-compiler.diff
-if {${subport} ne "${name}-cmake_scripts"} {
-    post-patch {
-        reinplace "s|__MACPORTS_CXX__|${configure.cxx}|g" \
-                    ${worksrcpath}/tools/build/src/tools/clang-darwin.jam \
-                    ${worksrcpath}/tools/build/src/tools/clang-linux.jam \
-                    ${worksrcpath}/tools/build/src/tools/gcc.jam \
-                    ${worksrcpath}/tools/build/src/tools/gcc.py
-        reinplace "s|__MACPORTS_CC__|${configure.cc}|g" \
-                    ${worksrcpath}/tools/build/src/tools/gcc.jam \
-                    ${worksrcpath}/tools/build/src/tools/gcc.py
-    }
+# Availability.h -> AvailabilityMacros.h on Tiger
+# The attempted fix:
+# https://github.com/boostorg/core/commit/128d9314d6f814930400c46c9afd34399d19132b
+# is insufficient because GCC 6/7 still defines __cpp_lib_uncaught_exceptions
+# in the absence of __STRICT_ANSI__
+platform darwin 8 {
+    patchfiles-append patch-tiger-availability.diff
 }
 
-# see https://github.com/boostorg/build/issues/440
-patchfiles-append patch-clang_version.diff
+# see https://trac.macports.org/wiki/UsingTheRightCompiler
+patchfiles-append patch-compiler.diff
+post-patch {
+    reinplace "s|__MACPORTS_CXX__|${configure.cxx}|g" \
+                ${worksrcpath}/tools/build/src/tools/clang-darwin.jam \
+                ${worksrcpath}/tools/build/src/tools/clang-linux.jam \
+                ${worksrcpath}/tools/build/src/tools/gcc.jam \
+                ${worksrcpath}/tools/build/src/tools/gcc.py
+    reinplace "s|__MACPORTS_CC__|${configure.cc}|g" \
+                ${worksrcpath}/tools/build/src/tools/gcc.jam \
+                ${worksrcpath}/tools/build/src/tools/gcc.py
+}
 
-# temporary patch to add basic support for arm64,
-# both alone as well as +universal
-patchfiles-append patch-add-support-for-arm64.diff
+# Build issue on some older systems
+# ld: warning: option -s is obsolete and being ignored
+# ld: internal error: atom not found in symbolIndex(__ZNSt3__1plIcNS_11char_traitsIcEENS_9allocatorIcEEEENS_12basic_stringIT_T0_T1_EERKS9_SB_) for architecture x86_64
+platform darwin {
+    patchfiles-append patch-b2-build-older-OSes.diff
+}
 
 # Upstream fix to allow building Boost with Clang 16+. Included in versions v181+.
 # https://trac.macports.org/ticket/67324
 patchfiles-append patch-boost-clang16-cpp17-compat.diff
 
-# Fix building with C++17
-patchfiles-append patch-boost-cpp17-compat.diff
+# Upstream c++17 fix: https://github.com/boostorg/functional/commit/6a573e4
+patchfiles-append patch-boost-functional.diff
+
+# Upstream c++17 fix: https://github.com/boostorg/math/commit/1ec5c98d80de97f9e962c5627e1a0e6096099894
+# https://trac.macports.org/ticket/71647
+patchfiles-append patch-math-tools-utility.diff
+
 proc new_jam {} {
     global worksrcpath
     file delete ${worksrcpath}/user-config.jam
@@ -217,40 +228,38 @@ pre-configure {
     new_jam
 }
 
-if {${subport} ne "${name}-cmake_scripts"} {
-    post-configure {
+post-configure {
 
-        # rewrite this reinplace such that it won't apply recursively
-        reinplace -E "s|-install_name \"\\\$|-install_name \"${bprefix}/lib/\$|" \
-            ${worksrcpath}/tools/build/src/tools/darwin.jam
+    reinplace -E "s|-install_name \"|&${bprefix}/lib/|" \
+        ${worksrcpath}/tools/build/src/tools/darwin.jam
 
-        set compileflags ""
-        platform darwin {
-            if {[string length ${configure.sdkroot}] != 0} {
-                set compileflags "<compileflags>\"-isysroot ${configure.sdkroot}\""
-            }
+    set compileflags ""
+    platform darwin {
+        if {[string length ${configure.sdkroot}] != 0} {
+            set compileflags "<compileflags>\"-isysroot ${configure.sdkroot}\""
         }
-
-        set cxx_stdlibflags {}
-        if {[string match *clang* ${configure.cxx}] && ${configure.cxx_stdlib} ne ""} {
-            set cxx_stdlibflags -stdlib=${configure.cxx_stdlib}
-        }
-
-        # see https://trac.macports.org/ticket/55857
-        # see https://svn.boost.org/trac10/ticket/13454
-        if {${os.platform} eq "darwin"} {
-            write_jam "using darwin : : ${configure.cxx} : <asmflags>\"${configure.cflags} [get_canonical_archflags cc]\" <cflags>\"${configure.cflags} [get_canonical_archflags cc]\" <cxxflags>\"${configure.cxxflags} [get_canonical_archflags cxx] ${cxx_stdlibflags}\" ${compileflags} <linkflags>\"${configure.ldflags} ${cxx_stdlibflags}\" : ;"
-        } elseif {${os.platform} eq "linux"} {
-            # somehow the user-config.jam approach raises an error about parameters already set, so we
-            # achieve the same thing by patching project-config.jam:
-            if {[string match *clang* ${configure.cxx}]} {
-                reinplace \
-                    "s|using clang-linux \;|using clang-linux : : ${configure.cxx} : <asmflags>\"${configure.cflags}\" <cflags>\"${configure.cflags}\" <cxxflags>\"${configure.cxxflags} ${cxx_stdlibflags}\" ${compileflags} <linkflags>\"${configure.ldflags} ${cxx_stdlibflags}\" : \;|g" \
-                    ${worksrcpath}/project-config.jam
-            }
-        }
-
     }
+
+    set cxx_stdlibflags {}
+    if {[string match *clang* ${configure.cxx}] && ${configure.cxx_stdlib} ne ""} {
+        set cxx_stdlibflags -stdlib=${configure.cxx_stdlib}
+    }
+
+    # see https://trac.macports.org/ticket/55857
+    # see https://svn.boost.org/trac10/ticket/13454
+    if {${os.platform} eq "darwin"} {
+        write_jam "using darwin : : ${configure.cxx} : <asmflags>\"${configure.cflags} [get_canonical_archflags cc]\" <cflags>\"${configure.cflags} [get_canonical_archflags cc]\" <cxxflags>\"${configure.cxxflags} [get_canonical_archflags cxx] ${cxx_stdlibflags}\" ${compileflags} <linkflags>\"${configure.ldflags} ${cxx_stdlibflags}\" : ;"
+    } elseif {${os.platform} eq "linux"} {
+        # somehow the user-config.jam approach raises an error about parameters already set, so we
+        # achieve the same thing by patching project-config.jam:
+        reinplace \
+            "s|using clang-linux \;|using clang-linux : : ${configure.cxx} : <asmflags>\"${configure.cflags}\" <cflags>\"${configure.cflags}\" <cxxflags>\"${configure.cxxflags} ${cxx_stdlibflags}\" ${compileflags} <linkflags>\"${configure.ldflags} ${cxx_stdlibflags}\" : \;|g" \
+            ${worksrcpath}/project-config.jam
+        reinplace \
+            "s|using gcc \;|using gcc : : ${configure.cxx} : <asmflags>\"${configure.cflags}\" <cflags>\"${configure.cflags}\" <cxxflags>\"${configure.cxxflags} ${cxx_stdlibflags}\" ${compileflags} <linkflags>\"${configure.ldflags} ${cxx_stdlibflags}\" : \;|g" \
+            ${worksrcpath}/project-config.jam
+    }
+
 }
 
 build.cmd       ${worksrcpath}/b2
@@ -336,8 +345,6 @@ foreach s ${pythons_suffixes} {
     set i [lsearch -exact ${pythons_ports} ${p}]
     set c [lreplace ${pythons_ports} ${i} ${i}]
     if { ${s} > 30 } { set bppatch "patch-boost-python3.diff" } else { set bppatch "" }
-    # https://github.com/boostorg/python/commit/cbd2d9f033c61d29d0a1df14951f4ec91e7d05cd?diff=unified
-    if { ${s} > 39 } { set fopenpatch "avoid-private-fopen-python310.diff" } else { set fopenpatch "" }
     variant ${p} description "Build Boost.Python for Python ${v}" conflicts {*}${c} debug "
 
         # There is a conflict with python and debug support, so we should really change the 'variant' line above
@@ -352,13 +359,12 @@ foreach s ${pythons_suffixes} {
             configure.cxxflags-append \
                 -I${prefix}/include/python${v}m
         }
-        if {\"${subport}\" ne \"${name}-cmake_scripts\"} {
-            patchfiles-append ${bppatch} ${fopenpatch} patch-tools-build-src-tools-python.jam.diff \
-                            patch-tools-build-src-tools-python-2.jam.diff
+        patchfiles-append   ${bppatch} patch-tools-build-src-tools-python.jam.diff
+        patchfiles-append   patch-tools-build-src-tools-python-2.jam.diff
+        patchfiles-append   patch-python-enum_type.diff
 
-            post-patch {
-                reinplace s|@FRAMEWORKS_DIR@|${frameworks_dir}| ${worksrcpath}/tools/build/src/tools/python.jam
-            }
+        post-patch {
+            reinplace s|@FRAMEWORKS_DIR@|${frameworks_dir}| ${worksrcpath}/tools/build/src/tools/python.jam
         }
     "
 }
@@ -404,7 +410,7 @@ variant no_single description {Disable building single-threaded libraries} {
 }
 
 subport ${name}-numpy {
-    revision 9
+    revision 8
     description Boost.Numpy library
     long_description {*}${description}
     depends_lib port:boost${tag}
@@ -426,11 +432,8 @@ subport ${name}-numpy {
     }
 }
 
-if {$subport eq $name || ${subport} eq "${name}-dev"} {
-    revision 11
-}
-
 if {$subport eq $name} {
+    revision 13
 
     patchfiles-append patch-disable-numpy-extension.diff
 
@@ -454,7 +457,7 @@ if {$subport eq $name} {
     }
 
     post-destroot {
-        delete file {*}[glob -nocomplain ${destroot}${bprefix}/include/boost/python/numpy*]
+        delete file {*}[glob ${destroot}${bprefix}/include/boost/python/numpy*]
         platform linux {
             # the build process has a habit of stripping out our -rpath definitions so add them again:
             foreach l [glob ${destroot}${bprefix}/lib/lib*.so.${version}] {
@@ -529,9 +532,6 @@ if {$subport eq $name} {
 }
 
 platform darwin {
-    if {![info exists universal_possible]} {
-        set universal_possible [expr {${os.universal_supported} && [llength ${configure.universal_archs}] >= 2}]
-    }
     if {!${universal_possible} || ![variant_isset universal]} {
         if {[lsearch ${configure.build_arch} arm*] != -1} {
             build.args-append address-model=64 architecture=arm
@@ -566,8 +566,8 @@ platform darwin {
 
             # allow universal building on arm/Intel
             # https://trac.macports.org/ticket/64954
-            # https://trac.macports.org/ticket/66686
-            patchfiles-append patch-boost171-universal-arm-intel.diff
+            patchfiles-append patch-boost176-universal-arm64-x86_64-fix.diff \
+                              patch-boost176-no-abi-asm_sources.diff
 
         } else {
             if {[lsearch ${configure.universal_archs} ppc*] != -1} {
@@ -631,24 +631,9 @@ if {${subport} eq "${name}" || ${subport} eq "${name}-dev"} {
     create_devport      port:${name}
 
     if {![is_mainport]} {
-        pre-activate {
-            set port_conflict_name ${name}-cmake_scripts
-
-            if { ![catch {set port_conflict_ver_info [lindex [registry_active ${port_conflict_name}] 0]}] } {
-                ui_info "${port_conflict_name} installed; deactivating"
-                registry_deactivate_composite ${port_conflict_name} "" [list ports_nodepcheck 1]
-            }
-        }
         # nothing else to be done
         return
     }
-}
-
-subport ${name}-cmake_scripts {
-    description         "CMake scripts for port:${name}"
-    long_description    {*}${description}
-    replaced_by         ${name}-dev
-    PortGroup           obsolete 1.0
 }
 
 
