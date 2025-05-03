@@ -203,8 +203,13 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
             } else {
                 set lto_flags           "-flto"
             }
-            if {[tbool LTO.fat_LTO_Objects] && (${LTO::mp_compiler_version} >= 17)} {
-                set lto_flags           "${lto_flags} -ffat-lto-objects"
+            if {[tbool LTO.fat_LTO_Objects]} {
+                if {${LTO::mp_compiler_version} >= 17} {
+                    set lto_flags       "${lto_flags} -ffat-lto-objects"
+                } elseif {[tbool LTO.require_fat_LTO_Objects]} {
+                    ui_error "Port ${subport} requires fat LTO objects which are only supported by clang 17 and up"
+                    return -code error "compiler doesn't support fat LTO objects"
+                }
             }
             set objc_lto_flags          ${lto_flags}
         } else {
