@@ -356,6 +356,8 @@ proc create_devport {dependency {auto_generate_content {}}} {
         checksum {}
         extract {}
         use_configure   no
+        # no need to let "base" add any compiler dependencies!
+        configure.compiler.add_deps no
         configure       {}
         patchfiles
         build           {}
