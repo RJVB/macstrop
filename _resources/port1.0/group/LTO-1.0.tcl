@@ -211,7 +211,6 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
                     return -code error "compiler doesn't support fat LTO objects"
                 }
             }
-            set objc_lto_flags          ${lto_flags}
         } else {
             if {${LTO.gcc_lto_jobs} ne ""} {
                 set LTO::gcc_lto_jobs "=${LTO.gcc_lto_jobs}"
@@ -220,15 +219,19 @@ if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
             }
             if {${os.platform} eq "linux"} {
                 set lto_flags           "-ftracer -flto${LTO::gcc_lto_jobs} -fuse-linker-plugin"
-                set objc_lto_flags      ${lto_flags}
             } elseif {${configure.compiler} ne "cc"} {
                 set lto_flags           "-ftracer -flto${LTO::gcc_lto_jobs}"
-                set objc_lto_flags      ""
             }
             if {[tbool LTO.fat_LTO_Objects]} {
                 set lto_flags           "${lto_flags} -ffat-lto-objects"
-                set objc_lto_flags      ""
             }
+        }
+        # let's see if we can make do with only objc_lto_flags and don't need objcxx_lto_flags as well;
+        # assume that projects use either ObjC or ObjC++
+        if {${configure.objc} eq ${configure.cc} || ${configure.objcxx} eq ${configure.cxx}} {
+            set objc_lto_flags          ${lto_flags}
+        } else {
+            set objc_lto_flags          ""
         }
         ui_debug "LTO: setting LTO compiler and linker option(s) \"${lto_flags}\""
         ui_debug "     ObjC and ObjC++ will use:                 \"${objc_lto_flags}\""
