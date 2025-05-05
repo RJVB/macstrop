@@ -1,5 +1,5 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
-# Copyright (c) 2015, 2016 R.J.V. Bertin
+# Copyright (c) 2015-2025 R.J.V. Bertin
 
 PortSystem          1.0
 
@@ -8,12 +8,7 @@ PortSystem          1.0
 set kf5.dont_use_xz yes
 set kf5.category    graphics
 PortGroup           kf5 1.1
-variant preserve_runtime_libraries conflicts more description {Preserve pre-existing versions of the EXR and RAW plugins that now fail to build} {}
-PortGroup           preserve_runtime_libraries 1.0
-PortGroup           python-required 1.0
-PortGroup           boost 1.0
 PortGroup           github 1.0
-PortGroup           conflicts_build 1.0
 
 maintainers         gmail.com:rjvbertin openmaintainer
 
@@ -33,6 +28,74 @@ checksums           rmd160  5b09362859b7f55c4ae5bc6dbdd3f6ee59548468 \
                     sha256  b910cd174d185740c4a28fde0daf028a67febfa6f9386d4903f3d3eda68ebee3
 #                     size    237923311
 distname            ${name}-git
+homepage            https://krita.org
+
+# shared dependencies:
+depends_lib-append  port:curl \
+                    port:libpng \
+                    port:zlib \
+                    port:fftw-3
+
+patch.pre_args      -Np1
+
+kf5.allow_apidocs_generation no
+
+subport ${name}-gmic_plugin {}
+if {${subport} eq "${name}-gmic_plugin"} {
+    description     krita's GMic plugin
+    long_description {*}${description}
+
+    version         3.0.2.2
+    
+    master_sites    https://github.com/amyspark/gmic/releases/download/v${version}
+    distname        gmic-${version}-patched
+    checksums       rmd160  594b13fcdd98abc5b5435101720a4f3f2c73c717 \
+                    sha256  117f0469e8697271f8808318d928013dc5036fe7dc6be180aa30757b65444aae
+#                     size    10452771
+
+    # we share dependencies with the main port, plus the main port itself
+    # also, we use LLVM's libomp for OpenMP functionality since it doesn't
+    # use static TLS like GCC's libgomp does.
+    depends_lib-append \
+                    port:${name} \
+                    path:include/libomp/omp.h:libomp
+    kf5.depends_frameworks \
+                    kcoreaddons
+
+    patchfiles-append \
+                    gmic_plugin/patch-allow-our-buildtype.diff \
+                    gmic_plugin/patch-use-libomp.diff \
+                    gmic_plugin/patch-really-support-qt59.diff
+
+    cmake.source_dir \
+                    ${worksrcpath}/gmic-qt
+    compiler.cxx_standard \
+                    2011
+    configure.args-append \
+                    -DGMIC_QT_HOST=krita-plugin \
+                    -DENABLE_SYSTEM_GMIC=FALSE \
+                    -DENABLE_ASAN=OFF
+
+    platform linux {
+        post-destroot {
+            if {![file exists ${prefix}/lib/kritaplugins] \
+                    && [file exists ${prefix}/lib/x86_64-linux-gnu/kritaplugins]} {
+                # plugin needs to be in with the other plugins or else all hell breaks loose
+                # (probably an order-of-loading thing?)
+                xinstall -m 755 -d ${destroot}${prefix}/lib/x86_64-linux-gnu
+                file rename ${destroot}${prefix}/lib/kritaplugins \
+                    ${destroot}${prefix}/lib/x86_64-linux-gnu/kritaplugins
+            }
+        }
+    }
+
+    # done here!
+    return
+}
+
+PortGroup           python-required 1.0
+PortGroup           boost 1.0
+PortGroup           conflicts_build 1.0
 
 boost.version       1.71
 
@@ -41,12 +104,8 @@ find_new_enough_python3 7
 depends_build-append \
                     port:python${py_ver_nodot}
 
-depends_lib-append  port:libpng
-
 # optional dependencies that we make default:
 depends_lib-append  port:gsl \
-                    port:zlib \
-                    port:libpng \
                     port:tiff \
                     port:webp \
                     port:openjpeg \
@@ -57,9 +116,7 @@ depends_lib-append  port:gsl \
                     port:exiv2 \
                     port:Vc \
                     port:poppler-qt5 \
-                    port:curl \
                     port:quazip1 \
-                    port:fftw-3 \
                     port:libraw \
                     port:lcms2
 
@@ -74,8 +131,6 @@ kf5.depends_frameworks \
                     kguiaddons ki18n kio kitemmodels kitemviews \
                     kwidgetsaddons kwindowsystem
 
-kf5.allow_apidocs_generation no
-
 platform darwin {
     conflicts calligra
     use_xcode       yes
@@ -86,8 +141,6 @@ platform darwin {
 #     setUnifiedTitleAndToolBarOnMac(true);
 # #endif
 # and setAttribute(Qt::WA_MacSmallSize)
-
-patch.pre_args      -Np1
 
 patchfiles-append   patch-linuxy-build.diff \
                     patch-omit-custom-rpath.diff \
@@ -101,6 +154,8 @@ patchfiles-append   patch-linuxy-build.diff \
 # support for icon themes in the XDG location(s). Clearing
 # the index in the KisApplication dtor prevents that.
 patchfiles-append   patch-clear_iconmap.diff
+# show the error that was raised when trying to load the GMic plugin (if any)
+patchfiles-append   patch-show-gmicplugin-error.diff
 
 configure.env-append \
                     "CCACHE_SLOPPINESS=pch_defines,time_macros"
@@ -112,6 +167,9 @@ pre-configure {
 
 cmake.install_rpath-append \
                     ${prefix}/lib/giflib5
+
+compiler.cxx_standard \
+                    2014
 
 configure.args-replace \
                     -DPYTHON_EXECUTABLE=${prefix}/bin/python${kf5::pyversion} \
