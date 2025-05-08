@@ -88,13 +88,37 @@ platform darwin {
             return 1
         }
 
+        proc hfscompress_bg {target} {
+            global use_parallel_build build.jobs prefix
+            catch {flush_logfile}
+            if {${use_parallel_build}} {
+                set compjobs "-J${build.jobs}"
+            } else {
+                set compjobs ""
+            }
+            # first try compressing in parallel, without backups/verification (this is all "redundant" data)
+            if {[catch {set outfile [get_logfile]} err]} {
+                set outfile "/dev/null"
+            } else {
+                set outfile "${outfile}.[file tail ${target}]"
+                ui_debug "sending background afsctool output to \"${outfile}\""
+            }
+            if {[catch {exec sh -c "${prefix}/bin/afsctool -cfvv -8 ${compjobs} -S -L -n ${target}/" >& ${outfile} &} result context]} {
+                ui_info "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
+                hfscompress ${target}
+            } else {
+                ui_debug "Compressing ${target}: pid ${result}"
+            }
+            return 1
+        }
+
         post-extract {
             if {[file exists ${prefix}/bin/afsctool]} {
                 ui_debug "--->  Compressing the source directory once more..."
                 catch {hfscompress ${worksrcpath}}
                 if {[info exists rustup::home]} {
                     ui_msg "---> Compressing the rustup install directory ${rustup::home}"
-                    catch {hfscompress ${rustup::home}}
+                    catch {hfscompress_bg ${rustup::home}}
                 }
             }
         }
@@ -117,10 +141,10 @@ platform darwin {
                             set extradirs "${extradirs} ${workpath}/cargo-cache"
                         }
                         ui_msg "--->  Compressing additional directories [string map [list ${workpath}/ ""] ${extradirs}] ..."
-                        catch {hfscompress ${extradirs}}
+                        catch {hfscompress_bg ${extradirs}}
                         if {[tbool configure.ccache]} {
                             ui_msg "--->  Compressing the ccache directory ..."
-                            catch {hfscompress ${ccache_dir}}
+                            catch {hfscompress_bg ${ccache_dir}}
                         }
                     }
                 }
