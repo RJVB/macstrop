@@ -57,20 +57,22 @@ depends_lib-append \
                 port:zlib \
                 port:zstd
 
-post-extract {
-    fs-traverse dir ${workpath} {
-        if {[file isdirectory ${dir}]} {
-            file attributes ${dir} -permissions a+rx
+if {${subport} ne "${name}-dev"} {
+    post-extract {
+        fs-traverse dir ${workpath} {
+            if {[file isdirectory ${dir}]} {
+                file attributes ${dir} -permissions a+rx
+            }
         }
+        # We use the compiler_wrapper PG to enforce correct compiler and flags are used to build b2
+        xinstall -m 755 -d ${workpath}/bin
+        ln -s [compwrap::wrapped_compiler_path cxx] ${workpath}/bin/clang++
+        ln -s [compwrap::wrapped_compiler_path cc]  ${workpath}/bin/clang
+        # Also link gcc/g++ for older systems
+        # https://trac.macports.org/ticket/63120
+        ln -s [compwrap::wrapped_compiler_path cxx] ${workpath}/bin/g++
+        ln -s [compwrap::wrapped_compiler_path cc]  ${workpath}/bin/gcc
     }
-    # We use the compiler_wrapper PG to enforce correct compiler and flags are used to build b2
-    xinstall -m 755 -d ${workpath}/bin
-    ln -s [compwrap::wrapped_compiler_path cxx] ${workpath}/bin/clang++
-    ln -s [compwrap::wrapped_compiler_path cc]  ${workpath}/bin/clang
-    # Also link gcc/g++ for older systems
-    # https://trac.macports.org/ticket/63120
-    ln -s [compwrap::wrapped_compiler_path cxx] ${workpath}/bin/g++
-    ln -s [compwrap::wrapped_compiler_path cc]  ${workpath}/bin/gcc
 }
 configure.env-append  PATH=${workpath}/bin:$env(PATH)
 build.env-append      PATH=${workpath}/bin:$env(PATH)
@@ -213,11 +215,13 @@ if {${os.platform} eq "darwin"} {
 
 configure.universal_args
 
-pre-configure {
-    new_jam
+if {${subport} ne "${name}-dev"} {
+    pre-configure {
+        new_jam
+    }
 }
 
-if {${subport} ne "${name}-cmake_scripts"} {
+if {${subport} ne "${name}-cmake_scripts" && ${subport} ne "${name}-dev"} {
     post-configure {
 
         # rewrite this reinplace such that it won't apply recursively
@@ -280,9 +284,11 @@ if {${os.platform} eq "darwin"} {
 destroot.cmd    ${worksrcpath}/b2
 destroot.post_args
 
-pre-destroot {
-    destroot.args {*}${build.args} --prefix=${destroot}${bprefix}
-    system "find ${worksrcpath} -type f -name '*.gch' -exec rm {} \\;"
+if {${subport} ne "${name}-dev"} {
+    pre-destroot {
+        destroot.args {*}${build.args} --prefix=${destroot}${bprefix}
+        system "find ${worksrcpath} -type f -name '*.gch' -exec rm {} \\;"
+    }
 }
 
 proc boost_docs_install {} {
@@ -305,9 +311,11 @@ proc boost_docs_install {} {
     }
 }
 
-post-destroot {
-    if {[variant_isset docs]} {
-        boost_docs_install
+if {${subport} ne "${name}-dev"} {
+    post-destroot {
+        if {[variant_isset docs]} {
+            boost_docs_install
+        }
     }
 }
 
@@ -352,7 +360,7 @@ foreach s ${pythons_suffixes} {
             configure.cxxflags-append \
                 -I${prefix}/include/python${v}m
         }
-        if {\"${subport}\" ne \"${name}-cmake_scripts\"} {
+        if {\"${subport}\" ne \"${name}-cmake_scripts\" && \"${subport}\" ne \"${name}-dev\"} {
             patchfiles-append ${bppatch} ${fopenpatch} patch-tools-build-src-tools-python.jam.diff \
                             patch-tools-build-src-tools-python-2.jam.diff
 
@@ -375,13 +383,15 @@ if {![variant_isset debug]} {
     }
 }
 
-post-destroot {
-    # To avoid checking for all Python variants, don't fail if no libs exist
-    foreach f [glob -nocomplain -directory ${destroot}${bprefix}/lib/ *python*.dylib *python*.so] {
-        set tf [file tail ${f}]
-        ln -s ${tf} ${destroot}${bprefix}/lib/[string map "${selected_python} python"  ${tf}]
-        if {![variant_isset python27]} {
-            ln -s ${tf} ${destroot}${bprefix}/lib/[string map "${selected_python} python3" ${tf}]
+if {${subport} ne "${name}-dev"} {
+    post-destroot {
+        # To avoid checking for all Python variants, don't fail if no libs exist
+        foreach f [glob -nocomplain -directory ${destroot}${bprefix}/lib/ *python*.dylib *python*.so] {
+            set tf [file tail ${f}]
+            ln -s ${tf} ${destroot}${bprefix}/lib/[string map "${selected_python} python"  ${tf}]
+            if {![variant_isset python27]} {
+                ln -s ${tf} ${destroot}${bprefix}/lib/[string map "${selected_python} python3" ${tf}]
+            }
         }
     }
 }
@@ -559,42 +569,44 @@ platform darwin {
     }
 
     variant universal {
-        build.args-append   pch=off
+        if {${subport} ne "${name}-dev"} {
+            build.args-append   pch=off
 
-        if {[lsearch ${configure.universal_archs} arm*] != -1} {
-            build.args-append address-model=64 architecture=combined
+            if {[lsearch ${configure.universal_archs} arm*] != -1} {
+                build.args-append address-model=64 architecture=combined
 
-            # allow universal building on arm/Intel
-            # https://trac.macports.org/ticket/64954
-            # https://trac.macports.org/ticket/66686
-            patchfiles-append patch-boost171-universal-arm-intel.diff
+                # allow universal building on arm/Intel
+                # https://trac.macports.org/ticket/64954
+                # https://trac.macports.org/ticket/66686
+                patchfiles-append patch-boost171-universal-arm-intel.diff
 
-        } else {
-            if {[lsearch ${configure.universal_archs} ppc*] != -1} {
-                if {[lsearch ${configure.universal_archs} *86*] != -1} {
-                    build.args-append architecture=combined
-                } else {
-                    build.args-append architecture=power
-                }
-                if {${os.arch} ne "powerpc"} {
-                    build.args-append --disable-long-double
-                }
             } else {
-                build.args-append architecture=x86
-            }
-            if {[lsearch ${configure.universal_archs} *64] != -1} {
-                if {[lsearch ${configure.universal_archs} i386] != -1 || [lsearch ${configure.universal_archs} ppc] != -1} {
-                    build.args-append address-model=32_64
-                    if {[lsearch ${configure.universal_archs} ppc64] == -1} {
-                        post-patch {
-                            reinplace "/local support-ppc64 =/s/= 1/= /" ${worksrcpath}/tools/build/src/tools/darwin.jam
-                        }
+                if {[lsearch ${configure.universal_archs} ppc*] != -1} {
+                    if {[lsearch ${configure.universal_archs} *86*] != -1} {
+                        build.args-append architecture=combined
+                    } else {
+                        build.args-append architecture=power
+                    }
+                    if {${os.arch} ne "powerpc"} {
+                        build.args-append --disable-long-double
                     }
                 } else {
-                    build.args-append address-model=64
+                    build.args-append architecture=x86
                 }
-            } else {
-                build.args-append address-model=32
+                if {[lsearch ${configure.universal_archs} *64] != -1} {
+                    if {[lsearch ${configure.universal_archs} i386] != -1 || [lsearch ${configure.universal_archs} ppc] != -1} {
+                        build.args-append address-model=32_64
+                        if {[lsearch ${configure.universal_archs} ppc64] == -1} {
+                            post-patch {
+                                reinplace "/local support-ppc64 =/s/= 1/= /" ${worksrcpath}/tools/build/src/tools/darwin.jam
+                            }
+                        }
+                    } else {
+                        build.args-append address-model=64
+                    }
+                } else {
+                    build.args-append address-model=32
+                }
             }
         }
     }
