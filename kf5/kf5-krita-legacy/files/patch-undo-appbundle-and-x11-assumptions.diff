@@ -1,0 +1,285 @@
+diff --git a/krita/main.cc b/krita/main.cc
+index 764bdb3..2f8d21d 100644
+--- a/krita/main.cc
++++ b/krita/main.cc
+@@ -60,6 +60,7 @@
+ #include <QMessageBox>
+ 
+ #elif defined HAVE_X11
++#include <QX11Info>
+ #include <kis_xi2_event_filter.h>
+ #endif
+ 
+@@ -124,10 +125,22 @@ extern "C" int main(int argc, char **argv)
+ 
+     // The global initialization of the random generator
+     qsrand(time(0));
++#if !defined(Q_OS_OSX) || defined(APPLE_STANDALONE_BUNDLE)
+     bool runningInKDE = !qgetenv("KDE_FULL_SESSION").isEmpty();
++#else
++    bool runningInKDE = true;
++#endif
+ 
+ #if defined HAVE_X11
++#if !defined(Q_OS_MAC)
+     qputenv("QT_QPA_PLATFORM", "xcb");
++#else
++    if (qEnvironmentVariableIsSet("QT_QPA_PLATFORM")
++        && QString::fromLocal8Bit(qgetenv("QT_QPA_PLATFORM")) == QStringLiteral("xcb")) {
++        QCoreApplication::setAttribute(Qt::AA_DontUseNativeMenuBar, true);
++        QCoreApplication::setAttribute(Qt::AA_MacDontSwapCtrlAndMeta, true);
++    }
++#endif
+ #endif
+ 
+     KisLoggingManager::initialize();
+@@ -139,7 +152,6 @@ extern "C" int main(int argc, char **argv)
+     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts, true);
+ 
+     QCoreApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings, true);
+-    QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps, true);
+ 
+ #if QT_VERSION >= 0x050900
+     QCoreApplication::setAttribute(Qt::AA_DisableShaderDiskCache, true);
+@@ -155,9 +167,11 @@ extern "C" int main(int argc, char **argv)
+         singleApplication = kritarc.value("EnableSingleApplication", true).toBool();
+ #if QT_VERSION >= 0x050600
+         if (kritarc.value("EnableHiDPI", false).toBool()) {
++            QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps, true);
+             QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+         }
+         if (!qgetenv("KRITA_HIDPI").isEmpty()) {
++            QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps, true);
+             QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+         }
+ #endif
+@@ -211,8 +225,10 @@ extern "C" int main(int argc, char **argv)
+         }
+         qputenv("XDG_DATA_DIRS", QFile::encodeName(root + "share") + ":" + originalXdgDataDirs);
+     }
+-#else
++#elif !defined(Q_OS_OSX) || defined(APPLE_STANDALONE_BUNDLE)
+     qputenv("XDG_DATA_DIRS", QFile::encodeName(root + "share"));
++#else
++    qputenv("XDG_DATA_DIRS", QFile::encodeName(QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation).join(QLatin1Char(':'))));
+ #endif
+ 
+     qDebug() << "Setting XDG_DATA_DIRS" << qgetenv("XDG_DATA_DIRS");
+@@ -312,7 +328,9 @@ extern "C" int main(int argc, char **argv)
+     }
+ 
+ #if defined HAVE_X11
+-    app.installNativeEventFilter(KisXi2EventFilter::instance());
++    //if (QX11Info::isPlatformX11()) {
++    //    app.installNativeEventFilter(KisXi2EventFilter::instance());
++    //}
+ #endif
+     app.installEventFilter(KisQtWidgetsTweaker::instance());
+ 
+diff --git a/libs/widgetutils/KoResourcePaths.cpp b/libs/widgetutils/KoResourcePaths.cpp
+index 1ea1d30..7e8cd4e 100644
+--- a/libs/widgetutils/KoResourcePaths.cpp
++++ b/libs/widgetutils/KoResourcePaths.cpp
+@@ -26,6 +26,7 @@
+ #include <QFileInfo>
+ #include <QDebug>
+ #include <QApplication>
++#include <QLibraryInfo>
+ #include <QMutex>
+ #include "kis_debug.h"
+ #include "WidgetUtilsDebug.h"
+@@ -86,7 +87,7 @@ static const Qt::CaseSensitivity cs = Qt::CaseSensitive;
+ #endif
+ 
+ QString getInstallationPrefix() {
+-#ifdef Q_OS_OSX
++#ifdef APPLE_STANDALONE_BUNDLE
+      QString appPath = qApp->applicationDirPath();
+ 
+      debugWidgetUtils << "1" << appPath;
+@@ -128,7 +129,8 @@ QString getInstallationPrefix() {
+         appdir.cdUp();
+         return appdir.canonicalPath();
+     #else
+-        return qApp->applicationDirPath() + "/../";
++//         return qApp->applicationDirPath() + "/../";
++        return QLibraryInfo::location(QLibraryInfo::PrefixPath);
+     #endif
+ #endif
+ }
+@@ -359,7 +361,7 @@ QStringList KoResourcePaths::findDirsInternal(const QString &type)
+             QStandardPaths::locateAll(d->mapTypeToQStandardPaths(type), alias + '/', QStandardPaths::LocateDirectory);
+         appendResources(&dirs, aliasDirs, true);
+ 
+-#ifdef Q_OS_OSX
++#ifdef APPLE_STANDALONE_BUNDLE
+         debugWidgetUtils << "MAC:" << getApplicationRoot();
+         QStringList bundlePaths;
+         bundlePaths << getApplicationRoot() + "/share/krita/" + alias;
+diff --git a/libs/ui/opengl/kis_opengl.cpp b/libs/ui/opengl/kis_opengl.cpp
+index 351ae2e..3a950ce 100644
+--- a/libs/ui/opengl/kis_opengl.cpp
++++ b/libs/ui/opengl/kis_opengl.cpp
+@@ -184,7 +184,7 @@ void KisOpenGL::initializeContext(QOpenGLContext *ctx)
+     // Check if we have a bugged driver that needs fence workaround
+     bool isOnX11 = false;
+ #ifdef HAVE_X11
+-    isOnX11 = true;
++    isOnX11 = QApplication::platformName().contains(QLatin1String("xcb"));
+ #endif
+ 
+     if ((isOnX11 && openGLCheckResult->rendererString().startsWith("AMD")) || cfg.forceOpenGLFenceWorkaround()) {
+diff --git a/libs/ui/thememanager.cpp b/libs/ui/thememanager.cpp
+index accb39a..2b51960 100644
+--- a/libs/ui/thememanager.cpp
++++ b/libs/ui/thememanager.cpp
+@@ -187,7 +187,7 @@ void ThemeManager::slotChangePalette()
+     //qDebug() << ">>>>>>>>>>>>>>>>>> going to set palette on app" << theme;
+     qApp->setPalette(palette);
+ 
+-#ifdef Q_OS_OSX
++#ifdef APPLE_STANDALONE_BUNDLE
+     if (theme == "Krita bright" || theme.isEmpty()) {
+         qApp->setStyle("Macintosh");
+         qApp->style()->polish(qApp);
+diff --git a/libs/ui/input/kis_extended_modifiers_mapper.cpp b/libs/ui/input/kis_extended_modifiers_mapper.cpp
+index 0667c83..02134f6 100644
+--- a/libs/ui/input/kis_extended_modifiers_mapper.cpp
++++ b/libs/ui/input/kis_extended_modifiers_mapper.cpp
+@@ -50,6 +50,7 @@ struct KisExtendedModifiersMapper::Private
+ 
+     bool checkKeyCodePressedX11(KeyCode key);
+     bool checkKeySymPressedX11(KeySym sym);
++    bool isX11;
+ #endif /* HAVE_X11 */
+ };
+ 
+@@ -57,7 +58,12 @@ struct KisExtendedModifiersMapper::Private
+ 
+ KisExtendedModifiersMapper::Private::Private()
+ {
+-    XQueryKeymap(QX11Info::display(), keysState);
++    if (QX11Info::isPlatformX11()) {
++        XQueryKeymap(QX11Info::display(), keysState);
++        isX11 = true;
++    } else {
++        isX11 = false;
++    }
+ 
+     mapping.append(KeyMapping(XK_Shift_L, Qt::Key_Shift));
+     mapping.append(KeyMapping(XK_Shift_R, Qt::Key_Shift));
+@@ -102,8 +108,11 @@ bool KisExtendedModifiersMapper::Private::checkKeyCodePressedX11(KeyCode key)
+ 
+ bool KisExtendedModifiersMapper::Private::checkKeySymPressedX11(KeySym sym)
+ {
+-    KeyCode key = XKeysymToKeycode(QX11Info::display(), sym);
+-    return key != 0 ? checkKeyCodePressedX11(key) : false;
++    if (isX11) {
++        KeyCode key = XKeysymToKeycode(QX11Info::display(), sym);
++        return key != 0 ? checkKeyCodePressedX11(key) : false;
++    }
++    return false;
+ }
+ 
+ #else /* HAVE_X11 */
+@@ -131,13 +140,16 @@ KisExtendedModifiersMapper::queryExtendedModifiers()
+ 
+ #ifdef HAVE_X11
+ 
+-    Q_FOREACH (const KeyMapping &map, m_d->mapping) {
+-        if (m_d->checkKeySymPressedX11(map.x11KeySym)) {
+-            modifiers << map.qtKey;
++    if (m_d->isX11) {
++        Q_FOREACH (const KeyMapping &map, m_d->mapping) {
++            if (m_d->checkKeySymPressedX11(map.x11KeySym)) {
++                modifiers << map.qtKey;
++            }
+         }
++        return modifiers;
+     }
+ 
+-#else /* HAVE_X11 */
++#endif /* HAVE_X11 */
+ 
+     Qt::KeyboardModifiers standardModifiers = queryStandardModifiers();
+ 
+@@ -157,8 +169,6 @@ KisExtendedModifiersMapper::queryExtendedModifiers()
+         modifiers << Qt::Key_Meta;
+     }
+ 
+-#endif /* HAVE_X11 */
+-
+     return modifiers;
+ }
+ 
+diff --git a/libs/ui/input/wintab/kis_tablet_support.h b/libs/ui/input/wintab/kis_tablet_support.h
+index 1c1899d..f937cd1 100644
+--- a/libs/ui/input/wintab/kis_tablet_support.h
++++ b/libs/ui/input/wintab/kis_tablet_support.h
+@@ -58,7 +58,7 @@ struct QTabletDeviceData
+     QPointer<QWidget> widgetToGetPress;
+ #endif
+ 
+-#ifdef HAVE_X11
++#if defined(HAVE_X11) && !defined(Q_OS_OSX)
+     int deviceType;
+     enum {
+         TOTAL_XINPUT_EVENTS = 64
+@@ -89,7 +89,7 @@ struct QTabletDeviceData
+   int currentDevice;
+ #endif
+ 
+-#ifdef HAVE_X11
++#if defined(HAVE_X11) && !defined(Q_OS_OSX)
+     bool isTouchWacomTablet;
+ 
+     /**
+diff --git a/libs/ui/CMakeLists.txt b/libs/ui/CMakeLists.txt
+index b8bca3f..a256f10 100644
+--- a/libs/ui/CMakeLists.txt
++++ b/libs/ui/CMakeLists.txt
+@@ -536,7 +536,7 @@ if (HAVE_KIO)
+     target_link_libraries(kritaui KF5::KIOCore)
+ endif() 
+ 
+-if (NOT WIN32 AND NOT APPLE)
++if (HAVE_X11)
+   target_link_libraries(kritaui ${X11_X11_LIB}
+                                 ${X11_Xinput_LIB}
+                                 ${XCB_LIBRARIES})
+diff --git a/plugins/tools/svgtexttool/main.cpp b/plugins/tools/svgtexttool/main.cpp
+index 4c18bf3..9aac57b 100644
+--- a/plugins/tools/svgtexttool/main.cpp
++++ b/plugins/tools/svgtexttool/main.cpp
+@@ -25,6 +25,7 @@
+ #include <SvgTextEditor.h>
+ 
+ #if defined HAVE_X11
++#   include <QX11Info>
+ #   include <kis_xi2_event_filter.h>
+ #endif
+ 
+@@ -32,12 +33,22 @@
+ extern "C" int main(int argc, char **argv)
+ {
+ #if defined HAVE_X11
++#if !defined(Q_OS_MAC)
+     qputenv("QT_QPA_PLATFORM", "xcb");
++#else
++    if (qEnvironmentVariableIsSet("QT_QPA_PLATFORM")
++        && QString::fromLocal8Bit(qgetenv("QT_QPA_PLATFORM")) == QStringLiteral("xcb")) {
++        QCoreApplication::setAttribute(Qt::AA_DontUseNativeMenuBar, true);
++        QCoreApplication::setAttribute(Qt::AA_MacDontSwapCtrlAndMeta, true);
++    }
++#endif
+ #endif
+ 
+     QApplication app(argc, argv);
+ #if defined HAVE_X11
+-    app.installNativeEventFilter(KisXi2EventFilter::instance());
++    //if (QX11Info::isPlatformX11()) {
++    //    app.installNativeEventFilter(KisXi2EventFilter::instance());
++    //}
+ #endif
+ 
+     KLocalizedString::setApplicationDomain("svgtexttool");
