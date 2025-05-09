@@ -103,7 +103,7 @@ platform darwin {
                 set outfile "${outfile}.[file tail ${target}]"
                 ui_debug "sending background afsctool output to \"${outfile}\""
             }
-            if {[catch {exec sh -c "${prefix}/bin/afsctool -cfvv -8 ${compjobs} -S -L -n ${target}/" >& ${outfile} &} result context]} {
+            if {[catch {exec sh -c "${prefix}/bin/afsctool -cfvv -8 ${compjobs} -S -L -n ${target}/ ; exit 0" >& ${outfile} &} result context]} {
                 ui_info "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
                 hfscompress ${target}
             } else {
