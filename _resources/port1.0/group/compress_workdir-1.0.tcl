@@ -141,19 +141,21 @@ platform darwin {
                             set extradirs "${extradirs} ${workpath}/cargo-cache"
                         }
                         ui_msg "--->  Compressing additional directories [string map [list ${workpath}/ ""] ${extradirs}] ..."
-                        catch {hfscompress_bg ${extradirs}}
-                        if {[tbool configure.ccache]} {
-                            ui_msg "--->  Compressing the ccache directory ..."
-                            catch {hfscompress_bg ${ccache_dir}}
-                        }
+                        catch {hfscompress ${extradirs}}
                     }
                 }
             }
             post-destroot {
-                set destroots [glob -nocomplain -type d ${destroot}-*]
-                if {[file exists ${prefix}/bin/afsctool] && ${destroots} ne {}} {
-                    ui_msg "--->  Compressing auxiliary destroot dirs ..."
-                    catch {hfscompress ${destroots}}
+                if {[file exists ${prefix}/bin/afsctool]} {
+                    if {[tbool configure.ccache]} {
+                        ui_msg "--->  Compressing the ccache directory ..."
+                        catch {hfscompress_bg ${ccache_dir}}
+                    }
+                    set destroots [glob -nocomplain -type d ${destroot}-*]
+                    if {${destroots} ne {}} {
+                        ui_msg "--->  Compressing auxiliary destroot dirs ..."
+                        catch {hfscompress ${destroots}}
+                    }
                 }
             }
             post-activate {
