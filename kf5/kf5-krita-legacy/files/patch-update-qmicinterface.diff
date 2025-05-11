@@ -1,0 +1,3073 @@
+diff --git a/plugins/extensions/qmic/CMakeLists.txt b/plugins/extensions/qmic/CMakeLists.txt
+index afd390b..432a5c1 100644
+--- a/plugins/extensions/qmic/CMakeLists.txt
++++ b/plugins/extensions/qmic/CMakeLists.txt
+@@ -1,23 +1,51 @@
+-set(kritaqmic_SOURCES 
+-    QMic.cpp
+-    kis_qmic_data.cpp
++# GMic bindings exposure.
++set(kritaqmicinterface_SOURCES
++    kis_import_qmic_processing_visitor.cpp
++    kis_input_output_mapper.cpp
+     kis_qmic_applicator.cpp
++    kis_qmic_data.cpp
++    kis_qmic_interface.cpp
++    kis_qmic_plugin_interface.cpp
+     kis_qmic_progress_manager.cpp
++    kis_qmic_simple_convertor.cpp
+     kis_qmic_synchronize_image_size_command.cpp
+     kis_qmic_synchronize_layers_command.cpp
+-    kis_import_qmic_processing_visitor.cpp
+-    kis_input_output_mapper.cpp
+-    kis_qmic_simple_convertor.cpp
+-    PluginSettings.cpp
++)
++
++
++set(kritaqmicinterface_HEADERS
++    kis_qmic_interface.h
++    kis_qmic_plugin_interface.h
++    ${CMAKE_CURRENT_BINARY_DIR}/kritaqmicinterface_export.h
++)
++
++add_library(kritaqmicinterface SHARED ${kritaqmicinterface_SOURCES})
++generate_export_header(kritaqmicinterface)
++target_link_libraries(kritaqmicinterface kritaui)
++
++set_target_properties(kritaqmicinterface
++    PROPERTIES
++    PUBLIC_HEADER "${kritaqmicinterface_HEADERS}"
++)
++
++set_target_properties(kritaqmicinterface PROPERTIES
++    VERSION ${GENERIC_KRITA_LIB_VERSION} SOVERSION ${GENERIC_KRITA_LIB_SOVERSION}
++)
++
++install(TARGETS kritaqmicinterface ${INSTALL_TARGETS_DEFAULT_ARGS}
++    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
++)
++
++set(kritaqmic_SOURCES 
++    QMic.cpp
+ )
+ 
+ ki18n_wrap_ui (
+     kritaqmic_SOURCES
+-    WdgQMicSettings.ui
+ )
+ 
+ add_library(kritaqmic MODULE ${kritaqmic_SOURCES})
+-target_link_libraries(kritaqmic kritaui)
+-install(TARGETS kritaqmic  DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
++target_link_libraries(kritaqmic kritaqmicinterface)
++
++install(TARGETS kritaqmic LIBRARY DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
+ 
+-add_subdirectory(tests)
+diff --git a/plugins/extensions/qmic/QMic.cpp b/plugins/extensions/qmic/QMic.cpp
+index 23dd4c6..2860019 100644
+--- a/plugins/extensions/qmic/QMic.cpp
++++ b/plugins/extensions/qmic/QMic.cpp
+@@ -1,112 +1,39 @@
+ /*
+- * Copyright (c) 2017 Boudewijn Rempt <boud@valdyas.org>
++ * SPDX-FileCopyrightText: 2017 Boudewijn Rempt <boud@valdyas.org>
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+-#include "QMic.h"
+-
++#include <KoJsonTrader.h>
+ #include <QApplication>
+ #include <QDebug>
+ #include <QFileInfo>
+-#include <QLocalSocket>
+-#include <QBuffer>
+-#include <QByteArray>
+-#include <QDataStream>
+-#include <QProcess>
+-#include <QLocalServer>
+-#include <QVBoxLayout>
+-#include <QUuid>
+ #include <QList>
+-#include <QSharedPointer>
+-#include <QMultiMap>
+-#include <QSharedMemory>
+ #include <QMessageBox>
+-
+-#include <klocalizedstring.h>
+-#include <kpluginfactory.h>
+-
+-#include <KoDialog.h>
+-#include <KoColorSpaceConstants.h>
+-#include <KoColorSpaceRegistry.h>
+-#include <KoColorSpace.h>
+-#include <KoColorModelStandardIds.h>
+-#include <KoColorSpaceTraits.h>
+-
+-#include <KisPart.h>
+-#include <KisViewManager.h>
++#include <QUuid>
+ #include <kis_action.h>
+ #include <kis_config.h>
+-#include <kis_preference_set_registry.h>
+-#include <kis_image.h>
+-#include <kis_paint_device.h>
+-#include <kis_layer.h>
+-#include <kis_selection.h>
+-#include <kis_paint_layer.h>
+-#include <kis_algebra_2d.h>
+-
+-#include "kis_input_output_mapper.h"
+-#include "kis_qmic_simple_convertor.h"
+-#include "kis_import_qmic_processing_visitor.h"
+-#include <PluginSettings.h>
+-
+-#include "kis_qmic_applicator.h"
++#include <klocalizedstring.h>
++#include <kpluginfactory.h>
+ 
+-static const char ack[] = "ack";
++#include "QMic.h"
++#include "kis_qmic_interface.h"
++#include "KisViewManager.h"
+ 
+ K_PLUGIN_FACTORY_WITH_JSON(QMicFactory, "kritaqmic.json", registerPlugin<QMic>();)
+ 
+ QMic::QMic(QObject *parent, const QVariantList &)
+     : KisActionPlugin(parent)
+-    , m_gmicApplicator(0)
+ {
+-#ifndef Q_OS_MAC
+-    KisPreferenceSetRegistry *preferenceSetRegistry = KisPreferenceSetRegistry::instance();
+-    PluginSettingsFactory* settingsFactory = new PluginSettingsFactory();
+-    preferenceSetRegistry->add("QMicPluginSettingsFactory", settingsFactory);
+-
+     m_qmicAction = createAction("QMic");
+     m_qmicAction->setActivationFlags(KisAction::ACTIVE_DEVICE);
+ 
+-    connect(m_qmicAction ,  SIGNAL(triggered()), this, SLOT(slotQMic()));
++    connect(m_qmicAction, SIGNAL(triggered()), this, SLOT(slotQMic()));
+ 
+     m_againAction = createAction("QMicAgain");
+     m_againAction->setActivationFlags(KisAction::ACTIVE_DEVICE);
+     m_againAction->setEnabled(false);
+-    connect(m_againAction,  SIGNAL(triggered()), this, SLOT(slotQMicAgain()));
+-
+-    m_gmicApplicator = new KisQmicApplicator();
+-    connect(m_gmicApplicator, SIGNAL(gmicFinished(bool, int, QString)), this, SLOT(slotGmicFinished(bool, int, QString)));
+-#endif
+-}
+-
+-QMic::~QMic()
+-{
+-    Q_FOREACH(QSharedMemory *memorySegment, m_sharedMemorySegments) {
+-//        qDebug() << "detaching" << memorySegment->key();
+-        memorySegment->detach();
+-    }
+-    qDeleteAll(m_sharedMemorySegments);
+-    m_sharedMemorySegments.clear();
+-
+-    if (m_pluginProcess) {
+-        m_pluginProcess->close();
+-    }
+-
+-    delete m_gmicApplicator;
+-    delete m_localServer;
++    connect(m_againAction, SIGNAL(triggered()), this, SLOT(slotQMicAgain()));
+ }
+ 
+ void QMic::slotQMicAgain()
+@@ -119,346 +46,55 @@ void QMic::slotQMic(bool again)
+     m_qmicAction->setEnabled(false);
+     m_againAction->setEnabled(false);
+ 
++    KisQmicPluginInterface *plugin = nullptr;
++
+     // find the krita-gmic-qt plugin
+-    QString pluginPath = PluginSettings::gmicQtPath();
+-    if (pluginPath.isEmpty() || !QFileInfo(pluginPath).exists() || !QFileInfo(pluginPath).isFile()) {
+-        QMessageBox::warning(0, i18nc("@title:window", "Krita"), i18n("Krita cannot find the gmic-qt plugin. You can set the location of the gmic-qt plugin in Settings/Configure Krita."));
++    const auto offers = KoJsonTrader::instance()->query("Krita/GMic", QString());
++    if (offers.isEmpty()) {
++        QMessageBox::warning(qApp->activeWindow(), i18nc("@title:window", "Krita"), i18n("The GMic plugin is not installed or could not be loaded."));
+         return;
+     }
+ 
+-    m_key = QUuid::createUuid().toString();
+-    m_localServer = new QLocalServer();
+-    m_localServer->listen(m_key);
+-    connect(m_localServer, SIGNAL(newConnection()), SLOT(connected()));
+-    m_pluginProcess = new QProcess(this);
+-    connect(viewManager(), SIGNAL(destroyed(QObject *o)), m_pluginProcess, SLOT(terminate()));
+-    m_pluginProcess->setProcessChannelMode(QProcess::ForwardedChannels);
+-    connect(m_pluginProcess, SIGNAL(finished(int, QProcess::ExitStatus)), this, SLOT(pluginFinished(int,QProcess::ExitStatus)));
+-    connect(m_pluginProcess, SIGNAL(stateChanged(QProcess::ProcessState)), this, SLOT(pluginStateChanged(QProcess::ProcessState)));
+-    m_pluginProcess->start(pluginPath, QStringList() << m_key << (again ? QString(" reapply") : QString()));
++    QString errorString = i18n("Krita cannot launch the gmic-qt plugin. No bundled library found.");
++    for (const auto &loader : offers) {
++        auto *factory = qobject_cast<KPluginFactory *>(loader->instance());
++        if (!factory) {
++            warnPlugins << "(GMic) This is not a Krita plugin: " << loader->fileName() << loader->errorString();
++		  errorString += QStringLiteral(" ") + loader->errorString();
+ 
+-    bool r = m_pluginProcess->waitForStarted();
+-    while (m_pluginProcess->waitForFinished(10)) {
+-        qApp->processEvents(QEventLoop::ExcludeUserInputEvents);
+-    }
+-    qDebug() << "Plugin started" << r << m_pluginProcess->state();
+-}
+-
+-void QMic::connected()
+-{
+-    qDebug() << "connected";
+-    if (!viewManager()) return;
+-
+-    QLocalSocket *socket = m_localServer->nextPendingConnection();
+-    if (!socket) { return; }
+-
+-    while (socket->bytesAvailable() < static_cast<int>(sizeof(quint32))) {
+-        if (!socket->isValid()) { // stale request
+-            return;
++            continue;
+         }
+-        socket->waitForReadyRead(1000);
+-    }
+-    QDataStream ds(socket);
+ 
+-    QByteArray msg;
+-    quint32 remaining;
+-    ds >> remaining;
+-    msg.resize(remaining);
+-    int got = 0;
+-    char* uMsgBuf = msg.data();
+-    // FIXME: Should use read transaction for Qt >= 5.7:
+-    //        https://doc.qt.io/qt-5/qdatastream.html#using-read-transactions
+-    do {
+-        got = ds.readRawData(uMsgBuf, remaining);
+-        remaining -= got;
+-        uMsgBuf += got;
+-    }
+-    while (remaining && got >= 0 && socket->waitForReadyRead(2000));
++        auto *pluginBase = factory->create<QObject>();
+ 
+-    if (got < 0) {
+-        qWarning() << "Message reception failed" << socket->errorString();
+-        delete socket;
+-        m_localServer->close();
+-        delete m_localServer;
+-        m_localServer = 0;
+-        return;
+-    }
++        plugin = qobject_cast<KisQmicPluginInterface *>(pluginBase);
+ 
+-    QString message = QString::fromUtf8(msg);
+-    qDebug() << "Received" << message;
++        if (!plugin) {
++            warnPlugins << "(GMic) This is not a valid GMic-Qt plugin: " << loader->fileName();
+ 
+-    // Check the message: we can get three different ones
+-    QMultiMap<QString, QString> messageMap;
+-    Q_FOREACH(QString line, message.split('\n', QString::SkipEmptyParts)) {
+-        QList<QString> kv = line.split('=', QString::SkipEmptyParts);
+-        if (kv.size() == 2) {
+-            messageMap.insert(kv[0], kv[1]);
+-        }
+-        else {
+-            qWarning() << "line" << line << "is invalid.";
++            continue;
+         }
+-    }
+-
+-    if (!messageMap.contains("command")) {
+-        qWarning() << "Message did not contain a command";
+-        return;
+-    }
+-
+-    int mode = 0;
+-    if (messageMap.contains("mode")) {
+-        mode = messageMap.values("mode").first().toInt();
+-    }
+-
+-    QByteArray ba;
+-    QString messageBoxWarningText;
+ 
+-    if (messageMap.values("command").first() == "gmic_qt_get_image_size") {
+-        KisSelectionSP selection = viewManager()->image()->globalSelection();
+-
+-        if (selection) {
+-            QRect selectionRect = selection->selectedExactRect();
+-            ba = QByteArray::number(selectionRect.width()) + "," + QByteArray::number(selectionRect.height());
+-        }
+-        else {
+-            ba = QByteArray::number(viewManager()->image()->width()) + "," + QByteArray::number(viewManager()->image()->height());
+-        }
+-    }
+-    else if (messageMap.values("command").first() == "gmic_qt_get_cropped_images") {
+-        // Parse the message, create the shared memory segments, and create a new message to send back and waid for ack
+-        QRectF cropRect(0.0, 0.0, 1.0, 1.0);
+-        if (!messageMap.contains("croprect") || messageMap.values("croprect").first().split(',', QString::SkipEmptyParts).size() != 4) {
+-            qWarning() << "gmic-qt didn't send a croprect or not a valid croprect";
+-        }
+-        else {
+-            QStringList cr = messageMap.values("croprect").first().split(',', QString::SkipEmptyParts);
+-            cropRect.setX(cr[0].toFloat());
+-            cropRect.setY(cr[1].toFloat());
+-            cropRect.setWidth(cr[2].toFloat());
+-            cropRect.setHeight(cr[3].toFloat());
+-        }
+-        if (!prepareCroppedImages(&ba, cropRect, mode)) {
+-            qWarning() << "Failed to prepare images for gmic-qt";
+-        }
+-    }
+-    else if (messageMap.values("command").first() == "gmic_qt_output_images") {
+-        // Parse the message. read the shared memory segments, fix up the current image and send an ack
+-        qDebug() << "gmic_qt_output_images";
+-        QStringList layers = messageMap.values("layer");
+-        m_outputMode = (OutputMode)mode;
+-        if (m_outputMode != IN_PLACE) {
+-            messageBoxWarningText = i18n("Sorry, this output mode is not implemented yet.");
+-            m_outputMode = IN_PLACE;
+-        }
+-        slotStartApplicator(layers);
+-    }
+-    else if (messageMap.values("command").first() == "gmic_qt_detach") {
+-        Q_FOREACH(QSharedMemory *memorySegment, m_sharedMemorySegments) {
+-            qDebug() << "detaching" << memorySegment->key() << memorySegment->isAttached();
+-            if (memorySegment->isAttached()) {
+-                if (!memorySegment->detach()) {
+-                    qDebug() << "\t" << memorySegment->error() << memorySegment->errorString();
+-                }
+-            }
+-        }
+-        qDeleteAll(m_sharedMemorySegments);
+-        m_sharedMemorySegments.clear();
+-    }
+-    else {
+-        qWarning() << "Received unknown command" << messageMap.values("command");
++        break;
+     }
+ 
+-    qDebug() << "Sending" << QString::fromUtf8(ba);
+-
+-    // HACK: Make sure QDataStream does not refuse to write!
+-    // Proper fix: Change the above read to use read transaction
+-    ds.resetStatus();
+-    ds.writeBytes(ba.constData(), ba.length());
+-    // Flush the socket because we might not return to the event loop!
+-    if (!socket->waitForBytesWritten(2000)) {
+-        qWarning() << "Failed to write response:" << socket->error();
++    if (!plugin) {
++        QMessageBox::warning(qApp->activeWindow(), i18nc("@title:window", "Krita"), errorString);
++        return;
+     }
+ 
+-    // Wait for the ack
+-    bool r = true;
+-    r &= socket->waitForReadyRead(2000); // wait for ack
+-    r &= (socket->read(qstrlen(ack)) == ack);
+-    if (!socket->waitForDisconnected(2000)) {
+-        qWarning() << "Remote not disconnected:" << socket->error();
+-        // Wait again
+-        socket->disconnectFromServer();
+-        if (socket->waitForDisconnected(2000)) {
+-            qWarning() << "Disconnect timed out:" << socket->error();
+-        }
+-    }
++    qDeleteAll(offers);
+ 
+-    if (!messageBoxWarningText.isEmpty()) {
+-        // Defer the message box to the event loop
+-        QTimer::singleShot(0, [messageBoxWarningText]() {
+-            QMessageBox::warning(KisPart::instance()->currentMainwindow(), i18nc("@title:window", "Krita"), messageBoxWarningText);
+-        });
+-    }
+-}
++    m_key = QUuid::createUuid().toString();
++    auto image = std::make_shared<KisImageInterface>(this->viewManager().data());
++    int status = plugin->launch(image, again);
+ 
+-void QMic::pluginStateChanged(QProcess::ProcessState state)
+-{
+-    qDebug() << "stateChanged" << state;
+-}
++    dbgPlugins << "pluginFinished" << status;
++    delete plugin;
++    plugin = nullptr;
+ 
+-void QMic::pluginFinished(int exitCode, QProcess::ExitStatus exitStatus)
+-{
+-    qDebug() << "pluginFinished" << exitCode << exitStatus;
+-    delete m_pluginProcess;
+-    m_pluginProcess = 0;
+-    delete m_localServer;
+-    m_localServer = 0;
+     m_qmicAction->setEnabled(true);
+     m_againAction->setEnabled(true);
+ }
+ 
+-void QMic::slotGmicFinished(bool successfully, int milliseconds, const QString &msg)
+-{
+-    qDebug() << "slotGmicFinished();" << successfully << milliseconds << msg;
+-    if (successfully) {
+-        m_gmicApplicator->finish();
+-    }
+-    else {
+-        m_gmicApplicator->cancel();
+-        QMessageBox::warning(0, i18nc("@title:window", "Krita"), i18n("G'Mic failed, reason:") + msg);
+-    }
+-}
+-
+-void QMic::slotStartApplicator(QStringList gmicImages)
+-{
+-    qDebug() << "slotStartApplicator();" << gmicImages;
+-    if (!viewManager()) return;
+-    // Create a vector of gmic images
+-
+-    QVector<gmic_image<float> *> images;
+-
+-    Q_FOREACH(const QString &image, gmicImages) {
+-        QStringList parts = image.split(',', QString::SkipEmptyParts);
+-        Q_ASSERT(parts.size() == 4);
+-        QString key = parts[0];
+-        QString layerName = QByteArray::fromHex(parts[1].toLatin1());
+-        int spectrum = parts[2].toInt();
+-        int width = parts[3].toInt();
+-        int height = parts[4].toInt();
+-
+-        qDebug() << key << layerName << width << height;
+-
+-        QSharedMemory m(key);
+-        if (!m.attach(QSharedMemory::ReadOnly)) {
+-            qWarning() << "Could not attach to shared memory area." << m.error() << m.errorString();
+-        }
+-        if (m.isAttached()) {
+-            if (!m.lock()) {
+-                qDebug() << "Could not lock memeory segment"  << m.error() << m.errorString();
+-            }
+-            qDebug() << "Memory segment" << key << m.size() << m.constData() << m.data();
+-            gmic_image<float> *gimg = new gmic_image<float>();
+-            gimg->assign(width, height, 1, spectrum);
+-            gimg->name = layerName;
+-
+-            gimg->_data = new float[width * height * spectrum * sizeof(float)];
+-            qDebug() << "width" << width << "height" << height << "size" << width * height * spectrum * sizeof(float) << "shared memory size" << m.size();
+-            memcpy(gimg->_data, m.constData(), width * height * spectrum * sizeof(float));
+-
+-            qDebug() << "created gmic image" << gimg->name << gimg->_width << gimg->_height;
+-
+-            if (!m.unlock()) {
+-                qDebug() << "Could not unlock memeory segment"  << m.error() << m.errorString();
+-            }
+-            if (!m.detach()) {
+-                qDebug() << "Could not detach from memeory segment"  << m.error() << m.errorString();
+-            }
+-            images.append(gimg);
+-        }
+-    }
+-
+-    qDebug() << "Got" << images.size() << "gmic images";
+-
+-    // Start the applicator
+-    KUndo2MagicString actionName = kundo2_i18n("Gmic filter");
+-    KisNodeSP rootNode = viewManager()->image()->root();
+-    KisInputOutputMapper mapper(viewManager()->image(), viewManager()->activeNode());
+-    KisNodeListSP layers = mapper.inputNodes(m_inputMode);
+-
+-    m_gmicApplicator->setProperties(viewManager()->image(), rootNode, images, actionName, layers);
+-    m_gmicApplicator->preview();
+-    m_gmicApplicator->finish();
+-}
+-
+-bool QMic::prepareCroppedImages(QByteArray *message, QRectF &rc, int inputMode)
+-{
+-    if (!viewManager()) return false;
+-
+-    viewManager()->image()->lock();
+-
+-    m_inputMode = (InputLayerMode)inputMode;
+-
+-    qDebug() << "prepareCroppedImages()" << QString::fromUtf8(*message) << rc << inputMode;
+-
+-    KisInputOutputMapper mapper(viewManager()->image(), viewManager()->activeNode());
+-    KisNodeListSP nodes = mapper.inputNodes(m_inputMode);
+-    if (nodes->isEmpty()) {
+-        viewManager()->image()->unlock();
+-        return false;
+-    }
+-
+-    for (int i = 0; i < nodes->size(); ++i) {
+-        KisNodeSP node = nodes->at(i);
+-        if (node && node->paintDevice()) {
+-            QRect cropRect;
+-
+-            KisSelectionSP selection = viewManager()->image()->globalSelection();
+-
+-            if (selection) {
+-                cropRect = selection->selectedExactRect();
+-            }
+-            else {
+-                cropRect = viewManager()->image()->bounds();
+-            }
+-
+-            qDebug() << "Converting node" << node->name() << cropRect;
+-
+-            const QRectF mappedRect = KisAlgebra2D::mapToRect(cropRect).mapRect(rc);
+-            const QRect resultRect = mappedRect.toAlignedRect();
+-
+-            QSharedMemory *m = new QSharedMemory(QString("key_%1").arg(QUuid::createUuid().toString()));
+-            m_sharedMemorySegments.append(m);
+-            if (!m->create(resultRect.width() * resultRect.height() * 4 * sizeof(float))) {  //buf.size())) {
+-                qWarning() << "Could not create shared memory segment" << m->error() << m->errorString();
+-                return false;
+-            }
+-            m->lock();
+-
+-            gmic_image<float> img;
+-            img.assign(resultRect.width(), resultRect.height(), 1, 4);
+-            img._data = reinterpret_cast<float*>(m->data());
+-
+-            KisQmicSimpleConvertor::convertToGmicImageFast(node->paintDevice(), &img, resultRect);
+-
+-            message->append(m->key().toUtf8());
+-
+-            m->unlock();
+-
+-            message->append(",");
+-            message->append(node->name().toUtf8().toHex());
+-            message->append(",");
+-            message->append(QByteArray::number(resultRect.width()));
+-            message->append(",");
+-            message->append(QByteArray::number(resultRect.height()));
+-
+-            message->append("\n");
+-        }
+-    }
+-
+-    qDebug() << QString::fromUtf8(*message);
+-
+-    viewManager()->image()->unlock();
+-
+-    return true;
+-}
+-
+-
+ #include "QMic.moc"
+diff --git a/plugins/extensions/qmic/QMic.cpp.orig b/plugins/extensions/qmic/QMic.cpp.orig
+new file mode 100644
+index 0000000..23dd4c6
+--- /dev/null
++++ b/plugins/extensions/qmic/QMic.cpp.orig
+@@ -0,0 +1,464 @@
++/*
++ * Copyright (c) 2017 Boudewijn Rempt <boud@valdyas.org>
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ */
++
++#include "QMic.h"
++
++#include <QApplication>
++#include <QDebug>
++#include <QFileInfo>
++#include <QLocalSocket>
++#include <QBuffer>
++#include <QByteArray>
++#include <QDataStream>
++#include <QProcess>
++#include <QLocalServer>
++#include <QVBoxLayout>
++#include <QUuid>
++#include <QList>
++#include <QSharedPointer>
++#include <QMultiMap>
++#include <QSharedMemory>
++#include <QMessageBox>
++
++#include <klocalizedstring.h>
++#include <kpluginfactory.h>
++
++#include <KoDialog.h>
++#include <KoColorSpaceConstants.h>
++#include <KoColorSpaceRegistry.h>
++#include <KoColorSpace.h>
++#include <KoColorModelStandardIds.h>
++#include <KoColorSpaceTraits.h>
++
++#include <KisPart.h>
++#include <KisViewManager.h>
++#include <kis_action.h>
++#include <kis_config.h>
++#include <kis_preference_set_registry.h>
++#include <kis_image.h>
++#include <kis_paint_device.h>
++#include <kis_layer.h>
++#include <kis_selection.h>
++#include <kis_paint_layer.h>
++#include <kis_algebra_2d.h>
++
++#include "kis_input_output_mapper.h"
++#include "kis_qmic_simple_convertor.h"
++#include "kis_import_qmic_processing_visitor.h"
++#include <PluginSettings.h>
++
++#include "kis_qmic_applicator.h"
++
++static const char ack[] = "ack";
++
++K_PLUGIN_FACTORY_WITH_JSON(QMicFactory, "kritaqmic.json", registerPlugin<QMic>();)
++
++QMic::QMic(QObject *parent, const QVariantList &)
++    : KisActionPlugin(parent)
++    , m_gmicApplicator(0)
++{
++#ifndef Q_OS_MAC
++    KisPreferenceSetRegistry *preferenceSetRegistry = KisPreferenceSetRegistry::instance();
++    PluginSettingsFactory* settingsFactory = new PluginSettingsFactory();
++    preferenceSetRegistry->add("QMicPluginSettingsFactory", settingsFactory);
++
++    m_qmicAction = createAction("QMic");
++    m_qmicAction->setActivationFlags(KisAction::ACTIVE_DEVICE);
++
++    connect(m_qmicAction ,  SIGNAL(triggered()), this, SLOT(slotQMic()));
++
++    m_againAction = createAction("QMicAgain");
++    m_againAction->setActivationFlags(KisAction::ACTIVE_DEVICE);
++    m_againAction->setEnabled(false);
++    connect(m_againAction,  SIGNAL(triggered()), this, SLOT(slotQMicAgain()));
++
++    m_gmicApplicator = new KisQmicApplicator();
++    connect(m_gmicApplicator, SIGNAL(gmicFinished(bool, int, QString)), this, SLOT(slotGmicFinished(bool, int, QString)));
++#endif
++}
++
++QMic::~QMic()
++{
++    Q_FOREACH(QSharedMemory *memorySegment, m_sharedMemorySegments) {
++//        qDebug() << "detaching" << memorySegment->key();
++        memorySegment->detach();
++    }
++    qDeleteAll(m_sharedMemorySegments);
++    m_sharedMemorySegments.clear();
++
++    if (m_pluginProcess) {
++        m_pluginProcess->close();
++    }
++
++    delete m_gmicApplicator;
++    delete m_localServer;
++}
++
++void QMic::slotQMicAgain()
++{
++    slotQMic(true);
++}
++
++void QMic::slotQMic(bool again)
++{
++    m_qmicAction->setEnabled(false);
++    m_againAction->setEnabled(false);
++
++    // find the krita-gmic-qt plugin
++    QString pluginPath = PluginSettings::gmicQtPath();
++    if (pluginPath.isEmpty() || !QFileInfo(pluginPath).exists() || !QFileInfo(pluginPath).isFile()) {
++        QMessageBox::warning(0, i18nc("@title:window", "Krita"), i18n("Krita cannot find the gmic-qt plugin. You can set the location of the gmic-qt plugin in Settings/Configure Krita."));
++        return;
++    }
++
++    m_key = QUuid::createUuid().toString();
++    m_localServer = new QLocalServer();
++    m_localServer->listen(m_key);
++    connect(m_localServer, SIGNAL(newConnection()), SLOT(connected()));
++    m_pluginProcess = new QProcess(this);
++    connect(viewManager(), SIGNAL(destroyed(QObject *o)), m_pluginProcess, SLOT(terminate()));
++    m_pluginProcess->setProcessChannelMode(QProcess::ForwardedChannels);
++    connect(m_pluginProcess, SIGNAL(finished(int, QProcess::ExitStatus)), this, SLOT(pluginFinished(int,QProcess::ExitStatus)));
++    connect(m_pluginProcess, SIGNAL(stateChanged(QProcess::ProcessState)), this, SLOT(pluginStateChanged(QProcess::ProcessState)));
++    m_pluginProcess->start(pluginPath, QStringList() << m_key << (again ? QString(" reapply") : QString()));
++
++    bool r = m_pluginProcess->waitForStarted();
++    while (m_pluginProcess->waitForFinished(10)) {
++        qApp->processEvents(QEventLoop::ExcludeUserInputEvents);
++    }
++    qDebug() << "Plugin started" << r << m_pluginProcess->state();
++}
++
++void QMic::connected()
++{
++    qDebug() << "connected";
++    if (!viewManager()) return;
++
++    QLocalSocket *socket = m_localServer->nextPendingConnection();
++    if (!socket) { return; }
++
++    while (socket->bytesAvailable() < static_cast<int>(sizeof(quint32))) {
++        if (!socket->isValid()) { // stale request
++            return;
++        }
++        socket->waitForReadyRead(1000);
++    }
++    QDataStream ds(socket);
++
++    QByteArray msg;
++    quint32 remaining;
++    ds >> remaining;
++    msg.resize(remaining);
++    int got = 0;
++    char* uMsgBuf = msg.data();
++    // FIXME: Should use read transaction for Qt >= 5.7:
++    //        https://doc.qt.io/qt-5/qdatastream.html#using-read-transactions
++    do {
++        got = ds.readRawData(uMsgBuf, remaining);
++        remaining -= got;
++        uMsgBuf += got;
++    }
++    while (remaining && got >= 0 && socket->waitForReadyRead(2000));
++
++    if (got < 0) {
++        qWarning() << "Message reception failed" << socket->errorString();
++        delete socket;
++        m_localServer->close();
++        delete m_localServer;
++        m_localServer = 0;
++        return;
++    }
++
++    QString message = QString::fromUtf8(msg);
++    qDebug() << "Received" << message;
++
++    // Check the message: we can get three different ones
++    QMultiMap<QString, QString> messageMap;
++    Q_FOREACH(QString line, message.split('\n', QString::SkipEmptyParts)) {
++        QList<QString> kv = line.split('=', QString::SkipEmptyParts);
++        if (kv.size() == 2) {
++            messageMap.insert(kv[0], kv[1]);
++        }
++        else {
++            qWarning() << "line" << line << "is invalid.";
++        }
++    }
++
++    if (!messageMap.contains("command")) {
++        qWarning() << "Message did not contain a command";
++        return;
++    }
++
++    int mode = 0;
++    if (messageMap.contains("mode")) {
++        mode = messageMap.values("mode").first().toInt();
++    }
++
++    QByteArray ba;
++    QString messageBoxWarningText;
++
++    if (messageMap.values("command").first() == "gmic_qt_get_image_size") {
++        KisSelectionSP selection = viewManager()->image()->globalSelection();
++
++        if (selection) {
++            QRect selectionRect = selection->selectedExactRect();
++            ba = QByteArray::number(selectionRect.width()) + "," + QByteArray::number(selectionRect.height());
++        }
++        else {
++            ba = QByteArray::number(viewManager()->image()->width()) + "," + QByteArray::number(viewManager()->image()->height());
++        }
++    }
++    else if (messageMap.values("command").first() == "gmic_qt_get_cropped_images") {
++        // Parse the message, create the shared memory segments, and create a new message to send back and waid for ack
++        QRectF cropRect(0.0, 0.0, 1.0, 1.0);
++        if (!messageMap.contains("croprect") || messageMap.values("croprect").first().split(',', QString::SkipEmptyParts).size() != 4) {
++            qWarning() << "gmic-qt didn't send a croprect or not a valid croprect";
++        }
++        else {
++            QStringList cr = messageMap.values("croprect").first().split(',', QString::SkipEmptyParts);
++            cropRect.setX(cr[0].toFloat());
++            cropRect.setY(cr[1].toFloat());
++            cropRect.setWidth(cr[2].toFloat());
++            cropRect.setHeight(cr[3].toFloat());
++        }
++        if (!prepareCroppedImages(&ba, cropRect, mode)) {
++            qWarning() << "Failed to prepare images for gmic-qt";
++        }
++    }
++    else if (messageMap.values("command").first() == "gmic_qt_output_images") {
++        // Parse the message. read the shared memory segments, fix up the current image and send an ack
++        qDebug() << "gmic_qt_output_images";
++        QStringList layers = messageMap.values("layer");
++        m_outputMode = (OutputMode)mode;
++        if (m_outputMode != IN_PLACE) {
++            messageBoxWarningText = i18n("Sorry, this output mode is not implemented yet.");
++            m_outputMode = IN_PLACE;
++        }
++        slotStartApplicator(layers);
++    }
++    else if (messageMap.values("command").first() == "gmic_qt_detach") {
++        Q_FOREACH(QSharedMemory *memorySegment, m_sharedMemorySegments) {
++            qDebug() << "detaching" << memorySegment->key() << memorySegment->isAttached();
++            if (memorySegment->isAttached()) {
++                if (!memorySegment->detach()) {
++                    qDebug() << "\t" << memorySegment->error() << memorySegment->errorString();
++                }
++            }
++        }
++        qDeleteAll(m_sharedMemorySegments);
++        m_sharedMemorySegments.clear();
++    }
++    else {
++        qWarning() << "Received unknown command" << messageMap.values("command");
++    }
++
++    qDebug() << "Sending" << QString::fromUtf8(ba);
++
++    // HACK: Make sure QDataStream does not refuse to write!
++    // Proper fix: Change the above read to use read transaction
++    ds.resetStatus();
++    ds.writeBytes(ba.constData(), ba.length());
++    // Flush the socket because we might not return to the event loop!
++    if (!socket->waitForBytesWritten(2000)) {
++        qWarning() << "Failed to write response:" << socket->error();
++    }
++
++    // Wait for the ack
++    bool r = true;
++    r &= socket->waitForReadyRead(2000); // wait for ack
++    r &= (socket->read(qstrlen(ack)) == ack);
++    if (!socket->waitForDisconnected(2000)) {
++        qWarning() << "Remote not disconnected:" << socket->error();
++        // Wait again
++        socket->disconnectFromServer();
++        if (socket->waitForDisconnected(2000)) {
++            qWarning() << "Disconnect timed out:" << socket->error();
++        }
++    }
++
++    if (!messageBoxWarningText.isEmpty()) {
++        // Defer the message box to the event loop
++        QTimer::singleShot(0, [messageBoxWarningText]() {
++            QMessageBox::warning(KisPart::instance()->currentMainwindow(), i18nc("@title:window", "Krita"), messageBoxWarningText);
++        });
++    }
++}
++
++void QMic::pluginStateChanged(QProcess::ProcessState state)
++{
++    qDebug() << "stateChanged" << state;
++}
++
++void QMic::pluginFinished(int exitCode, QProcess::ExitStatus exitStatus)
++{
++    qDebug() << "pluginFinished" << exitCode << exitStatus;
++    delete m_pluginProcess;
++    m_pluginProcess = 0;
++    delete m_localServer;
++    m_localServer = 0;
++    m_qmicAction->setEnabled(true);
++    m_againAction->setEnabled(true);
++}
++
++void QMic::slotGmicFinished(bool successfully, int milliseconds, const QString &msg)
++{
++    qDebug() << "slotGmicFinished();" << successfully << milliseconds << msg;
++    if (successfully) {
++        m_gmicApplicator->finish();
++    }
++    else {
++        m_gmicApplicator->cancel();
++        QMessageBox::warning(0, i18nc("@title:window", "Krita"), i18n("G'Mic failed, reason:") + msg);
++    }
++}
++
++void QMic::slotStartApplicator(QStringList gmicImages)
++{
++    qDebug() << "slotStartApplicator();" << gmicImages;
++    if (!viewManager()) return;
++    // Create a vector of gmic images
++
++    QVector<gmic_image<float> *> images;
++
++    Q_FOREACH(const QString &image, gmicImages) {
++        QStringList parts = image.split(',', QString::SkipEmptyParts);
++        Q_ASSERT(parts.size() == 4);
++        QString key = parts[0];
++        QString layerName = QByteArray::fromHex(parts[1].toLatin1());
++        int spectrum = parts[2].toInt();
++        int width = parts[3].toInt();
++        int height = parts[4].toInt();
++
++        qDebug() << key << layerName << width << height;
++
++        QSharedMemory m(key);
++        if (!m.attach(QSharedMemory::ReadOnly)) {
++            qWarning() << "Could not attach to shared memory area." << m.error() << m.errorString();
++        }
++        if (m.isAttached()) {
++            if (!m.lock()) {
++                qDebug() << "Could not lock memeory segment"  << m.error() << m.errorString();
++            }
++            qDebug() << "Memory segment" << key << m.size() << m.constData() << m.data();
++            gmic_image<float> *gimg = new gmic_image<float>();
++            gimg->assign(width, height, 1, spectrum);
++            gimg->name = layerName;
++
++            gimg->_data = new float[width * height * spectrum * sizeof(float)];
++            qDebug() << "width" << width << "height" << height << "size" << width * height * spectrum * sizeof(float) << "shared memory size" << m.size();
++            memcpy(gimg->_data, m.constData(), width * height * spectrum * sizeof(float));
++
++            qDebug() << "created gmic image" << gimg->name << gimg->_width << gimg->_height;
++
++            if (!m.unlock()) {
++                qDebug() << "Could not unlock memeory segment"  << m.error() << m.errorString();
++            }
++            if (!m.detach()) {
++                qDebug() << "Could not detach from memeory segment"  << m.error() << m.errorString();
++            }
++            images.append(gimg);
++        }
++    }
++
++    qDebug() << "Got" << images.size() << "gmic images";
++
++    // Start the applicator
++    KUndo2MagicString actionName = kundo2_i18n("Gmic filter");
++    KisNodeSP rootNode = viewManager()->image()->root();
++    KisInputOutputMapper mapper(viewManager()->image(), viewManager()->activeNode());
++    KisNodeListSP layers = mapper.inputNodes(m_inputMode);
++
++    m_gmicApplicator->setProperties(viewManager()->image(), rootNode, images, actionName, layers);
++    m_gmicApplicator->preview();
++    m_gmicApplicator->finish();
++}
++
++bool QMic::prepareCroppedImages(QByteArray *message, QRectF &rc, int inputMode)
++{
++    if (!viewManager()) return false;
++
++    viewManager()->image()->lock();
++
++    m_inputMode = (InputLayerMode)inputMode;
++
++    qDebug() << "prepareCroppedImages()" << QString::fromUtf8(*message) << rc << inputMode;
++
++    KisInputOutputMapper mapper(viewManager()->image(), viewManager()->activeNode());
++    KisNodeListSP nodes = mapper.inputNodes(m_inputMode);
++    if (nodes->isEmpty()) {
++        viewManager()->image()->unlock();
++        return false;
++    }
++
++    for (int i = 0; i < nodes->size(); ++i) {
++        KisNodeSP node = nodes->at(i);
++        if (node && node->paintDevice()) {
++            QRect cropRect;
++
++            KisSelectionSP selection = viewManager()->image()->globalSelection();
++
++            if (selection) {
++                cropRect = selection->selectedExactRect();
++            }
++            else {
++                cropRect = viewManager()->image()->bounds();
++            }
++
++            qDebug() << "Converting node" << node->name() << cropRect;
++
++            const QRectF mappedRect = KisAlgebra2D::mapToRect(cropRect).mapRect(rc);
++            const QRect resultRect = mappedRect.toAlignedRect();
++
++            QSharedMemory *m = new QSharedMemory(QString("key_%1").arg(QUuid::createUuid().toString()));
++            m_sharedMemorySegments.append(m);
++            if (!m->create(resultRect.width() * resultRect.height() * 4 * sizeof(float))) {  //buf.size())) {
++                qWarning() << "Could not create shared memory segment" << m->error() << m->errorString();
++                return false;
++            }
++            m->lock();
++
++            gmic_image<float> img;
++            img.assign(resultRect.width(), resultRect.height(), 1, 4);
++            img._data = reinterpret_cast<float*>(m->data());
++
++            KisQmicSimpleConvertor::convertToGmicImageFast(node->paintDevice(), &img, resultRect);
++
++            message->append(m->key().toUtf8());
++
++            m->unlock();
++
++            message->append(",");
++            message->append(node->name().toUtf8().toHex());
++            message->append(",");
++            message->append(QByteArray::number(resultRect.width()));
++            message->append(",");
++            message->append(QByteArray::number(resultRect.height()));
++
++            message->append("\n");
++        }
++    }
++
++    qDebug() << QString::fromUtf8(*message);
++
++    viewManager()->image()->unlock();
++
++    return true;
++}
++
++
++#include "QMic.moc"
+diff --git a/plugins/extensions/qmic/QMic.cpp.rej b/plugins/extensions/qmic/QMic.cpp.rej
+new file mode 100644
+index 0000000..0c01227
+--- /dev/null
++++ b/plugins/extensions/qmic/QMic.cpp.rej
+@@ -0,0 +1,42 @@
++***************
++*** 55,66 ****
++          return;
++      }
++  
++-     QString errorString = i18n("Krita cannot launch the gmic-qt plugin. No bundled library found.");
++      for (const auto &loader : offers) {
++          auto *factory = qobject_cast<KPluginFactory *>(loader->instance());
++          if (!factory) {
++              warnPlugins << "(GMic) This is not a Krita plugin: " << loader->fileName() << loader->errorString();
++- 		  errorString += QStringLiteral(" ") + loader->errorString();
++  
++              continue;
++          }
++--- 55,64 ----
++          return;
++      }
++  
++      for (const auto &loader : offers) {
++          auto *factory = qobject_cast<KPluginFactory *>(loader->instance());
++          if (!factory) {
++              warnPlugins << "(GMic) This is not a Krita plugin: " << loader->fileName() << loader->errorString();
++  
++              continue;
++          }
++***************
++*** 79,85 ****
++      }
++  
++      if (!plugin) {
++-         QMessageBox::warning(qApp->activeWindow(), i18nc("@title:window", "Krita"), errorString);
++          return;
++      }
++  
++--- 77,83 ----
++      }
++  
++      if (!plugin) {
+++         QMessageBox::warning(qApp->activeWindow(), i18nc("@title:window", "Krita"), i18n("Krita cannot launch the gmic-qt plugin. No bundled library found."));
++          return;
++      }
++  
+diff --git a/plugins/extensions/qmic/QMic.h b/plugins/extensions/qmic/QMic.h
+index f839112..84acf0a 100644
+--- a/plugins/extensions/qmic/QMic.h
++++ b/plugins/extensions/qmic/QMic.h
+@@ -1,31 +1,21 @@
+ /*
+- * Copyright (c) 2017 Boudewijn Rempt <boud@valdyas.org>
++ * SPDX-FileCopyrightText: 2017 Boudewijn Rempt <boud@valdyas.org>
+  *
+- * This program is free software; you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License as published by
+- * the Free Software Foundation; either version 2 of the License, or
+- * (at your option) any later version.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program; if not, write to the Free Software
+- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ * SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ #ifndef QMIC_H
+ #define QMIC_H
+ 
+-#include <QProcess>
++#include <KisActionPlugin.h>
++#include <QPointer>
+ #include <QVariant>
+ #include <QVector>
+-#include <KisActionPlugin.h>
+ #include <kis_types.h>
+ 
+ #include "gmic.h"
++#include "kis_qmic_interface.h"
++#include "kis_qmic_plugin_interface.h"
+ 
+ class KisAction;
+ class QLocalServer;
+@@ -38,32 +28,17 @@ class QMic : public KisActionPlugin
+     Q_OBJECT
+ public:
+     QMic(QObject *parent, const QVariantList &);
+-    virtual ~QMic();
++    ~QMic() override = default;
+ 
+ private Q_SLOTS:
+ 
+     void slotQMicAgain();
+     void slotQMic(bool again = false);
+-    void connected();
+-    void pluginStateChanged(QProcess::ProcessState);
+-    void pluginFinished(int exitCode, QProcess::ExitStatus exitStatus);
+-    void slotGmicFinished(bool successfully, int milliseconds = -1, const QString& msg = QString());
+-    void slotStartApplicator(QStringList gmicImages);
+ 
+ private:
+-
+-    bool prepareCroppedImages(QByteArray *message, QRectF &rc, int inputMode);
+-
+-    QProcess *m_pluginProcess {0};
+-    QLocalServer *m_localServer {0};
+     QString m_key;
+     KisAction *m_qmicAction {0};
+     KisAction *m_againAction {0};
+-    QVector<QSharedMemory *> m_sharedMemorySegments;
+-    KisQmicApplicator *m_gmicApplicator {0};
+-    InputLayerMode m_inputMode {ACTIVE_LAYER};
+-    OutputMode m_outputMode {IN_PLACE};
+-
+ };
+ 
+ #endif // QMic_H
+diff --git a/plugins/extensions/qmic/gmic.h b/plugins/extensions/qmic/gmic.h
+index 2372c99..795af50 100644
+--- a/plugins/extensions/qmic/gmic.h
++++ b/plugins/extensions/qmic/gmic.h
+@@ -1,51 +1,37 @@
+ /*
+- * Copyright (C) 2017 Boudewijn Rempt <boud@valdyas.org>
++ * SPDX-FileCopyrightText: 2017 Boudewijn Rempt <boud@valdyas.org>
++ * SPDX-FileCopyrightText: 2020-2021 L. E. Segovia <amy@amyspark.me>
+  *
+- * This library is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU Library General Public
+- * License as published by the Free Software Foundation; either
+- * version 2 of the License, or (at your option) any later version.
+- *
+- * This library is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+- * Library General Public License for more details.
+- *
+- * You should have received a copy of the GNU Library General Public License
+- * along with this library; see the file COPYING.LIB.  If not, write to
+- * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+- * Boston, MA 02110-1301, USA.
++ * SPDX-License-Identifier: LGPL-2.0-or-later
+  */
+ 
+ #ifndef GMIC_H
+ #define GMIC_H
+ 
++#include <QString>
++
+ /**
+  * A sham header to make it easier to handle gmic types without
+  * needing gmic itself.
+  */
+ 
+-enum OutputMode {   IN_PLACE = 0,
+-                        NEW_LAYERS,
+-                        NEW_ACTIVE_LAYERS,
+-                        NEW_IMAGE
+-};
+-
++enum class OutputMode { InPlace, NewLayers, NewActiveLayers, NewImage, Unspecified = 100 };
+ 
+ // this enum is also index in LAYER_MODE_STRINGS list
+-enum InputLayerMode {   NONE = 0,
+-                        ACTIVE_LAYER,
+-                        ALL_LAYERS,
+-                        ACTIVE_LAYER_BELOW_LAYER,
+-                        ACTIVE_LAYER_ABOVE_LAYER,
+-                        ALL_VISIBLE_LAYERS,
+-                        ALL_INVISIBLE_LAYERS,
+-                        ALL_VISIBLE_LAYERS_DECR,
+-                        ALL_INVISIBLE_DECR,
+-                        ALL_DECR
++enum class InputLayerMode {
++    NoInput,
++    Active,
++    All,
++    ActiveAndBelow,
++    ActiveAndAbove,
++    AllVisible,
++    AllInvisible,
++    AllVisiblesDesc_DEPRECATED, /* Removed since 2.8.2 */
++    AllInvisiblesDesc_DEPRECATED, /* Removed since 2.8.2 */
++    AllDesc_DEPRECATED, /* Removed since 2.8.2 */
++    Unspecified = 100
+ };
+ 
+-
+ template<typename T> struct gmic_image {
+     unsigned int _width;       // Number of image columns (dimension along the X-axis).
+     unsigned int _height;      // Number of image lines (dimension along the Y-axis)
+diff --git a/plugins/extensions/qmic/kis_import_qmic_processing_visitor.cpp b/plugins/extensions/qmic/kis_import_qmic_processing_visitor.cpp
+index ece1ce0..f3b71e3 100644
+--- a/plugins/extensions/qmic/kis_import_qmic_processing_visitor.cpp
++++ b/plugins/extensions/qmic/kis_import_qmic_processing_visitor.cpp
+@@ -1,20 +1,9 @@
+ /*
+- *  Copyright (c) 2013 Dmitry Kazakov <dimula73@gmail.com>
+- *  Copyright (c) 2013 Lukáš Tvrdý <lukast.dev@gmail.com>
++ *  SPDX-FileCopyrightText: 2013 Dmitry Kazakov <dimula73@gmail.com>
++ *  SPDX-FileCopyrightText: 2013 Lukáš Tvrdý <lukast.dev@gmail.com>
++ *  SPDX-FileCopyrightText: 2020 L. E. Segovia <amy@amyspark.me>
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ 
+@@ -31,6 +20,7 @@
+ #include <KoCompositeOpRegistry.h>
+ #include <kis_selection.h>
+ #include <kis_types.h>
++#include <QtCore/QRegularExpression>
+ 
+ #include "kis_import_qmic_processing_visitor.h"
+ #include "gmic.h"
+@@ -41,7 +31,7 @@ KisImportQmicProcessingVisitor::KisImportQmicProcessingVisitor(const KisNodeList
+       m_dstRect(dstRect),
+       m_selection(selection)
+ {
+-    qDebug() << "KisImportQmicProcessingVisitor";
++    dbgPlugins << "KisImportQmicProcessingVisitor";
+ }
+ 
+ 
+@@ -49,7 +39,7 @@ void KisImportQmicProcessingVisitor::gmicImageToPaintDevice(gmic_image<float>& s
+                                                             KisPaintDeviceSP dst, KisSelectionSP selection, const QRect &dstRect)
+ {
+ 
+-    qDebug() << "KisImportQmicProcessingVisitor::gmicImageToPaintDevice();";
++    dbgPlugins << "KisImportQmicProcessingVisitor::gmicImageToPaintDevice();";
+     if (selection) {
+         KisPaintDeviceSP src = new KisPaintDevice(dst->colorSpace());
+         KisQmicSimpleConvertor::convertFromGmicFast(srcGmicImage, src, 255.0f);
+@@ -63,18 +53,67 @@ void KisImportQmicProcessingVisitor::gmicImageToPaintDevice(gmic_image<float>& s
+     }
+ }
+ 
++void KisImportQmicProcessingVisitor::applyLayerNameChanges(const gmic_image<float> &srcGmicImage, KisNode *node, KisPaintDeviceSP dst)
++{
++    dbgPlugins << "Layer name: " << srcGmicImage.name;
++
++    {
++        const QRegExp modeRe("mode\\(\\s*([^)]*)\\s*\\)");
++        if (modeRe.indexIn(srcGmicImage.name) != -1) {
++            QString modeStr = modeRe.cap(1).trimmed();
++            auto translatedMode = KisQmicSimpleConvertor::stringToBlendingMode(modeStr);
++            dbgPlugins << "Detected mode: " << modeStr << " => " << translatedMode;
++            if (!translatedMode.isNull())
++                node->setCompositeOpId(translatedMode);
++        }
++    }
++
++    {
++        const QRegExp opacityRe("opacity\\(\\s*([^)]*)\\s*\\)");
++
++        if (opacityRe.indexIn(srcGmicImage.name) != -1) {
++            const auto opacity = opacityRe.cap(1).toUInt();
++            dbgPlugins << "Detected opacity: " << opacity;
++            node->setPercentOpacity(opacity);
++        }
++    }
+ 
++    {
++        const QRegExp nameRe("name\\(\\s*([^)]*)\\s*\\)");
++
++        if (nameRe.indexIn(srcGmicImage.name) != -1) {
++            const auto name = nameRe.cap(1);
++            dbgPlugins << "Detected layer name: " << name;
++            node->setName(name);
++        }
++    }
++
++    // Some GMic filters encode layer position into the layer name.
++    // E.g. from extract foreground: "name([unnamed] [foreground]),pos(55,35)"
++    const QRegularExpression positionPattern(R"(\Wpos\((\d+),(\d+)\))");
++    const QRegularExpressionMatch match = positionPattern.match(srcGmicImage.name);
++    if (match.hasMatch()) {
++        int x = match.captured(1).toInt();
++        int y = match.captured(2).toInt();
++        dst->moveTo(x, y);
++    }
++}
+ 
+ void KisImportQmicProcessingVisitor::visitNodeWithPaintDevice(KisNode *node, KisUndoAdapter *undoAdapter)
+ {
+     int index = m_nodes->indexOf(node);
+-    if (index >= 0) {
++    if (index >= 0 && index < m_images.size()) {
+         gmic_image<float> *gimg = m_images[index];
+-        qDebug() << "Importing layer index" << index << "Size: "<< gimg->_width << "x" << gimg->_height << "colorchannels: " << gimg->_spectrum;
++        dbgPlugins << "Importing layer index" << index << "Size: "<< gimg->_width << "x" << gimg->_height << "colorchannels: " << gimg->_spectrum;
+ 
+         KisPaintDeviceSP dst = node->paintDevice();
++
++        const KisLayer *layer = dynamic_cast<KisLayer*>(node);
++        const KisSelectionSP selection = layer ? layer->selection() : m_selection;
++
+         KisTransaction transaction(dst);
+-        KisImportQmicProcessingVisitor::gmicImageToPaintDevice(*gimg, dst, m_selection, m_dstRect);
++        KisImportQmicProcessingVisitor::gmicImageToPaintDevice(*gimg, dst, selection, m_dstRect);
++        KisImportQmicProcessingVisitor::applyLayerNameChanges(*gimg, node, dst);
+         if (undoAdapter) {
+             transaction.commit(undoAdapter);
+             node->setDirty(m_dstRect);
+diff --git a/plugins/extensions/qmic/kis_import_qmic_processing_visitor.h b/plugins/extensions/qmic/kis_import_qmic_processing_visitor.h
+index 24a7e07..aa0eff7 100644
+--- a/plugins/extensions/qmic/kis_import_qmic_processing_visitor.h
++++ b/plugins/extensions/qmic/kis_import_qmic_processing_visitor.h
+@@ -1,20 +1,9 @@
+ /*
+- *  Copyright (c) 2013 Dmitry Kazakov <dimula73@gmail.com>
+- *  Copyright (c) 2013 Lukáš Tvrdý <lukast.dev@gmail.com>
++ *  SPDX-FileCopyrightText: 2013 Dmitry Kazakov <dimula73@gmail.com>
++ *  SPDX-FileCopyrightText: 2013 Lukáš Tvrdý <lukast.dev@gmail.com>
++ *  SPDX-FileCopyrightText: 2020-2021 L. E. Segovia <amy@amyspark.me>
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ #ifndef __KIS_IMPORT_GMIC_PROCESSING_VISITOR_H
+@@ -41,6 +30,10 @@ public:
+                                    const KisSelectionSP selection
+                                   );
+ 
++    static void applyLayerNameChanges(const gmic_image<float> &srcGmicImage,
++                                   KisNode *node,
++                                   KisPaintDeviceSP dst
++                                   );
+ 
+     static void gmicImageToPaintDevice(gmic_image<float>& srcGmicImage,
+                                        KisPaintDeviceSP dstPaintDevice,
+@@ -49,10 +42,9 @@ public:
+ 
+ 
+ protected:
+-
+-    void visitNodeWithPaintDevice(KisNode *node, KisUndoAdapter *undoAdapter);
+-    void visitExternalLayer(KisExternalLayer *layer, KisUndoAdapter *undoAdapter);
+-    void visitColorizeMask(KisColorizeMask *mask, KisUndoAdapter *undoAdapter);
++    void visitNodeWithPaintDevice(KisNode *node, KisUndoAdapter *undoAdapter) override;
++    void visitExternalLayer(KisExternalLayer *layer, KisUndoAdapter *undoAdapter) override;
++    void visitColorizeMask(KisColorizeMask *mask, KisUndoAdapter *undoAdapter) override;
+ 
+ private:
+     const KisNodeListSP m_nodes;
+diff --git a/plugins/extensions/qmic/kis_input_output_mapper.cpp b/plugins/extensions/qmic/kis_input_output_mapper.cpp
+index d13387b..43ff80f 100644
+--- a/plugins/extensions/qmic/kis_input_output_mapper.cpp
++++ b/plugins/extensions/qmic/kis_input_output_mapper.cpp
+@@ -1,19 +1,8 @@
+ /*
+- * Copyright (c) 2013 Lukáš Tvrdý <lukast.dev@gmail.com
++ * SPDX-FileCopyrightText: 2013 Lukáš Tvrdý <lukast.dev@gmail.com>
++ * SPDX-FileCopyrightText: 2020 L. E. Segovia <amy@amyspark.me>
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ #include <kis_input_output_mapper.h>
+@@ -44,47 +33,46 @@ KisNodeListSP KisInputOutputMapper::inputNodes(InputLayerMode inputMode)
+     KisNodeListSP result(new QList< KisNodeSP >());
+     switch (inputMode)
+     {
+-        case ACTIVE_LAYER:
+-        {
+-            result->append(m_activeNode);
+-            break;// drop down in case of one more layer modes
+-        }
+-        case ACTIVE_LAYER_BELOW_LAYER:
+-        {
+-            result->append(m_activeNode);
+-            result->append(m_activeNode->prevSibling());
+-            break;
+-        }
+-        case ACTIVE_LAYER_ABOVE_LAYER:
+-        {
+-            result->append(m_activeNode);
+-            result->append(m_activeNode->nextSibling());
+-            break;
+-        }
+-        case NONE:
+-        case ALL_VISIBLE_LAYERS:
+-        case ALL_INVISIBLE_LAYERS:
+-        case ALL_VISIBLE_LAYERS_DECR:
+-        case ALL_INVISIBLE_DECR:
+-        {
+-            qWarning() << "Inputmode" << inputMode << "not implemented";
+-            break;
+-        }
+-        case ALL_LAYERS:
+-        {
+-            allLayers(result);
+-            break;
+-        }
+-        case ALL_DECR:
+-        {
+-            allInverseOrderedLayers(result);
+-            break;
+-        }
+-        default:
+-        {
+-            Q_ASSERT(false); // why here??
+-            break;
+-        }
++    case InputLayerMode::Active: {
++        result->append(m_activeNode);
++        break; // drop down in case of one more layer modes
++    }
++    case InputLayerMode::ActiveAndBelow: {
++        result->append(m_activeNode);
++        result->append(m_activeNode->prevSibling());
++        break;
++    }
++    case InputLayerMode::ActiveAndAbove: {
++        result->append(m_activeNode);
++        result->append(m_activeNode->nextSibling());
++        break;
++    }
++    case InputLayerMode::NoInput: {
++        break;
++    }
++    case InputLayerMode::AllVisible: {
++        allLayers(result, true);
++        break;
++    }
++    case InputLayerMode::AllInvisible: {
++        allLayers(result, false);
++        break;
++    }
++    case InputLayerMode::All: {
++        allLayers(result);
++        break;
++    }
++    case InputLayerMode::AllVisiblesDesc_DEPRECATED:
++    case InputLayerMode::AllInvisiblesDesc_DEPRECATED:
++    case InputLayerMode::AllDesc_DEPRECATED: {
++        qWarning() << "Inputmode" << static_cast<int>(inputMode) << "is not supported by GMic anymore";
++        break;
++    }
++    case InputLayerMode::Unspecified:
++    default: {
++        qWarning() << "Inputmode" << static_cast<int>(inputMode) << "must be specified by GMic or is not implemented in Krita";
++        break;
++    }
+     }
+     return result;
+ }
+@@ -106,9 +94,18 @@ void KisInputOutputMapper::allLayers(KisNodeListSP result)
+     }
+ }
+ 
+-
+-void KisInputOutputMapper::allInverseOrderedLayers(KisNodeListSP result)
++void KisInputOutputMapper::allLayers(KisNodeListSP result, bool visible)
+ {
+-    qWarning() << "allInverseOrderedLayers not implemented";
+-    Q_UNUSED(result);
++    //TODO: hack ignores hierarchy introduced by group layers
++    KisNodeSP root = m_image->rootLayer();
++    KisNodeSP item = root->lastChild();
++    while (item)
++    {
++        auto * paintLayer = dynamic_cast<KisPaintLayer*>(item.data());
++        if (paintLayer && paintLayer->visible(true) == visible)
++        {
++            result->append(item);
++        }
++        item = item->prevSibling();
++    }
+ }
+diff --git a/plugins/extensions/qmic/kis_input_output_mapper.h b/plugins/extensions/qmic/kis_input_output_mapper.h
+index 2758089..6a5d358 100644
+--- a/plugins/extensions/qmic/kis_input_output_mapper.h
++++ b/plugins/extensions/qmic/kis_input_output_mapper.h
+@@ -1,19 +1,8 @@
+ /*
+- * Copyright (c) 2013 Lukáš Tvrdý <lukast.dev@gmail.com
++ * SPDX-FileCopyrightText: 2013 Lukáš Tvrdý <lukast.dev@gmail.com>
++ * SPDX-FileCopyrightText: 2020 L. E. Segovia <amy@amyspark.me>
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ #ifndef _KIS_INPUT_OUTPUT_MAPPER
+@@ -30,7 +19,7 @@ public:
+ 
+ private:
+     void allLayers(KisNodeListSP result);
+-    void allInverseOrderedLayers(KisNodeListSP result);
++    void allLayers(KisNodeListSP result, bool visible);
+ 
+ private:
+     KisImageWSP m_image;
+diff --git a/plugins/extensions/qmic/kis_qmic_applicator.cpp b/plugins/extensions/qmic/kis_qmic_applicator.cpp
+index ca00c91..b456ea9 100644
+--- a/plugins/extensions/qmic/kis_qmic_applicator.cpp
++++ b/plugins/extensions/qmic/kis_qmic_applicator.cpp
+@@ -1,19 +1,7 @@
+ /*
+- * Copyright (c) 2013 Lukáš Tvrdý <lukast.dev@gmail.com
++ * SPDX-FileCopyrightText: 2013 Lukáš Tvrdý <lukast.dev@gmail.com
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ #include "kis_qmic_applicator.h"
+ 
+@@ -27,18 +15,17 @@
+ #include "kis_qmic_synchronize_layers_command.h"
+ #include "kis_qmic_synchronize_image_size_command.h"
+ 
+-KisQmicApplicator::KisQmicApplicator():m_applicator(0),m_applicatorStrokeEnded(false)
++KisQmicApplicator::KisQmicApplicator()
+ {
+ }
+ 
+ KisQmicApplicator::~KisQmicApplicator()
+ {
+-    delete m_applicator;
+ }
+ 
+ void KisQmicApplicator::setProperties(KisImageWSP image, KisNodeSP node, QVector<gmic_image<float> *> images, const KUndo2MagicString &actionName, KisNodeListSP kritaNodes)
+ {
+-    qDebug() << "KisQmicApplicator::setProperties();" << ppVar(image) << ppVar(node) << images.size() << actionName << kritaNodes->count();
++    dbgPlugins << "KisQmicApplicator::setProperties();" << ppVar(image) << ppVar(node) << images.size() << actionName << kritaNodes->count();
+ 
+     m_image = image;
+     m_node = node;
+@@ -48,19 +35,20 @@ void KisQmicApplicator::setProperties(KisImageWSP image, KisNodeSP node, QVector
+ }
+ 
+ 
+-void KisQmicApplicator::preview()
++void KisQmicApplicator::apply()
+ {
+-    // cancel previous preview if there is one
+-    qDebug() << "Request for preview, cancelling any previous possible on-canvas preview";
++    dbgPlugins << "Request for applying the result";
+     cancel();
+ 
+     KisImageSignalVector emitSignals;
+-    emitSignals << ComplexSizeChangedSignal() << ModifiedSignal;
++    emitSignals << ComplexSizeChangedSignal();
+ 
+-    m_applicator = new KisProcessingApplicator(m_image, m_node,
+-            KisProcessingApplicator::RECURSIVE | KisProcessingApplicator::NO_UI_UPDATES,
+-            emitSignals, m_actionName);
+-    qDebug() << "Created applicator " << m_applicator;
++    m_applicator.reset(
++        new KisProcessingApplicator(m_image, m_node,
++                                    KisProcessingApplicator::RECURSIVE |
++                                    KisProcessingApplicator::NO_UI_UPDATES,
++                                    emitSignals, m_actionName));
++    dbgPlugins << "Created applicator " << m_applicator;
+ 
+     m_gmicData = KisQmicDataSP(new KisQmicData());
+ 
+@@ -73,14 +61,17 @@ void KisQmicApplicator::preview()
+         layerSize = QRect(0, 0, m_image->width(), m_image->height());
+     }
+ 
+-   if (!selection) {
+-        // synchronize Krita image size with biggest gmic layer size
++    // This is a three-stage process.
++
++    if (!selection) {
++        // 1. synchronize Krita image size with biggest gmic layer size
+         m_applicator->applyCommand(new KisQmicSynchronizeImageSizeCommand(m_images, m_image));
+     }
+ 
+-    // synchronize layer count
++    // 2. synchronize layer count and convert excess GMic nodes to paint layers
+     m_applicator->applyCommand(new KisQmicSynchronizeLayersCommand(m_kritaNodes, m_images, m_image, layerSize, selection), KisStrokeJobData::SEQUENTIAL, KisStrokeJobData::EXCLUSIVE);
+ 
++    // 3. visit the existing nodes and reuse them to apply the remaining changes from GMic
+     KisProcessingVisitorSP  importVisitor = new KisImportQmicProcessingVisitor(m_kritaNodes, m_images, layerSize, selection);
+     m_applicator->applyVisitor(importVisitor, KisStrokeJobData::SEQUENTIAL); // undo information is stored in this visitor
+     m_applicator->explicitlyEmitFinalSignals();
+@@ -89,27 +80,14 @@ void KisQmicApplicator::preview()
+ 
+ void KisQmicApplicator::cancel()
+ {
+-    qDebug() << "KisQmicApplicator::cancel";
++    dbgPlugins << "KisQmicApplicator::cancel";
+     if (m_applicator) {
+ 
+-        if (!m_applicatorStrokeEnded)
+-        {
+-            dbgPlugins << "Cancelling applicator: Yes!";
+-            m_applicator->cancel();
+-        }
+-        else
+-        {
+-            dbgPlugins << "Cancelling applicator: No! Reason: Already finished!";
+-        }
+-
++        dbgPlugins << "Cancelling applicator!";
++        m_applicator->cancel();
+ 
+         dbgPlugins << "deleting applicator: " << m_applicator;
+-        delete m_applicator;
+-        m_applicator = 0;
+-
+-
+-        m_applicatorStrokeEnded = false;
+-        dbgPlugins << ppVar(m_applicatorStrokeEnded);
++        m_applicator.reset();
+     }
+     else  {
+         dbgPlugins << "Cancelling applicator: No! Reason: Null applicator!";
+@@ -118,21 +96,19 @@ void KisQmicApplicator::cancel()
+ 
+ void KisQmicApplicator::finish()
+ {
+-    qDebug() << "Applicator " << m_applicator << " finished";
+-    if (m_applicator)
+-    {
++    dbgPlugins << "Applicator " << m_applicator << " finished";
++    if (m_applicator) {
+         m_applicator->end();
+-        m_applicatorStrokeEnded = true;
++        m_applicator.reset();
+     }
+-    qDebug() << ppVar(m_applicatorStrokeEnded);
+ }
+ 
+ float KisQmicApplicator::getProgress() const
+ {
+-    qDebug() << "KisQmicApplicator::getProgress";
++    dbgPlugins << "KisQmicApplicator::getProgress";
+ 
+     if (m_gmicData) {
+-        m_gmicData->progress();
++        return m_gmicData->progress();
+     }
+     return KisQmicData::INVALID_PROGRESS_VALUE;
+ }
+diff --git a/plugins/extensions/qmic/kis_qmic_applicator.h b/plugins/extensions/qmic/kis_qmic_applicator.h
+index 84f66b4..37d0cd2 100644
+--- a/plugins/extensions/qmic/kis_qmic_applicator.h
++++ b/plugins/extensions/qmic/kis_qmic_applicator.h
+@@ -1,19 +1,7 @@
+ /*
+- * Copyright (c) 2013-2014 Lukáš Tvrdý <lukast.dev@gmail.com
++ * SPDX-FileCopyrightText: 2013-2014 Lukáš Tvrdý <lukast.dev@gmail.com
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ #ifndef _KIS_GMIC_APPLICATOR
+@@ -27,6 +15,7 @@
+ 
+ #include "gmic.h"
+ #include "kis_qmic_data.h"
++#include <QScopedPointer>
+ 
+ class KisProcessingApplicator;
+ 
+@@ -39,7 +28,7 @@ public:
+     ~KisQmicApplicator();
+     void setProperties(KisImageWSP image, KisNodeSP node, QVector<gmic_image<float> *> images, const KUndo2MagicString &actionName, KisNodeListSP kritaNodes);
+ 
+-    void preview();
++    void apply();
+     void cancel();
+     void finish();
+ 
+@@ -49,12 +38,11 @@ Q_SIGNALS:
+     void gmicFinished(bool successfully, int milliseconds = -1, const QString &msg = QString());
+ 
+ private:
+-    KisProcessingApplicator *m_applicator;
++    QScopedPointer<KisProcessingApplicator> m_applicator;
+     KisImageWSP m_image;
+     KisNodeSP m_node;
+     KUndo2MagicString m_actionName;
+     KisNodeListSP m_kritaNodes;
+-    bool m_applicatorStrokeEnded;
+     QVector<gmic_image<float> *> m_images;
+     KisQmicDataSP m_gmicData;
+ };
+diff --git a/plugins/extensions/qmic/kis_qmic_data.cpp b/plugins/extensions/qmic/kis_qmic_data.cpp
+index 0cfa2ce..5b695b2 100644
+--- a/plugins/extensions/qmic/kis_qmic_data.cpp
++++ b/plugins/extensions/qmic/kis_qmic_data.cpp
+@@ -1,22 +1,11 @@
+ /*
+- *  Copyright (c) 2015 Lukáš Tvrdý <lukast.dev@gmail.com>
++ *  SPDX-FileCopyrightText: 2015 Lukáš Tvrdý <lukast.dev@gmail.com>
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ #include "kis_qmic_data.h"
++#include <kis_debug.h>
+ 
+ const float KisQmicData::INVALID_PROGRESS_VALUE = -2.0f;
+ 
+diff --git a/plugins/extensions/qmic/kis_qmic_data.h b/plugins/extensions/qmic/kis_qmic_data.h
+index d80960f..2e6fce8 100644
+--- a/plugins/extensions/qmic/kis_qmic_data.h
++++ b/plugins/extensions/qmic/kis_qmic_data.h
+@@ -1,19 +1,7 @@
+ /*
+- *  Copyright (c) 2015 Lukáš Tvrdý <lukast.dev@gmail.com>
++ *  SPDX-FileCopyrightText: 2015 Lukáš Tvrdý <lukast.dev@gmail.com>
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ #ifndef KIS_QMIC_DATA
+@@ -27,7 +15,7 @@ public:
+     KisQmicData();
+     ~KisQmicData();
+ 
+-    float progress() const { qDebug() << "KisQmicData::progress" << m_progress; return m_progress; }
++    float progress() const { return m_progress; }
+     bool isCancelled() const { return m_cancel; }
+     void setCancel(bool cancel) { m_cancel = cancel; }
+ 
+diff --git a/plugins/extensions/qmic/kis_qmic_interface.cpp b/plugins/extensions/qmic/kis_qmic_interface.cpp
+new file mode 100644
+index 0000000..b69fc10
+--- /dev/null
++++ b/plugins/extensions/qmic/kis_qmic_interface.cpp
+@@ -0,0 +1,216 @@
++/*
++ * This file is part of Krita
++ *
++ * SPDX-FileCopyrightText: 2020 L. E. Segovia <amy@amyspark.me>
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include <QApplication>
++#include <QMessageBox>
++
++#include "KisViewManager.h"
++#include "kis_algebra_2d.h"
++#include "kis_debug.h"
++#include "kis_image.h"
++#include "kis_image_barrier_locker.h"
++#include "kis_qmic_interface.h"
++#include "kis_input_output_mapper.h"
++#include "kis_qmic_applicator.h"
++#include "kis_qmic_simple_convertor.h"
++#include "kis_selection.h"
++
++#include "gmic.h"
++
++struct KisImageInterface::Private {
++    Private() = default;
++
++    KisViewManager *m_viewManager {nullptr};
++    InputLayerMode m_inputMode{InputLayerMode::Active};
++    OutputMode m_outputMode{OutputMode::InPlace};
++    QVector<KisQMicImageSP> m_sharedMemorySegments {};
++    KisQmicApplicator *m_gmicApplicator {nullptr};
++};
++
++KisImageInterface::KisImageInterface(KisViewManager *parent)
++    : p(new Private)
++{
++    p->m_viewManager = parent;
++    KIS_ASSERT(p->m_viewManager);
++
++    p->m_gmicApplicator = new KisQmicApplicator();
++    connect(p->m_gmicApplicator, SIGNAL(gmicFinished(bool, int, QString)), this, SLOT(slotGmicFinished(bool, int, QString)));
++}
++
++KisImageInterface::~KisImageInterface()
++{
++}
++
++QSize KisImageInterface::gmic_qt_get_image_size()
++{
++    KisSelectionSP selection = p->m_viewManager->image()->globalSelection();
++
++    if (selection) {
++        QRect selectionRect = selection->selectedExactRect();
++        return selectionRect.size();
++    } else {
++        return p->m_viewManager->image()->size();
++    }
++}
++
++QVector<KisQMicImageSP> KisImageInterface::gmic_qt_get_cropped_images(int inputMode, QRectF &rc)
++{
++    // Create the shared memory segments, and create a new "message" to send back
++
++    QVector<KisQMicImageSP> message;
++
++    if (!p->m_viewManager)
++        return {};
++
++    KisImageBarrierLocker locker(p->m_viewManager->image());
++
++    p->m_inputMode = static_cast<InputLayerMode>(inputMode);
++
++    dbgPlugins << "prepareCroppedImages()" << message << rc << inputMode;
++
++    KisInputOutputMapper mapper(p->m_viewManager->image(), p->m_viewManager->activeNode());
++    KisNodeListSP nodes = mapper.inputNodes(p->m_inputMode);
++    if (nodes->isEmpty()) {
++        return {};
++    }
++
++    for (int i = 0; i < nodes->size(); ++i) {
++        KisNodeSP node = nodes->at(i);
++        if (node && node->paintDevice()) {
++            QRect cropRect;
++
++            KisSelectionSP selection = p->m_viewManager->image()->globalSelection();
++
++            if (selection) {
++                cropRect = selection->selectedExactRect();
++            } else {
++                cropRect = p->m_viewManager->image()->bounds();
++            }
++
++            dbgPlugins << "Converting node" << node->name() << cropRect;
++
++            const QRectF mappedRect = KisAlgebra2D::mapToRect(cropRect).mapRect(rc);
++            const QRect resultRect = mappedRect.toAlignedRect();
++
++            QString noParenthesisName(node->name());
++            noParenthesisName.replace(QChar('('), QChar(21)).replace(QChar(')'), QChar(22));
++
++            auto translatedMode = KisQmicSimpleConvertor::blendingModeToString(node->compositeOpId());
++
++            QString name = QString("mode(%1),opacity(%2),pos(%3,%4),name(%5)").arg(translatedMode).arg(node->percentOpacity()).arg(cropRect.x()).arg(cropRect.y()).arg(noParenthesisName);
++
++            auto m = KisQMicImageSP::create(name, resultRect.width(), resultRect.height(), 4);
++            p->m_sharedMemorySegments << m;
++
++            {
++                QMutexLocker lock(&m->m_mutex);
++
++                gmic_image<float> img;
++                img.assign(resultRect.width(), resultRect.height(), 1, 4);
++
++
++                img._data = m->m_data;
++                
++                KisQmicSimpleConvertor::convertToGmicImageFast(node->paintDevice(), &img, resultRect);
++            }
++
++            message << m;
++        }
++    }
++
++    dbgPlugins << message;
++
++    return message;
++}
++
++void KisImageInterface::gmic_qt_output_images(int mode, QVector<KisQMicImageSP> layers)
++{
++    // Parse the message. read the shared memory segments, fix up the current image and send an ack
++    dbgPlugins << "gmic_qt_output_images";
++    p->m_outputMode = (OutputMode)mode;
++    if (p->m_outputMode != OutputMode::InPlace) {
++        QMessageBox::warning(qApp->activeWindow(), i18nc("@title:window", "Krita"), i18n("Sorry, this output mode is not implemented yet."));
++        p->m_outputMode = OutputMode::InPlace;
++    }
++    slotStartApplicator(layers);
++}
++
++void KisImageInterface::gmic_qt_detach()
++{
++    for (auto memorySegment : p->m_sharedMemorySegments) {
++        dbgPlugins << "detaching" << (quintptr)memorySegment.data();
++        memorySegment.clear();
++    }
++    p->m_sharedMemorySegments.clear();
++}
++
++void KisImageInterface::slotStartApplicator(QVector<KisQMicImageSP> gmicImages)
++{
++    dbgPlugins << "slotStartApplicator();" << gmicImages;
++    if (!p->m_viewManager)
++        return;
++    // Create a vector of gmic images
++
++    QVector<gmic_image<float> *> images;
++
++    for (auto &image : gmicImages) {
++        QString layerName = image->m_layerName;
++        int spectrum = image->m_spectrum;
++        int width = image->m_width;
++        int height = image->m_height;
++
++        dbgPlugins << "Received image: " << (quintptr)image.data() << layerName << width << height;
++
++        gmic_image<float> *gimg = nullptr;
++
++        {
++            QMutexLocker lock(&image->m_mutex);
++
++            dbgPlugins << "Memory segment" << (quintptr)image.data() << image->size() << (quintptr)image->constData() << (quintptr)image->m_data;
++            gimg = new gmic_image<float>();
++            gimg->assign(width, height, 1, spectrum);
++            gimg->name = layerName;
++
++            gimg->_data = new float[width * height * spectrum * sizeof(float)];
++            dbgPlugins << "width" << width << "height" << height << "size" << width * height * spectrum * sizeof(float) << "shared memory size" << image->size();
++            memcpy(gimg->_data, image->constData(), width * height * spectrum * sizeof(float));
++
++            dbgPlugins << "created gmic image" << gimg->name << gimg->_width << gimg->_height;
++
++        }
++        images.append(gimg);
++    }
++
++    dbgPlugins << "Got" << images.size() << "gmic images";
++
++    // Start the applicator
++    KUndo2MagicString actionName = kundo2_i18n("Gmic filter");
++    KisNodeSP rootNode = p->m_viewManager->image()->root();
++    KisInputOutputMapper mapper(p->m_viewManager->image(), p->m_viewManager->activeNode());
++    KisNodeListSP layers = mapper.inputNodes(p->m_inputMode);
++
++    p->m_gmicApplicator->setProperties(p->m_viewManager->image(), rootNode, images, actionName, layers);
++    p->m_gmicApplicator->apply();
++}
++
++void KisImageInterface::slotGmicFinished(bool successfully, int milliseconds, const QString &msg)
++{
++    dbgPlugins << "slotGmicFinished();" << successfully << milliseconds << msg;
++    if (successfully) {
++        p->m_gmicApplicator->finish();
++    } else {
++        p->m_gmicApplicator->cancel();
++        QMessageBox::warning(qApp->activeWindow(), i18nc("@title:window", "Krita"), i18n("G'Mic failed, reason:") + msg);
++    }
++}
++
++QDebug operator<<(QDebug d, const KisQMicImage &model)
++{
++    d << QString("0x%1,%2,%3,%4").arg((quintptr)&model).arg(QString(model.m_layerName.toUtf8().toHex())).arg(model.m_width).arg(model.m_height);
++    return d;
++}
+diff --git a/plugins/extensions/qmic/kis_qmic_interface.h b/plugins/extensions/qmic/kis_qmic_interface.h
+new file mode 100644
+index 0000000..85178fc
+--- /dev/null
++++ b/plugins/extensions/qmic/kis_qmic_interface.h
+@@ -0,0 +1,85 @@
++/*
++ * This file is part of Krita
++ *
++ * SPDX-FileCopyrightText: 2020 L. E. Segovia <amy@amyspark.me>
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#ifndef __KIS_IMAGE_INTERFACE_H
++#define __KIS_IMAGE_INTERFACE_H
++
++#include "kritaqmicinterface_export.h"
++
++#include <QDebug>
++#include <QMutex>
++#include <QObject>
++#include <QRect>
++#include <QScopedPointer>
++#include <QSharedPointer>
++#include <QSize>
++#include <QVector>
++
++class KisQmicApplicator;
++class KisViewManager;
++
++struct KRITAQMICINTERFACE_EXPORT KisQMicImage {
++    QMutex m_mutex;
++    QString m_layerName;
++    int m_width;
++    int m_height;
++    int m_spectrum;
++    float* m_data;
++
++    KisQMicImage(QString layerName, int width, int height, int spectrum = 4)
++        : m_mutex()
++        , m_layerName(layerName)
++        , m_width(width)
++        , m_height(height)
++        , m_spectrum(spectrum)
++        , m_data(new float[width * height * spectrum])
++    {
++    }
++
++    ~KisQMicImage() {
++        delete[] m_data;
++    }
++
++    const float* constData() const
++    {
++        return m_data;
++    }
++
++    size_t size() const
++    {
++        return m_width * m_height * m_spectrum * sizeof(float);
++    }
++};
++
++QDebug operator<<(QDebug d, const KisQMicImage &model);
++
++using KisQMicImageSP = QSharedPointer<KisQMicImage>;
++
++class KRITAQMICINTERFACE_EXPORT KisImageInterface : public QObject
++{
++    Q_OBJECT
++
++public:
++    KisImageInterface(KisViewManager *parent = nullptr);
++    ~KisImageInterface() override;
++
++    QSize gmic_qt_get_image_size();
++    QVector<KisQMicImageSP> gmic_qt_get_cropped_images(int mode, QRectF &cropRect);
++    void gmic_qt_output_images(int mode, QVector<KisQMicImageSP> layers);
++    void gmic_qt_detach();
++
++private:
++    struct Private;
++    const QScopedPointer<Private> p;
++
++private Q_SLOTS:
++    void slotStartApplicator(QVector<KisQMicImageSP> gmicImages);
++    void slotGmicFinished(bool successfully, int milliseconds, const QString &msg);
++};
++
++#endif
+diff --git a/plugins/extensions/qmic/kis_qmic_plugin_interface.cpp b/plugins/extensions/qmic/kis_qmic_plugin_interface.cpp
+new file mode 100644
+index 0000000..f549f74
+--- /dev/null
++++ b/plugins/extensions/qmic/kis_qmic_plugin_interface.cpp
+@@ -0,0 +1,12 @@
++/*
++ * This file is part of Krita
++ *
++ * SPDX-FileCopyrightText: 2021 L. E. Segovia <amy@amyspark.me>
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "kis_qmic_plugin_interface.h"
++
++KisQmicPluginInterface::KisQmicPluginInterface() = default;
++KisQmicPluginInterface::~KisQmicPluginInterface() = default;
+diff --git a/plugins/extensions/qmic/kis_qmic_plugin_interface.h b/plugins/extensions/qmic/kis_qmic_plugin_interface.h
+new file mode 100644
+index 0000000..94d3957
+--- /dev/null
++++ b/plugins/extensions/qmic/kis_qmic_plugin_interface.h
+@@ -0,0 +1,30 @@
++/*
++ * This file is part of Krita
++ *
++ * SPDX-FileCopyrightText: 2020 L. E. Segovia <amy@amyspark.me>
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#ifndef KRITA_GMIC_PLUGIN_INTERFACE
++#define KRITA_GMIC_PLUGIN_INTERFACE
++
++#include <memory>
++#include <QObject>
++
++#include "kis_qmic_interface.h"
++#include "kritaqmicinterface_export.h"
++
++#define KRITA_GMIC_PLUGIN_INTERFACE_IID "org.kde.krita.KritaGmicPluginInterface"
++
++class KRITAQMICINTERFACE_EXPORT KisQmicPluginInterface
++{
++public:
++  KisQmicPluginInterface();
++  virtual ~KisQmicPluginInterface();
++  virtual int launch(std::shared_ptr<KisImageInterface> iface, bool headless = false) = 0;
++};
++
++Q_DECLARE_INTERFACE(KisQmicPluginInterface, KRITA_GMIC_PLUGIN_INTERFACE_IID)
++
++#endif
+diff --git a/plugins/extensions/qmic/kis_qmic_progress_manager.cpp b/plugins/extensions/qmic/kis_qmic_progress_manager.cpp
+index 7af5c25..0013a54 100644
+--- a/plugins/extensions/qmic/kis_qmic_progress_manager.cpp
++++ b/plugins/extensions/qmic/kis_qmic_progress_manager.cpp
+@@ -1,19 +1,7 @@
+ /*
+- * Copyright (c) 2014 Lukáš Tvrdý <lukast.dev@gmail.com>
++ * SPDX-FileCopyrightText: 2014 Lukáš Tvrdý <lukast.dev@gmail.com>
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ #include "kis_qmic_progress_manager.h"
+diff --git a/plugins/extensions/qmic/kis_qmic_progress_manager.h b/plugins/extensions/qmic/kis_qmic_progress_manager.h
+index c4957a9..80c09ea 100644
+--- a/plugins/extensions/qmic/kis_qmic_progress_manager.h
++++ b/plugins/extensions/qmic/kis_qmic_progress_manager.h
+@@ -1,19 +1,7 @@
+ /*
+- * Copyright (c) 2014 Lukáš Tvrdý <lukast.dev@gmail.com>
++ * SPDX-FileCopyrightText: 2014 Lukáš Tvrdý <lukast.dev@gmail.com>
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ 
+diff --git a/plugins/extensions/qmic/kis_qmic_simple_convertor.cpp b/plugins/extensions/qmic/kis_qmic_simple_convertor.cpp
+index fb9ea32..f388a1f 100644
+--- a/plugins/extensions/qmic/kis_qmic_simple_convertor.cpp
++++ b/plugins/extensions/qmic/kis_qmic_simple_convertor.cpp
+@@ -1,21 +1,12 @@
+ /*
+- * Copyright (c) 2013 Lukáš Tvrdý <lukast.dev@gmail.com
++ * SPDX-FileCopyrightText: 2013 Lukáš Tvrdý <lukast.dev@gmail.com>
++ * SPDX-FileCopyrightText: 2020 L. E. Segovia <amy@amyspark.me>
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
++#include <map>
++
+ #include <kis_qmic_simple_convertor.h>
+ 
+ #include <kis_debug.h>
+@@ -25,6 +16,7 @@
+ #include <KoColorSpace.h>
+ #include <KoColorModelStandardIds.h>
+ #include <KoColorSpaceTraits.h>
++#include <KoCompositeOpRegistry.h>
+ 
+ #define SCALE_TO_FLOAT( v ) KoColorSpaceMaths< _channel_type_, float>::scaleToA( v )
+ #define SCALE_FROM_FLOAT( v  ) KoColorSpaceMaths< float, _channel_type_>::scaleToA( v )
+@@ -167,7 +159,69 @@ private:
+     float m_gmicUnitValue;
+ };
+ 
+-
++const QString COMPOSITE_AND             = "and";
++const QString COMPOSITE_FREEZE          = "freeze";
++const QString COMPOSITE_INTERPOLATION   = "interpolation";
++const QString COMPOSITE_NEGATION        = "negation";
++const QString COMPOSITE_OR              = "or";
++const QString COMPOSITE_REFLECT         = "reflect";
++
++const std::map<QString, QString> blendingModeMap = {{"add", COMPOSITE_ADD},
++                                                    //   {"alpha", ""}, // XXX
++                                                      {"and", COMPOSITE_AND},
++                                                    //   {"average", ""}, // XXX
++                                                      {"blue", COMPOSITE_COPY_BLUE},
++                                                      {"burn", COMPOSITE_BURN},
++                                                      {"darken", COMPOSITE_DARKEN},
++                                                      {"difference", COMPOSITE_DIFF},
++                                                      {"divide", COMPOSITE_DIVIDE},
++                                                      {"dodge", COMPOSITE_DODGE},
++                                                    //   {"edges", ""}, // XXX
++                                                      {"exclusion", COMPOSITE_EXCLUSION},
++                                                      {"freeze", COMPOSITE_FREEZE},
++                                                      {"grainextract", COMPOSITE_GRAIN_EXTRACT},
++                                                      {"grainmerge", COMPOSITE_GRAIN_MERGE},
++                                                      {"green", COMPOSITE_COPY_GREEN},
++                                                      {"hardlight", COMPOSITE_HARD_LIGHT},
++                                                      {"hardmix", COMPOSITE_HARD_MIX},
++                                                      {"hue", COMPOSITE_HUE},
++                                                      {"interpolation", COMPOSITE_INTERPOLATION},
++                                                      {"lighten", COMPOSITE_LIGHTEN},
++                                                      {"lightness", COMPOSITE_LIGHTNESS},
++                                                      {"linearburn", COMPOSITE_LINEAR_BURN},
++                                                      {"linearlight", COMPOSITE_LINEAR_LIGHT},
++                                                      {"luminance", COMPOSITE_LUMINIZE},
++                                                      {"multiply", COMPOSITE_MULT},
++                                                      {"negation", COMPOSITE_NEGATION},
++                                                      {"or", COMPOSITE_OR},
++                                                      {"overlay", COMPOSITE_OVERLAY},
++                                                      {"pinlight", COMPOSITE_PIN_LIGHT},
++                                                      {"red", COMPOSITE_COPY_RED},
++                                                      {"reflect", COMPOSITE_REFLECT},
++                                                      {"saturation", COMPOSITE_SATURATION},
++                                                    //   {"seamless", ""},       // XXX
++                                                    //   {"seamless_mixed", ""}, // XXX
++                                                      {"screen", COMPOSITE_SCREEN},
++                                                    //   {"shapeareamax", ""},                    // XXX
++                                                    //   {"shapeareamax0", ""},                   // XXX
++                                                    //   {"shapeareamin", ""},                    // XXX
++                                                    //   {"shapeareamin0", ""},                   // XXX
++                                                    //   {"shapeaverage", ""},                    // XXX
++                                                    //   {"shapeaverage0", ""},                   // XXX
++                                                    //   {"shapemedian", ""},                     // XXX
++                                                    //   {"shapemedian0", ""},                    // XXX
++                                                    //   {"shapemin", ""},                        // XXX
++                                                    //   {"shapemin0", ""},                       // XXX
++                                                    //   {"shapemax", ""},                        // XXX
++                                                    //   {"shapemax0", ""},                       // XXX
++                                                    //   {"softburn", ""},                        // XXX
++                                                    //   {"softdodge", ""},                       // XXX
++                                                      {"softlight", COMPOSITE_SOFT_LIGHT_SVG}, // XXX Is this correct?
++                                                    //   {"stamp", ""}, // XXX
++                                                      {"subtract", COMPOSITE_SUBTRACT},
++                                                      {"value", COMPOSITE_VALUE},
++                                                      {"vividlight", COMPOSITE_VIVID_LIGHT},
++                                                      {"xor", COMPOSITE_XOR}};
+ 
+ static KoColorTransformation* createTransformationFromGmic(const KoColorSpace* colorSpace, quint32 gmicSpectrum,float gmicUnitValue)
+ {
+@@ -264,10 +318,10 @@ static KoColorTransformation* createTransformation(const KoColorSpace* colorSpac
+ 
+ void KisQmicSimpleConvertor::convertFromGmicFast(gmic_image<float>& gmicImage, KisPaintDeviceSP dst, float gmicUnitValue)
+ {
++    dbgPlugins << "convertFromGmicFast";
+     const KoColorSpace * dstColorSpace = dst->colorSpace();
+-    KoColorTransformation * gmicToDstPixelFormat = createTransformationFromGmic(dstColorSpace,gmicImage._spectrum,gmicUnitValue);
+-    if (gmicToDstPixelFormat == 0)
+-    {
++    KoColorTransformation * gmicToDstPixelFormat = createTransformationFromGmic(dstColorSpace, gmicImage._spectrum, gmicUnitValue);
++    if (gmicToDstPixelFormat == 0) {
+             dbgPlugins << "Fall-back to slow color conversion";
+             convertFromGmicImage(gmicImage, dst, gmicUnitValue);
+             return;
+@@ -281,25 +335,23 @@ void KisQmicSimpleConvertor::convertFromGmicFast(gmic_image<float>& gmicImage, K
+     width  = width < 0  ? 0 : width;
+     height = height < 0 ? 0 : height;
+ 
+-
+     const KoColorSpace *rgbaFloat32bitcolorSpace = KoColorSpaceRegistry::instance()->colorSpace(RGBAColorModelID.id(),
+                                                                                                 Float32BitsColorDepthID.id(),
+                                                                                                 KoColorSpaceRegistry::instance()->rgb8()->profile());
+     // this function always convert to rgba or rgb with various color depth
+     quint32 dstNumChannels = rgbaFloat32bitcolorSpace->channelCount();
++
+     // number of channels that we will copy
+     quint32 numChannels = gmicImage._spectrum;
+ 
+     // gmic image has 4, 3, 2, 1 channel
+     QVector<float *> planes(dstNumChannels);
+     int channelOffset = gmicImage._width * gmicImage._height;
+-    for (unsigned int channelIndex = 0; channelIndex < gmicImage._spectrum; channelIndex++)
+-    {
++    for (unsigned int channelIndex = 0; channelIndex < gmicImage._spectrum; channelIndex++) {
+         planes[channelIndex] = gmicImage._data + channelOffset * channelIndex;
+     }
+ 
+-    for (unsigned int channelIndex = gmicImage._spectrum; channelIndex < dstNumChannels; channelIndex++)
+-    {
++    for (unsigned int channelIndex = gmicImage._spectrum; channelIndex < dstNumChannels; channelIndex++) {
+         planes[channelIndex] = 0; //turn off
+     }
+ 
+@@ -314,16 +366,14 @@ void KisQmicSimpleConvertor::convertFromGmicFast(gmic_image<float>& gmicImage, K
+     int tileHeight = it->numContiguousRows(dst->y());
+     Q_ASSERT(tileWidth == 64);
+     Q_ASSERT(tileHeight == 64);
+-    quint8 * convertedTile = new quint8[rgbaFloat32bitcolorSpace->pixelSize() * tileWidth * tileHeight];
++    quint8 *convertedTile = new quint8[rgbaFloat32bitcolorSpace->pixelSize() * tileWidth * tileHeight];
+ 
+     // grayscale and rgb case does not have alpha, so let's fill 4th channel of rgba tile with opacity opaque
+-    if (gmicImage._spectrum == 1 || gmicImage._spectrum == 3)
+-    {
++    if (gmicImage._spectrum == 1 || gmicImage._spectrum == 3) {
+         quint32 nPixels = tileWidth * tileHeight;
+         quint32 pixelIndex = 0;
+         KoRgbF32Traits::Pixel* srcPixel = reinterpret_cast<KoRgbF32Traits::Pixel*>(convertedTile);
+-        while (pixelIndex < nPixels)
+-        {
++        while (pixelIndex < nPixels) {
+             srcPixel->alpha = gmicUnitValue;
+             ++srcPixel;
+             ++pixelIndex;
+@@ -404,14 +454,14 @@ void KisQmicSimpleConvertor::convertToGmicImageFast(KisPaintDeviceSP dev, gmic_i
+     KoColorTransformation * pixelToGmicPixelFormat = createTransformation(dev->colorSpace());
+     if (pixelToGmicPixelFormat == 0)
+     {
+-        qDebug() << "Fall-back to slow color conversion method";
++        dbgPlugins << "Fall-back to slow color conversion method";
+         convertToGmicImage(dev, gmicImage, rc);
+         return;
+     }
+ 
+     if (rc.isEmpty())
+     {
+-        qDebug() << "Image rectangle is empty! Using supplied gmic layer dimension";
++        dbgPlugins << "Image rectangle is empty! Using supplied gmic layer dimension";
+         rc = QRect(0, 0, gmicImage->_width, gmicImage->_height);
+     }
+ 
+@@ -565,7 +615,9 @@ void KisQmicSimpleConvertor::convertToGmicImage(KisPaintDeviceSP dev, gmic_image
+     KisRandomConstAccessorSP it = dev->createRandomConstAccessorNG(0,0);
+ 
+     int optimalBufferSize = 64; // most common numContiguousColumns, tile size?
+-    quint8 * floatRGBApixel = new quint8[rgbaFloat32bitcolorSpace->pixelSize() * optimalBufferSize];
++    QScopedArrayPointer<quint8> floatRGBApixelStorage(new quint8[rgbaFloat32bitcolorSpace->pixelSize() * optimalBufferSize]);
++    quint8 *floatRGBApixel = floatRGBApixelStorage.data();
++
+     quint32 pixelSize = rgbaFloat32bitcolorSpace->pixelSize();
+     int pos = 0;
+     for (int y = 0; y < rc.height(); y++)
+@@ -593,21 +645,17 @@ void KisQmicSimpleConvertor::convertToGmicImage(KisPaintDeviceSP dev, gmic_image
+             x += numContiguousColumns;
+         }
+     }
+-    delete [] floatRGBApixel;
+     delete pixelToGmicPixelFormat;
+ }
+ 
+ void KisQmicSimpleConvertor::convertFromGmicImage(gmic_image<float>& gmicImage, KisPaintDeviceSP dst, float gmicMaxChannelValue)
+ {
++    dbgPlugins << "convertFromGmicSlow";
+     Q_ASSERT(!dst.isNull());
+     const KoColorSpace *rgbaFloat32bitcolorSpace = KoColorSpaceRegistry::instance()->colorSpace(RGBAColorModelID.id(),
+                                                                                                 Float32BitsColorDepthID.id(),
+                                                                                                 KoColorSpaceRegistry::instance()->rgb8()->profile());
+     const KoColorSpace *dstColorSpace = dst->colorSpace();
+-    if (dstColorSpace == 0)
+-    {
+-        dstColorSpace = rgbaFloat32bitcolorSpace;
+-    }
+ 
+     KisPaintDeviceSP dev = dst;
+     int greenOffset = gmicImage._width * gmicImage._height;
+@@ -620,7 +668,8 @@ void KisQmicSimpleConvertor::convertFromGmicImage(gmic_image<float>& gmicImage,
+     float r,g,b,a;
+ 
+     int optimalBufferSize = 64; // most common numContiguousColumns, tile size?
+-    quint8 * floatRGBApixel = new quint8[rgbaFloat32bitcolorSpace->pixelSize() * optimalBufferSize];
++    QScopedArrayPointer<quint8> floatRGBApixelStorage(new quint8[rgbaFloat32bitcolorSpace->pixelSize() * optimalBufferSize]);
++    quint8 * floatRGBApixel = floatRGBApixelStorage.data();
+     quint32 pixelSize = rgbaFloat32bitcolorSpace->pixelSize();
+ 
+     KoColorConversionTransformation::Intent renderingIntent = KoColorConversionTransformation::internalRenderingIntent();
+@@ -878,3 +927,26 @@ void KisQmicSimpleConvertor::convertFromQImage(const QImage &image, gmic_image<f
+     }
+ }
+ 
++std::map<QString, QString> reverseMap()
++{
++    std::map<QString, QString> result {};
++    for (auto &pair : blendingModeMap) {
++        result.emplace(pair.second, pair.first);
++    }
++    return result;
++}
++
++QString KisQmicSimpleConvertor::blendingModeToString(QString blendMode)
++{
++    static auto reverseModeMap = reverseMap();
++    if (reverseModeMap.find(blendMode) != reverseModeMap.end())
++        return reverseModeMap.at(blendMode);
++    return "alpha";
++}
++
++QString KisQmicSimpleConvertor::stringToBlendingMode(QString blendMode)
++{
++    if (blendingModeMap.find(blendMode) != blendingModeMap.end())
++        return blendingModeMap.at(blendMode);
++    return COMPOSITE_OVER;
++}
+diff --git a/plugins/extensions/qmic/kis_qmic_simple_convertor.h b/plugins/extensions/qmic/kis_qmic_simple_convertor.h
+index 1ccacc2..9e63ce7 100644
+--- a/plugins/extensions/qmic/kis_qmic_simple_convertor.h
++++ b/plugins/extensions/qmic/kis_qmic_simple_convertor.h
+@@ -1,19 +1,7 @@
+ /*
+- * Copyright (c) 2013 Lukáš Tvrdý <lukast.dev@gmail.com
++ * SPDX-FileCopyrightText: 2013 Lukáš Tvrdý <lukast.dev@gmail.com
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ #ifndef __KIS_QMIC_SIMPLE_CONVERTOR_H
+@@ -29,6 +17,9 @@ class QImage;
+ class KisQmicSimpleConvertor
+ {
+ public:
++    static QString blendingModeToString(QString blendMode);
++    static QString stringToBlendingMode(QString str);
++
+     static QImage convertToQImage(gmic_image<float>& gmicImage, float gmicMaxChannelValue = 255.0);
+     static void convertFromQImage(const QImage &image, gmic_image<float> *gmicImage, float gmicUnitValue = 1.0);
+ 
+diff --git a/plugins/extensions/qmic/kis_qmic_synchronize_image_size_command.cpp b/plugins/extensions/qmic/kis_qmic_synchronize_image_size_command.cpp
+index bbb5837..43b2d10 100644
+--- a/plugins/extensions/qmic/kis_qmic_synchronize_image_size_command.cpp
++++ b/plugins/extensions/qmic/kis_qmic_synchronize_image_size_command.cpp
+@@ -1,19 +1,7 @@
+ /*
+- * Copyright (c) 2015 Lukáš Tvrdý <lukast.dev@gmail.com
++ * SPDX-FileCopyrightText: 2015 Lukáš Tvrdý <lukast.dev@gmail.com
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ #include "kis_qmic_synchronize_image_size_command.h"
+@@ -24,7 +12,7 @@ KisQmicSynchronizeImageSizeCommand::KisQmicSynchronizeImageSizeCommand(QVector<g
+     , m_image(image)
+     , m_resizeCommand(0)
+ {
+-    qDebug() << "KisQmicSynchronizeImageSizeCommand" << "gmic images" << m_images.size();
++    dbgPlugins << "KisQmicSynchronizeImageSizeCommand" << "gmic images" << m_images.size();
+ }
+ 
+ KisQmicSynchronizeImageSizeCommand::~KisQmicSynchronizeImageSizeCommand()
+@@ -35,14 +23,14 @@ KisQmicSynchronizeImageSizeCommand::~KisQmicSynchronizeImageSizeCommand()
+ 
+ void KisQmicSynchronizeImageSizeCommand::redo()
+ {
+-    qDebug() << "KisQmicSynchronizeImageSizeCommand::redo";
++    dbgPlugins << "KisQmicSynchronizeImageSizeCommand::redo";
+     // sync image size
+     if (m_image)
+     {
+         QSize gmicBoundingLayerSize = findMaxLayerSize(m_images);
+         QSize kritaSize = m_image->size();
+ 
+-        qDebug() << "\tkrita image" << kritaSize << "gmic size" << gmicBoundingLayerSize;
++        dbgPlugins << "\tkrita image" << kritaSize << "gmic size" << gmicBoundingLayerSize;
+ 
+         if (gmicBoundingLayerSize.width() > kritaSize.width() || gmicBoundingLayerSize.height() > kritaSize.height())
+         {
+@@ -56,7 +44,7 @@ void KisQmicSynchronizeImageSizeCommand::redo()
+ 
+ void KisQmicSynchronizeImageSizeCommand::undo()
+ {
+-    qDebug() << "KisQmicSynchronizeImageSizeCommand::undo";
++    dbgPlugins << "KisQmicSynchronizeImageSizeCommand::undo";
+     if (m_resizeCommand) {
+         m_resizeCommand->undo();
+     }
+@@ -77,6 +65,6 @@ QSize KisQmicSynchronizeImageSizeCommand::findMaxLayerSize(QVector<gmic_image<fl
+         maxHeight = qMax(height, maxHeight);
+     }
+ 
+-    qDebug() << "MaxLayerSize" << maxWidth << maxHeight;
++    dbgPlugins << "MaxLayerSize" << maxWidth << maxHeight;
+     return QSize(maxWidth, maxHeight);
+ }
+diff --git a/plugins/extensions/qmic/kis_qmic_synchronize_image_size_command.h b/plugins/extensions/qmic/kis_qmic_synchronize_image_size_command.h
+index 69a6a53..0dc7dba 100644
+--- a/plugins/extensions/qmic/kis_qmic_synchronize_image_size_command.h
++++ b/plugins/extensions/qmic/kis_qmic_synchronize_image_size_command.h
+@@ -1,19 +1,7 @@
+ /*
+- * Copyright (c) 2015 Lukáš Tvrdý <lukast.dev@gmail.com
++ * SPDX-FileCopyrightText: 2015 Lukáš Tvrdý <lukast.dev@gmail.com
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ #ifndef KIS_GMIC_SYNCHRONIZE_IMAGE_SIZE_COMMAND_H
+diff --git a/plugins/extensions/qmic/kis_qmic_synchronize_layers_command.cpp b/plugins/extensions/qmic/kis_qmic_synchronize_layers_command.cpp
+index 8ea09ee..b694902 100644
+--- a/plugins/extensions/qmic/kis_qmic_synchronize_layers_command.cpp
++++ b/plugins/extensions/qmic/kis_qmic_synchronize_layers_command.cpp
+@@ -1,19 +1,7 @@
+ /*
+- * Copyright (c) 2013 Lukáš Tvrdý <lukast.dev@gmail.com
++ * SPDX-FileCopyrightText: 2013 Lukáš Tvrdý <lukast.dev@gmail.com
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ #include <kis_qmic_synchronize_layers_command.h>
+@@ -35,7 +23,7 @@ KisQmicSynchronizeLayersCommand::KisQmicSynchronizeLayersCommand(KisNodeListSP n
+         m_selection(selection),
+         m_firstRedo(true)
+ {
+-    qDebug() << "KisQmicSynchronizeLayersCommand";
++    dbgPlugins << "KisQmicSynchronizeLayersCommand";
+ }
+ 
+ KisQmicSynchronizeLayersCommand::~KisQmicSynchronizeLayersCommand()
+@@ -46,7 +34,7 @@ KisQmicSynchronizeLayersCommand::~KisQmicSynchronizeLayersCommand()
+ 
+ void KisQmicSynchronizeLayersCommand::redo()
+ {
+-    qDebug() << "KisQmicSynchronizeLayersCommand::Redo" << m_firstRedo;
++    dbgPlugins << "KisQmicSynchronizeLayersCommand::Redo" << m_firstRedo;
+ 
+     if (m_firstRedo) {
+         // if gmic produces more layers
+@@ -58,14 +46,30 @@ void KisQmicSynchronizeLayersCommand::redo()
+                 for (int i = nodesCount; i < m_images.size(); i++) {
+ 
+                     KisPaintDevice * device = new KisPaintDevice(m_image->colorSpace());
+-                    KisLayerSP paintLayer = new KisPaintLayer(m_image, "New layer from gmic filter", OPACITY_OPAQUE_U8, device);
++                    KisLayerSP paintLayer = new KisPaintLayer(m_image, QString("New layer %1 from gmic filter").arg(i), OPACITY_OPAQUE_U8, device);
++
+                     KisImportQmicProcessingVisitor::gmicImageToPaintDevice(*m_images[i], device);
+ 
+-                    KisNodeSP aboveThis = m_nodes->last();
+-                    KisNodeSP parent = m_nodes->at(0)->parent();
++                    KisNodeSP aboveThis(nullptr), parent(nullptr);
++
++                    KisImageLayerAddCommand *addLayerCmd(nullptr);
++
++                    if (nodesCount > 0) {
++                        // This node is a copy made by GMic of an existing node;
++                        // give it its name back (the existing node will be reused
++                        // by KisImportQmicProcessingVisitor)
++                        paintLayer->setName(m_nodes->at(i - nodesCount)->name());
++                        aboveThis = m_nodes->last()->prevSibling();
++                        parent = m_nodes->at(0)->parent();
++
++                        dbgPlugins << "Adding paint layer" << (i - nodesCount + 1) << paintLayer << "to parent"
++                                   << parent->name() << "above" << aboveThis;
++                    }
++
++                    KisImportQmicProcessingVisitor::applyLayerNameChanges(*m_images[i], paintLayer.data(), device);
++
++                    addLayerCmd = new KisImageLayerAddCommand(m_image, paintLayer, parent, aboveThis, false, true);
+ 
+-                    dbgPlugins << "Adding paint layer " << (i - nodesCount + 1) << " to parent " << parent->name();
+-                    KisImageLayerAddCommand *addLayerCmd = new KisImageLayerAddCommand(m_image, paintLayer, parent, aboveThis, false, true);
+                     addLayerCmd->redo();
+                     m_imageCommands.append(addLayerCmd);
+                     m_nodes->append(paintLayer);
+@@ -75,8 +79,7 @@ void KisQmicSynchronizeLayersCommand::redo()
+             else // small preview
+             {
+                 Q_ASSERT(m_nodes->size() > 0);
+-                for (int i = m_nodes->size(); i < m_images.size(); i++)
+-                {
++                for (int i = m_nodes->size(); i < m_images.size(); i++) {
+                     KisPaintDevice * device = new KisPaintDevice(m_nodes->at(0)->colorSpace());
+                     KisLayerSP paintLayer = new KisPaintLayer(0, "New layer from gmic filter", OPACITY_OPAQUE_U8, device);
+                     m_nodes->append(paintLayer);
+diff --git a/plugins/extensions/qmic/kis_qmic_synchronize_layers_command.h b/plugins/extensions/qmic/kis_qmic_synchronize_layers_command.h
+index bab0f7c..668b9d8 100644
+--- a/plugins/extensions/qmic/kis_qmic_synchronize_layers_command.h
++++ b/plugins/extensions/qmic/kis_qmic_synchronize_layers_command.h
+@@ -1,19 +1,7 @@
+ /*
+- * Copyright (c) 2013 Lukáš Tvrdý <lukast.dev@gmail.com
++ * SPDX-FileCopyrightText: 2013 Lukáš Tvrdý <lukast.dev@gmail.com
+  *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+ #ifndef _KIS_GMIC_SYNCHRONIZE_LAYERS_COMMAND
+diff --git a/plugins/extensions/qmic/tests/CMakeLists.txt b/plugins/extensions/qmic/tests/CMakeLists.txt
+index 685b181..a124537 100644
+--- a/plugins/extensions/qmic/tests/CMakeLists.txt
++++ b/plugins/extensions/qmic/tests/CMakeLists.txt
+@@ -1,11 +1,27 @@
+-set( EXECUTABLE_OUTPUT_PATH ${CMAKE_CURRENT_BINARY_DIR} )
+-include_directories( ${CMAKE_SOURCE_DIR}/sdk/tests
++include_directories(${CMAKE_SOURCE_DIR}/sdk/tests
+     ${CMAKE_CURRENT_SOURCE_DIR}/..
+     ${CMAKE_BINARY_DIR}/plugins/extensions/qmic
+ )
+ 
+ macro_add_unittest_definitions()
+ 
+-ecm_add_test(kis_qmic_tests.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../kis_qmic_simple_convertor.cpp
+-    TEST_NAME krita-qmic-test
+-    LINK_LIBRARIES kritaimage Qt5::Test)
++if (APPLE)
++    include(KritaAddBrokenUnitTest)
++
++    krita_add_broken_unit_test(kis_qmic_tests.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../kis_qmic_simple_convertor.cpp
++        TEST_NAME kis_qmic_tests
++        LINK_LIBRARIES kritaimage Qt5::Test
++        NAME_PREFIX "plugins-extensions-qmic-"
++        GUI)
++
++    macos_test_fixrpath(kis_qmic_tests)
++
++else (APPLE)
++
++
++    ecm_add_test(kis_qmic_tests.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../kis_qmic_simple_convertor.cpp
++        TEST_NAME kis_qmic_tests
++        LINK_LIBRARIES kritaimage Qt5::Test
++        NAME_PREFIX "plugins-extensions-qmic-")
++
++endif()
+diff --git a/plugins/extensions/qmic/tests/kis_qmic_tests.cpp b/plugins/extensions/qmic/tests/kis_qmic_tests.cpp
+index 9d83f69..f72dfd8 100644
+--- a/plugins/extensions/qmic/tests/kis_qmic_tests.cpp
++++ b/plugins/extensions/qmic/tests/kis_qmic_tests.cpp
+@@ -1,19 +1,7 @@
+ /*
+- *  Copyright (c) 2013 Lukáš Tvrdý <lukast.dev@gmail.com>
++ *  SPDX-FileCopyrightText: 2013 Lukáš Tvrdý <lukast.dev@gmail.com>
+  *
+- *  This library is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU Lesser General Public License as published by
+- *  the Free Software Foundation; either version 2.1 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This library is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Lesser General Public License for more details.
+- *
+- *  You should have received a copy of the GNU Lesser General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: LGPL-2.1-or-later
+  */
+ 
+ #include <kis_paint_device.h>
+@@ -25,7 +13,7 @@
+ #include <KoColorModelStandardIds.h>
+ #include <KoColor.h>
+ 
+-#include <QTest>
++#include <simpletest.h>
+ #include <QImage>
+ 
+ #include <kis_qmic_simple_convertor.h>
+@@ -50,12 +38,6 @@ void KisQmicTests::initTestCase()
+ {
+     m_qimage = QImage(QString(FILES_DATA_DIR) + "/" + "poster_rodents_bunnysize.jpg");
+     m_qimage = m_qimage.convertToFormat(QImage::Format_ARGB32);
+-
+-    qDebug() << m_qimage.size();
+-
+-    m_qmicImage.assign(m_qimage.width(), m_qimage.height(), 1, 4); // rgba
+-    m_qmicImage._data = new float[m_qimage.width() * m_qimage.height() * 4];
+-    KisQmicSimpleConvertor::convertFromQImage(m_qimage, &m_qmicImage);
+ }
+ 
+ void KisQmicTests::cleanupTestCase()
+@@ -68,19 +50,18 @@ void KisQmicTests::testConvertGrayScaleQmic()
+     KisPaintDeviceSP resultDevFast = new KisPaintDevice(KoColorSpaceRegistry::instance()->rgb8());
+ 
+     gmic_image<float> qmicImage;
+-    qmicImage.assign(m_qimage.width(),m_qimage.height(), 1, 1);
++    qmicImage.assign(m_qimage.width(), m_qimage.height(), 1, 1);
+     qmicImage._data = new float[m_qimage.width() * m_qimage.height()];
+ 
+     KisQmicSimpleConvertor::convertFromQImage(m_qimage, &qmicImage, 1.0);
+     KisQmicSimpleConvertor::convertFromGmicImage(qmicImage, resultDev, 1.0);
+     KisQmicSimpleConvertor::convertFromGmicFast(qmicImage, resultDevFast, 1.0);
+ 
+-    QImage slowQImage = resultDev->convertToQImage(0,0,0,qmicImage._width, qmicImage._height);
+-    QImage fastQImage = resultDevFast->convertToQImage(0,0,0,qmicImage._width, qmicImage._height);
++    QImage slowQImage = resultDev->convertToQImage(0, 0, 0, qmicImage._width, qmicImage._height);
++    QImage fastQImage = resultDevFast->convertToQImage(0, 0, 0, qmicImage._width, qmicImage._height);
+ 
+     QPoint errpoint;
+-    if (!TestUtil::compareQImages(errpoint, slowQImage, fastQImage))
+-    {
++    if (!TestUtil::compareQImages(errpoint, slowQImage, fastQImage)) {
+         QFAIL(QString("Slow method produces different result then fast to convert qmic grayscale pixel format, first different pixel: %1,%2 ").arg(errpoint.x()).arg(errpoint.y()).toLatin1());
+         slowQImage.save("grayscale.bmp");
+         fastQImage.save("grayscale_fast.bmp");
+@@ -100,12 +81,11 @@ void KisQmicTests::testConvertGrayScaleAlphaQmic()
+     KisQmicSimpleConvertor::convertFromGmicImage(qmicImage, resultDev, 1.0);
+     KisQmicSimpleConvertor::convertFromGmicFast(qmicImage, resultDevFast, 1.0);
+ 
+-    QImage slowQImage = resultDev->convertToQImage(0, 0,0,qmicImage._width, qmicImage._height);
+-    QImage fastQImage = resultDevFast->convertToQImage(0,0,0,qmicImage._width, qmicImage._height);
++    QImage slowQImage = resultDev->convertToQImage(0, 0, 0, qmicImage._width, qmicImage._height);
++    QImage fastQImage = resultDevFast->convertToQImage(0, 0, 0, qmicImage._width, qmicImage._height);
+ 
+     QPoint errpoint;
+-    if (!TestUtil::compareQImages(errpoint,slowQImage,fastQImage))
+-    {
++    if (!TestUtil::compareQImages(errpoint, slowQImage, fastQImage)) {
+         QFAIL(QString("Slow method produces different result then fast to convert qmic grayscale pixel format, first different pixel: %1,%2 ").arg(errpoint.x()).arg(errpoint.y()).toLatin1());
+         slowQImage.save("grayscale.bmp");
+         fastQImage.save("grayscale_fast.bmp");
+@@ -125,17 +105,16 @@ void KisQmicTests::testConvertRGBqmic()
+     KisQmicSimpleConvertor::convertFromGmicImage(qmicImage, resultDev, 1.0);
+     KisQmicSimpleConvertor::convertFromGmicFast(qmicImage, resultDevFast, 1.0);
+ 
+-    QImage slowQImage = resultDev->convertToQImage(0,0,0,qmicImage._width, qmicImage._height);
++    QImage slowQImage = resultDev->convertToQImage(0, 0, 0, qmicImage._width, qmicImage._height);
+     QPoint errpoint;
+-    if (!TestUtil::compareQImages(errpoint, slowQImage, m_qimage))
+-    {
++
++    if (!TestUtil::compareQImages(errpoint, slowQImage, m_qimage)) {
+         QFAIL(QString("Slow method failed to convert qmic RGB pixel format, first different pixel: %1,%2 ").arg(errpoint.x()).arg(errpoint.y()).toLatin1());
+         slowQImage.save("RGB.bmp");
+     }
+ 
+-    QImage fastQImage = resultDevFast->convertToQImage(0,0,0,qmicImage._width, qmicImage._height);
+-    if (!TestUtil::compareQImages(errpoint,fastQImage,m_qimage))
+-    {
++    QImage fastQImage = resultDevFast->convertToQImage(0, 0, 0, qmicImage._width, qmicImage._height);
++    if (!TestUtil::compareQImages(errpoint,fastQImage,m_qimage)) {
+         QFAIL(QString("Fast method failed to convert qmic RGB pixel format, first different pixel: %1,%2 ").arg(errpoint.x()).arg(errpoint.y()).toLatin1());
+         fastQImage.save("RGB_fast.bmp");
+     }
+@@ -155,17 +134,15 @@ void KisQmicTests::testConvertRGBAqmic()
+     KisQmicSimpleConvertor::convertFromGmicImage(qmicImage, resultDev, 1.0);
+     KisQmicSimpleConvertor::convertFromGmicFast(qmicImage, resultDevFast, 1.0);
+ 
+-    QImage slowQImage = resultDev->convertToQImage(0,0,0,qmicImage._width, qmicImage._height);
++    QImage slowQImage = resultDev->convertToQImage(0, 0, 0, qmicImage._width, qmicImage._height);
+     QPoint errpoint;
+-    if (!TestUtil::compareQImages(errpoint,slowQImage,m_qimage))
+-    {
++    if (!TestUtil::compareQImages(errpoint,slowQImage,m_qimage)) {
+         QFAIL(QString("Slow method failed to convert qmic RGBA pixel format, first different pixel: %1,%2 ").arg(errpoint.x()).arg(errpoint.y()).toLatin1());
+         slowQImage.save("RGBA.bmp");
+     }
+ 
+-    QImage fastQImage = resultDevFast->convertToQImage(0,0,0,qmicImage._width, qmicImage._height);
+-    if (!TestUtil::compareQImages(errpoint,fastQImage,m_qimage))
+-    {
++    QImage fastQImage = resultDevFast->convertToQImage(0, 0, 0, qmicImage._width, qmicImage._height);
++    if (!TestUtil::compareQImages(errpoint,fastQImage,m_qimage)) {
+         QFAIL(QString("Fast method failed to convert qmic RGBA pixel format, first different pixel: %1,%2 ").arg(errpoint.x()).arg(errpoint.y()).toLatin1());
+         fastQImage.save("RGBA_fast.bmp");
+     }
+@@ -182,32 +159,33 @@ void KisQmicTests::testConvertToGmic()
+ 
+     KisQmicSimpleConvertor::convertToGmicImageFast(srcDev, &qmicImage, srcDev->exactBounds());
+ 
+-    KisPaintDeviceSP resultDev = new KisPaintDevice(KoColorSpaceRegistry::instance()->rgb8());
+-    KisPaintDeviceSP resultDevFast = new KisPaintDevice(KoColorSpaceRegistry::instance()->rgb8());
+-
+-    KisQmicSimpleConvertor::convertFromGmicImage(qmicImage, resultDev, 1.0);
+-    KisQmicSimpleConvertor::convertFromGmicFast(qmicImage, resultDevFast, 1.0);
+-
+-    QImage slowQImage = resultDev->convertToQImage(0, 0, 0, qmicImage._width, qmicImage._height);
+-    slowQImage.save("a.png");
+     QPoint errpoint;
+-    if (!TestUtil::compareQImages(errpoint, slowQImage, m_qimage))
+-    {
+-        QFAIL(QString("Slow method failed to convert qmic RGBA pixel format, first different pixel: %1,%2 ").arg(errpoint.x()).arg(errpoint.y()).toLatin1());
+-        slowQImage.save("RGBA.bmp");
++    QImage resultQImage = KisQmicSimpleConvertor::convertToQImage(qmicImage);
++    if (!TestUtil::compareQImages(errpoint, resultQImage, m_qimage)) {
++        QFAIL(QString("Failed to convert qmic RGBA pixel format to QImage, first different pixel: %1,%2 ").arg(errpoint.x()).arg(errpoint.y()).toLatin1());
++        resultQImage.save("testConvertToGmic_qimage.bmp");
+     }
+ 
++    KisPaintDeviceSP resultDevFast = new KisPaintDevice(KoColorSpaceRegistry::instance()->rgb8());
++    KisQmicSimpleConvertor::convertFromGmicFast(qmicImage, resultDevFast, 255.0f);
+     QImage fastQImage = resultDevFast->convertToQImage(0, 0, 0, qmicImage._width, qmicImage._height);
+-    fastQImage.save("b.png");
+-    if (!TestUtil::compareQImages(errpoint, fastQImage, m_qimage))
+-    {
++
++    if (!TestUtil::compareQImages(errpoint, fastQImage, m_qimage)) {
+         QFAIL(QString("Fast method failed to convert qmic RGBA pixel format, first different pixel: %1,%2 ").arg(errpoint.x()).arg(errpoint.y()).toLatin1());
+-        fastQImage.save("RGBA_fast.bmp");
++        fastQImage.save("testConvertToGmic_fast.bmp");
++    }
++
++    KisPaintDeviceSP resultDev = new KisPaintDevice(KoColorSpaceRegistry::instance()->rgb8());
++    KisQmicSimpleConvertor::convertFromGmicImage(qmicImage, resultDev, 255.0f);
++    QImage slowQImage = resultDev->convertToQImage(0, 0, 0, qmicImage._width, qmicImage._height);
++    if (!TestUtil::compareQImages(errpoint, slowQImage, m_qimage)) {
++        QFAIL(QString("Slow method failed to convert qmic RGBA pixel format, first different pixel: %1,%2 ").arg(errpoint.x()).arg(errpoint.y()).toLatin1());
++        slowQImage.save("testConvertToGmic_slow.bmp");
+     }
+ 
+ 
+ }
+ 
+ 
+-QTEST_MAIN(KisQmicTests)
++SIMPLE_TEST_MAIN(KisQmicTests)
+ 
+diff --git a/plugins/extensions/qmic/tests/kis_qmic_tests.h b/plugins/extensions/qmic/tests/kis_qmic_tests.h
+index 0badb80..91fa62a 100644
+--- a/plugins/extensions/qmic/tests/kis_qmic_tests.h
++++ b/plugins/extensions/qmic/tests/kis_qmic_tests.h
+@@ -1,25 +1,13 @@
+-/*
+- *  Copyright (c) 2013 Lukáš Tvrdý <lukast.dev@gmail.com>
++/*ls
++ *  SPDX-FileCopyrightText: 2013 Lukáš Tvrdý <lukast.dev@gmail.com>
+  *
+- *  This library is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU Lesser General Public License as published by
+- *  the Free Software Foundation; either version 2.1 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This library is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU Lesser General Public License for more details.
+- *
+- *  You should have received a copy of the GNU Lesser General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ *  SPDX-License-Identifier: LGPL-2.1-or-later
+  */
+ 
+ #ifndef _KIS_QMIC_TESTS_H_
+ #define _KIS_QMIC_TESTS_H_
+ 
+-#include <QtTest>
++#include <simpletest.h>
+ #include <QImage>
+ 
+ #include "../gmic.h"
+@@ -29,18 +17,17 @@ class KisQmicTests : public QObject
+     Q_OBJECT
+ 
+ private:
+-    gmic_image<float> m_qmicImage;
+     QImage m_qimage;
+ 
+ private Q_SLOTS:
+     void initTestCase();
+     void cleanupTestCase();
+-
++    void testConvertToGmic();
+     void testConvertGrayScaleQmic();
+     void testConvertGrayScaleAlphaQmic();
+     void testConvertRGBqmic();
+     void testConvertRGBAqmic();
+-    void testConvertToGmic();
++
+ };
+ 
+ #endif
