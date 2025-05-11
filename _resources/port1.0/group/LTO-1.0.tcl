@@ -139,9 +139,17 @@ if {${os.platform} eq "darwin"} {
     # and before they inject ${configure.ldflags} where and how that's required.
     proc LTO.set_lto_cache {} {
         global configure.compiler configure.ldflags build.dir
+        global muniversal.current_arch merger_configure_ldflags merger_arch_flag
         if {[LTO::variant_enabled LTO] && ${configure.compiler} ne "clang"} {
             xinstall -m 755 -d ${build.dir}/.lto_cache
-            configure.ldflags-append    -Wl,-cache_path_lto,${build.dir}/.lto_cache
+            ui_debug "Setting LTO cache path to ${build.dir}/.lto_cache"
+            if {[info exists muniversal.build_arch] && [variant_isset universal]} {
+                configure.ldflags.${muniversal.current_arch}-append -Wl,-cache_path_lto,${build.dir}/.lto_cache
+            } elseif {[info exists merger_arch_flag] && [variant_isset universal]} {
+                lappend merger_configure_ldflags(${muniversal.current_arch}) -Wl,-cache_path_lto,${build.dir}/.lto_cache
+            } else {
+                configure.ldflags-append -Wl,-cache_path_lto,${build.dir}/.lto_cache
+            }
         }
     }
     post-destroot {
