@@ -10,6 +10,7 @@ PortGroup               compiler_blacklist_versions 1.0
 if {[variant_isset universal]} {
     set LTO.LTO.maybe_ForceLD yes
 }
+set LTO.allow_ThinLTO   no
 PortGroup               LTO 1.0
 PortGroup               compress_workdir 1.0
 PortGroup               python-required 1.0
@@ -35,7 +36,9 @@ epoch                   1
 if {${os.platform} ne "darwin" || ${configure.cxx_stdlib} ne "libstdc++"} {
 
     version             20.1.1
-    revision            0
+    platform darwin {
+        revision        1
+    }
 
     livecheck.regex {"llvmorg-([0-9.]+)".*}
 
@@ -81,7 +84,8 @@ if {${os.platform} ne "darwin" || ${configure.cxx_stdlib} ne "libstdc++"} {
     dist_subdir         openmp-release
     worksrcdir          ${distname}
     set rtpath          "runtime/"
-    patchfiles-append   patch-libomp-use-gettid-on-Leopard.diff
+    patchfiles-append   patch-libomp-use-gettid-on-Leopard.diff \
+                        patch-test-ignore-unexpected-dependencies.diff
 
     livecheck.url       https://api.github.com/repos/llvm/llvm-project/tags
 } else {
@@ -152,7 +156,7 @@ if {${os.platform} eq "darwin" && ${os.major} <= 10} {
     configure.args-append \
                         -DLIBOMP_OMPT_SUPPORT=FALSE
 } else {
-    set hnames          {omp-tools.h omp.h ompt.h ompx.h}
+    set hnames          {*.h}
 }
 
 if {[variant_isset hwloc]} {
@@ -190,8 +194,8 @@ post-destroot {
     xinstall -d ${instdest}/share/doc/libomp
 
     xinstall -d ${instdest}/include/libomp
-    foreach h ${hnames} {
-        move ${instdest}/tmp/include/${h} ${instdest}/include/libomp/
+    foreach h [glob -directory ${instdest}/tmp/include ${hnames}] {
+        move ${h} ${instdest}/include/libomp/
     }
 
     xinstall -d ${instdest}/lib/libomp
@@ -200,20 +204,20 @@ post-destroot {
     } else {
         set shlext "so"
     }
-    foreach p [glob -directory ${instdest}/tmp/lib/ *.${shlext}] {
+    foreach p [glob -directory ${instdest}/tmp/lib/ *.${shlext}* *.a] {
         move ${p} ${instdest}/lib/libomp/
     }
-#     foreach p {libiomp5.dylib libomp.dylib libgomp.dylib} {
-#         move ${instdest}/tmp/lib/${p} ${instdest}/lib/libomp/
-#     }
+    move ${instdest}/tmp/lib/cmake ${instdest}/lib/
 
     if {[variant_isset top_level]} {
-        foreach h ${hnames} {
-            system -W ${instdest}/include \
-              "ln -sf libomp/${h} ."
-        }
+        system -W ${instdest}/include \
+          "ln -sf libomp/* ."
         system -W ${instdest}/lib/ \
           "ln -sf libomp/* ."
+    }
+
+    if {[file exists ${destroot}${prefix}/tmp/share/gdb]} {
+        file rename ${destroot}${prefix}/tmp/share/gdb ${destroot}${prefix}/share/gdb
     }
 
     set fpath ${worksrcpath}/${rtpath}
@@ -232,3 +236,12 @@ notes "
 
 test.run                yes
 test.target             libomp-micro-tests
+
+post-test {
+    if {${os.platform} eq "darwin"} {
+        set env(DYLD_LIBRARY_PATH)  "${build.dir}/runtime/src"
+    } else {
+        set env(LD_LIBRARY_PATH)    "${build.dir}/runtime/src"
+    }
+    system -W ${build.dir} "runtime/src/test-touch-rt/test-touch"
+}
