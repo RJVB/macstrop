@@ -110,7 +110,7 @@ if { ${os.major} < 10 && ${os.platform} eq "darwin" } {
 } else {
     set gcc_main_version 13
 }
-ui_debug "GCC versions for Darwin ${os.major} ${os.arch} - ${gcc_versions}"
+ui_debug "GCC versions for ${os.platform} ${os.major} ${os.arch} - ${gcc_versions}"
 foreach ver ${gcc_versions} {
     # Remove dot from version if present
     set ver_nodot [string map {. {}} ${ver}]
@@ -194,7 +194,7 @@ if { ${os.major} >= 9 || ${os.platform} ne "darwin" } {
         lappend clang_versions devel
     }
 }
-ui_debug "Clang versions for Darwin ${os.major} ${os.arch} - ${clang_versions}"
+ui_debug "Clang versions for ${os.platform} ${os.major} ${os.arch} - ${clang_versions}"
 foreach ver ${clang_versions} {
     # Remove dot from version if present
     set ver_nodot [string map {. {}} ${ver}]
@@ -243,7 +243,12 @@ set cdb(g95,compiler) g95
 set cdb(g95,descrip)  "g95 Fortran"
 set cdb(g95,depends)  port:g95
 set cdb(g95,dependsl) ""
-set cdb(g95,libfortran) ${prefix}/lib/g95/x86_64-apple-darwin14/4.2.4/libf95.a
+if {${os.platform} eq "darwin"} {
+    set cdb(g95,libfortran) ${prefix}/lib/g95/x86_64-apple-darwin14/4.2.4/libf95.a
+} else {
+    # no idea, really!
+    set cdb(g95,libfortran) ${prefix}/lib/g95/x86_64-pc-linux-gnu/4.2.4/libf95.a
+}
 set cdb(g95,dependsd) ""
 set cdb(g95,dependsa) g95
 set cdb(g95,conflict) ""
@@ -664,7 +669,7 @@ proc compilers.setup {args} {
     global cdb compilers.variants compilers.clang_variants compilers.gcc_variants \
         compilers.my_fortran_variants compilers.require_fortran compilers.default_fortran \
         compilers.setup_done compilers.list compilers.gcc_default compiler.blacklist \
-        os.major os.arch
+        os.major os.arch os.platform
 
     if {!${compilers.setup_done}} {
         set add_list [list]
@@ -719,9 +724,9 @@ proc compilers.setup {args} {
                     if {[info exists cdb($v,variant)] == 0} {
                         # If removing an already not available compiler just warn, otherwise hard error
                         if { ${mode} eq "add" } {
-                            return -code error "Compiler ${v} not available for Darwin${os.major} ${os.arch}"
+                            return -code error "Compiler ${v} not available for ${os.platform}${os.major} ${os.arch}"
                         } else {
-                            ui_debug "Compiler ${v} not available for Darwin${os.major} ${os.arch}"
+                            ui_debug "Compiler ${v} not available for ${os.platform}${os.major} ${os.arch}"
                         }
                     } else {
                         set ${mode}_list [${mode}_from_list [set ${mode}_list] $cdb($v,variant)]
