@@ -495,6 +495,11 @@ default kf5.git.depth {}
 # by default we create working copies that are shallow before Jan 1st 2018
 # that should include any commit we're currently requesting through git.branch .
 default kf5.git.shallowbefore 2018-01-01
+
+# a "real branch"!
+options kf5.git.branch
+default kf5.git.branch {}
+
 ## set an appropriate git.url
 ## `kf5.git.setup project` : fetch from the KDE git server
 ## `kf5.git.setup host project` : fetch from ${host}${project}; "host" must be fully qualified and end with a separator
@@ -503,7 +508,7 @@ default kf5.git.shallowbefore 2018-01-01
 ## those settings to be respected.
 ## NB2: the other forms set fetch.type=git .
 proc kf5.git.setup {first {second ""} args} {
-    global kf5.version kf5.git.depth kf5.git.shallowbefore filespath fetch.type
+    global kf5.version kf5.git.depth kf5.git.shallowbefore kf5.git.branch 0i// filespath fetch.type
     if {[llength ${args}] > 0} {
         # this implies `second` isn't empty either!
         ui_debug        "Checking out through github PortGroup"
@@ -524,12 +529,15 @@ proc kf5.git.setup {first {second ""} args} {
         } else {
             ui_debug    "cloning \"${project}\" from host \"${host}\""
             set uri ${host}${project}
+            if {${kf5.git.branch} ne {}} {
+                git.url-append -b ${kf5.git.branch}
+            }
             if {${kf5.git.depth} ne {} && ${kf5.git.depth} > 0} {
-                git.url -n --depth ${kf5.git.depth} ${uri}
+                git.url-append -n --depth ${kf5.git.depth} ${uri}
             } elseif {${kf5.git.shallowbefore} ne {}} {
-                git.url -n --shallow-since ${kf5.git.shallowbefore} ${uri}
+                git.url-append -n --shallow-since ${kf5.git.shallowbefore} ${uri}
             } else {
-                git.url -n ${uri}
+                git.url-append -n ${uri}
             }
             distname    ${project}-${kf5.version}.git
         }
