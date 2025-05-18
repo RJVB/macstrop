@@ -45,15 +45,20 @@
 # and other earlier versions. Set `preserve_runtime_libraries_ports` to the list of
 # ports to be covered for this. NB: files from these ports also end up in the normal
 # previous/${subport} directory to show that they now belong to ${subport}!
+# Set `preserve_runtime_libraries_allow_unregistered yes` to extend the same courtesy
+# to libraries matching the pattern that aren't registered to belong to any port
+# (the registry reverse lookup can get confused like this under specific circumstances).
 
 # Note that ports that depend on poppler via poppler-qt4-mac or
 # poppler-qt5-mac do not need this trick to avoid rebuilding.
 
 
 options preserve_runtime_libraries_allow_unlinked \
-        preserve_runtime_libraries_ports
+        preserve_runtime_libraries_ports \
+        preserve_runtime_libraries_allow_unregistered
 default preserve_runtime_libraries_allow_unlinked {no}
 default preserve_runtime_libraries_ports {}
+default preserve_runtime_libraries_allow_unregistered {no}
 
 namespace eval PRL {
     set preserve_runtime_library_root "previous"
@@ -75,6 +80,9 @@ namespace eval PRL {
 proc preserve_libraries {srcdir patternlist} {
     global prefix subport destroot PRL::preserve_runtime_library_dir version revision
     set prlp [split [option preserve_runtime_libraries_ports] " "]
+    if {[option preserve_runtime_libraries_allow_unregistered]} {
+        lappend prlp 0
+    }
     if {[variant_isset preserve_runtime_libraries]} {
         if {![file exists ${srcdir}]} {
             ui_debug "Source for previous runtime libraries (${srcdir}) does not exist"
@@ -160,13 +168,12 @@ proc preserve_libraries {srcdir patternlist} {
                     set fport [registry_file_registered ${l}]
                     # registry_file_registered returns "0" for files not belonging to a port
                     # we give the port author the favour of the doubt and backup the file anyway.
-                    if {${fport} eq "${subport}" || ${fport} eq "0" \
-                        || (${prlp} ne {} && [lsearch -exact ${prlp} ${fport}] >= 0)} {
+                    if {${fport} eq "${subport}" || (${prlp} ne {} && [lsearch -exact ${prlp} ${fport}] >= 0)} {
                         set lib [file tail ${l}]
                         set prevlib [file join ${destroot}${srcdir}/${prevdir} ${lib}]
                         if {![file exists ${prevlib}] &&
                                 ([option preserve_runtime_libraries_allow_unlinked] || ![file exists ${destroot}${l}])} {
-                            ui_debug "Preserving current runtime shared library ${l} as ${prevlib}"
+                            ui_debug "Preserving current runtime shared library ${l} (from ${fport}) as ${prevlib}"
                             set perms [file attributes ${l} -permissions]
                             copy ${l} ${prevlib}
                             if {![file exists ${destroot}${srcdir}/${lib}]} {
