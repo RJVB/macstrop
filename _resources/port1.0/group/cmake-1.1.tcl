@@ -189,6 +189,19 @@ proc cmake::handle_build_type {option action args} {
     }
 }
 
+proc cmake::reenable_package {args} {
+    foreach p ${args} {
+        configure.args-delete -DCMAKE_DISABLE_FIND_PACKAGE_${p}=ON
+    }
+}
+
+proc cmake::disable_package {args} {
+    cmake::reenable_package ${args}
+    foreach p ${args} {
+        configure.args-append -DCMAKE_DISABLE_FIND_PACKAGE_${p}=ON
+    }
+}
+
 option_proc cmake.generator cmake::handle_generator
 proc cmake::handle_generator {option action args} {
     global cmake.generator destroot destroot.target build.cmd build.post_args
