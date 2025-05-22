@@ -1,0 +1,366 @@
+commit 0fc1c277d2b833ab5e5fb343967f77de70f47523
+Author: bertin <macportsuser@macports.org>
+Date:   Thu May 22 23:55:21 2025 +0200
+
+    /opt/local/site-ports/sysutils/MacPorts/files/patch-progressbar-tweaks.diff
+
+diff --git a/doc/macports.conf.in b/doc/macports.conf.in
+index 590b7414c..4555f092e 100644
+--- a/doc/macports.conf.in
++++ b/doc/macports.conf.in
+@@ -136,6 +136,20 @@ variants_conf       	@MPCONFIGDIR_EXPANDED@/variants.conf
+ # Keep logs after successful installations.
+ #keeplogs            	no
+ 
++# Progress reporting.
++# MacPorts will show a progressbar during lengthy operations which take more
++# than $progressbar_after milliseconds. The bar reports determinate progress
++# when the total amount of work and the work done are quantified. It can also
++# show an "indeterminate" indication of work being done (and switch to this
++# display after a certain amount of time) if $progressbar_type is set to `both`.
++# The operations that use this feature are downloads, builds and rev-upgrade,
++# plus a list of additional operations $progressbar_also_for which can include
++# `de/activation` (for `port deactivate` and `port activate`) and possibly more
++# in the future. NB: no quotes for the string values!
++# progressbar_after     500
++# progressbar_type      both
++# progressbar_also_for  de/activation
++
+ # URLs that MacPorts attempts to download to find out whether a new version was
+ # released. Multiple values, space-separated; only one of the URLs needs to be
+ # available. Downloads will be attempted in the specified order.
+diff --git a/src/macports1.0/macports.tcl b/src/macports1.0/macports.tcl
+index e7b2c8035..9db20a226 100644
+--- a/src/macports1.0/macports.tcl
++++ b/src/macports1.0/macports.tcl
+@@ -52,6 +52,7 @@ namespace eval macports {
+     foreach opt [list binpath auto_path clonebin_path extra_env portdbformat \
+         portarchivetype portimage_mode hfscompression portautoclean \
+         porttrace portverbose keeplogs destroot_umask release_urls release_version_urls \
++        progressbar_after progressbar_type progressbar_also_for \
+         rsync_server rsync_options rsync_dir \
+         startupitem_autostart startupitem_type startupitem_install \
+         place_worksymlink xcodeversion xcodebuildcmd xcodecltversion xcode_license_unaccepted \
+@@ -78,6 +79,7 @@ namespace eval macports {
+         registry.path registry.format user_home user_path user_ssh_auth_sock \
+         portarchivetype portarchive_hfscompression archivefetch_pubkeys \
+         portautoclean portimage_mode porttrace keeplogs portverbose destroot_umask \
++        progressbar_after progressbar_type progressbar_also_for \
+         rsync_server rsync_options rsync_dir startupitem_autostart startupitem_type startupitem_install \
+         place_worksymlink macportsuser sudo_user \
+         configureccache ccache_dir ccache_size configuredistcc configurepipe buildnicevalue buildmakejobs \
+@@ -1050,6 +1052,9 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
+         macports::cxx_stdlib \
+         macports::hfscompression \
+         macports::portarchive_hfscompression \
++        macports::progressbar_after \
++        macports::progressbar_type \
++        macports::progressbar_also_for \
+         macports::host_cache \
+         macports::porturl_prefix_map \
+         macports::clonebin_path \
+@@ -1551,6 +1556,16 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
+     }
+     set portarchive_hfscompression $hfscompression
+ 
++    if {![info exists progressbar_after]} {
++        set progressbar_after 500
++    }
++    if {![info exists progressbar_type]} {
++        set progressbar_type "both"
++    }
++    if {![info exists progressbar_also_for]} {
++        set progressbar_also_for "de/activation"
++    }
++
+     # Set rync options
+     if {![info exists rsync_server]} {
+         set rsync_server rsync.macports.org
+diff --git a/src/pextlib1.0/Pextlib.c b/src/pextlib1.0/Pextlib.c
+index 148e54ccb..043f83ee5 100644
+--- a/src/pextlib1.0/Pextlib.c
++++ b/src/pextlib1.0/Pextlib.c
+@@ -1213,6 +1213,48 @@ static int fileIsSparseCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int
+     return TCL_OK;
+ }
+ 
++/*
++    processIsForeground
++
++    synopsis: processIsForeground
++
++    Returns true if the process is running in the foreground or false
++    if in the background or if the state couldn't be determined. This
++    function is intended for use in contexts where it shouldn't raise
++    an error, so we always return TCL_OK.
++*/
++int IsProcessForegroundCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[])
++{
++    /* Check the arg count */
++    if (objc != 1) {
++        Tcl_WrongNumArgs(interp, 1, objv, NULL);
++        return TCL_ERROR;
++    }
++
++    errno = 0;
++    int fd, fdo = fileno(stdout), valid = false;
++    if ((fd = isatty(fdo) ? fdo : open("/dev/tty", O_RDONLY)) != -1) {
++        const pid_t pgrp = getpgrp();
++        const pid_t tcpgrp = tcgetpgrp(fd);
++        if (fd != fdo) {
++            close(fd);
++        }
++        if (pgrp != -1 && tcpgrp != -1) {
++            Tcl_SetObjResult(interp, Tcl_NewBooleanObj(pgrp == tcpgrp));
++            valid = true;
++        }
++    }
++    if (!valid) {
++        // we return false
++        Tcl_SetObjResult(interp, Tcl_NewBooleanObj(false));
++        if (errno) {
++            // and set errno. 
++            Tcl_SetErrno(errno);
++        }
++    }
++    return TCL_OK;
++}
++
+ int Pextlib_Init(Tcl_Interp *interp)
+ {
+     if (Tcl_InitStubs(interp, "8.4", 0) == NULL)
+@@ -1276,6 +1318,8 @@ int Pextlib_Init(Tcl_Interp *interp)
+     Tcl_CreateObjCommand(interp, "fs_clone_capable", FSCloneCapableCmd, NULL, NULL);
+     Tcl_CreateObjCommand(interp, "clonefile", ClonefileCmd, NULL, NULL);
+ 
++    Tcl_CreateObjCommand(interp, "processIsForeground", IsProcessForegroundCmd, NULL, NULL);
++
+     if (Tcl_PkgProvide(interp, "Pextlib", "1.0") != TCL_OK)
+         return TCL_ERROR;
+ 
+diff --git a/src/port/port.tcl b/src/port/port.tcl
+index e76631905..157f28c88 100755
+--- a/src/port/port.tcl
++++ b/src/port/port.tcl
+@@ -4971,9 +4971,11 @@ namespace eval portclient::progress {
+     proc initDelay {} {
+         variable show
+         variable startTime
++        variable showTimeThreshold
+ 
+         set startTime [clock milliseconds]
+         set show no
++        set showTimeThreshold ${macports::progressbar_after}
+     }
+ 
+     ##
+@@ -5049,7 +5051,9 @@ namespace eval portclient::progress {
+             }
+             update {
+                 lassign $args now total
+-                if {[showProgress $now $total] eq "yes"} {
++                # Check on each update if we're still outputting to a tty - the user can
++                # have pushed us into the background.
++                if {[processIsForeground] && ([showProgress $now $total] eq "yes")} {
+                     set barPrefix "      "
+                     set barPrefixLen [string length $barPrefix]
+                     if {$total != 0} {
+@@ -5061,11 +5065,13 @@ namespace eval portclient::progress {
+             }
+             intermission -
+             finish {
+-                # erase to start of line
+-                ::term::ansi::send::esolch stderr
+-                # return cursor to start of line
+-                puts -nonewline stderr "\r"
+-                flush stderr
++                if {[processIsForeground]} {
++                    # erase to start of line
++                    ::term::ansi::send::esolch stderr
++                    # return cursor to start of line
++                    puts -nonewline stderr "\r"
++                    flush stderr
++                }
+             }
+         }
+ 
+@@ -5097,7 +5103,9 @@ namespace eval portclient::progress {
+             }
+             update {
+                 lassign $args type total now speed
+-                if {[showProgress $now $total] eq "yes"} {
++                # Check on each update if we're still outputting to a tty - the user can
++                # have pushed us into the background.
++                if {[processIsForeground] && ([showProgress $now $total] eq "yes")} {
+                     set barPrefix "      "
+                     set barPrefixLen [string length $barPrefix]
+                     if {$total != 0} {
+@@ -5116,11 +5124,13 @@ namespace eval portclient::progress {
+                 }
+             }
+             finish {
+-                # erase to start of line
+-                ::term::ansi::send::esolch stderr
+-                # return cursor to start of line
+-                puts -nonewline stderr "\r"
+-                flush stderr
++                if {[processIsForeground]} {
++                    # erase to start of line
++                    ::term::ansi::send::esolch stderr
++                    # return cursor to start of line
++                    puts -nonewline stderr "\r"
++                    flush stderr
++                }
+             }
+         }
+ 
+diff --git a/src/port1.0/portprogress.tcl b/src/port1.0/portprogress.tcl
+index f0165e73b..f50f93ec0 100644
+--- a/src/port1.0/portprogress.tcl
++++ b/src/port1.0/portprogress.tcl
+@@ -41,6 +41,7 @@ namespace eval portprogress {
+     variable indeterminate_timer        0
+ 
+     # If our progress callback should issue indeterminate progress updates
++    variable allow_indeterminate        yes
+     variable indeterminate              yes
+ 
+     # ninja ([<completed tasks>/<pending tasks>])
+@@ -53,7 +54,8 @@ namespace eval portprogress {
+ # A SystemCmd callback that parses common target progress formats to display
+ # a progress bar
+ proc portprogress::target_progress_callback {event} {
+-    global portverbose
++    global portverbose progressbar_type
++    variable allow_indeterminate
+     variable indeterminate
+     variable indeterminate_timer
+     variable indeterminate_threshold
+@@ -66,7 +68,11 @@ proc portprogress::target_progress_callback {event} {
+ 
+     switch -- [dict get $event type] {
+         exec {
+-            set indeterminate yes
++            # reset allow_indeterminate to the user/default-configured setting
++            if {${progressbar_type} ne "both"} {
++			  set allow_indeterminate no
++		  }
++            set indeterminate ${allow_indeterminate}
+             set indeterminate_timer 0
+             ui_progress_generic start
+         }
+@@ -102,7 +108,7 @@ proc portprogress::target_progress_callback {event} {
+                 set time_diff [expr { $time_now - $time_last }]
+ 
+                 if {${time_diff} >= ${indeterminate_threshold}} {
+-                    set indeterminate yes
++                    set indeterminate ${allow_indeterminate}
+                 }
+             }
+ 
+diff --git a/src/registry2.0/portimage.tcl b/src/registry2.0/portimage.tcl
+index 8a3f64dd1..89ca9f2c8 100644
+--- a/src/registry2.0/portimage.tcl
++++ b/src/registry2.0/portimage.tcl
+@@ -63,6 +63,7 @@ namespace eval portimage {
+ variable force 0
+ variable noexec 0
+ variable UI_PREFIX {---> }
++variable show_progressbar 1
+ 
+ # takes a composite version spec rather than separate version,revision,variants
+ proc activate_composite {name {v ""} {optionslist ""}} {
+@@ -167,6 +168,7 @@ proc deactivate_composite {name {v ""} {optionslist ""}} {
+ 
+ proc deactivate {name {version ""} {revision ""} {variants 0} {options ""}} {
+     variable UI_PREFIX
++    variable show_progressbar
+ 
+     if {[dict exists $options ports_force] && [string is true -strict [dict get $options ports_force]] } {
+         # this not using the namespace variable is correct, since activate
+@@ -253,6 +255,12 @@ proc deactivate {name {version ""} {revision ""} {variants 0} {options ""}} {
+         }
+     }
+ 
++    if {[lsearch -exact ${macports::progressbar_also_for} "de/activation"] < 0} {
++        set show_progressbar 0
++        # minimise the overhead of calling _progress: it wouldn't do a thing so make it a stub
++        proc _progress {args} {}
++    }
++
+     ui_msg "$UI_PREFIX [format [msgcat::mc "Deactivating %s @%s"] $name $specifier]"
+ 
+     try {
+@@ -434,6 +442,8 @@ proc _activate_directories {dirs imageroot} {
+ # extract an archive to a directory
+ # returns: path to the extracted directory
+ proc extract_archive_to_imagedir {location} {
++    variable show_progressbar
++
+     set extractdir [file rootname $location]
+     if {[file exists $extractdir]} {
+         set extractdir [mkdtemp ${extractdir}XXXXXXXX]
+@@ -592,7 +602,11 @@ proc extract_archive_to_imagedir {location} {
+         } else {
+             set cmdstring "${unarchive.pipe_cmd} ( ${unarchive.cmd} ${unarchive.pre_args} ${unarchive.args} )"
+         }
+-        system -callback portimage::_extract_progress $cmdstring
++        if {${show_progressbar}} {
++            system -callback portimage::_extract_progress $cmdstring
++        } else {
++            system $cmdstring
++        }
+     } on error {_ eOptions} {
+         ::file delete -force $extractdir
+         throw [dict get $eOptions -errorcode] [dict get $eOptions -errorinfo]
+@@ -633,7 +647,9 @@ proc _extract_progress {event} {
+ }
+ 
+ proc _progress {args} {
+-    if {[macports::ui_isset ports_verbose]} {
++    variable show_progressbar
++
++    if {!${show_progressbar} || [macports::ui_isset ports_verbose]} {
+         return
+     }
+ 
+@@ -696,6 +712,7 @@ proc _activate_contents {port {rename_list {}}} {
+     variable keep_imagedir
+     variable progress_step
+     variable progress_total_steps
++    variable show_progressbar
+ 
+     set files [list]
+     set baksuffix .mp_[clock seconds]
+@@ -704,6 +721,12 @@ proc _activate_contents {port {rename_list {}}} {
+     set imagefiles [$port imagefiles]
+     set num_imagefiles [llength $imagefiles]
+ 
++    if {[lsearch -exact ${macports::progressbar_also_for} "de/activation"] < 0} {
++        set show_progressbar 0
++        # minimise the overhead of calling _progress: it wouldn't do a thing so make it a stub
++        proc _progress {args} {}
++    }
++
+     set progress_step 0
+     if {[::file isfile $location]} {
+         set progress_total_steps [expr {$num_imagefiles * 3}]
+diff --git a/tests/test/processIsForeground/test.tcl b/tests/test/processIsForeground/test.tcl
+new file mode 100644
+index 000000000..f2bcfff6f
+--- /dev/null
++++ b/tests/test/processIsForeground/test.tcl
+@@ -0,0 +1,13 @@
++package require Pextlib 1.0
++
++set loops 20
++
++for {set i 0} {${i} < ${loops}} {incr i 1} {
++    set fg [processIsForeground]
++    if {${fg}} {
++        puts stderr "${i}: Foreground (${fg})"
++    } else {
++        puts stderr "${i}: Background (${fg})"
++    }
++    exec sleep 5
++}
