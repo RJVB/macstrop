@@ -58,7 +58,7 @@ proc trAccept {path} {
 # don't follow symlinks:
 proc noLinks {path} {
     if {[string equal [file type ${path}] link]} {
-        set target [file link ${path}]
+        set target [realpath ${path}]
         if {[string equal [file type ${target}] "directory"]} {
             ui_debug "Not following symlink ${path} to directory ${target}"
             return 0
