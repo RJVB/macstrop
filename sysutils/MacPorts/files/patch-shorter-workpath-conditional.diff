@@ -1,21 +1,100 @@
+diff --git a/doc/macports.conf.in b/doc/macports.conf.in
+index 4555f092e..e5ad2f0b6 100644
+--- a/doc/macports.conf.in
++++ b/doc/macports.conf.in
+@@ -94,6 +94,13 @@ variants_conf       	@MPCONFIGDIR_EXPANDED@/variants.conf
+ # universal building.
+ #universal_archs     	@UNIVERSAL_ARCHS@
+ 
++# Whether or not to use shorter work paths while building. This helps
++# avoiding failures when the build tree structure becomes too deep and
++# filenames too long, but makes work directory names less obvious for
++# manual management by port maintainers.
++# Can also be set on an individual basis in individual Portfiles
++#use_shorter_workpath	no
++
+ # Use ccache, a compiler cache for C, C++, Objective-C, and
+ # Objective-C++. (See http://ccache.samba.org.) The "ccache" executable
+ # must exist in one of the directories in binpath.
+diff --git a/src/macports1.0/macports.tcl b/src/macports1.0/macports.tcl
+index 8ab392b58..21a4599a3 100644
+--- a/src/macports1.0/macports.tcl
++++ b/src/macports1.0/macports.tcl
+@@ -62,7 +62,8 @@ namespace eval macports {
+         master_site_local patch_site_local archive_site_local fetch_credentials buildfromsource \
+         revupgrade_autorun revupgrade_mode revupgrade_check_id_loadcmds \
+         host_blacklist preferred_hosts sandbox_enable sandbox_network delete_la_files cxx_stdlib \
+-        default_compilers pkg_post_unarchive_deletions ui_interactive] {
++        default_compilers pkg_post_unarchive_deletions ui_interactive \
++        use_shorter_workpath] {
+             dict set bootstrap_options $opt {}
+     }
+     # Config file options that are a filesystem path and should be fully resolved
+@@ -87,7 +88,8 @@ namespace eval macports {
+         developer_dir universal_archs build_arch os_arch os_endian os_version os_major os_minor \
+         os_platform os_subplatform macos_version macos_version_major macosx_version macosx_sdk_version \
+         macosx_deployment_target packagemaker_path default_compilers sandbox_enable sandbox_network \
+-        delete_la_files cxx_stdlib pkg_post_unarchive_deletions {*}$user_options]
++        delete_la_files cxx_stdlib pkg_post_unarchive_deletions \
++        use_shorter_workpath {*}$user_options]
+ 
+     # Options set in the portfile interpreter but only in system_options
+     variable portinterp_private_options [list clonebin_path]
+@@ -1060,7 +1062,8 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
+         macports::clonebin_path \
+         macports::ui_options \
+         macports::global_options \
+-        macports::global_variations
++        macports::global_variations \
++        macports::use_shorter_workpath
+ 
+     # Disable unknown(n)'s behavior of running unknown commands in the system
+     # shell
+@@ -1775,6 +1778,11 @@ match macports.conf.default."
+         set sandbox_network no
+     }
+ 
++    # RJVB
++    if {![info exists use_shorter_workpath]} {
++        set use_shorter_workpath no
++    }
++
+     # make tools we run operate in UTF-8 mode
+     set env(LANG) en_US.UTF-8
+ 
+diff --git a/src/port1.0/portmain.tcl b/src/port1.0/portmain.tcl
+index dae406f74..6021648a4 100644
+--- a/src/port1.0/portmain.tcl
++++ b/src/port1.0/portmain.tcl
+@@ -60,7 +60,8 @@ options prefix name version revision epoch categories maintainers \
+         compiler.limit_flags \
+         compiler.support_environment_paths \
+         compiler.support_environment_sdkroot \
+-        add_users use_xcode source_date_epoch
++        add_users use_xcode source_date_epoch \
++        use_shorter_workpath
+ 
+ proc portmain::check_option_integer {option action args} {
+     if {$action eq "set" && ![string is wideinteger -strict $args]} {
 diff --git a/src/port1.0/portutil.tcl b/src/port1.0/portutil.tcl
-index 17b1cd192..10748ef52 100644
+index 7a8a8809d..26413306b 100644
 --- a/src/port1.0/portutil.tcl
 +++ b/src/port1.0/portutil.tcl
-@@ -1736,10 +1778,14 @@ proc portutil::create_workpath {} {
+@@ -1772,13 +1772,15 @@ proc eval_targets {target} {
+ }
+ 
+ proc portutil::create_workpath {} {
+-    global workpath portbuildpath subbuildpath subport
++    global workpath portbuildpath subbuildpath subport use_shorter_workpath
+     if {[getuid] == 0 && [geteuid] != 0} {
+         elevateToRoot create_workpath
      }
      file mkdir $portbuildpath
      # Create and link build dir if link or link target are missing or wrong type.
 -    if {[catch {file type $subbuildpath} ftype] || $ftype eq "directory" || ![file isdirectory $subbuildpath]} {
-+    # RJVB : add a global variable to enable the mechanism, settable via macports.conf of in the Portfile
 +    if {([catch {file type $subbuildpath} ftype] || $ftype eq "directory" || ![file isdirectory $subbuildpath])
-+        && 0
++        && ${use_shorter_workpath}
 +    } {
          # This doesn't need to be unguessable, just unique (and short). Four
-         # random characters is enough for ~1.7M build dirs.
--        set shortpath [mkdtemp [file dirname $portbuildpath]/[string range $subport 0 3]XXXX]
-+        # RJVB : but Linux wants 6 random chars at least.
-+        set shortpath [mkdtemp [file dirname $portbuildpath]/[string range $subport 0 3]XXXXXX]
-         if {$ftype eq "directory"} {
-             delete $shortpath
-             file rename $subbuildpath $shortpath
+         # random characters is enough for ~1.7M build dirs. Posix calls for 6.
+         set shortpath [mkdtemp [file dirname $portbuildpath]/[string range $subport 0 3]XXXXXX]
