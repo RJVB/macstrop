@@ -7,9 +7,10 @@ namespace eval configure {
     variable docdir
     proc logfile {} {
         if {[catch {set fn [get_logfile]} err]} {
-            ui_debug "get_logfile not defined or returns empty string: $err
+            ui_debug "get_logfile not defined or returns empty string: $err"
             return ""
         } else {
+            ui_debug "logfile is \"${fn}\""
             return $fn
         }
     }
