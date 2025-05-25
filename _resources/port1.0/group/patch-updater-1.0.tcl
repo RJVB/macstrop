@@ -58,6 +58,7 @@ pre-patch {
     PatchUpdater::addIgnore "*.kdev4"
     PatchUpdater::addIgnore ".kdev4"
     PatchUpdater::addIgnore ".*.swp"
+    PatchUpdater::addIgnore "*.so"
     system -W ${worksrcpath} "git config user.email \"macportsuser@macports.org\" ; git config user.name \"${macportsuser}\""
     if {${PatchUpdater::gitignores}} {
         system -W ${worksrcpath} "git add .gitignore ; git commit -m \".gitignore\" .gitignore"
