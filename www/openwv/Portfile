@@ -1,0 +1,112 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
+PortSystem          1.0
+PortGroup           github 1.1
+
+set rustup.shim_cargo_portgroup yes
+use_configure       0
+default_variants    +rustup_build
+PortGroup           rustup 1.0
+PortGroup           save_configure_cmd 1.0
+PortGroup           compress_workdir 1.0
+
+github.setup        tchebb openwv feb0aebb86d29d43c878efede7cb6a8a7afd5640
+version             1.0.0.5
+fetch.type          git
+distname            ${name}-git
+
+description         Open reimplementation of Google's Widevine Content Decryption Module for browsers
+long_description    An open reimplementation of Google's Widevine Content Decryption Module for browsers. \
+                    This installs the libwidevinecdm library into $prefix/libexec/openwv, and installation \
+                    instructions the README in $prefix/share/doc/openwv . The library will have to be copied \
+                    manually into a browser-specific location.
+
+categories          www
+platforms           darwin linux
+license             lGPL-3.0
+
+# we do install a "library" but it's a plugin for non-MacPorts applications
+installs_libs 		no
+
+maintainers         nomaintainer
+
+depends_lib-append  port:libiconv
+
+patch.pre_args      -Np1
+patchfiles-append   patch-downgrade-cxxstandard.diff
+
+cargo.offline_cmd
+build.pre_args-append -vvv --locked
+
+configure.save_configure_cmd "install log"
+configure.save_build_cmd     "install"
+
+compiler.cxx_standard 2014
+
+# configure.env-append \
+#                     "CC=[compwrap::wrap_compiler cc]" \
+#                     "CXX=[compwrap::wrap_compiler cxx]" \
+#                     "LD=[compwrap::wrap_compiler ld]" \
+#                     "LIBCLANG_PATH=/opt/local/libexec/llvm-12/lib"
+# build.env-append    "CC=[compwrap::wrap_compiler cc]" \
+#                     "CXX=[compwrap::wrap_compiler cxx]" \
+#                     "LD=[compwrap::wrap_compiler ld]" \
+#                     "LIBCLANG_PATH=/opt/local/libexec/llvm-12/lib"
+
+if {![variant_isset rustup_build]} {
+    return -code error "+rustup_build must be used"
+}
+
+set clangversions {9.0 10 11 12 13 14 15 16}
+foreach clv ${clangversions} {
+    set confs ""
+    foreach dmw ${clangversions} {
+        if {${dmw} != ${clv}} {
+            set confs "${confs} libclang${dmw}"
+        }
+    }
+    variant libclang${clv} conflicts ${confs} description "build using libclang from port:clang${clv}" {}
+}
+set clangset no
+foreach clv ${clangversions} {
+    if {[variant_isset libclang${clv}]} {
+        depends_build-append \
+                    port:clang-${clv}
+        configure.env-append \
+                    "LIBCLANG_PATH=${prefix}/libexec/llvm-${clv}/lib"
+        build.env-append \
+                    "LIBCLANG_PATH=${prefix}/libexec/llvm-${clv}/lib"
+        set clangset yes
+    }
+}
+if {!${clangset}} {
+    known_fail yes
+    pre-fetch {
+        ui_error "Exactly one libclang variant must be set"
+        return -code error "please select one of the libclang variants!"
+    }
+}
+
+pre-configure {
+    # just the 1st wvd file from https://forum.videohelp.com/threads/417425-Real-Device-L3-Cdms
+    xinstall ${filespath}/samsung_sm-a025g_16.0.0_929e205b_22589_l3.wvd \
+        ${worksrcpath}/embedded.wvd
+}
+
+destroot {
+    xinstall -m 755 -d ${destroot}${prefix}/libexec/openwv
+    if {${os.platform} eq "darwin"} {
+        xinstall -m 755 \
+            ${worksrcpath}/target/[cargo.rust_platform]/release/libwidevinecdm.dylib \
+            ${destroot}${prefix}/libexec/openwv/
+    } else {
+        xinstall -m 755 \
+            ${worksrcpath}/target/release/libwidevinecdm.so \
+            ${destroot}${prefix}/libexec/openwv/
+    }
+    xinstall -m 755 -d ${destroot}${prefix}/share/doc/openwv
+    xinstall -m 755 \
+            ${worksrcpath}/README.md \
+            ${destroot}${prefix}/share/doc/openwv/
+}
+
