@@ -74,7 +74,7 @@ options github.livecheck.regex
 default github.livecheck.regex {(\[^"]+)}
 
 options git.shallow_since
-default git.shallow_since {""}
+default git.shallow_since {}
 
 proc github.setup {gh_author gh_project gh_version {gh_tag_prefix ""} {gh_tag_suffix ""}} {
     global github.author github.project github.version github.tag_prefix github.tag_suffix \
@@ -129,7 +129,7 @@ proc portfetch::gitfetch {args} {
            git.url git.branch git.cmd git.shallow_since
 
     set options "--progress --recurse-submodules"
-    if {${git.shallow_since} ne ""} {
+    if {${git.shallow_since} ne {}} {
         append options " --shallow-since ${git.shallow_since} --shallow-submodules"
     } elseif {${git.branch} eq ""} {
         # if we're just using HEAD, we can make a shallow repo
