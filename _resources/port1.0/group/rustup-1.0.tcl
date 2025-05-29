@@ -180,6 +180,7 @@ namespace eval rustup {
                             ui_debug "port:legacy-support provides the clonefile functions; installing the stable rust toolchain"
                             # as of 250328, that is Rust 1.85.1 (250315).
                             # as of 250408, that is Rust 1.86.0 (250331).
+                            # as of 250227, that is Rust 1.87.0 (250509).
                             set toolchain_version stable
                         }
                         system "${rustup::home}/Cargo/bin/rustup install --profile minimal --no-self-update ${toolchain_version}"
