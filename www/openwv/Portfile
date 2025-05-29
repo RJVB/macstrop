@@ -31,9 +31,14 @@ installs_libs 		no
 
 maintainers         nomaintainer
 
-# we don't need our libiconv, so avoid being linked to it
+# we don't need our libiconv, so avoid being linked to it because we shouldn't
+# depend on anything in $prefix/lib
 conflicts_build-append \
                     libiconv-dev
+# we also do not depend on OpenSSL
+if {[info exists openssl.branch]} {
+    openssl.branch  no_version
+}
 
 platform darwin {
     PortGroup       code_sign 1.0
@@ -50,6 +55,7 @@ configure.save_configure_cmd "install log"
 configure.save_build_cmd     "install"
 
 platform darwin {
+    # don't depend on anything in $prefix/lib ; link the legacysupport library statically.
     legacysupport.use_static yes
 
     configure.cflags-append \
@@ -58,9 +64,14 @@ platform darwin {
                     -mmacosx-version-min=${macosx_deployment_target}
 }
 
+# don't depend on anything in $prefix/lib ; don't add it to the RPATH
+configure.ldflags-delete \
+                    -Wl,-rpath,${prefix}/lib
+
 compiler.cxx_standard 2014
 
 if {![variant_isset rustup_build]} {
+    # this is just me being lazy:
     return -code error "+rustup_build must be used"
 }
 
@@ -104,6 +115,8 @@ destroot {
     xinstall -m 755 -d ${destroot}${prefix}/libexec/openwv
     if {${os.platform} eq "darwin"} {
         if {${os.major} < 17} {
+            # rust sets the min OS version to 10.12 (as of this writing) while we actually asked
+            # for it to "our OS version". Use vtool to correct that on 10.13 and earlier.
             system "vtool -set-version-min macos ${macosx_deployment_target} ${macosx_deployment_target} \
                 ${worksrcpath}/target/[cargo.rust_platform]/release/libwidevinecdm.dylib \
                 -output ${destroot}${prefix}/libexec/openwv/libwidevinecdm.dylib"
@@ -112,7 +125,9 @@ destroot {
                 ${worksrcpath}/target/[cargo.rust_platform]/release/libwidevinecdm.dylib \
                 ${destroot}${prefix}/libexec/openwv/
         }
+        # set the dylib id as it is in the official library:
         system "install_name_tool -id @loader_path/libwidevinecdm.dylib ${destroot}${prefix}/libexec/openwv/libwidevinecdm.dylib"
+        # we could conflicts_build with port:libcxx-dev but let's do this instead:
         system "install_name_tool -change ${prefix}/lib/libc++.1.dylib /usr/lib/libc++.1.dylib ${destroot}${prefix}/libexec/openwv/libwidevinecdm.dylib"
         codesign ${destroot}${prefix}/libexec/openwv/libwidevinecdm.dylib
     } else {
