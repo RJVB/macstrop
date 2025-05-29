@@ -1129,6 +1129,17 @@ proc portdestroot::destroot_finish {args} {
     muniversal::merge  ${workpath}/destroot-powerpc  ${workpath}/destroot-intel     ${workpath}/destroot-ppc-intel ""  powerpc x86    ${muniversal.dont_diff}  ${muniversal.combine} ${muniversal.equivalent} ${diffFormatProc}
     muniversal::merge  ${workpath}/destroot-arm64    ${workpath}/destroot-ppc-intel ${workpath}/destroot           ""  arm64 ppcintel ${muniversal.dont_diff}  ${muniversal.combine} ${muniversal.equivalent} ${diffFormatArmElse}
 
+    # RJVB : now see if there's a devport for which we have to do the same thing!
+    global dev::workdir_uuid devport_name
+    if {[info exists dev::workdir_uuid]} {
+        set dwp [get_devport_workpath]
+        ui_msg "$UI_PREFIX [format [msgcat::mc "  Merging %1\$s destroots"] ${devport_name}]"
+        muniversal::merge  ${dwp}/destroot-ppc      ${dwp}/destroot-ppc64     ${dwp}/destroot-powerpc   ""  ppc ppc64      ${muniversal.dont_diff}  ${muniversal.combine} ${muniversal.equivalent} ${diffFormatM}
+        muniversal::merge  ${dwp}/destroot-i386     ${dwp}/destroot-x86_64    ${dwp}/destroot-intel     ""  i386 x86_64    ${muniversal.dont_diff}  ${muniversal.combine} ${muniversal.equivalent} ${diffFormatM}
+        muniversal::merge  ${dwp}/destroot-powerpc  ${dwp}/destroot-intel     ${dwp}/destroot-ppc-intel ""  powerpc x86    ${muniversal.dont_diff}  ${muniversal.combine} ${muniversal.equivalent} ${diffFormatProc}
+        muniversal::merge  ${dwp}/destroot-arm64    ${dwp}/destroot-ppc-intel ${dwp}/destroot           ""  arm64 ppcintel ${muniversal.dont_diff}  ${muniversal.combine} ${muniversal.equivalent} ${diffFormatArmElse}
+    }
+
     portdestroot::destroot_finish_real ${args}
 }
 pre-destroot {

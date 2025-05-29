@@ -72,6 +72,8 @@ namespace eval dev {}
 
     set dev::mainport_installed no
 
+    set dev::workdir_uuid {}
+
 proc dev::port_variants {} {
     global PortInfo
     set variants ""
@@ -85,10 +87,19 @@ proc dev::port_variants {} {
     return ${variants}
 }
 
+# constructs the devport workdir using the fact it's a subport of the main port:
+proc get_devport_workpath {} {
+    global portbuildpath devport_name
+    set dir "${portbuildpath}/${devport_name}"
+    set devworkdir "${dir}/work"
+    ui_debug "devport workdir=${devworkdir}"
+    return ${devworkdir}
+}
+
 # create the online devport content archive
 proc create_devport_content_archive {} {
     global mainport_name devport_name dev.archdir dev.archname dev.cachedir devport_excluded_variants
-    global destroot prefix os.major os.platform portbuildpath portpath dev.tar.cmd
+    global destroot prefix os.major os.platform portbuildpath portpath dev.tar.cmd muniversal.build_arch
     set rawargs [option devport_content]
     set args ""
     # convert the arguments to local-relative:
@@ -117,20 +128,48 @@ proc create_devport_content_archive {} {
                 file delete -force ${prefix}/var/macports/home/Library/Preferences/com.apple.dt.Xcode.plist
             }
         }
-        # construct the devport workdir using the fact it's a subport of the main port:
-        set dir "${portbuildpath}/${devport_name}"
-        set devworkdir "${dir}/work"
-        ui_debug "devport workdir=${devworkdir}"
-        set devdestdir "${devworkdir}/destroot"
+        set devworkdir [get_devport_workpath]
+        set destname [file tail ${destroot}]
+
+        # sanity checks and handingling of muniversal
+        if {${destname} ne "destroot"} {
+            if {${os.platform} eq "darwin"} {
+                if {[variant_exists universal] && [variant_isset universal] && ![info exists muniversal.build_arch]} {
+                    ui_error "Destroot to \"${destname}\" is not currently supported on this platform"
+                    return -code error "The devport feature requires muniversal-1.1"
+                }
+            } else {
+                ui_error "Destroot to \"${destname}\" is not currently supported on this platform"
+                return -code error "devport feature: Unsupported destroot destination"
+            }
+        }
+
+        set devdestdir "${devworkdir}/${destname}"
         ui_debug "Cleaning ${devport_name}"
         # `port clean` can block on the registry lock so we do this manually:
-        exec rm -rf "${dir}"
-        # now prepare the devport for our manual destroot "injection"
-        # creating the entire work tree by hand to prevent registry locks:
-        ui_debug "Creating `port work ${devport_name}`"
-        # voodoo: create each path components to be really certain they all get the perms we want
-        xinstall -m 755 -d "${dir}"
-        xinstall -m 755 -d "${portbuildpath}/${devport_name}/work"
+        set dir [file dirname ${devworkdir}]
+
+        # on Darwin, we'll be called for multiple architectures when doing an muniversal-style +universal build
+        # So we can only remove ${dir} once per destroot step. Fortunately we know that all archs are
+        # destrooted in a single `port destroot` invocation so "all" we need to do is tag ${dir} with
+        # something unique after creating it, and cache that tag for the duration of the destroot run.
+        if {${dev::workdir_uuid} eq {}} {
+            package require uuid
+            set dev::workdir_uuid [::uuid::uuid generate]
+            ui_debug "New devworkdir tag\"${dev::workdir_uuid}\" exists=[file exists ${dir}/${dev::workdir_uuid}]"
+        } else {
+            ui_debug "Current devworkdir tag\"${dev::workdir_uuid}\" exists=[file exists ${dir}/${dev::workdir_uuid}]"
+        }
+        if {![file exists ${dir}/${dev::workdir_uuid}]} {
+            exec rm -rf "${dir}"
+            # now prepare the devport for our manual destroot "injection"
+            # creating the entire work tree by hand to prevent registry locks:
+            ui_debug "Creating `port work ${devport_name}`"
+            # voodoo: create each path components to be really certain they all get the perms we want
+            xinstall -m 755 -d "${dir}"
+            xinstall -m 755 -d "${portbuildpath}/${devport_name}/work"
+            system "touch ${dir}/${dev::workdir_uuid}"
+        }
         xinstall -m 755 -d ${devdestdir}
         # check if we got it right:
         if {[exec port work ${devport_name}] eq ""} {
@@ -328,7 +367,7 @@ proc create_devport {dependency {auto_generate_content {}}} {
     global subport mainport_name devport_name devport_description devport_long_description baseport devport_variants \
             universal_possible portsandbox_profile sandbox_enable portbuildpath \
             dev.archdir dev.archname dev.cachedir \
-            dev::mainport_installed
+            dev::mainport_installed dev::workdir_uuid
     # just so we're clear that what port we're talking about (the main port):
     set baseport ${mainport_name}
     subport ${devport_name} {
