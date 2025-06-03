@@ -59,7 +59,13 @@ if {![info exists python.default_version]} {
 # meson checks LDFLAGS during install to respect rpaths set via that variable
 # for safety, add LDFLAGS to both build and destroot environments
 pre-build {
-    build.env-append        "LDFLAGS=${configure.ldflags}"
+    # also set some more build-defining variables, as meson doesn't cache them like cmake
+    # does, but may still decide to trigger a re-configure.
+    build.env-append        "CC=${configure.cc}" \
+                            "CXX=${configure.cxx}" \
+                            "CFLAGS=${configure.cflags}" \
+                            "CXXFLAGS=${configure.cxxflags}" \
+                            "LDFLAGS=${configure.ldflags}"
 }
 pre-destroot {
     destroot.env-append     "LDFLAGS=${configure.ldflags}"
