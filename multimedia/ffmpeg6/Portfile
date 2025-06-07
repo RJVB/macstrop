@@ -23,9 +23,7 @@ platform darwin {
 name                ffmpeg6
 set my_name         ffmpeg
 
-# Please increase the revision of mpv whenever ffmpeg's version is updated.
-version             6.1.1 ; revision 1
-# epoch               0
+version             6.1.2 ; revision 6
 
 license             LGPL-2.1+
 categories          multimedia
@@ -69,14 +67,14 @@ distname            ${my_name}-${version}
 dist_subdir         ${my_name}
 use_xz              yes
 
-checksums           rmd160  75589206a87bb9fc9153119396d1f0a434561ea4 \
-                    sha256  8684f4b00f94b85461884c3719382f1261f0d9eb3d59640a1f4ac0873616f968
-#                     size    10458600
+checksums           rmd160  0c31b4f9a5c0d8c8c6d5e6bba1ae4ce65deaeb45 \
+                    sha256  3b624649725ecdc565c903ca6643d41f33bd49239922e45c9b1442c63dca4e38
+#                     size    10466152
 
 depends_build-append \
-                    port:pkgconfig \
-                    port:gmake \
                     port:cctools \
+                    port:gmake \
+                    path:bin/pkg-config:pkgconfig \
                     port:ld64 \
                     port:texinfo
 
@@ -89,7 +87,7 @@ depends_lib-append \
                     path:lib/pkgconfig/gnutls.pc:gnutls \
                     path:lib/pkgconfig/harfbuzz.pc:harfbuzz \
                     port:lame \
-                    port:libass \
+                    path:lib/pkgconfig/libass.pc:libass \
                     port:libbluray \
                     port:libiconv \
                     port:libmodplug \
@@ -103,6 +101,7 @@ depends_lib-append \
                     port:openjpeg \
                     port:soxr \
                     path:lib/libspeex.dylib:speex \
+                    port:webp \
                     port:xz \
                     port:zimg \
                     port:zlib \
@@ -115,13 +114,24 @@ patchfiles-append   patch-avutil-builtin-available.diff
 # TODO: Submit patches to upstream
 patchfiles-append   patch-libavcodec-profvidworkflow.diff
 
-# some more patches to build on 10.9
-patchfiles-append   patch-legacy-librsvg.diff \
-                    patch-libavcodec-videotoolboxenc-legacy.diff
+# https://trac.macports.org/ticket/68973
+# TODO: Raise the issue to upstream
+patchfiles-append   patch-libavcodec-librsvgdec.diff
+
+# https://trac.macports.org/ticket/68720
+# Remove once upstream has included these in the next release
+patchfiles-append   patch-issue-10695.diff
+
+# SVT-AV1 v3 has API changes
+# See https://gitlab.com/AOMediaCodec/SVT-AV1/-/commit/988e930c1083ce518ead1d364e3a486e9209bf73
+patchfiles-append   patch-svt-av1-v3.diff
+
+# doc/t2h: Support texinfo 7.1 and 7.2 pretest
+# https://trac.macports.org/ticket/72110
+patchfiles-append   patch-texinfo7x-pretest-support.diff
 
 # enable auto configure of asm optimizations
 # requires Xcode 3.1 or better on Leopard
-#
 minimum_xcodeversions {9 3.1}
 
 # requires a C11 compiler
@@ -205,6 +215,7 @@ configure.args-append \
                     --enable-libtheora \
                     --enable-libvorbis \
                     --enable-libvpx \
+                    --enable-libwebp \
                     --enable-libzimg \
                     --enable-libzvbi \
                     --enable-lzma \
@@ -223,6 +234,20 @@ post-extract {
     # fix file perms; tarball contents deny group and world read
     system "find ${worksrcpath} -type d -print0 | xargs -0 chmod a+rx"
     system "find ${worksrcpath} -type f -print0 | xargs -0 chmod a+r"
+}
+
+post-configure {
+    # (parallel?) LTO builds with GCC can fail *initially* because of a supposedly missing symbol
+    # `ff_sbr_noise_table` when creating the libavcodec library. Surprisingly, the library does get
+    # created and when the build is restarted it will complete just fine. So this is really a
+    # toolchain issue, which can be solved by keeping the symbol visible instead of hidden.
+    file delete -force ${worksrcpath}/libavcodec/sbr_noise_table_visibility.h
+    xinstall -m 644 ${filespath}/sbr_noise_table_visibility.h ${worksrcpath}/libavcodec/sbr_noise_table_visibility.h
+    if {[variant_isset LTO] && [string match *gcc* ${configure.compiler}]} {
+        reinplace "s|@VISIBILITY@|/**/|g" ${worksrcpath}/libavcodec/sbr_noise_table_visibility.h
+    } else {
+        reinplace "s|@VISIBILITY@|attribute_visibility_hidden|g" ${worksrcpath}/libavcodec/sbr_noise_table_visibility.h
+    }
 }
 
 platform darwin 8 {
@@ -268,9 +293,8 @@ platform darwin {
                     --enable-audiotoolbox
     }
 
-    if {${os.major} > 9 && ${build_arch} ni [list ppc ppc64]} {
-        # libsdl2 requires minimum Xcode 10.7 SDK to build successfully
-        # but builds on Snow Leopard x86. Exclude ppc until fixed.
+    if {${os.major} > 9 || ${configure.build_arch} in [list ppc ppc64]} {
+        # libsdl2 uses X11 backend on PowerPC and builds on 10.4+.
         configure.args-replace \
                     --disable-sdl2 \
                     --enable-sdl2
@@ -330,10 +354,19 @@ platform darwin {
     # this port requires '-ld_classic' to build successfully with the toolchains from Xcode 15 or Command Line Tools 15.
     #
     # TODO: This is a temporary solution, the classic linker will be removed in a future release by Apple.
-    if { ( [vercmp ${xcodeversion} 15 ] >= 0 ) || ( [info exists xcodecltversion] && [vercmp ${xcodecltversion} 15 ] >= 0 ) } {
+    if { ${os.major} == 23 && ( [vercmp ${xcodeversion} 15 ] >= 0 ) || ( [vercmp ${xcodecltversion} 15 ] >= 0 ) } {
         configure.ldflags-append \
                     -Wl,-ld_classic
     }
+}
+
+# libavcodec/pcm-bluray.c:172:45: error: passing argument 2 of 'bytestream2_get_buffer' from incompatible pointer type [-Wincompatible-pointer-types]
+# libavcodec/pcm-dvd.c:155:37: error: passing argument 2 of 'bytestream2_get_buffer' from incompatible pointer type [-Wincompatible-pointer-types]
+# vulkan_av1.c:216:43: error: initialization of 'long long unsigned int' from 'void *' makes integer from pointer without a cast [-Wint-conversion]
+if {[string match *gcc* ${configure.compiler}]} {
+    configure.cflags-append \
+                    -Wno-error=incompatible-pointer-types \
+                    -Wno-error=int-conversion
 }
 
 platform powerpc {
@@ -419,21 +452,30 @@ post-destroot {
     }
 
     # Create bin symlinks
-    set port_bin_list \
-        [glob -type f -directory ${destroot}${port_bindir} *]
-    foreach f ${port_bin_list} {
-        set fname [file tail ${f}]
-        ui_info "Symlinking bin: ${prefix}/bin/${fname} -> ${port_bindir}/${fname}"
-        ln -s ${port_bindir}/${fname} ${destroot}${prefix}/bin/${fname}
+    if {![variant_isset no_symlink]} {
+        set port_bin_list \
+            [glob -type f -directory ${destroot}${port_bindir} *]
+        foreach f ${port_bin_list} {
+            set fname [file tail ${f}]
+            ui_info "Symlinking bin: ${prefix}/bin/${fname} -> ${port_bindir}/${fname}"
+            ln -s ${port_bindir}/${fname} ${destroot}${prefix}/bin/${fname}
+        }
     }
+}
+
+variant no_symlink description {Disable binary suffices and symlinks} {
+    configure.pre_args-delete \
+                    --progs-suffix=${port_ver_major}
 }
 
 variant x11 {
     # enable x11grab_xcb input device
+    # Re libXv see: https://trac.macports.org/ticket/58617
     depends_lib-append \
                     port:xorg-libxcb \
                     port:xorg-libXext \
-                    port:xorg-libXfixes
+                    port:xorg-libXfixes \
+                    port:xorg-libXv
     configure.args-delete \
                     --disable-xlib \
                     --disable-libxcb \
@@ -447,10 +489,14 @@ variant ffvp9 description {Enable only FFmpeg's internal VP9 implementation, fas
     configure.args-replace  --enable-libvpx --disable-libvpx
 }
 
-if {[variant_isset x11]} {
-    require_active_variants libsdl2 x11
-} else {
-    require_active_variants libsdl2 "" x11
+# On PowerPC libsdl2 is a stub for libsdl2-powerpc, which is always built
+# with X11 backend. It is meaningless to require it as a variant there.
+if {${configure.build_arch} ni [list ppc ppc64]} {
+    if {[variant_isset x11]} {
+        require_active_variants libsdl2 x11
+    } else {
+        require_active_variants libsdl2 "" x11
+    }
 }
 
 variant libdc1394 description {Enable IIDC-1394 frame grabbing using libdc1394 (experimental)} {
@@ -543,6 +589,23 @@ variant rav1e description {Enable codec rav1e} {
                     port:rav1e
 }
 
+variant flite description {Enable flite audio source} {
+    configure.args-append \
+                    --enable-libflite
+    depends_lib-append \
+                    port:flite
+}
+
+variant vmaf description {Enable VMAF perceptual video quality assessment} {
+    configure.args-append \
+                    --enable-libvmaf
+    depends_lib-append \
+                    port:libvmaf
+}
+
+default_variants-append \
+                    +vmaf
+
 if {![variant_isset rav1e]} {
     notes-append "Support for rav1e now disabled by default; enable via +rav1e"
 }
@@ -599,9 +662,29 @@ This build of ${name} includes no GPLed or nonfree code and is therefore license
 "
 }
 
+notes-append ""
+if {[variant_isset no_symlink]} {
+    notes-append "
+    To use the ${name} command-line programs, add\
+    ${prefix}/libexec/ffmpeg${port_ver_major}/bin to your \$PATH,\
+    in front of the normal ${prefix}/bin; or else use full paths.
+    "
+}
+notes-append "
+To compile and link with ${name}, add\
+-I${prefix}/libexec/ffmpeg${port_ver_major}/include and\
+-L${prefix}/libexec/ffmpeg${port_ver_major}/lib to your compile command.
+For builds using pkg-config, add\
+${prefix}/libexec/ffmpeg${port_ver_major}/lib/pkgconfig to \$PKG_CONFIG_PATH.
+"
+
 variant gcc description {placeholder variant to label a build with GCC} {
     pre-configure {
-        ui_warn "The +gcc variant is only a label; you need to select a GCC compiler yourself via configure.compiler!"
+        if {![string match *gcc* ${configure.compiler}]} {
+            ui_error "Can't use variant +gcc with compiler \"${configure.compiler}\"!"
+            return -code error "+gcc conflicts with ${configure.compiler}
+        }
+        ui_warn "The +gcc variant is only a label!"
     }
 }
 
@@ -610,4 +693,4 @@ default_variants-append +static
 
 livecheck.type      regex
 livecheck.url       ${master_sites}
-livecheck.regex     "${my_name}-(\\d+(?:\\.\\d+)*)${extract.suffix}"
+livecheck.regex     "${my_name}-(${port_ver_major}(?:\\.\\d+)*)${extract.suffix}"
