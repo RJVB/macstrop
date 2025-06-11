@@ -289,9 +289,16 @@ if {${os.platform} eq "darwin"} {
             }
             # now make the preserved libraries depend on other preserved libraries.
             foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${PRL::preserve_runtime_library_dir}/${pattern}] {
+                # remove unnecessary rpath entries first
+                # See: https://github.com/RJVB/macstrop/issues/144 !!
+                system "patchelf --shrink-rpath ${lib}"
                 set lrpath [exec patchelf --print-rpath ${lib}]
-                # prepend the new installation path to the rpath
-                system "patchelf --set-rpath ${prefix}/lib/${PRL::preserve_runtime_library_dir}:${lrpath} ${lib}"
+                # prepend the new installation path to the rpath if not already present
+                if {[lsearch -exact "${prefix}/lib/${PRL::preserve_runtime_library_dir}:${lrpath}" [split ${lrpath} ":"]] < 0} {
+                    system "patchelf --set-rpath ${prefix}/lib/${PRL::preserve_runtime_library_dir}:${lrpath} ${lib}"
+                } else {
+                    ui_debug "Preservation RPATH ${prefix}/lib/${PRL::preserve_runtime_library_dir} already in ${lib}!"
+                }
                 # update any dependencies on the other libraries installed by this port
                 dict for {id info} ${sonames} {
                     dict with info {
