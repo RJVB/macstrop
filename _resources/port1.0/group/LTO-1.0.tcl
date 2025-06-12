@@ -1,33 +1,7 @@
 # -*- coding: utf-8; mode: tcl; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 4; truncate-lines: t -*- vim:fenc=utf-8:et:sw=4:ts=4:sts=4
 #
-# Copyright (c) 2019 R.J.V. Bertin
+# Copyright (c) 2019-25 R.J.V. Bertin
 # All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are
-# met:
-#
-# 1. Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-# 2. Redistributions in binary form must reproduce the above copyright
-#    notice, this list of conditions and the following disclaimer in the
-#    documentation and/or other materials provided with the distribution.
-# 3. Neither the name of Apple Computer, Inc. nor the names of its
-#    contributors may be used to endorse or promote products derived from
-#    this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
 #
 # Usage:
 # PortGroup     LTO 1.0
@@ -512,18 +486,24 @@ if {![variant_exists use_lld] || ![variant_isset use_lld]} {
 }
 
 if {![variant_exists builtwith]} {
-    variant builtwith description {Label the install with the compiler used} {}
+    variant builtwith description {Label the install with the compiler used. Do not use!} {}
+    if {[variant_isset builtwith]} {
+        set LTO::load_compvars yes
+        PortGroup compiler-variants 1.0
+        unset LTO::load_compvars
+    }
 }
 if {[variant_isset builtwith]} {
     set usedCompiler [string map {"-" "_"} [file tail ${configure.cc}]]
     if {![variant_exists ${usedCompiler}]} {
-        variant ${usedCompiler} requires builtwith description "placeholder variant to record the compiler used" {
+        variant ${usedCompiler} requires builtwith description "automatic placeholder variant to record the compiler used" {
             pre-configure {
                 ui_warn "+builtwith+${usedCompiler} are just placeholder variants used only to label the install with the compiler used"
             }
+            notes-append "+${usedCompiler} is an automatic variant which will probably require to use -nf with `port activate` to avoid side-effects!"
         }
-        default_variants-append +${usedCompiler}
     }
+    default_variants-append +${usedCompiler}
 }
 
 proc LTO::callback {} {
