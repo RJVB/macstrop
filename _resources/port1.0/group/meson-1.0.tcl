@@ -45,7 +45,7 @@ configure.universal_args-delete \
 
 default build.dir           {[meson::build.dir]}
 default build.cmd           {${prefix}/bin/ninja}
-default build.post_args     {-v}
+default build.post_args     {}
 default build.target        ""
 
 # remove DESTDIR= from arguments, but rather take it from environmental variable
@@ -59,6 +59,8 @@ if {![info exists python.default_version]} {
 # meson checks LDFLAGS during install to respect rpaths set via that variable
 # for safety, add LDFLAGS to both build and destroot environments
 pre-build {
+    # (not all versions of) ninja like to have options following the target(s)!
+    build.pre_args-append   -v
     # also set some more build-defining variables, as meson doesn't cache them like cmake
     # does, but may still decide to trigger a re-configure.
     build.env-append        "CC=${configure.cc}" \
