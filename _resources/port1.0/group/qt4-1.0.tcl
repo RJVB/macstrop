@@ -145,6 +145,9 @@ set qt_name             qt4
 # standard lrelease command location
     global qt_lrelease_cmd
 
+## qt4_is_concurrent : indicates the mainstream concurrency solution of installing
+## everything into $prefix/libexec/qt4 . The variable will remain unset when the
+## MacStrop solution is used.
 global qt4_is_concurrent
 if {![variant_isset exclusive]} {
     if {![info exists building_qt4] || ![info exists name] || (${name} ne "qt4-mac" && ${name} ne "qt4-mac-devel") || ${subport} eq "${name}-transitional"} {
