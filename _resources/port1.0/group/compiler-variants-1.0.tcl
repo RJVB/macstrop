@@ -12,38 +12,41 @@ namespace eval compvars {}
 # "Known" means a compiler that I use or have used; requests can be made to add others.
 #
 set compvars::known_compilers { \
-	clang \
-	clang_mp_5.0 \
-	clang_mp_6.0 \
-	clang_mp_7.0 \
-	clang_mp_8.0 \
-	clang_mp_9.0 \
-	clang_mp_10 \
-	clang_mp_11 \
-	clang_mp_12 \
-	clang_mp_13 \
-	clang_mp_14 \
-	clang_mp_15 \
-	clang_mp_16 \
-	clang_mp_17 \
-	gcc_mp_7 \
-	gcc_mp_12 \
-	gcc_mp_13 \
-	gcc_mp_14 \
+    clang \
+    clang_mp_5.0 \
+    clang_mp_6.0 \
+    clang_mp_7.0 \
+    clang_mp_8.0 \
+    clang_mp_9.0 \
+    clang_mp_10 \
+    clang_mp_11 \
+    clang_mp_12 \
+    clang_mp_13 \
+    clang_mp_14 \
+    clang_mp_15 \
+    clang_mp_16 \
+    clang_mp_17 \
+    gcc_mp_7 \
+    gcc_mp_12 \
+    gcc_mp_13 \
+    gcc_mp_14 \
 }
 
 foreach comp ${compvars::known_compilers} {
     if {![variant_exists ${comp}]} {
-	   set confs {}
-	   foreach c2 ${compvars::known_compilers} {
-		   if {${c2} ne ${comp}} {
-			   lappend confs ${c2}
-		   }
-	   }
-        variant ${comp} requires builtwith conflicts ${confs} description "placeholder variant to record the compiler used" {
-            pre-configure {
-                ui_warn "+builtwith+${comp} are just placeholder variants used only to label the install with the compiler used"
+        set confs {}
+        foreach c2 ${compvars::known_compilers} {
+            if {${c2} ne ${comp}} {
+                lappend confs ${c2}
             }
+        }
+        variant ${comp} requires builtwith conflicts ${confs} description "placeholder variant to record the compiler used" {}
+    }
+}
+pre-configure {
+    foreach comp ${compvars::known_compilers} {
+        if {[variant_isset ${comp}]} {
+            ui_warn "+builtwith+${comp} are just placeholder variants used only to label the install with the compiler used"
         }
     }
 }
