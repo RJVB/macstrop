@@ -3,14 +3,16 @@
 PortSystem          1.0
 PortGroup           mpi 1.0
 PortGroup           compiler_blacklist_versions 1.0
+set LTO.configure_option --enable-LTO
+PortGroup           LTO 1.0
+PortGroup           save_configure_cmd 1.0
 
 name                valgrind
 categories          devel
 platforms           darwin
 supported_archs     i386 x86_64
 license             GPL-2
-maintainers         {raimue @raimue} \
-                    openmaintainer
+maintainers         nomaintainer
 
 description         A powerful open-source memory debugger
 long_description \
@@ -42,7 +44,6 @@ platform darwin {
 # as they are only used for tests
 
 configure.args      --without-mpicc \
-                    --disable-lto \
                     --enable-tls
 if {${build_arch} eq "i386"} {
     configure.args-append --enable-only32bit
@@ -54,22 +55,24 @@ if {${build_arch} eq "i386"} {
 configure.cc_archflags {}
 configure.ld_archflags {}
 
-variant universal {
-    configure.args-delete --enable-only32bit --enable-only64bit
-    configure.universal_cflags {}
-    configure.universal_cxxflags {}
-    configure.universal_ldflags {}
+platform darwin {
+    variant universal {
+        configure.args-delete --enable-only32bit --enable-only64bit
+        configure.universal_cflags {}
+        configure.universal_cxxflags {}
+        configure.universal_ldflags {}
 
-    pre-configure {
-        if {${build_arch} eq "i386"} {
-            # See #25684 and https://bugs.kde.org/show_bug.cgi?id=243362
-            ui_error "${subport} does not build +universal on a 32-bit only CPU!"
-            return -code error "unsupported CPU"
+        pre-configure {
+            if {${build_arch} eq "i386"} {
+                # See #25684 and https://bugs.kde.org/show_bug.cgi?id=243362
+                ui_error "${subport} does not build +universal on a 32-bit only CPU!"
+                return -code error "unsupported CPU"
+            }
         }
     }
 }
 
-patchfiles-append       patch-enable-lto.diff \
+patchfiles-append       patch-enable-lto-legacy.diff \
                         patch-missing-header.diff
 
 pre-patch {
@@ -87,11 +90,6 @@ pre-configure {
         configure.args-delete --without-mpicc
         configure.args-append --with-mpicc=${mpi.cc}
     }
-#     platform darwin {
-#         xinstall -m 755 -d ${build.dir}/.lto_cache
-#         configure.ldflags-append \
-#                         -Wl,-cache_path_lto,${build.dir}/.lto_cache
-#     }
     if {[string match *clang* ${configure.cc}]} {
         platform linux {
             configure.cflags-replace -Os -O3
@@ -100,13 +98,6 @@ pre-configure {
         configure.env-append \
                         LTO_AR="[string map {"clang" "llvm-ar"} ${configure.cc}]" \
                         LTO_RANLIB="[string map {"clang" "llvm-ranlib"} ${configure.cc}]"
-    } else {
-        platform linux {
-            # Clang's LTO should not be used (apps crash on start)
-            configure.args-replace \
-                    --disable-lto \
-                    --enable-lto
-        }
     }
     configure.env-append \
                         LD=${prefix}/bin/ld
@@ -115,40 +106,54 @@ pre-configure {
 build.post_args-append  -wk LD=${prefix}/bin/ld
 
 if {$subport eq $name} {
-    version             3.14.0
-    revision            0
-    conflicts           valgrind-devel
+    if {${os.platform} eq "darwin"} {
+        version         3.16.1
+        conflicts       valgrind-devel valgrind-macos-devel
 
-    checksums           rmd160  562359c6222acd8546eedf6f0b6db964e91bd434 \
-                        sha256  037c11bfefd477cc6e9ebe8f193bb237fe397f7ce791b4a4ce3fa1c6a520baa5 \
-                        size    16602858
+        checksums       rmd160  f06068b1f2aa9f6c2377816a0af809459da2c5a8 \
+                        sha256  c91f3a2f7b02db0f3bc99479861656154d241d2fdb265614ba918cc6720a33ca
+#                         size    16262776
+        pre-fetch {
+            if {${os.platform} eq "darwin" && (${os.major} < 9 || ${os.major} > 17)} {
+                ui_error "${subport} @${version} is only compatible with macOS versions from 10.5 up to 10.13."
+                ui_error "Consider installing valgrind-macos-devel on newer macOS systems."
+                return -code error "incompatible macOS version"
+            }
+        }
+    } else {
+        version         3.25.1
+
+        checksums       rmd160  74a3e2404d1ab77e83dcf557cf1c00d6d6e398eb \
+                        sha256  61deb8d0727b45c268efdc1b3b6c9e679cd97cbf5ee4b28d1dead7c8b7a271af
+#                         size    16888334
+        patchfiles-replace \
+                        patch-enable-lto-legacy.diff \
+                        patch-enable-lto.diff
+    }
 
     use_bzip2           yes
 
     # Avoid conflict of faq.html and FAQ.html, #30541
     extract.post_args-append --exclude=${distname}/docs/html/FAQ.html
 
-    pre-fetch {
-        if {${os.platform} eq "darwin" && (${os.major} < 9 || ${os.major} > 17)} {
-            ui_error "${subport} @${version} is only compatible with macOS versions from 10.5 up to 10.13."
-            return -code error "incompatible macOS version"
-        }
-    }
-
     livecheck.type      regex
     livecheck.url       ${homepage}
     livecheck.regex     ${name}-(\\d(?:\\.\\d+)+)
 }
 
+if {${os.platform} ne "darwin"} {
+    return
+}
+
 subport valgrind-devel {
     epoch           1
-    set date        2017-11-21
-    version         3.14.0-r${date}
-    conflicts       valgrind
+    set date        2020-12-17
+    version         3.16.1-r${date}
+    conflicts       valgrind valgrind-macos-devel
 
     fetch.type      git
     git.url         http://repo.or.cz/valgrind.git
-    git.branch      0a5ff8c309d18778bb919a1a661a1976b04a6483
+    git.branch      04cdc29b007594a0e58ffef0c9dd87df3ea595ea
 
     pre-fetch {
         if {${os.platform} eq "darwin" && ${os.major} < 9 } {
@@ -158,6 +163,7 @@ subport valgrind-devel {
 
         if {${os.platform} eq "darwin" && ${os.major} > 17 } {
             ui_error "${subport} @${version} is not presently compatible with macOS Mojave or newer"
+            ui_error "Consider installing valgrind-macos-devel on newer macOS systems."
             return -code error "incompatible macOS version"
         }
     }
@@ -165,4 +171,20 @@ subport valgrind-devel {
     use_autoreconf      yes
 
     livecheck.type none
+}
+
+subport valgrind-macos-devel {
+    set date        2023-10-29
+    version         3.22.0-r${date}
+    conflicts       valgrind valgrind-devel
+
+    fetch.type      git
+    git.url         https://github.com/LouisBrunner/valgrind-macos.git
+    git.branch      d14be1d4f76466560ed6515d0f314f0925522456
+
+    description     A powerful memory debugger with latest macOS support
+
+    use_autoreconf  yes
+
+    livecheck.type  none
 }
