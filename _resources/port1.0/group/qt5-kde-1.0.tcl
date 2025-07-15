@@ -70,6 +70,8 @@ if {[tbool just_want_qt5_version_info]} {
     # can't return here anymore since "base" now blocks multiple PG inclusion
     ui_warn "just_want_qt5_version_info is true, but obsolete and ignored nowadays"
     #return
+} else {
+    namespace eval qt5pg {}
 }
 
 # Check what Qt5 installation flavour already exists, or if not if the port calling us
