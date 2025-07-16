@@ -86,6 +86,9 @@ proc stub::${setupFn} {} {
     use_autoreconf      no
     use_configure       no
     depends_lib
+    if {[variant_exists fromHost] && [variant_isset fromHost]} {
+        depends_run
+    }
     # we're not building, so why add compiler build dependencies?!
     configure.compiler.add_deps no
     build {}
