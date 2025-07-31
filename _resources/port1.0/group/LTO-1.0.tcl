@@ -47,6 +47,10 @@ if {![string match *make ${build.cmd}]} {
     default LTO.gcc_lto_jobs "auto"
 }
 
+if {![info exists LTO_needs_ranlib]} {
+    set LTO_needs_ranlib no
+}
+
 namespace eval LTO {}
 
 proc LTO::variant_enabled {v} {
@@ -289,9 +293,12 @@ if {[string match *clang* ${configure.compiler}]} {
         if {![variant_isset universal] || [info exists universal_archs_supported]} {
             default configure.ar "[string map {"clang" "llvm-ar"} ${configure.cc}]"
             default configure.nm "[string map {"clang" "llvm-nm"} ${configure.cc}]"
-#             default configure.ranlib "[string map {"clang" "llvm-ranlib"} ${configure.cc}]"
-            # ranlib is done by llvm-ar
-            default configure.ranlib "/bin/echo"
+            if {[tbool LTO_needs_ranlib]} {
+                default configure.ranlib "[string map {"clang" "llvm-ranlib"} ${configure.cc}]"
+            } else {
+                # ranlib is done by llvm-ar
+                default configure.ranlib "/bin/echo"
+            }
             set LTO.custom_binaries 1
         }
     }
@@ -310,9 +317,12 @@ if {[string match *clang* ${configure.compiler}]} {
     if {![variant_isset universal] || [info exists universal_archs_supported]} {
         default configure.ar "[string map {"gcc" "gcc-ar"} ${configure.cc}]"
         default configure.nm "[string map {"gcc" "gcc-nm"} ${configure.cc}]"
-#         default configure.ranlib "[string map {"gcc" "gcc-ranlib"} ${configure.cc}]"
-        # done by gcc-ar
-        default configure.ranlib "/bin/echo"
+        if {[tbool LTO_needs_ranlib]} {
+            default configure.ranlib "[string map {"gcc" "gcc-ranlib"} ${configure.cc}]"
+        } else {
+            # done by gcc-ar
+            default configure.ranlib "/bin/echo"
+        }
         set LTO.custom_binaries 1
     }
 } elseif {${os.platform} eq "linux"} {
@@ -353,9 +363,12 @@ if {[string match *clang* ${configure.compiler}]} {
     } else {
         default configure.ar "[string map {"gcc" "gcc-ar"} ${configure.cc}]"
         default configure.nm "[string map {"gcc" "gcc-nm"} ${configure.cc}]"
-#         default configure.ranlib "[string map {"gcc" "gcc-ranlib"} ${configure.cc}]"
-        # done by gcc-ar
-        default configure.ranlib "/bin/echo"
+        if {[tbool LTO_needs_ranlib]} {
+            default configure.ranlib "[string map {"gcc" "gcc-ranlib"} ${configure.cc}]"
+        } else {
+            # done by gcc-ar
+            default configure.ranlib "/bin/echo"
+        }
         set LTO.custom_binaries 1
     }
 }
