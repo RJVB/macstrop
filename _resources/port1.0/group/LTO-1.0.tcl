@@ -56,8 +56,10 @@ namespace eval LTO {}
 proc LTO::variant_enabled {v} {
     global LTO.disable_LTO
     if {${v} eq "LTO" && [tbool LTO.disable_LTO]} {
+        ui_debug "variant LTO is disabled because of LTO.disable_LTO=${LTO.disable_LTO}"
         return 0
     } else {
+        ui_debug "\[variant_isset ${v}\]=[variant_isset ${v}]"
         return [variant_isset ${v}]
     }
 }
