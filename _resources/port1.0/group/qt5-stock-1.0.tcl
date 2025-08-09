@@ -103,7 +103,7 @@ if {[file exists "${qt_install_registry}/qt5-qtbase+qt5stock_kde"]} {
 # borrowed from qt5-kde-1.0.tcl:
 proc qt5.active_version {} {
     global prefix
-    namespace upvar ::qt5 active_version av
+    namespace upvar ::qt5pg active_version av
     if {[info exists av]} {
         return ${av}
     }
@@ -111,7 +111,10 @@ proc qt5.active_version {} {
         set av ${version}
         return ${av}
     } elseif {[file exists ${prefix}/bin/pkg-config]} {
-        if {![catch {set av [exec ${prefix}/bin/pkg-config --modversion Qt5Core]} err]} {
+        if {[variant_exists qt5stock_kde] && [variant_isset qt5stock_kde]
+            && ![catch {set av [exec env PKG_CONFIG_PATH=${prefix}/libexec/qt512/lib/pkgconfig ${prefix}/bin/pkg-config --modversion Qt5Core]} err]} {
+            return ${av}
+        } elseif {![catch {set av [exec ${prefix}/bin/pkg-config --modversion Qt5Core]} err]} {
             return ${av}
         }
         # else: Qt5 isn't installed yet
