@@ -18,8 +18,11 @@ default meson.wrap_mode     {default}
 default build_dir           {${workpath}/build}
 default source_dir          {${worksrcpath}}
 
-options meson.build_type
+options meson.build_type \
+        meson.install_prefix
 default meson.build_type    plain
+default meson.install_prefix \
+                            {${prefix}}
 
 options meson.debugopts
 # Set meson.debugopts to the desired compiler debug options (or an empty string) if you want to
@@ -38,7 +41,16 @@ depends_skip_archcheck-append \
 
 # TODO: --buildtype=plain tells Meson not to add its own flags to the command line. This gives the packager total control on used flags.
 default configure.cmd       {${prefix}/bin/meson}
-default configure.pre_args  {setup --prefix=${prefix} -Db_colorout=never}
+if {${os.platform} eq "linux"} {
+    # many ports are misbehaved and reset configure.args, so use pre_args to
+    # ensure libraries go where we want them to:
+    default configure.pre_args \
+                            {setup --prefix=${meson.install_prefix} -Db_colorout=never --libdir ${meson.install_prefix}/lib}
+} else {
+    default configure.pre_args \
+                            {setup --prefix=${meson.install_prefix} -Db_colorout=never}
+}
+
 default configure.post_args {[meson::get_post_args]}
 configure.universal_args-delete \
                             --disable-dependency-tracking
@@ -105,12 +117,6 @@ proc meson::debugopts {} {
 proc meson::add_depends {} {
     depends_build-append    port:meson \
                             path:bin/ninja:ninja
-}
-
-platform linux {
-    # many ports are misbehaved and reset configure.args, so use pre_args to
-    # ensure libraries go where we want them to:
-    configure.pre_args-append --libdir ${prefix}/lib
 }
 
 pre-configure {
