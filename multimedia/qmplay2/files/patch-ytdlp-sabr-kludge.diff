@@ -1,0 +1,140 @@
+diff --git a/src/modules/Extensions/YouTube.cpp b/src/modules/Extensions/YouTube.cpp
+index a1911b98..f6d8ed37 100644
+--- a/src/modules/Extensions/YouTube.cpp
++++ b/src/modules/Extensions/YouTube.cpp
+@@ -1214,18 +1214,19 @@ void YouTube::setSearchResults(const QJsonObject &jsonObj, bool isContinuation,
+     }
+ }
+ 
+-QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, IOController<YouTubeDL> &youTubeDL)
++QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, IOController<YouTubeDL> &youTubeDL, bool experimental)
+ {
+     if (!youTubeDL.assign(new YouTubeDL))
+         return {};
+ 
+-    const auto rawOutputs = youTubeDL->exec(url, {"--flat-playlist", "--write-sub", "-J"}, nullptr, true);
++    const auto rawOutputs = youTubeDL->exec(url, {"--flat-playlist", "--write-sub", "-J"}, nullptr, true, !experimental);
+     if (rawOutputs.count() != 2)
+         return {};
+ 
+     const auto rawOutput = rawOutputs[0].toUtf8();
+     if (rawOutput.isEmpty())
+         return {};
++    qWarning() << "yt-dlp output in bytes:" << rawOutput.size();
+ 
+     const auto &rawErrOutput = rawOutputs[1];
+ 
+@@ -1269,6 +1270,7 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+ 
+     QHash<int, QPair<QString, QString>> itagsData;
+ 
++    qWarning() << "Number of formats:" << formats.size();
+     for (auto &&formatVal : formats)
+     {
+         const auto format = formatVal.toObject();
+@@ -1285,8 +1287,14 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+         const auto itag = format["format_id"].toString().toInt();
+         const auto url = format["url"].toString();
+         const auto ext = format["ext"].toString();
+-        if (itag != 0 && !url.isEmpty() && !ext.isEmpty())
++        if (itag != 0 && !url.isEmpty() && !ext.isEmpty()) {
+             itagsData[itag] = {url, "." + ext};
++            fprintf(stderr, "Will consider format #%d[%s], url=\"%s\", ext=\"%s\"\n",
++                    itag, qPrintable(format["format_id"].toString()), qPrintable(url), ext.toLatin1().constData());
++        } else {
++            fprintf(stderr, "\tSkipping format #%d[%s], sizeof(url)=%d, ext=\"%s\"\n",
++                    itag, qPrintable(format["format_id"].toString()), url.size(), qPrintable(ext));
++        }
+     }
+ 
+     auto appendUrl = [&](const QVector<int> &itags) {
+@@ -1317,9 +1325,22 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+         appendUrl(hlsItags);
+     }
+ 
++    if (urls.isEmpty() && rawErrOutput.contains("forcing SABR streaming") && !experimental) {
++        qCritical() << "YouTube :: Can't find desired format, trying a less selective approach";
++        return getYouTubeVideo(param, url, youTubeDL, true);
++    }
++
++    // fall back on H264_360P_AAC_128
++    if (urls.isEmpty() && itagsData.keys().contains(18)) {
++        qCritical() << "YouTube :: Can't find desired format better than falling back to format 18!";
++        urls+= itagsData[18].first;
++        exts+= itagsData[18].second;
++    }
++
+     if (urls.isEmpty())
+     {
+-        qCritical() << "YouTube :: Can't find desired format, available:" << itagsData.keys();
++        qCritical() << "YouTube :: Can't find desired format, available:" << itagsData.keys()
++            << "considered:" << m_videoItags << "(video) +" << m_audioItags << "(audio) and" << m_hlsItags << "(HLS)";
+         return {};
+     }
+ 
+diff --git a/src/modules/Extensions/YouTube.hpp b/src/modules/Extensions/YouTube.hpp
+index fc96b874..65a4c6cc 100644
+--- a/src/modules/Extensions/YouTube.hpp
++++ b/src/modules/Extensions/YouTube.hpp
+@@ -141,7 +141,7 @@ private:
+     void setAutocomplete(const QByteArray &data);
+     void setSearchResults(const QJsonObject &jsonObj, bool isContinuation, bool isRelatedResults);
+ 
+-    QStringList getYouTubeVideo(const QString &param, const QString &url, IOController<YouTubeDL> &youTubeDL);
++    QStringList getYouTubeVideo(const QString &param, const QString &url, IOController<YouTubeDL> &youTubeDL, bool experimental = false);
+ 
+     QJsonDocument getYtInitialData(const QByteArray &data);
+ 
+diff --git a/src/qmplay2/YouTubeDL.cpp b/src/qmplay2/YouTubeDL.cpp
+index 42a7d608..b61d0237 100644
+--- a/src/qmplay2/YouTubeDL.cpp
++++ b/src/qmplay2/YouTubeDL.cpp
+@@ -196,19 +215,27 @@ void YouTubeDL::addr(const QString &url, const QString &param, QString *streamUr
+     }
+ }
+ 
+-QStringList YouTubeDL::exec(const QString &url, const QStringList &args, QString *silentErr, bool rawOutput)
++QStringList YouTubeDL::exec(const QString &url, const QStringList &args, QString *silentErr, bool rawOutput, bool addAllCommonArgs)
+ {
+     if (!prepare())
+         return {};
+ 
+     QStringList processArgs;
+-    processArgs += url;
+     if (!rawOutput)
+         processArgs += "-g";
+     processArgs += args;
+-    processArgs += m_commonArgs;
++    if (addAllCommonArgs)
++    {
++        processArgs += m_commonArgs;
++    }
++    else
++    {
++        processArgs += "--no-check-certificate";
++    }
+     if (!rawOutput)
+         processArgs += "-j";
++    // URL comes last!
++    processArgs += url;
+ 
+     startProcess(processArgs);
+     if (!m_process.waitForStarted() && !m_aborted)
+@@ -524,5 +608,6 @@ void YouTubeDL::startProcess(QStringList args)
+     }
+ #endif
+ 
++    qWarning() << "Starting" << program << args;
+     m_process.start(program, args);
+ }
+diff --git a/src/qmplay2/YouTubeDL.hpp b/src/qmplay2/YouTubeDL.hpp
+index 202e19e374982d91fb1bfbec10e1d33917e1ac07..0330b2cc59fa1e8a7b76229d49f345faff7541b6 100644
+--- a/src/qmplay2/YouTubeDL.hpp
++++ b/src/qmplay2/YouTubeDL.hpp
+@@ -43,5 +43,5 @@ public:
+     void addr(const QString &url, const QString &param, QString *streamUrl, QString *name, QString *extension, QString *err = nullptr);
+ 
+-    QStringList exec(const QString &url, const QStringList &args, QString *silentErr = nullptr, bool rawOutput = false);
++    QStringList exec(const QString &url, const QStringList &args, QString *silentErr = nullptr, bool rawOutput = false, bool addAllCommonArgs = true);
+ 
+ private:
