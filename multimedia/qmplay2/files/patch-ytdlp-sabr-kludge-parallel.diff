@@ -1,0 +1,269 @@
+diff --git a/src/modules/Extensions/YouTube.cpp b/src/modules/Extensions/YouTube.cpp
+index a1911b98..d307fc46 100644
+--- a/src/modules/Extensions/YouTube.cpp
++++ b/src/modules/Extensions/YouTube.cpp
+@@ -1220,21 +1220,38 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+         return {};
+ 
+     const auto rawOutputs = youTubeDL->exec(url, {"--flat-playlist", "--write-sub", "-J"}, nullptr, true);
+-    if (rawOutputs.count() != 2)
++    fprintf(stderr, "youTubeDL->exec() returned %d outputs\n", rawOutputs.count());
++    if (rawOutputs.count() != 2 && rawOutputs.count() != 4)
+         return {};
+ 
+-    const auto rawOutput = rawOutputs[0].toUtf8();
++    QStringList urls;
++    QStringList exts;
++    QString fallbackURL, fallbackEXT, title, description;
++    QHash<int, QPair<QString, QString>> itagsData;
++    bool audioOnly;
++    QJsonObject subtitles;
++
++    for (int attempt = 0 ; attempt < rawOutputs.count() / 2 ; ++attempt)
++    {
++    if (attempt > 0)
++        qWarning() << "YouTube :: Couldn't find desired format, trying a less selective approach";
++
++    const int approach = attempt * 2;
++    const auto rawOutput = rawOutputs[approach].toUtf8();
++    qWarning() << QString("yt-dlp output [%1] in bytes: %2").arg(approach).arg(rawOutput.size());
+     if (rawOutput.isEmpty())
+         return {};
+ 
+-    const auto &rawErrOutput = rawOutputs[1];
++    const auto &rawErrOutput = rawOutputs[approach + 1];
+ 
+     const auto o = QJsonDocument::fromJson(rawOutput).object();
+     if (o.isEmpty())
+         return {};
++    subtitles = o["subtitles"].toObject();
+ 
+     const bool hasTitle = !rawErrOutput.contains("Unable to extract video title", Qt::CaseInsensitive);
+-    const auto title = hasTitle ? o["title"].toString() : QString();
++    title = hasTitle ? o["title"].toString() : QString();
++    description = o["description"].toString();
+ 
+     if (hasTitle && o["_type"].toString() == QStringLiteral("playlist"))
+     {
+@@ -1256,10 +1273,10 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+     if (formats.isEmpty())
+         return {};
+ 
+-    const bool audioOnly = (param.compare("audio", Qt::CaseInsensitive) == 0);
++    audioOnly = (param.compare("audio", Qt::CaseInsensitive) == 0);
+ 
+-    QStringList urls;
+-    QStringList exts;
++    urls.clear();
++    exts.clear();
+ 
+     m_itagsMutex.lock();
+     const auto videoItags = m_videoItags;
+@@ -1267,8 +1284,9 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+     const auto hlsItags = m_hlsItags;
+     m_itagsMutex.unlock();
+ 
+-    QHash<int, QPair<QString, QString>> itagsData;
++    itagsData.clear();
+ 
++    qWarning() << "Number of formats:" << formats.size();
+     for (auto &&formatVal : formats)
+     {
+         const auto format = formatVal.toObject();
+@@ -1285,8 +1303,14 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+         const auto itag = format["format_id"].toString().toInt();
+         const auto url = format["url"].toString();
+         const auto ext = format["ext"].toString();
+-        if (itag != 0 && !url.isEmpty() && !ext.isEmpty())
++        if (itag != 0 && !url.isEmpty() && !ext.isEmpty()) {
+             itagsData[itag] = {url, "." + ext};
++            fprintf(stderr, "Will consider format #%d[%s], url=\"%s\", ext=\"%s\"\n",
++                    itag, qPrintable(format["format_id"].toString()), qPrintable(url), ext.toLatin1().constData());
++        } else {
++            fprintf(stderr, "\tSkipping format #%d[%s], sizeof(url)=%d, ext=\"%s\"\n",
++                    itag, qPrintable(format["format_id"].toString()), url.size(), qPrintable(ext));
++        }
+     }
+ 
+     auto appendUrl = [&](const QVector<int> &itags) {
+@@ -1317,13 +1341,32 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+         appendUrl(hlsItags);
+     }
+ 
++    if (attempt == 0 && itagsData.keys().contains(18)) {
++        fallbackURL = itagsData[18].first;
++        fallbackEXT = itagsData[18].second;
++    }
++    if (!urls.isEmpty())
++    {
++        break;
++    }
++
++    // loop to 2nd attempt/2nd approach
++    }
++
++    // fall back on H264_360P_AAC_128
++    if (urls.isEmpty() && !fallbackURL.isEmpty()) {
++        qCritical() << "YouTube :: Can't find desired format better than falling back to format 18!";
++        urls+= fallbackURL;
++        exts+= fallbackEXT;
++    }
++
+     if (urls.isEmpty())
+     {
+-        qCritical() << "YouTube :: Can't find desired format, available:" << itagsData.keys();
++        qCritical() << "YouTube :: Can't find desired format, available:" << itagsData.keys()
++            << "considered:" << m_videoItags << "(video) +" << m_audioItags << "(audio) and" << m_hlsItags << "(HLS)";
+         return {};
+     }
+ 
+-    const auto subtitles = o["subtitles"].toObject();
+     QString lang = QMPlay2Core.getSettings().getString("SubtitlesLanguage");
+     if (lang.isEmpty()) // Default language
+         lang = QLocale::languageToString(QLocale::system().language());
+@@ -1394,7 +1437,7 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+     }
+     result += title;
+ 
+-    result += o["description"].toString();
++    result += description;
+ 
+     return result;
+ }
+diff --git a/src/qmplay2/YouTubeDL.cpp b/src/qmplay2/YouTubeDL.cpp
+index 42a7d608f1a4cff78bdd9acf196a0797bdf0c5f6..34bb4aed167e6a55627c7306c3e2bd838abf2f74 100644
+--- a/src/qmplay2/YouTubeDL.cpp
++++ b/src/qmplay2/YouTubeDL.cpp
+@@ -201,14 +220,20 @@ QStringList YouTubeDL::exec(const QString &url, const QStringList &args, QString
+     if (!prepare())
+         return {};
+ 
+-    QStringList processArgs;
+-    processArgs += url;
++    QStringList processArgs, process2Args;
+     if (!rawOutput)
+         processArgs += "-g";
+     processArgs += args;
++    process2Args = processArgs;
+     processArgs += m_commonArgs;
++    process2Args += "--no-check-certificate";
+     if (!rawOutput)
++    {
+         processArgs += "-j";
++    }
++    // URL comes last!
++    processArgs += url;
++    process2Args += url;
+ 
+     startProcess(processArgs);
+     if (!m_process.waitForStarted() && !m_aborted)
+@@ -218,20 +243,41 @@ QStringList YouTubeDL::exec(const QString &url, const QStringList &args, QString
+         startProcess(processArgs);
+     }
+ 
+-    if (!m_process.waitForFinished(-1) || m_aborted)
++    if (rawOutput)
++    {
++        m_processToStart = 2;
++        startProcess(process2Args);
++        m_process2.waitForStarted();
++    }
++
++    bool finished = m_process.waitForFinished(-1);
++    if (rawOutput)
++    {
++        fprintf(stderr, "m_process finished ..."); fflush(stderr);
++        finished &= m_process2.waitForFinished(-1);
++        fprintf(stderr, " m_process2 finished too\n");
++    }
++    if (!finished || m_aborted)
+         return {};
+ 
+     QStringList result;
+ 
+-    bool isOk = (m_process.exitCode() == 0);
++    for (int proc = 0 ; proc < (rawOutput ? 2 : 1) ; ++proc)
++    {
++    QProcess &process = (proc == 0) ? m_process : m_process2;
++
++    bool isOk = (process.exitCode() == 0);
+     QString error;
+ 
+     if (isOk)
+     {
+-        result = QStringList(QString::fromLocal8Bit(m_process.readAllStandardOutput()));
++        result += QStringList(QString::fromLocal8Bit(process.readAllStandardOutput()));
+         if (rawOutput)
+         {
+-            result += m_process.readAllStandardError();
++            const auto error = process.readAllStandardError();
++            result += error;
++            if (!error.isEmpty())
++                qWarning() << QString("yt-dlp (process #%1)").arg(proc+1) << url << ":" << error;
+         }
+         else
+         {
+@@ -261,8 +307,10 @@ QStringList YouTubeDL::exec(const QString &url, const QStringList &args, QString
+ 
+     if (!isOk)
+     {
+-        result.clear();
+-        const QString newError = m_process.readAllStandardError();
++        if (!rawOutput)
++            result.clear();
++        const QString newError = process.readAllStandardError();
++        qWarning() << QString("yt-dlp (process #%1)").arg(proc+1) << url << ":" << newError;
+         if (error.isEmpty())
+         {
+             error = newError;
+@@ -276,7 +324,11 @@ QStringList YouTubeDL::exec(const QString &url, const QStringList &args, QString
+             else
+                 emit QMPlay2Core.sendMessage(error, g_name, 3, 0);
+         }
+-        return {};
++        if (!rawOutput)
++            return {};
++    }
++
++    // loop to handle the output of the 2nd process if there is one
+     }
+ 
+     if (!rawOutput)
+@@ -312,6 +364,7 @@ void YouTubeDL::abort()
+ {
+     m_reply.abort();
+     m_process.kill();
++    m_process2.kill();
+     m_aborted = true;
+ }
+ 
+@@ -524,5 +634,19 @@ void YouTubeDL::startProcess(QStringList args)
+     }
+ #endif
+ 
+-    m_process.start(program, args);
++    switch (m_processToStart)
++    {
++        case 1:
++            qWarning() << "Starting" << program << args;
++            m_process.start(program, args);
++            break;
++        case 2:
++            qWarning() << "Starting process2:" << program << args;
++            m_process2.start(program, args);
++            // reset m_processToStart
++            m_processToStart = 1;
++            break;
++        default:
++            qCritical() << "Unexpected m_processToStart" << m_processToStart << "in" << Q_FUNC_INFO;
++    }
+ }
+diff --git a/src/qmplay2/YouTubeDL.hpp b/src/qmplay2/YouTubeDL.hpp
+index 202e19e374982d91fb1bfbec10e1d33917e1ac07..b76e4319ffc2532590ad241a987e4039d067e565 100644
+--- a/src/qmplay2/YouTubeDL.hpp
++++ b/src/qmplay2/YouTubeDL.hpp
+@@ -67,2 +70,4 @@ private:
+     bool m_aborted;
++    QProcess m_process2;
++    int m_processToStart = 1;
+ };
