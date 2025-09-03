@@ -1,8 +1,8 @@
 diff --git a/src/modules/Extensions/YouTube.cpp b/src/modules/Extensions/YouTube.cpp
-index a1911b98..d307fc46 100644
+index 15915f0532b34c6c48b2f8df21fda8dce21c9c1d..451facc6b66e2adc7f940e88d0059b5153d284cb 100644
 --- a/src/modules/Extensions/YouTube.cpp
 +++ b/src/modules/Extensions/YouTube.cpp
-@@ -1220,21 +1220,38 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+@@ -1220,21 +1220,42 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
          return {};
  
      const auto rawOutputs = youTubeDL->exec(url, {"--flat-playlist", "--write-sub", "-J"}, nullptr, true);
@@ -14,10 +14,13 @@ index a1911b98..d307fc46 100644
 -    const auto rawOutput = rawOutputs[0].toUtf8();
 +    QStringList urls;
 +    QStringList exts;
-+    QString fallbackURL, fallbackEXT, title, description;
-+    QHash<int, QPair<QString, QString>> itagsData;
++    QHash<QString, QString> urlLanguages;
++    QHash<QString, QString> urlNotes;
++    QString title, description;
++    QHash<int, QPair<QStringList, QStringList>> itagsData;
 +    bool audioOnly;
 +    QJsonObject subtitles;
++    const bool parallelDebug = qEnvironmentVariableIsSet("QMPLAY2_PARALLEL_YOUTUBEDL_DEBUG");
 +
 +    for (int attempt = 0 ; attempt < rawOutputs.count() / 2 ; ++attempt)
 +    {
@@ -26,7 +29,8 @@ index a1911b98..d307fc46 100644
 +
 +    const int approach = attempt * 2;
 +    const auto rawOutput = rawOutputs[approach].toUtf8();
-+    qWarning() << QString("yt-dlp output [%1] in bytes: %2").arg(approach).arg(rawOutput.size());
++    if (parallelDebug)
++        qWarning() << QString("yt-dlp output [%1] in bytes: %2").arg(approach).arg(rawOutput.size());
      if (rawOutput.isEmpty())
          return {};
  
@@ -45,7 +49,7 @@ index a1911b98..d307fc46 100644
  
      if (hasTitle && o["_type"].toString() == QStringLiteral("playlist"))
      {
-@@ -1256,10 +1273,10 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+@@ -1256,12 +1277,12 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
      if (formats.isEmpty())
          return {};
  
@@ -54,59 +58,60 @@ index a1911b98..d307fc46 100644
  
 -    QStringList urls;
 -    QStringList exts;
+-    QHash<QString, QString> urlLanguages;
+-    QHash<QString, QString> urlNotes;
 +    urls.clear();
 +    exts.clear();
++    urlLanguages.clear();
++    urlNotes.clear();
  
      m_itagsMutex.lock();
      const auto videoItags = m_videoItags;
-@@ -1267,8 +1284,9 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+@@ -1269,8 +1290,10 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
      const auto hlsItags = m_hlsItags;
      m_itagsMutex.unlock();
  
--    QHash<int, QPair<QString, QString>> itagsData;
+-    QHash<int, QPair<QStringList, QStringList>> itagsData;
 +    itagsData.clear();
  
-+    qWarning() << "Number of formats:" << formats.size();
++    if (parallelDebug)
++        qWarning() << "Number of formats:" << formats.size();
      for (auto &&formatVal : formats)
      {
          const auto format = formatVal.toObject();
-@@ -1285,8 +1303,14 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
-         const auto itag = format["format_id"].toString().toInt();
-         const auto url = format["url"].toString();
-         const auto ext = format["ext"].toString();
--        if (itag != 0 && !url.isEmpty() && !ext.isEmpty())
-+        if (itag != 0 && !url.isEmpty() && !ext.isEmpty()) {
-             itagsData[itag] = {url, "." + ext};
-+            fprintf(stderr, "Will consider format #%d[%s], url=\"%s\", ext=\"%s\"\n",
-+                    itag, qPrintable(format["format_id"].toString()), qPrintable(url), ext.toLatin1().constData());
-+        } else {
+@@ -1292,12 +1315,22 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+         {
+             itagsData[itag].first += url;
+             itagsData[itag].second += "." + ext;
++            if (parallelDebug)
++                fprintf(stderr, "Will consider format #%d[%s], sizeof(url)=%d, ext=\"%s\" lang=\"%s\"\n",
++                    itag, qPrintable(format["format_id"].toString()), url.size(), ext.toLatin1().constData(),
++                    qPrintable(format[QStringLiteral("language")].toString()));
+             if (!itagStr.value(1).isEmpty())
+             {
+                 urlLanguages[url] = format[QStringLiteral("language")].toString();
+                 urlNotes[url] = format[QStringLiteral("format_note")].toString();
+             }
+         }
++        else if (parallelDebug)
++        {
 +            fprintf(stderr, "\tSkipping format #%d[%s], sizeof(url)=%d, ext=\"%s\"\n",
 +                    itag, qPrintable(format["format_id"].toString()), url.size(), qPrintable(ext));
 +        }
++
      }
  
      auto appendUrl = [&](const QVector<int> &itags) {
-@@ -1317,13 +1341,32 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+@@ -1328,13 +1361,21 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
          appendUrl(hlsItags);
      }
  
-+    if (attempt == 0 && itagsData.keys().contains(18)) {
-+        fallbackURL = itagsData[18].first;
-+        fallbackEXT = itagsData[18].second;
-+    }
 +    if (!urls.isEmpty())
 +    {
 +        break;
 +    }
 +
 +    // loop to 2nd attempt/2nd approach
-+    }
-+
-+    // fall back on H264_360P_AAC_128
-+    if (urls.isEmpty() && !fallbackURL.isEmpty()) {
-+        qCritical() << "YouTube :: Can't find desired format better than falling back to format 18!";
-+        urls+= fallbackURL;
-+        exts+= fallbackEXT;
 +    }
 +
      if (urls.isEmpty())
@@ -121,7 +126,7 @@ index a1911b98..d307fc46 100644
      QString lang = QMPlay2Core.getSettings().getString("SubtitlesLanguage");
      if (lang.isEmpty()) // Default language
          lang = QLocale::languageToString(QLocale::system().language());
-@@ -1394,7 +1437,7 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
+@@ -1433,7 +1474,7 @@ QStringList YouTube::getYouTubeVideo(const QString &param, const QString &url, I
      }
      result += title;
  
