@@ -122,7 +122,7 @@ proc github.setup {gh_author gh_project gh_version {gh_tag_prefix ""} {gh_tag_su
 
 rename portfetch::gitfetch portfetch::gitfetch_stock
 pre-fetch {
-    ui_debug "github-1.0 PG overloaded the gitfetch procedure!"
+    ui_debug "github-1.1 PG overloaded the gitfetch procedure!"
 }
 proc portfetch::gitfetch {args} {
     global worksrcpath patchfiles \
