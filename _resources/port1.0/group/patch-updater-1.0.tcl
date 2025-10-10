@@ -15,6 +15,10 @@
 # The procedure keeps track of which patches have been applied but is not yet
 # clever enough to pick hand-fixed patchfiles from the dedicated target directory.
 # The fixes must thus be applied to the original failing patchfile under ${filespath} !
+#
+# Options:
+# PatchUpdater::ignore_files : this can be used to list files not created by patchfiles
+#               but for instance by the Portfile, or the build.
 
 if {[info exists PatchUpdater::currentportgroupdir]} {
     ui_debug "[dict get [info frame 0] file] has already been loaded"
@@ -31,6 +35,9 @@ depends_patch-append port:git
 set PatchUpdater::updatesfilespath "unset"
 set PatchUpdater::gitignores 0
 
+options PatchUpdater::ignore_files
+default PatchUpdater::ignore_files {}
+
 proc PatchUpdater::addIgnore {txt} {
     global worksrcpath
     if {[catch {exec fgrep -s -q ${txt} ${worksrcpath}/.gitignore}]} {
@@ -42,6 +49,16 @@ proc PatchUpdater::addIgnore {txt} {
     }
 }
 
+proc PatchUpdater::waitforgit {} {
+    global worksrcpath
+    while {[file exists ${worksrcpath}/.git/index.lock]} {
+        ui_msg "Waiting for external git command to complete"
+        after 500 set stop_wait &
+        vwait stop_wait
+        unset stop_wait
+    }
+}
+
 rename portpatch::patch_main portpatch::patch_main_real
 pre-patch {
     ui_debug "PatchUpdater-1.1 PG overloaded the patch_main procedure!"
@@ -49,6 +66,7 @@ pre-patch {
         ui_error "Using the patch-update PortGroup requires a git repository in \"${worksrcpath}\"!"
         return -code error "Not a git repository!"
     }
+    PatchUpdater::waitforgit
     if {[catch {system -W ${worksrcpath} "git checkout ${macportsuser}-${version}"}]} {
         system -W ${worksrcpath} "git checkout -b ${macportsuser}-${version}"
     }
@@ -59,8 +77,13 @@ pre-patch {
     PatchUpdater::addIgnore ".kdev4"
     PatchUpdater::addIgnore ".*.swp"
     PatchUpdater::addIgnore "*.so"
+    ui_msg "Additional ignores: \"${PatchUpdater::ignore_files}\""
+    foreach f ${PatchUpdater::ignore_files} {
+        PatchUpdater::addIgnore "${f}"
+    }
     system -W ${worksrcpath} "git config user.email \"macportsuser@macports.org\" ; git config user.name \"${macportsuser}\""
     if {${PatchUpdater::gitignores}} {
+        PatchUpdater::waitforgit
         system -W ${worksrcpath} "git add .gitignore ; git commit -m \".gitignore\" .gitignore"
     }
     set PatchUpdater::updatesfilespath "${filespath}-updated-for-${version}"
@@ -150,6 +173,7 @@ proc portpatch::patch_main {args} {
                     set patchname "${patch}"
                 }
             }
+            PatchUpdater::waitforgit
             system -W ${worksrcpath} "git add -v ."
             system -W ${worksrcpath} "git commit -m \"${patch}\" ."
             # patchname can be in a subdir of filespath
