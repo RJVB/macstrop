@@ -793,7 +793,7 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
         # this wrapper exists to a large extent to improve integration of "pure" qt5
         # apps with KF5 apps, in particular through the use of the KDE platform theme plugin
         # Hence the reference to KDE things in the preamble.
-        puts ${fd} "#!/bin/sh\n\
+        puts ${fd} "#!/usr/bin/env bash\n\
             if \[ -r ~/.kf5.env \] ;then\n\
             \t. ~/.kf5.env\n\
             else\n\
@@ -820,9 +820,9 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
             puts ${fd} "    export LD_LIBRARY_PATH=\$\{LD_LIBRARY_PATH\}:${prefix}/lib:${qt_libs_dir}"
             puts ${fd} "fi"
             if {[file dirname ${bundleexec}] eq "."} {
-                puts ${fd} "exec \"${appdir}/${bundleexec}\" \"\$\@\""
+                puts ${fd} "exec -a \"${prefix}/bin/${wrappername}\" \"${appdir}/${bundleexec}\" \"\$\@\""
             } else {
-                puts ${fd} "exec \"${bundleexec}\" \"\$\@\""
+                puts ${fd} "exec -a \"${prefix}/bin/${wrappername}\" \"${bundleexec}\" \"\$\@\""
             }
         }
         close ${fd}

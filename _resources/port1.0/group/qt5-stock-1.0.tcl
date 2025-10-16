@@ -165,6 +165,7 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
     }
     xinstall -m 755 -d ${destroot}${prefix}/bin
     if {![catch {set fd [open "${destroot}${prefix}/bin/${wrappername}" "w"]} err]} {
+        puts ${fd} "#!/usr/bin/env bash"
         # this wrapper exists to a large extent to improve integration of "pure" qt5
         # apps with KF5 apps, in particular through the use of the KDE platform theme plugin
         # Hence the reference to KDE things in the preamble.
@@ -174,6 +175,7 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
             puts ${fd} "export ${wrapper_env_additions}"
             puts ${fd} "#"
         }
+        puts ${fd} "export THISEXEC=\"${prefix}/bin/${wrappername}\""
         if {${os.platform} eq "darwin"} {
             if {[file dirname ${bundleexec}] eq "."} {
                 puts ${fd} "exec ${qt_dir}/thisQt.sh \"${appdir}/${bundlename}.app/Contents/MacOS/${bundleexec}\" \"\$\@\""
@@ -183,9 +185,9 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
             }
         } else {
             if {[file dirname ${bundleexec}] eq "."} {
-                puts ${fd} "exec ${qt_dir}/thisQt.sh \"${appdir}/${bundleexec}\" \"\$\@\""
+                puts ${fd} "exec -a \"${prefix}/bin/${wrappername}\" ${qt_dir}/thisQt.sh \"${appdir}/${bundleexec}\" \"\$\@\""
             } else {
-                puts ${fd} "exec ${qt_dir}/thisQt.sh \"${bundleexec}\" \"\$\@\""
+                puts ${fd} "exec -a \"${prefix}/bin/${wrappername}\" ${qt_dir}/thisQt.sh \"${bundleexec}\" \"\$\@\""
             }
         }
         close ${fd}

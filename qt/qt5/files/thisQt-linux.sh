@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 HERE="`dirname $0`"
 
@@ -60,4 +60,8 @@ if [ "${XDG_RUNTIME_DIR} = "" ] ;then
 	export XDG_RUNTIME_DIR=${TMPDIR}/runtime-${USER}
 fi
 
-exec "$@"
+if [ "${THISEXEC}" != "" ] ;then
+	exec -a "${THISEXEC}" "$@"
+else
+	exec "$@"
+fi
