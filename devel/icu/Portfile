@@ -6,9 +6,12 @@ PortGroup           preserve_runtime_libraries 1.0
 PortGroup           LTO 1.0
 PortGroup           compress_workdir 1.0
 PortGroup           python-required 1.0
+PortGroup           save_configure_cmd 1.0
 
 name                icu
-set my_name         icu4c
+set my_name         icu
+
+# Please keep the icu and icu-devel ports as similar as possible.
 
 #===============================================================================
 # *** IMPORTANT NOTE ***
@@ -25,16 +28,16 @@ set my_name         icu4c
 # Please confirm that all ports and its subport can be build. To find the list, use:
 #  port file all | sort -u | xargs grep -El ':icu( |$)' | rev | cut -d / -f 2 | rev | xargs port info --name --subport | cut -d : -f 2 | tr ',' ' ' | grep -v '\-\-' | tr ' ' '\n' | sort -u
 
-version             71.1
-revision            0
+version             76.1
 epoch               1
 subport             ${name}-docs         { revision 0 }
 subport             ${name}-lx           { revision 0 }
-subport             ${name}-doxygen-docs { revision 0 }
+
+conflicts           icu-devel icu-devel-lx icu-devel-docs
 
 categories          devel textproc
 platforms           darwin freebsd
-maintainers         {@catap korins.ky:kirill} openmaintainer
+maintainers         {makr @mohd-akram} openmaintainer
 license             Permissive
 
 description         International Components for Unicode
@@ -47,13 +50,14 @@ long_description \
 
 homepage            https://icu.unicode.org/
 master_sites        https://github.com/unicode-org/icu/releases/download/release-[string map {. -} ${version}]/
-set docdir          ${prefix}/share/doc/${name}
+dist_subdir         ${my_name}
+set docdir          ${prefix}/share/doc/${my_name}
 
 if {${subport} eq ${name} || ${subport} eq "${name}-lx"} {
 
-    # we will only use the muniversal PG on < 10.14. (see footnote 1).
+    # we will only use the muniversal PG on < 10.15. (see footnote 1).
     set using_muniversal_PG false
-    if {${os.platform} eq "darwin" && ${os.major} < 18} {
+    if {${os.platform} eq "darwin" && ${os.major} < 19} {
 
         set using_muniversal_PG true
         PortGroup muniversal 1.0
@@ -62,22 +66,23 @@ if {${subport} eq ${name} || ${subport} eq "${name}-lx"} {
         merger_must_run_binaries yes
     }
 
-    distname            ${my_name}-[string map {. _} ${version}]-src
+    distname            icu4c-[string map {. _} ${version}]-src
     extract.suffix      .tgz
-    worksrcdir          ${name}/source
+    worksrcdir          icu/source
 
     # please also update the icu-docs checksums at the bottom of the Portfile
-    checksums           rmd160  e2cdd18bb849514081a541ec7b580ed652473554 \
-                        sha256  67a7e6e51f61faf1306b6935333e13b2c48abd8da6d2f46ce6adca24b1e21ebf
-#                         size    25701340
+    checksums           rmd160  efcd85126216df7ed96ab7f197e89b228c4c121f \
+                        sha256  dfacb46bfe4747410472ce3e1144bf28a102feeaa4e3875bac9b4c6cf30f4f3e
+#                         size    27437767
 
+    # fix rpath mess
     # use full pathnames to libraries in tools and make certain all versions of llvm-ar are called correctly
     platform darwin {
         patchfiles-append   patch-config-mh-darwin.diff
     }
-    patchfiles-append patch-i18n-formatted_string_builder.h.diff
 
-    compiler.cxx_standard   2011
+    compiler.c_standard     2011
+    compiler.cxx_standard   2017
     pre-configure {
         configure.python    [find_new_enough_python3]
         if {${configure.python} eq "0"} {
@@ -94,6 +99,10 @@ if {${subport} eq ${name} || ${subport} eq "${name}-lx"} {
     configure.args      --disable-layoutex \
                         --disable-samples \
                         --enable-static
+    platform darwin {
+        configure.args-append \
+                        --disable-rpath
+    }
 
     configure.universal_args-delete --disable-dependency-tracking
 
@@ -113,23 +122,52 @@ if {${subport} eq ${name} || ${subport} eq "${name}-lx"} {
         }
         foreach dir ${dirs} {
             # Remove architecture-specific differences to allow merging. (See footnote 3).
-            reinplace {s| -DSIZEOF_VOID_P=[48]||g}              ${dir}/config/Makefile.inc \
-                                                                ${dir}/config/icu-config
-            reinplace -E {s| -arch +[^ ]+||g}                   ${dir}/config/pkgdata.inc
-            reinplace {s|host=\".*\"|host=\"\"|g}               ${dir}/config/icu-config
-            reinplace {s|host_alias=\".*\"|host_alias=\"\"|g}   ${dir}/config/icu-config
-            reinplace {s|host_cpu=\".*\"|host_cpu=\"\"|g}       ${dir}/config/icu-config
+            reinplace -q {s| -DSIZEOF_VOID_P=[48]||g}               ${dir}/config/Makefile.inc \
+                                                                    ${dir}/config/icu-config
+            reinplace -q -E {s| -arch +[^ ]+||g}                    ${dir}/config/pkgdata.inc
+            reinplace -q {s|host=\".*\"|host=\"\"|g}                ${dir}/config/icu-config
+            reinplace -q {s|host_alias=\".*\"|host_alias=\"\"|g}    ${dir}/config/icu-config
+            reinplace -q {s|host_cpu=\".*\"|host_cpu=\"\"|g}        ${dir}/config/icu-config
         }
     }
 
     test.run        yes
     test.target     check
-    test.args       VERBOSE=1
+    test.args       VERBOSE=1 -w -k -j${build.jobs}
 
-    if {${os.platform} eq "darwin" && (${os.major} < 11 || ${os.major} > 20)} {
+    # https://trac.macports.org/ticket/71616
+    # Use clang-11-bootstrap on macOS 10.13 and older
+    if {${os.platform} eq "darwin" && ${os.major} < 18 && ${os.major} > 8} {
+        if {${configure.build_arch} in {"x86_64" "i386"}} {
+
+            if {![string match macports-* ${configure.compiler}]} {
+                configure.compiler.add_deps no
+                depends_build-append port:clang-11-bootstrap
+                depends_skip_archcheck-append clang-11-bootstrap
+                configure.cc ${prefix}/libexec/clang-11-bootstrap/bin/clang
+                configure.cxx ${prefix}/libexec/clang-11-bootstrap/bin/clang++
+            }
+
+            if {${os.major} < 11} {
+                depends_build-append port:cctools
+            }
+        }
+    }
+
+    # icu4c requires python2.7+ regardless of configure:
+    #   checking for python3...
+    # libxml2 which is used to compile llvm/clang depends on icu,
+    # and adding MacPorts' python may introduce a dependency loop.
+    # See: https://unicode-org.atlassian.net/browse/ICU-20301
+    # See: https://trac.macports.org/ticket/65870
+    if {${os.platform} eq "darwin" && ${os.major} < 11} {
         depends_build-append    port:python27
         license_noconflict      python27
         configure.python        ${prefix}/bin/python2.7
+    } elseif {${os.platform} eq "darwin" && ${os.major} >= 19} {
+        configure.python        /usr/bin/python3
+    } else {
+        configure.python        /usr/bin/python
     }
 
     if {${build_arch} eq "ppc" || ${build_arch} eq "ppc64"} {
@@ -169,7 +207,7 @@ if {${subport} eq "${name}-lx"} {
     long_description        {*}${description}
 
     depends_build-append    port:pkgconfig
-    depends_lib-append      port:icu \
+    depends_lib-append      port:${name} \
                             port:icu-le-hb
 
     configure.args-replace  --disable-layoutex --enable-layoutex
@@ -183,15 +221,16 @@ if {${subport} eq "${name}-lx"} {
 
 if {${subport} eq "${name}-docs"} {
     supported_archs         noarch
+    platforms               any
 
     description-append      (documentation)
     long_description-append Documentation.
 
     use_zip                 yes
-    distname                ${my_name}-[string map {. _} ${version}]-docs
-    checksums               rmd160  06c9db2c6dfc989e65426e9e671188c69b713464 \
-                            sha256  b2b6ec8bc5234d0ebe47aaee3d1f80dcf3dba4fda666588531b07f5b0d9cffc8
-#                             size    8136508
+    distname                icu4c-[string map {. _} [string map {.rc rc} ${version}]]-docs
+    checksums               rmd160  a5b398bb74f4425beddadf2599fca44056c99a1a \
+                            sha256  cc03a16b37924d719d72013868c6023581ec1c5f13420931fcb946f0a92d73ea \
+                            size    9188702
 
     extract.dir             ${worksrcpath}/doc/html
     use_configure           no
@@ -202,16 +241,11 @@ if {${subport} eq "${name}-docs"} {
     }
 }
 
-if {${subport} eq "${name}-doxygen-docs"} {
-    # remove after 20220407
-    PortGroup               obsolete 1.0
-
-    replaced_by             ${name}-docs
-}
-
 if {${subport} eq ${name}} {
-    livecheck.url       http://site.icu-project.org/download
-    livecheck.regex     "ICU (\[0-9.\]+) is now available."
+    livecheck.name      ${my_name}
+    livecheck.version   [string map {. -} ${version}]
+    livecheck.url       https://api.github.com/repos/unicode-org/icu/releases?per_page=100
+    livecheck.regex     \".+releases/tag/release-(\\d+\-\\d+)\"
 } else {
     livecheck.type      none
 }
