@@ -98,7 +98,7 @@ proc printUsage {} {
     puts "  -h    This help"
     puts "  -t    Give a different location for the base MacPorts Tcl"
     puts "        file (defaults to /Library/Tcl)"
-    puts "  -v    verbose output"
+    puts "  -v    verbose output (without this the exit value is the only result)"
     puts "  -V    show version and MacPorts version being used"
     puts ""
     puts "port-name is the name of a port to check"
@@ -271,7 +271,6 @@ proc check_licenses {portName variantInfo verbose} {
     if {$verbose} {
         puts "\"$portName\" is distributable"
     }
-    mportshutdown
     return 0
 }
 
@@ -312,12 +311,6 @@ while {[string index [lindex $::argv 0] 0] == "-" } {
     set ::argv [lrange $::argv 1 end]
 }
 
-if {$showVersion} {
-    puts "Version $MY_VERSION"
-    puts "MacPorts version [macports::version]"
-    exit 0
-}
-
 if {[llength $::argv] == 0} {
     puts "Error: missing port-name"
     printUsage
@@ -333,14 +326,29 @@ foreach variantSetting $::argv {
     set variantInfo($variantName) $flag
 }
 
-package require Threads
+package require Thread
 set runner [thread::create -preserved [list thread::wait]]
 thread::send $runner [list after 250 {puts stderr "Loading MacPorts..."}] timerID
 package require macports
 thread::send -async $runner [list after cancel $timerID]
 thread::send $runner [list after 250 {puts stderr "Initialising MacPorts..."}] timerID
-mportinit
+
+array set ui_options        {}
+array set global_options    {}
+array set global_variations {}
+if {[catch {mportinit ui_options global_options global_variations} result]} {
+    puts stderr $::errorInfo
+    puts stderr "Failed to initialise MacPorts ($result)"
+    exit -1
+}
 thread::send -async $runner [list after cancel $timerID]
+
+if {$showVersion} {
+    puts "Version $MY_VERSION"
+    puts "MacPorts version [macports::version]"
+    mportshutdown
+    exit 0
+}
 
 check_licenses $portName [array get variantInfo] $verbose
 
