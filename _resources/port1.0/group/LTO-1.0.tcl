@@ -492,7 +492,7 @@ if {[tbool LTO.allow_UseLLD] && ![variant_exists use_lld]} {
     }
 }
 if {![variant_exists use_lld] || ![variant_isset use_lld]} {
-    if {[tbool LTO.LTO.maybe_ForceLD] && [string match "macports-clang*" ${configure.compiler}]} {
+    if {(![tbool LTO.allow_UseLLD] || [tbool LTO.LTO.maybe_ForceLD]) && [string match "macports-clang*" ${configure.compiler}]} {
         if {${LTO::mp_compiler_version} >= 5} {
             # simple, unconditional "don't use lld" for clang compilers built to use lld by default
             LTO.configure.flags_append {ldflags} "-fuse-ld=ld"
