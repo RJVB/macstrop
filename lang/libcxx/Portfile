@@ -16,13 +16,13 @@ if {[catch {set cmake_available [registry_active cmake]}]} {
     ui_debug "use_cmake: [tbool use_cmake]"
 }
 
-version                 13.0.1 ; revision 2
+version                 13.0.1 ; revision 3
 set llvm_version        13
 ## v17 builds as configured below but for now the result doesn't work with GCC so 
 ## we put off the upgrade.
 variant exp17 description {installs the still experimental libc++ v17.0.x version} {}
 if {[variant_isset exp17]} {
-    version             17.0.6 ; revision 1
+    version             17.0.6 ; revision 2
     set llvm_version    17
 
     # NB : see the NB comment below about running $filespath/find_reexported_from_legacy-support.sh !
@@ -389,8 +389,8 @@ configure.args-append \
                     -DLLVM_ENABLE_RUNTIMES="libcxx\;libcxxabi" \
                     -DLIBCXX_INSTALL_LIBRARY=ON \
                     -DLIBCXX_ENABLE_ASSERTIONS=OFF \
-                    -DLIBCXXABI_ENABLE_STATIC=OFF \
-                    -DLIBCXX_ENABLE_STATIC=OFF \
+                    -DLIBCXXABI_ENABLE_STATIC=ON \
+                    -DLIBCXX_ENABLE_STATIC=ON \
                     -ULIBCXX_BENCHMARK_NATIVE_STDLIB \
                     -DLIBCXX_LINK_TESTS_WITH_SHARED_LIBCXXABI=ON
 ## NB: prevent "dyld: Symbol not found: __ZdaPv (expected in libc++)
@@ -424,27 +424,30 @@ configure.args-append \
                     -DVERSION_ACCORDING_TO_MACPORTS=${version4macports}
 
 if {[string match *g++-mp-* ${configure.cxx}]} {
-    configure.args-replace \
-                    -ULIBCXX_BENCHMARK_NATIVE_STDLIB \
-                    -DLIBCXX_BENCHMARK_NATIVE_STDLIB=libstdc++
     if {[string match *clang++-mp-* ${configure.cxx}]} {
         # clang++-mp-XY will need `-stdlib=macports-stdc++`, g++-mp-XY just `-stdlib=libstdc++`
         # to achieve the same effect: build and link against our libstdc++ runtime.
         pre-configure {
             if {![catch \
                 {exec echo "extern int foo;" | ${configure.cxx} -x c++ -fsyntax-only - -stdlib=macports-libstdc++}]} {
+                configure.args-replace \
+                    -ULIBCXX_BENCHMARK_NATIVE_STDLIB \
+                    -DLIBCXX_BENCHMARK_NATIVE_STDLIB=libstdc++
                 configure.args-append \
                     -DLIBCXX_BENCHMARK_NATIVE_STDLIB_FROM_MACPORTS=ON
-            } else {
-                ui_warn "${configure.cxx} doesn't accept -stdlib=macports-libstdcxx"
+                ui_warn "${configure.cxx} accepts -stdlib=macports-libstdcxx; building benchmarks against libstdc++"
             }
         }
         pre-test {
             if {[catch \
                 {exec echo "extern int foo;" | ${configure.cxx} -x c++ -fsyntax-only - -stdlib=macports-libstdc++}]} {
-                ui_warn "${configure.cxx} doesn't accept -stdlib=macports-libstdcxx; the native benchmark will probably fail"
+                ui_warn "${configure.cxx} doesn't accept -stdlib=macports-libstdcxx; the native benchmark are against the platform libc++ and will probably fail"
             }
         }
+    } else {
+        configure.args-replace \
+                    -ULIBCXX_BENCHMARK_NATIVE_STDLIB \
+                    -DLIBCXX_BENCHMARK_NATIVE_STDLIB=libstdc++
     }
 }
 
@@ -511,15 +514,15 @@ destroot {
     ui_debug "-->  doing a 'formal-reference' install to ${destroot}-formal"
     system -W ${build.dir} "${build.cmd} ${build.pre_args} install/fast ${build.post_args} ${destroot.destdir}-formal"
 
-    ## TODO:
-    ## install ${destroot}-formal/lib/libc++experimental.a
     if {[variant_isset replacemnt_libcxx]} {
         xinstall -m 755 -d ${destroot}${roots_path}/${root_name}/usr/lib
 
         xinstall -m 755 ${libcxxabi_worksrcpath}/lib/libc++abi.dylib ${destroot}${roots_path}/${root_name}/usr/lib
+        xinstall -m 755 ${libcxxabi_worksrcpath}/lib/libc++abi.a ${destroot}${roots_path}/${root_name}/usr/lib
 
         xinstall -m 755 ${libcxx_worksrcpath}/lib/libc++.1.dylib ${destroot}${roots_path}/${root_name}/usr/lib
         ln -s libc++.1.dylib ${destroot}${roots_path}/${root_name}/usr/lib/libc++.dylib
+        xinstall -m 755 ${libcxx_worksrcpath}/lib/libc++.a ${destroot}${roots_path}/${root_name}/usr/lib
 
         if {[file exists ${destroot}-formal${prefix}/lib/libc++experimental.a]} {
             xinstall -m 755 ${destroot}-formal${prefix}/lib/libc++experimental.a \
@@ -579,6 +582,10 @@ destroot {
             ${destroot}${prefix}/lib/libcxx/${l}.1.dylib"
         ln -s ${l}.1.dylib ${destroot}${prefix}/lib/libcxx/${l}.dylib
     }
+    xinstall -m 755 \
+            ${destroot}-formal${prefix}/lib/libc++.a \
+            ${destroot}-formal${prefix}/lib/libc++abi.a \
+            ${destroot}${prefix}/lib/libcxx/
     if {[file exists ${destroot}-formal${prefix}/lib/libc++experimental.a]} {
         xinstall -m 755 ${destroot}-formal${prefix}/lib/libc++experimental.a \
             ${destroot}${prefix}/lib/libcxx/
@@ -598,6 +605,8 @@ destroot {
                 @rpath/libc++abi.1.dylib ${prefix}/lib/libc++abi.1.dylib \
                 ${destroot}${prefix}/lib/${l}.1.dylib"
         }
+        ln -s libcxx/libc++.a  ${destroot}${prefix}/lib/
+        ln -s libcxx/libc++abi.a  ${destroot}${prefix}/lib/
         if {[file exists ${destroot}${prefix}/lib/libcxx/libc++experimental.a]} {
             ln -s libcxx/libc++experimental.a  ${destroot}${prefix}/lib/
         }
@@ -612,6 +621,8 @@ post-destroot {
     register_devport_standard_content
     append_to_devport_standard_content ${prefix}/lib/libcxx/libc++.dylib
     append_to_devport_standard_content ${prefix}/lib/libcxx/libc++abi.dylib
+    append_to_devport_standard_content ${prefix}/lib/libcxx/libc++.a
+    append_to_devport_standard_content ${prefix}/lib/libcxx/libc++abi.a
     append_to_devport_standard_content ${prefix}/lib/libcxx/libc++experimental.a
     append_to_devport_standard_content ${prefix}/lib/cmake
     create_devport_content_archive

@@ -158,7 +158,7 @@ proc legacysupport::add_legacysupport {} {
     global ls_cache_incpath ls_cache_ldflags ls_cache_cppflags ls_cache_cxxflags
     global configure.cxx_stdlib
 
-    if { ${os.platform} eq "darwin" && ${os.major} <= [option legacysupport.newest_darwin_requires_legacy] } {
+    if { ${os.platform} eq "darwin" } {
 
         # depend on the support library or devel version if installed
         legacysupport::add_once [legacysupport::get_depends_type] append [legacysupport::get_dependency]
@@ -173,10 +173,12 @@ proc legacysupport::add_legacysupport {} {
             }
         }
 
-        # Add flags for legacy-support library
-        set ls_cache_incpath  "${prefix}/include/LegacySupport"
-        set ls_cache_ldflags  "[join [legacysupport::get_library_link_flags]]"
-        set ls_cache_cppflags "[legacysupport::get_cpp_flags]"
+        if { ${os.major} <= [option legacysupport.newest_darwin_requires_legacy] } {
+            # Add flags for legacy-support library
+            set ls_cache_incpath  "${prefix}/include/LegacySupport"
+            set ls_cache_ldflags  "[join [legacysupport::get_library_link_flags]]"
+            set ls_cache_cppflags "[legacysupport::get_cpp_flags]"
+        }
 
         # Flags for using MP libcxx
         if { [option legacysupport.use_mp_libcxx] && ${configure.cxx_stdlib} eq "libc++" } {
@@ -210,23 +212,24 @@ proc legacysupport::add_legacysupport {} {
         ui_debug "legacysupport: incpath  ${ls_cache_incpath}"
         ui_debug "legacysupport: cxxflags ${ls_cache_cxxflags}"
 
-        # Add the flags
-        foreach f ${ls_cache_ldflags} { legacysupport::add_once configure.ldflags append ${f} }
-        legacysupport::set_phase_env_var MACPORTS_LEGACY_SUPPORT_LDFLAGS=[join ${ls_cache_ldflags}]
-        if {![option compiler.limit_flags]} {
-            foreach f ${ls_cache_cppflags} { legacysupport::add_once configure.cppflags prepend ${f} }
-            foreach f ${ls_cache_cxxflags} { legacysupport::add_once configure.cxxflags prepend ${f} }
-            legacysupport::set_phase_env_var MACPORTS_LEGACY_SUPPORT_CPPFLAGS=[join ${ls_cache_cppflags}]
-            legacysupport::set_phase_env_var MACPORTS_LEGACY_SUPPORT_CXXFLAGS=[join ${ls_cache_cxxflags}]
-        }
+        if { ${ls_cache_incpath} ne "" } {
+            # Add the flags
+            foreach f ${ls_cache_ldflags} { legacysupport::add_once configure.ldflags append ${f} }
+            legacysupport::set_phase_env_var MACPORTS_LEGACY_SUPPORT_LDFLAGS=[join ${ls_cache_ldflags}]
+            if {![option compiler.limit_flags]} {
+                foreach f ${ls_cache_cppflags} { legacysupport::add_once configure.cppflags prepend ${f} }
+                foreach f ${ls_cache_cxxflags} { legacysupport::add_once configure.cxxflags prepend ${f} }
+                legacysupport::set_phase_env_var MACPORTS_LEGACY_SUPPORT_CPPFLAGS=[join ${ls_cache_cppflags}]
+                legacysupport::set_phase_env_var MACPORTS_LEGACY_SUPPORT_CXXFLAGS=[join ${ls_cache_cxxflags}]
+            }
 
-        # do not use compiler.cpath since it behaves like -I, while ${lang}_INCLUDE_PATH behaves like -isystem
-        # since legacy-support uses GNU language extensions, this prevents warnings when `-pedantic` is
-        # used and error when `-pedantic-errors` is used. see, e.g., llvm-devel
-        foreach lang {C OBJC CPLUS OBJCPLUS} {
-            legacysupport::set_phase_env_var ${lang}_INCLUDE_PATH=[string map {" " ":"} ${ls_cache_incpath}]
+            # do not use compiler.cpath since it behaves like -I, while ${lang}_INCLUDE_PATH behaves like -isystem
+            # since legacy-support uses GNU language extensions, this prevents warnings when `-pedantic` is
+            # used and error when `-pedantic-errors` is used. see, e.g., llvm-devel
+            foreach lang {C OBJC CPLUS OBJCPLUS} {
+                legacysupport::set_phase_env_var ${lang}_INCLUDE_PATH=[string map {" " ":"} ${ls_cache_incpath}]
+            }
         }
-
     }
 
     # Sets some indicator env vars to see if support is ENABLED or DISABLED.
