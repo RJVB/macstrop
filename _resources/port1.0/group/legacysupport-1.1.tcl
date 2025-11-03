@@ -197,7 +197,11 @@ proc legacysupport::add_legacysupport {} {
                 legacysupport::add_once depends_lib append port:macports-libcxx
             }
             append ls_cache_incpath  " ${prefix}/include/libcxx/v1"
-            append ls_cache_ldflags  " -L${prefix}/lib/libcxx"
+            if {[option legacysupport.use_static]} {
+                append ls_cache_ldflags  " -nostdlib++ ${prefix}/lib/libcxx/libc++.a ${prefix}/lib/libcxx/libc++abi.a"
+            } else {
+                append ls_cache_ldflags  " -L${prefix}/lib/libcxx"
+            }
             append ls_cache_cxxflags " -nostdinc++ -isystem${prefix}/include/libcxx/v1"
         }
 
