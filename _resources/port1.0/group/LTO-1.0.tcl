@@ -6,32 +6,45 @@
 # Usage:
 # PortGroup     LTO 1.0
 
-if {[variant_exists LTO]} {
-    set LTO.disable_LTO yes
-} elseif {![variant_exists LTO]} {
-    if {[tbool LTO.disable_LTO]} {
-        ui_debug "LTO cannot be activated"
-        set LTO.must_be_disabled yes
-        variant LTO description {dummy variant: link-time optimisation disabled for this port} {
-            pre-configure {
-                ui_warn "The +LTO variant has been disabled and thus has no effect"
+if {![info exists LTO.LTO_variant]} {
+    set LTO.LTO_variant "LTO"
+} else {
+    ui_debug "LTO: the \"LTO\" variant will be called \"${LTO.LTO_variant}\""
+}
+
+set LTO.must_be_disabled no
+
+proc define_LTO_variant {} {
+    global LTO.LTO_variant LTO.disable_LTO LTO.must_be_disabled subport
+    if {[variant_exists ${LTO.LTO_variant}]} {
+        ui_debug "LTO: the \"${LTO.LTO_variant}\" variant is already defined by the ${subport} Portfile"
+        set LTO.disable_LTO yes
+    } elseif {![variant_exists ${LTO.LTO_variant}]} {
+        if {[tbool LTO.disable_LTO]} {
+            ui_debug "${LTO.LTO_variant} cannot be activated"
+            set LTO.must_be_disabled yes
+            variant ${LTO.LTO_variant} description {dummy variant: link-time optimisation disabled for this port} {
+                pre-configure {
+                    ui_warn "The +${LTO.LTO_variant} variant has been disabled and thus has no effect"
+                }
+                notes-append "Port ${subport} has been installed with a dummy +${LTO.LTO_variant} variant!"
+                # cast the iron while it's hot (takes care of +LTO on the commandline)
+                if {[variant_isset ${LTO.LTO_variant}]} {
+                     ui_warn "Variant +${LTO.LTO_variant} unsetting itself!"
+                     unset ::variations(${LTO.LTO_variant})
+                }
             }
-            notes-append "Port ${subport} has been installed with a dummy +LTO variant!"
             # cast the iron while it's hot (takes care of +LTO on the commandline)
-            if {[variant_isset LTO]} {
-                 ui_warn "Variant +LTO unsetting itself!"
-                 unset ::variations(LTO)
+            if {[variant_isset ${LTO.LTO_variant}]} {
+                 ui_warn "Variant disabled, please don't request +${LTO.LTO_variant}!"
+                 unset ::variations(${LTO.LTO_variant})
             }
+        } else {
+            variant ${LTO.LTO_variant} description {build with link-time optimisation} {}
         }
-        # cast the iron while it's hot (takes care of +LTO on the commandline)
-        if {[variant_isset LTO]} {
-             ui_warn "Variant disabled, please don't request +LTO!"
-             unset ::variations(LTO)
-        }
-    } else {
-        variant LTO description {build with link-time optimisation} {}
     }
 }
+
 options LTO.supports_i386 \
         LTO.gcc_lto_jobs
 default LTO.supports_i386 yes
@@ -54,9 +67,9 @@ if {![info exists LTO_needs_ranlib]} {
 namespace eval LTO {}
 
 proc LTO::variant_enabled {v} {
-    global LTO.disable_LTO
-    if {${v} eq "LTO" && [tbool LTO.disable_LTO]} {
-        ui_debug "variant LTO is disabled because of LTO.disable_LTO=${LTO.disable_LTO}"
+    global LTO.disable_LTO LTO.LTO_variant
+    if {${v} eq "${LTO.LTO_variant}" && [tbool LTO.disable_LTO]} {
+        ui_debug "variant ${LTO.LTO_variant} is disabled because of LTO.disable_LTO=${LTO.disable_LTO}"
         return 0
     } else {
         ui_debug "\[variant_isset ${v}\]=[variant_isset ${v}]"
@@ -120,9 +133,9 @@ if {${os.platform} eq "darwin"} {
     proc LTO.set_lto_cache {} {
         global configure.compiler configure.ldflags build.dir
         global muniversal.current_arch merger_configure_ldflags merger_arch_flag
-        if {[LTO::variant_enabled LTO] && ${configure.compiler} ne "clang"} {
+        if {[LTO::variant_enabled ${LTO.LTO_variant}] && ${configure.compiler} ne "clang"} {
             xinstall -m 755 -d ${build.dir}/.lto_cache
-            ui_debug "Setting LTO cache path to ${build.dir}/.lto_cache"
+            ui_debug "Setting ${LTO.LTO_variant} cache path to ${build.dir}/.lto_cache"
             if {[info exists muniversal.build_arch] && [variant_isset universal]} {
                 configure.ldflags.${muniversal.current_arch}-append -Wl,-cache_path_lto,${build.dir}/.lto_cache
             } elseif {[info exists merger_arch_flag] && [variant_isset universal]} {
@@ -133,7 +146,7 @@ if {${os.platform} eq "darwin"} {
         }
     }
     post-destroot {
-        if {[LTO::variant_enabled LTO] && ${configure.compiler} ne "clang"} {
+        if {[LTO::variant_enabled ${LTO.LTO_variant}] && ${configure.compiler} ne "clang"} {
             file delete -force ${build.dir}/.lto_cache
             set morecrud [glob -nocomplain -directory ${workpath}/.tmp/ thinlto-* cc-*.o lto-llvm-*.o]
             if {${morecrud} ne {}} {
@@ -143,7 +156,7 @@ if {${os.platform} eq "darwin"} {
     }
 } else {
     post-destroot {
-        if {[LTO::variant_enabled LTO]} {
+        if {[LTO::variant_enabled ${LTO.LTO_variant}]} {
             set morecrud [glob -nocomplain -directory ${workpath}/.tmp/ thinlto-* cc-*.o lto-llvm-*.o]
             if {${morecrud} ne {}} {
                 file delete -force {*}${morecrud}
@@ -175,7 +188,7 @@ proc LTO.configure.flags_append {vars flags} {
 # out-of-line implementation so changes are made *now*.
 # Qt5 has its own mechanism to set LTO flags so don't do anything
 # if we end up being loaded for a build of Qt5 itself.
-if {[LTO::variant_enabled LTO] && ![info exists building_qt5]} {
+if {[LTO::variant_enabled ${LTO.LTO_variant}] && ![info exists building_qt5]} {
     # some projects have their own configure option for LTO (often --enable-lto);
     # use this if the port tells us to
     if {[info exists LTO.configure_option]} {
@@ -306,9 +319,9 @@ if {[string match *clang* ${configure.compiler}]} {
     }
     if {${os.platform} ne "darwin" \
             && [string match macports-clang* ${configure.compiler}]
-            && [LTO::variant_enabled LTO]} {
+            && [LTO::variant_enabled ${LTO.LTO_variant}]} {
         ## clang on ~Darwin doesn't like -Os -flto so remove that flag from the initial C*FLAGS
-        ui_warn "Changing -Os for -O2 because of +LTO"
+        ui_warn "Changing -Os for -O2 because of +${LTO.LTO_variant}"
         configure.cflags-replace -Os -O2
         configure.objcflags-replace -Os -O2
         configure.cxxflags-replace -Os -O2
@@ -523,16 +536,19 @@ if {[variant_isset builtwith]} {
 
 proc LTO::callback {} {
     # this callback could really also handle the disable and allow switches!
-    global supported_archs LTO.must_be_disabled LTO.gcc_lto_jobs build.cmd configure.cmd
+    global supported_archs LTO.must_be_disabled LTO.gcc_lto_jobs build.cmd configure.cmd LTO.LTO_variant
+
+    define_LTO_variant
+
     if {[variant_exists use_lld] && [variant_isset use_lld]} {
         # lld doesn't support 32bit architectures
         supported_archs-delete i386 ppc
     }
     # don't allow the Portfile to activate the LTO variant
-    if {[info exists LTO.must_be_disabled] && [variant_exists LTO] && [variant_isset LTO]} {
-        ui_warn "Unsetting +LTO!"
-        unset ::variations(LTO)
-    } elseif {[variant_isset LTO] && ${LTO.gcc_lto_jobs} eq "auto" && [string match *make ${build.cmd}]} {
+    if {[tbool LTO.must_be_disabled] && [variant_exists ${LTO.LTO_variant}] && [variant_isset ${LTO.LTO_variant}]} {
+        ui_warn "Unsetting +${LTO.LTO_variant}!"
+        unset ::variations(${LTO.LTO_variant})
+    } elseif {[variant_isset ${LTO.LTO_variant}] && ${LTO.gcc_lto_jobs} eq "auto" && [string match *make ${build.cmd}]} {
         ui_debug "LTO PG setting build.cmd=gmake!"
         build.cmd           gmake
         depends_build-delete \
