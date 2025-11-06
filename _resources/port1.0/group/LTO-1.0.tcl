@@ -6,19 +6,16 @@
 # Usage:
 # PortGroup     LTO 1.0
 
-if {![info exists LTO.LTO_variant]} {
-    set LTO.LTO_variant "LTO"
-} else {
-    ui_debug "LTO: the \"LTO\" variant will be called \"${LTO.LTO_variant}\""
-}
+namespace eval LTO {}
 
 set LTO.must_be_disabled no
 
-proc define_LTO_variant {} {
-    global LTO.LTO_variant LTO.disable_LTO LTO.must_be_disabled subport
+if {![info exists LTO.LTO_variant]} {
+    set LTO.LTO_variant "LTO"
+
     if {[variant_exists ${LTO.LTO_variant}]} {
         ui_debug "LTO: the \"${LTO.LTO_variant}\" variant is already defined by the ${subport} Portfile"
-        set LTO.disable_LTO yes
+        set LTO.disable_LTO 1
     } elseif {![variant_exists ${LTO.LTO_variant}]} {
         if {[tbool LTO.disable_LTO]} {
             ui_debug "${LTO.LTO_variant} cannot be activated"
@@ -43,6 +40,12 @@ proc define_LTO_variant {} {
             variant ${LTO.LTO_variant} description {build with link-time optimisation} {}
         }
     }
+
+} else {
+    ui_debug "LTO: the \"LTO\" variant will be called \"${LTO.LTO_variant}\""
+    ui_debug "     AND is ASSUMED to be provided by the Portfile!!"
+    set LTO::port_provides_LTO_variant yes
+    set LTO.disable_LTO 1
 }
 
 options LTO.supports_i386 \
@@ -64,12 +67,10 @@ if {![info exists LTO_needs_ranlib]} {
     set LTO_needs_ranlib no
 }
 
-namespace eval LTO {}
-
 proc LTO::variant_enabled {v} {
     global LTO.disable_LTO LTO.LTO_variant
     if {${v} eq "${LTO.LTO_variant}" && [tbool LTO.disable_LTO]} {
-        ui_debug "variant ${LTO.LTO_variant} is disabled because of LTO.disable_LTO=${LTO.disable_LTO}"
+        ui_debug "The LTO PG variant ${LTO.LTO_variant} is force-disabled because of LTO.disable_LTO=${LTO.disable_LTO}"
         return 0
     } else {
         ui_debug "\[variant_isset ${v}\]=[variant_isset ${v}]"
@@ -537,8 +538,6 @@ if {[variant_isset builtwith]} {
 proc LTO::callback {} {
     # this callback could really also handle the disable and allow switches!
     global supported_archs LTO.must_be_disabled LTO.gcc_lto_jobs build.cmd configure.cmd LTO.LTO_variant
-
-    define_LTO_variant
 
     if {[variant_exists use_lld] && [variant_isset use_lld]} {
         # lld doesn't support 32bit architectures
