@@ -189,12 +189,16 @@ proc LTO.configure.flags_append {vars flags} {
 # out-of-line implementation so changes are made *now*.
 # Qt5 has its own mechanism to set LTO flags so don't do anything
 # if we end up being loaded for a build of Qt5 itself.
-if {[LTO::variant_enabled ${LTO.LTO_variant}] && ![info exists building_qt5]} {
+if {[variant_isset ${LTO.LTO_variant}] && ![info exists building_qt5]} {
     # some projects have their own configure option for LTO (often --enable-lto);
     # use this if the port tells us to
     if {[info exists LTO.configure_option]} {
-        ui_debug "LTO: setting custom configure option(s) \"${LTO.configure_option}\""
-        configure.args-append           ${LTO.configure_option}
+        if {[LTO::variant_enabled ${LTO.LTO_variant}]} {
+            ui_debug "LTO: setting custom configure option(s) \"${LTO.configure_option}\""
+            configure.args-append       ${LTO.configure_option}
+        } else {
+            ui_warn "LTO PG: LTO.configure_option is set but so is LTO.disable_LTO - seems fishy!"
+        }
     } else {
         if {[string match *clang* ${configure.compiler}]} {
             # detect support for flto=thin but only with MacPorts clang versions (being a bit cheap here)
@@ -242,50 +246,55 @@ if {[LTO::variant_enabled ${LTO.LTO_variant}] && ![info exists building_qt5]} {
                 ui_warn "Warning: ObjC/++ files will be compiled without LTO because of the main compiler choice!"
             }
         }
-        if {![variant_isset universal] || [tbool LTO.supports_i386]} {
-            # consolidate the current (possibly) default values for ObjC compiler flags
-            # (to make sure they're "unlinked from" the corresponding C/C++ flags!)
-            configure.objcflags             {*}${configure.objcflags}
-            configure.objcxxflags           {*}${configure.objcxxflags}
-            # now we can add the possibly GCC-specific LTO flags into the C/C++ flags
-            # without risk that they also get appended to the ObjC/++ flags.
-            LTO.configure.flags_append      {cflags \
-                                            cxxflags} \
-                                            ${lto_flags}
-            # ObjC may require different LTO flags because on Darwin we may be using clang instead of gcc.
-            LTO.configure.flags_append      {objcflags \
-                                            objcxxflags} \
-                                            ${objc_lto_flags}
-            # ${configure.optflags} is a list, and that can lead to strange effects
-            # in certain situations if we don't treat it as such here.
-            LTO.configure.flags_append      ldflags "${configure.optflags} ${lto_flags}"
-        } else { # checking build_arch probably won't do what I thought here #  if {${build_arch} ne "i386"}
-            if {[info exists merger_configure_cflags(x86_64)]} {
-                set merger_configure_cflags(x86_64) "{*}$merger_configure_cflags(x86_64) ${lto_flags}"
-            } else {
-                set merger_configure_cflags(x86_64) "${lto_flags}"
+        if {[LTO::variant_enabled ${LTO.LTO_variant}]} {
+            # here is the actual venom: insert the LTO flags where they should go!
+            if {![variant_isset universal] || [tbool LTO.supports_i386]} {
+                # consolidate the current (possibly) default values for ObjC compiler flags
+                # (to make sure they're "unlinked from" the corresponding C/C++ flags!)
+                configure.objcflags             {*}${configure.objcflags}
+                configure.objcxxflags           {*}${configure.objcxxflags}
+                # now we can add the possibly GCC-specific LTO flags into the C/C++ flags
+                # without risk that they also get appended to the ObjC/++ flags.
+                LTO.configure.flags_append      {cflags \
+                                                cxxflags} \
+                                                ${lto_flags}
+                # ObjC may require different LTO flags because on Darwin we may be using clang instead of gcc.
+                LTO.configure.flags_append      {objcflags \
+                                                objcxxflags} \
+                                                ${objc_lto_flags}
+                # ${configure.optflags} is a list, and that can lead to strange effects
+                # in certain situations if we don't treat it as such here.
+                LTO.configure.flags_append      ldflags "${configure.optflags} ${lto_flags}"
+            } else { # checking build_arch probably won't do what I thought here #  if {${build_arch} ne "i386"}
+                if {[info exists merger_configure_cflags(x86_64)]} {
+                    set merger_configure_cflags(x86_64) "{*}$merger_configure_cflags(x86_64) ${lto_flags}"
+                } else {
+                    set merger_configure_cflags(x86_64) "${lto_flags}"
+                }
+                if {[info exists merger_configure_cxxflags(x86_64)]} {
+                    set merger_configure_cxxflags(x86_64) "{*}$merger_configure_cxxflags(x86_64) ${lto_flags}"
+                } else {
+                    set merger_configure_cxxflags(x86_64) "${lto_flags}"
+                }
+                if {[info exists merger_configure_objcflags(x86_64)]} {
+                    set merger_configure_objcflags(x86_64) "{*}$merger_configure_objcflags(x86_64) ${objc_lto_flags}"
+                } else {
+                    set merger_configure_objcflags(x86_64) "${objc_lto_flags}"
+                }
+                if {[info exists merger_configure_ldflags(x86_64)]} {
+                    set merger_configure_ldflags(x86_64) "{*}$merger_configure_ldflags(x86_64) ${objc_lto_flags}"
+                } else {
+                    set merger_configure_ldflags(x86_64) "${objc_lto_flags}"
+                }
+                # ${configure.optflags} is a list, and that can lead to strange effects
+                # in certain situations if we don't treat it as such here.
+                foreach opt ${configure.optflags} {
+                    configure.ldflags-append    ${opt}
+                }
+                set merger_arch_flag            yes
             }
-            if {[info exists merger_configure_cxxflags(x86_64)]} {
-                set merger_configure_cxxflags(x86_64) "{*}$merger_configure_cxxflags(x86_64) ${lto_flags}"
-            } else {
-                set merger_configure_cxxflags(x86_64) "${lto_flags}"
-            }
-            if {[info exists merger_configure_objcflags(x86_64)]} {
-                set merger_configure_objcflags(x86_64) "{*}$merger_configure_objcflags(x86_64) ${objc_lto_flags}"
-            } else {
-                set merger_configure_objcflags(x86_64) "${objc_lto_flags}"
-            }
-            if {[info exists merger_configure_ldflags(x86_64)]} {
-                set merger_configure_ldflags(x86_64) "{*}$merger_configure_ldflags(x86_64) ${objc_lto_flags}"
-            } else {
-                set merger_configure_ldflags(x86_64) "${objc_lto_flags}"
-            }
-            # ${configure.optflags} is a list, and that can lead to strange effects
-            # in certain situations if we don't treat it as such here.
-            foreach opt ${configure.optflags} {
-                configure.ldflags-append    ${opt}
-            }
-            set merger_arch_flag            yes
+        } else {
+            ui_debug "Only exporting LTO.ltoflags=${lto_flags} !"
         }
         if {${os.platform} eq "darwin" && ![tbool LTO.allow_ThinLTO]} {
             if {![variant_isset universal] || [tbool LTO.supports_i386]} {
