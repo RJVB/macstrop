@@ -8,19 +8,19 @@ PortGroup           save_configure_cmd 1.0
 
 # For 'TARGET_OS_OSX', 'TARGET_CPU_ARM64' macros
 PortGroup           legacysupport 1.1
-PortGroup           muniversal 1.0
-PortGroup           xcodeversion 1.0
 
 name                ffmpeg7
 set LTO.configure_option --enable-lto
 PortGroup           LTO 1.0
 platform darwin {
+    PortGroup       muniversal 1.0
     PortGroup       xcode_workaround 1.0
 }
+PortGroup           xcodeversion 1.0
 
 set my_name         ffmpeg
 
-version             7.1.1 ; revision 1
+version             7.1.2
 
 license             LGPL-2.1+
 categories          multimedia
@@ -56,6 +56,8 @@ long_description    {*}${description}. It includes libavcodec, \
                     \
                     libavformat is a library containing parsers and \
                     generators for all common audio/video formats.
+
+platforms           darwin
 homepage            https://ffmpeg.org/
 
 master_sites        ${homepage}releases/
@@ -63,14 +65,15 @@ distname            ${my_name}-${version}
 dist_subdir         ${my_name}
 use_xz              yes
 
-checksums           rmd160  853cb40a604d87cc959f50ac9c1e62aef0c9a54c \
-                    sha256  733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1
-#                     size    11019500
+checksums           rmd160  648e440ba96113023cce129262d65cd7eb7169cd \
+                    sha256  089bc60fb59d6aecc5d994ff530fd0dcb3ee39aa55867849a2bbc4e555f9c304
+#                     size    11030368
 
 depends_build-append \
                     port:cctools \
                     port:gmake \
                     path:bin/pkg-config:pkgconfig \
+                    port:ladspa-sdk \
                     port:texinfo
 
 depends_lib-append \
@@ -110,10 +113,6 @@ patchfiles-append   patch-avutil-builtin-available.diff
 # TODO: Submit patches to upstream
 patchfiles-append   patch-libavcodec-profvidworkflow.diff
 
-# https://trac.macports.org/ticket/68973
-# TODO: Raise the issue to upstream
-patchfiles-append   patch-libavcodec-librsvgdec.diff
-
 # add retina resolution capabilities via -movflags write_pixeldensity flag
 # this patch is by daniel kaiser who posted on the ffmpeg bugtracker:
 # https://fftrac-bg.ffmpeg.org/ticket/7045
@@ -121,6 +120,9 @@ patchfiles-append   patch-libavcodec-librsvgdec.diff
 # https://ffmpeg.org/pipermail/ffmpeg-devel/2024-July/331470.html
 # so the FFMpeg team does not seem to care to include this functionality
 patchfiles-append   patch-add-pixeldensity.diff
+
+# allow making the ff_sbr_noise_table visible, for building +LTO with GCC
+patchfiles-append   patch-libavcodec-unhide_ff_sbr_table.diff
 
 platform darwin {
     # Typedef AVMediaType to NSString* on older systems
@@ -130,16 +132,9 @@ platform darwin {
     }
 }
 
-# SVT-AV1 v3 has API changes
-# See https://gitlab.com/AOMediaCodec/SVT-AV1/-/commit/988e930c1083ce518ead1d364e3a486e9209bf73
-patchfiles-append   patch-svt-av1-v3.diff
-
-# hack in control over the visibility of the ff_sbr_noise_table
-# needed for building +LTO with macports-gcc
-patchfiles-append   patch-sbr_noise_table_visibility.diff
-
 # enable auto configure of asm optimizations
 # requires Xcode 3.1 or better on Leopard
+#
 minimum_xcodeversions {9 3.1}
 
 # requires a C11 compiler
@@ -214,6 +209,7 @@ configure.args-append \
                     --disable-xlib \
                     --disable-stripping \
                     --enable-avfilter \
+                    --enable-ladspa \
                     --enable-fontconfig \
                     --enable-gnutls \
                     --enable-lcms2 \
@@ -369,15 +365,14 @@ platform darwin {
             error "Variant rav1e not supported for macOS 10.5 and earlier, or PPC"
         }
     }
+}
 
-    # due to the new linker (which was introduced in Xcode 15: https://developer.apple.com/documentation/xcode-release-notes/xcode-15-release-notes),
-    # this port requires '-ld_classic' to build successfully with the toolchains from Xcode 15 or Command Line Tools 15.
-    #
-    # TODO: This is a temporary solution, the classic linker will be removed in a future release by Apple.
-    if { ${os.major} == 23 && ( [vercmp ${xcodeversion} 15 ] >= 0 ) || ( [vercmp ${xcodecltversion} 15 ] >= 0 ) } {
-        configure.ldflags-append \
-                    -Wl,-ld_classic
-    }
+# libavcodec/pcm-bluray.c:172:45: error: passing argument 2 of 'bytestream2_get_buffer' from incompatible pointer type [-Wincompatible-pointer-types]
+# libavcodec/pcm-dvd.c:155:37: error: passing argument 2 of 'bytestream2_get_buffer' from incompatible pointer type [-Wincompatible-pointer-types]
+# vulkan_av1.c:216:43: error: initialization of 'long long unsigned int' from 'void *' makes integer from pointer without a cast [-Wint-conversion]
+if {[string match *gcc* ${configure.compiler}]} {
+    configure.cflags-append \
+                    -Wno-error=int-conversion
 }
 
 platform powerpc {
@@ -702,7 +697,10 @@ variant gcc description {placeholder variant to label a build with GCC} {
 }
 
 variant static description {install the static libraries} {}
-default_variants-append +static
+# building with LTO can generate huge and/or unusable static libraries, so do not build them by default in that case
+if {![variant_isset LTO]} {
+    default_variants-append +static
+}
 
 livecheck.type      regex
 livecheck.url       ${master_sites}
