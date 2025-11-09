@@ -328,7 +328,7 @@ proc python_set_versions {option action args} {
         }
         post-destroot {
             if {${python.link_binaries}} {
-                foreach bin [glob -nocomplain -tails -directory "${destroot}${python.prefix}/bin" *] {
+                foreach bin [glob -nocomplain -tails -directory "[python.destrooted_prefix]/bin" *] {
                     if {[catch {file type "${destroot}${prefix}/bin/${bin}${python.link_binaries_suffix}"}]} {
                         ln -s "${python.prefix}/bin/${bin}" "${destroot}${prefix}/bin/${bin}${python.link_binaries_suffix}"
                     }
@@ -381,6 +381,34 @@ default python.test_framework   pytest
 default test.cmd        {[python_get_defaults test_cmd]}
 default test.target     {}
 default test.args       {[python_get_defaults test_args]}
+
+# RJVB : figure out where a py*-?? port really installs into rather than the expected python.prefix
+# This is to account for python builds that append ${abiflags} to ${python.prefix}
+# We're looking for this in the current port's destroot
+proc python.destrooted_prefix {} {
+    global destroot subport prefix
+    set dirs [glob -nocomplain ${destroot}[option python.prefix]*]
+    switch -- [llength ${dirs}] {
+        0 {
+            if {[file exists ${destroot}]} {
+                ui_warn "Port ${subport} does not install anything into [option python.prefix]\n\
+                    \tassuming it uses the standard ${prefix}"
+            } else {
+                ui_warn "Port ${subport} calling python.destrooted_prefix in the wrong stage!"
+            }
+            return "${destroot}${prefix}"
+        }
+        1 {
+            ui_debug "Port ${subport} actual python.prefix is [string map [list ${destroot} ""] ${dirs}]\n\
+                \tinstead of [option python.prefix]"
+            return ${dirs}
+        }
+        default {
+            ui_error "Port ${subport} installs files into multiple directories:\n${dirs}"
+            return -code error "Unsupported install layout"
+        }
+    }
+}
 
 default python.add_dependencies yes
 proc python_add_dependencies {} {
@@ -605,10 +633,12 @@ default python.set_compiler yes
 default python.set_cxx_stdlib yes
 default python.set_sdkroot yes
 
-default python.link_binaries yes
+# RJVB on Darwin, py*-?? binaries should go into the Python.framework bindir, and be symlinked from there to $prefix/bin
+default python.link_binaries [expr {${os.platform} eq "darwin" ? yes : no}] 
 default python.link_binaries_suffix {[python_get_defaults binary_suffix]}
 
-default python.move_binaries no
+# RJVB everywhere else, py*-?? binaries should go into $prefix/bin and be renamed
+default python.move_binaries [expr {${os.platform} eq "darwin" ? no : yes}] 
 default python.move_binaries_suffix {[python_get_defaults binary_suffix]}
 
 # python._first_version: keep track of the first version line in the port.
