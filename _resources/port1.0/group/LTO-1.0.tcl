@@ -308,7 +308,7 @@ if {[variant_isset ${LTO.LTO_variant}] && ![info exists building_qt5]} {
                 }
             }
         }
-        LTO.ltoflags ${lto_flags}
+        LTO.ltoflags {*}${lto_flags}
     }
 }
 
