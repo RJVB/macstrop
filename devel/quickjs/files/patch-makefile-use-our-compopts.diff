@@ -1,18 +1,25 @@
 diff --git orig.Makefile Makefile
-index 3b1c745..751bea2 100644
+index 3b1c745..2a014f1 100644
 --- orig.Makefile
 +++ Makefile
-@@ -160,7 +160,8 @@ endif
- CFLAGS+=$(DEFINES)
+@@ -157,20 +157,25 @@ DEFINES+=-DHAVE_CLOSEFROM
+ endif
+ endif
+ 
+-CFLAGS+=$(DEFINES)
++PGO_GEN=
++PGO_USE=
++CFLAGS+=$(DEFINES) $(PGO_GEN) $(PGO_USE)
  CFLAGS_DEBUG=$(CFLAGS) -O0
  CFLAGS_SMALL=$(CFLAGS) -Os
 -CFLAGS_OPT=$(CFLAGS) -O2
 +CFLAGS_OPT=$(CFLAGS)
 +CFLAGS_LTO=-flto
  CFLAGS_NOLTO:=$(CFLAGS_OPT)
++QJSC_FLAGS=
  ifdef CONFIG_COSMO
  LDFLAGS+=-s # better to strip by default
-@@ -168,9 +169,9 @@ else
+ else
  LDFLAGS+=-g
  endif
  ifdef CONFIG_LTO
@@ -21,7 +28,100 @@ index 3b1c745..751bea2 100644
 -LDFLAGS+=-flto
 +CFLAGS_SMALL+=$(CFLAGS_LTO)
 +CFLAGS_OPT+=$(CFLAGS_LTO)
-+LDFLAGS+=$(CFLAGS_LTO)
++LDFLAGS+=$(CFLAGS_LTO) $(PGO_GEN) $(PGO_USE)
++QJSC_FLAGS+=-flto
  endif
  ifdef CONFIG_PROFILE
  CFLAGS+=-p
+@@ -281,7 +286,14 @@ $(QJSC): $(OBJDIR)/qjsc.host.o \
+ 
+ endif #CROSS_PREFIX
+ 
++ifeq ($(PGO_GEN),)
+ QJSC_DEFINES:=-DCONFIG_CC=\"$(QJSC_CC)\" -DCONFIG_PREFIX=\"$(PREFIX)\"
++else
++# qjsc needs to use the PGO_GEN compiler AND LINKER option if it's defined
++# not that we care about profiling the code it generates, but it will link with
++# libquickjs.a which references profiling functions, so the linker option IS needed.
++QJSC_DEFINES:=-DCONFIG_CC=\"$(QJSC_CC)\" -DCONFIG_PREFIX=\"$(PREFIX)\" -DPGO_GEN=\"$(PGO_GEN)\"
++endif
+ ifdef CONFIG_LTO
+ QJSC_DEFINES+=-DCONFIG_LTO
+ endif
+@@ -308,7 +320,7 @@ libquickjs.fuzz.a: $(patsubst %.o, %.fuzz.o, $(QJS_LIB_OBJS))
+ 	$(AR) rcs $@ $^
+ 
+ repl.c: $(QJSC) repl.js
+-	$(QJSC) -s -c -o $@ -m repl.js
++	$(QJSC) $(QJSC_FLAGS) -s -c -o $@ -m repl.js
+ 
+ ifneq ($(wildcard unicode/UnicodeData.txt),)
+ $(OBJDIR)/libunicode.o $(OBJDIR)/libunicode.nolto.o: libunicode-table.h
+@@ -355,15 +367,20 @@ regexp_test: libregexp.c libunicode.c cutils.c
+ unicode_gen: $(OBJDIR)/unicode_gen.host.o $(OBJDIR)/cutils.host.o libunicode.c unicode_gen_def.h
+ 	$(HOST_CC) $(LDFLAGS) $(CFLAGS) -o $@ $(OBJDIR)/unicode_gen.host.o $(OBJDIR)/cutils.host.o
+ 
+-clean:
++rewind_build:
+ 	rm -f repl.c out.c
+ 	rm -f *.a *.o *.d *~ unicode_gen regexp_test fuzz_eval fuzz_compile fuzz_regexp $(PROGS)
+ 	rm -f hello.c test_fib.c
+ 	rm -f examples/*.so tests/*.so
+-	rm -rf $(OBJDIR)/ *.dSYM/ qjs-debug$(EXE)
++	rm -f $(OBJDIR)/*.o $(OBJDIR)/*.d $(OBJDIR)/.d
++	rm -f $(OBJDIR)/*/*.o $(OBJDIR)/*/*.d
++	rm -rf *.dSYM/ qjs-debug$(EXE)
+ 	rm -rf run-test262-debug$(EXE)
+ 	rm -f run_octane run_sunspider_like
+ 
++clean: rewind_build
++	rm -rf $(OBJDIR)/
++
+ install: all
+ 	mkdir -p "$(DESTDIR)$(PREFIX)/bin"
+ 	$(STRIP) qjs$(EXE) qjsc$(EXE)
+@@ -386,7 +403,7 @@ HELLO_OPTS=-fno-string-normalize -fno-map -fno-promise -fno-typedarray \
+            -fno-date -fno-module-loader
+ 
+ hello.c: $(QJSC) $(HELLO_SRCS)
+-	$(QJSC) -e $(HELLO_OPTS) -o $@ $(HELLO_SRCS)
++	$(QJSC) $(QJSC_FLAGS) -e $(HELLO_OPTS) -o $@ $(HELLO_SRCS)
+ 
+ examples/hello: $(OBJDIR)/hello.o $(QJS_LIB_OBJS)
+ 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
+@@ -397,12 +414,12 @@ HELLO_MODULE_OPTS=-fno-string-normalize -fno-map -fno-typedarray \
+            -fno-typedarray -fno-regexp -fno-json -fno-eval -fno-proxy \
+            -fno-date -m
+ examples/hello_module: $(QJSC) libquickjs$(LTOEXT).a $(HELLO_MODULE_SRCS)
+-	$(QJSC) $(HELLO_MODULE_OPTS) -o $@ $(HELLO_MODULE_SRCS)
++	$(QJSC) $(QJSC_FLAGS) $(HELLO_MODULE_OPTS) -o $@ $(HELLO_MODULE_SRCS)
+ 
+ # use of an external C module (static compilation)
+ 
+ test_fib.c: $(QJSC) examples/test_fib.js
+-	$(QJSC) -e -M examples/fib.so,fib -m -o $@ examples/test_fib.js
++	$(QJSC) $(QJSC_FLAGS) -e -M examples/fib.so,fib -m -o $@ examples/test_fib.js
+ 
+ examples/test_fib: $(OBJDIR)/test_fib.o $(OBJDIR)/examples/fib.o libquickjs$(LTOEXT).a
+ 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
+@@ -413,6 +430,9 @@ examples/fib.so: $(OBJDIR)/examples/fib.pic.o
+ examples/point.so: $(OBJDIR)/examples/point.pic.o
+ 	$(CC) $(LDFLAGS) -shared -o $@ $^
+ 
++tests/microbench: $(QJSC) tests/microbench.js
++	$(QJSC) $(QJSC_FLAGS) -o $@ tests/microbench.js
++
+ ###############################################################################
+ # documentation
+ 
+@@ -461,8 +481,9 @@ endif
+ stats: qjs$(EXE)
+ 	$(WINE) ./qjs$(EXE) -qd
+ 
+-microbench: qjs$(EXE)
++microbench: qjs$(EXE) tests/microbench
+ 	$(WINE) ./qjs$(EXE) --std tests/microbench.js
++	$(WINE) tests/microbench
+ 
+ ifeq ($(wildcard test262o/tests.txt),)
+ test2o test2o-update:

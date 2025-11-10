@@ -4,6 +4,7 @@ PortSystem       1.0
 PortGroup        github 1.0
 PortGroup        legacysupport 1.1
 PortGroup        makefile 1.0
+PortGroup        conflicts_build 1.0
 
 set LTO_needs_pre_build yes
 variant LTO description {build with Link Time Optimisation} {}
@@ -61,8 +62,74 @@ compiler.blacklist-append {clang < 700}
 build.args-append   QJSC_CC=${prefix}/libexec/quickjs/qjscc
 if {[variant_isset LTO]} {
     build.args-append \
-                    CFLAGS_LTO="[join ${LTO.ltoflags}]" \
+                    CFLAGS_LTO="${LTO.ltoflags}" \
                     CONFIG_LTO=yes
+    destroot.args-append \
+                    CFLAGS_LTO="${LTO.ltoflags}" \
+                    CONFIG_LTO=yes
+    test.target-append \
+                    CFLAGS_LTO="${LTO.ltoflags}" \
+                    CONFIG_LTO=yes
+}
+build.args-append   AR=${configure.ar}
+destroot.args-append \
+                    AR=${configure.ar}
+test.target-append  AR=${configure.ar}
+
+pre-build {
+    if {[variant_isset PGO]} {
+        if {[string match *gcc* ${configure.cc}]} {
+            # make certain build.env has been completed *before* we start
+            makefile_pg::setup_phase build
+            ui_msg " ----> PGO training build"
+            # build.env gets applied *after* the pre-build, so we have to do it ourselves.
+            # Borrowed from portutil:parse_environment().
+            foreach assignment ${build.env} {
+                set equals_pos [string first = $assignment]
+                if {${equals_pos} != -1} {
+                    set key [string range $assignment 0 $equals_pos-1]
+                    set ::env(${key}) [string range $assignment $equals_pos+1 end]
+                    ui_debug "${key}=$::env(${key})"
+                }
+            }
+            system -W ${worksrcpath} \
+                "${build.cmd} ${build.pre_args} [join ${build.args}] PGO_GEN=-fprofile-generate ${build.post_args} -j${build.jobs}"
+            ui_msg " ----> PGO training runs"
+            for {set i 0} {$i < 5} {incr i} {
+                system -W ${worksrcpath} \
+                    "${build.cmd} test microbench [join ${build.args}] PGO_GEN=-fprofile-generate ${build.post_args}"
+            }
+            ui_msg " ----> PGO optimised build"
+            system -W ${worksrcpath} "${build.cmd} -kj${build.jobs} rewind_build"
+            build.args-append \
+                    PGO_USE="-fprofile-use -fprofile-correction -fprofile-partial-training"
+        } else {
+            ui_error "${subport} supports +PGO only with a GCC compiler for now!"
+            return -code error "Please try again with GCC"
+        }
+    }
+}
+
+pre-destroot {
+    destroot.env-append {*}${build.env}
+    if {[variant_isset PGO]} {
+        if {[string match *gcc* ${configure.cc}]} {
+            destroot.args-append \
+                    PGO_USE="-fprofile-use -fprofile-correction -fprofile-partial-training"
+        }
+    }
+}
+
+variant PGO description {build with Profile Guided Optimisation} {}
+if {[variant_isset PGO]} {
+# for GCC: -fprofile-generate / -fprofile-use -fprofile-correction -fprofile-partial-training
+    if {![string match *gcc* ${configure.cc}]} {
+        ui_warn "Currently, +PGO requires a GCC compiler!"
+    } else {
+        # don't allow qjsc to use an installed copy of libquickjs!
+        conflicts_build-append \
+                    ${subport}
+    }
 }
 
 build.post_args     -wk
@@ -90,7 +157,7 @@ if {${os.platform} eq "darwin" && ${os.major} < 16} {
 }
 
 patchfiles-append   patch-makefile-use-our-compopts.diff \
-                    patch-add-QJSCC-env_var.diff
+                    LTO.require_fat_LTO_Objects
 
 destroot.destdir PREFIX=${destroot}${prefix}
 
@@ -106,4 +173,11 @@ post-destroot {
 
     file mkdir ${destroot}${prefix}/libexec/quickjs
     xinstall [compwrap::wrap_compiler cc] ${destroot}${prefix}/libexec/quickjs/qjscc
+    if {[variant_isset LTO] && [string match *fat-lto* ${LTO.ltoflags}]} {
+        if {[file exists ${destroot}${prefix}/lib/quickjs/libquickjs.lto.a]} {
+            # we've built a static archive with fat objects, so we don't need the
+            # version WITHOUT LTO information.
+            ln -sf libquickjs.lto.a ${destroot}${prefix}/lib/quickjs/libquickjs.a
+        }
+    }
 }
