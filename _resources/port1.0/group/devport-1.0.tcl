@@ -370,6 +370,7 @@ proc create_devport {dependency {auto_generate_content {}}} {
             dev::mainport_installed dev::workdir_uuid
     # just so we're clear that what port we're talking about (the main port):
     set baseport ${mainport_name}
+    ui_debug "devport PG creating port:${devport_name}"
     subport ${devport_name} {
         description     [join ${devport_description}]
         long_description [join ${devport_long_description}]
@@ -388,7 +389,12 @@ proc create_devport {dependency {auto_generate_content {}}} {
         depends_lib
         # we really only have a runtime dependency on the mainport because it
         # expresses itself only when using the port for building a dependent.
-        depends_run     ${dependency}
+        if {[string match port:* ${dependency}]} {
+            depends_run ${dependency}
+        } else {
+            ui_debug "create_devport: prepending \"port:\" to \"${dependency}\""
+            depends_run port:${dependency}
+        }
         installs_libs   yes
         distfiles
         fetch {}
