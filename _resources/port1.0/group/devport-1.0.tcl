@@ -34,9 +34,12 @@
 # PortGroup     devport 1.0
 
 options mainport_name devport_name devport_content devport_description devport_long_description
+options devport_include_dir devport_lib_dir
 options devport_variants devport_excluded_variants
 default mainport_name               {${name}}
 default devport_name                {${mainport_name}-dev}
+default devport_include_dir         {include}
+default devport_lib_dir             {lib}
 default devport_content             ""
 default devport_description         {"Development headers and libraries for ${mainport_name}"}
 default devport_long_description    {"${long_description}\nThis installs the development headers and linker/static libraries."}
@@ -215,40 +218,52 @@ proc create_devport_content_archive {} {
 }
 
 # registers content that standard devports will contain
-proc register_devport_standard_content {{thePrefix {}}} {
+proc register_devport_standard_content {{theprefix {}}} {
     global subport destroot prefix mainport_name devport_name
-    if {${thePrefix} eq {}} {
-        set thePrefix ${prefix}
+    if {${theprefix} eq {}} {
+        set theprefix ${prefix}
     }
     if {${subport} eq "${mainport_name}"} {
-        ui_msg "---->  Transferring developer content to port:${devport_name}"
-        ui_debug "Finding and registering standard content for the devport"
-        foreach h [glob -nocomplain ${destroot}${thePrefix}/include/*] {
+        ui_msg "---->  transferring developer content to port:${devport_name}"
+        ui_debug "finding and registering standard content for the devport"
+        set incdir [string map [list ${prefix} ""] [option devport_include_dir]]
+        if {${incdir} ne [option devport_include_dir]} {
+            ui_debug "register_devport_standard_content: stripping \"${prefix}\" from option devport_include_dir!"
+        }
+        foreach h [glob -nocomplain ${destroot}${theprefix}/${incdir}/*] {
             ui_debug "\theader: ${h}"
             devport_content-append [string map [list ${destroot} ""] ${h}]
         }
-        foreach h [glob -nocomplain ${destroot}${thePrefix}/lib/lib*.a] {
+        set libdir [string map [list ${prefix} ""] [option devport_lib_dir]]
+        if {${libdir} ne [option devport_lib_dir]} {
+            ui_debug "register_devport_standard_content: stripping \"${prefix}\" from option devport_lib_dir!"
+        }
+        foreach h [glob -nocomplain ${destroot}${theprefix}/${libdir}/lib*.a] {
             ui_debug "\tstatic library: ${h}"
             devport_content-append [string map [list ${destroot} ""] ${h}]
         }
-        foreach h [glob -nocomplain ${destroot}${thePrefix}/lib/lib*.la] {
+        foreach h [glob -nocomplain ${destroot}${theprefix}/${libdir}/lib*.la] {
             ui_debug "\t.la library: ${h}"
             devport_content-append [string map [list ${destroot} ""] ${h}]
         }
-        foreach h [glob -nocomplain ${destroot}${thePrefix}/lib/lib*.dylib] {
+        foreach h [glob -nocomplain ${destroot}${theprefix}/${libdir}/lib*.dylib] {
             if {![string match -nocase {lib*.[0-9.]*.dylib} [file tail ${h}]] && [file type ${h}] eq "link"} {
-                ui_debug "\tMac shared linker library: ${h}"
+                ui_debug "\tmac shared linker library: ${h}"
                 devport_content-append [string map [list ${destroot} ""] ${h}]
             }
         }
-        foreach h [glob -nocomplain ${destroot}${thePrefix}/lib/lib*.so] {
+        foreach h [glob -nocomplain ${destroot}${theprefix}/${libdir}/lib*.so] {
             if {[file type ${h}] eq "link"} {
-                ui_debug "\tstandard Unix shared linker library: ${h}"
+                ui_debug "\tstandard unix shared linker library: ${h}"
                 devport_content-append [string map [list ${destroot} ""] ${h}]
             }
         }
-        foreach h [glob -nocomplain ${destroot}${thePrefix}/lib/pkgconfig/*] {
+        foreach h [glob -nocomplain ${destroot}${theprefix}/${libdir}/pkgconfig/*] {
             ui_debug "\tpkg-config file: ${h}"
+            devport_content-append [string map [list ${destroot} ""] ${h}]
+        }
+        foreach h [glob -nocomplain ${destroot}${theprefix}/${libdir}/cmake/*] {
+            ui_debug "\tCMake module: ${h}"
             devport_content-append [string map [list ${destroot} ""] ${h}]
         }
     }
