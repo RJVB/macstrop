@@ -164,8 +164,6 @@ wxWidgets.macosx_version_min
 options     wxWidgets.use
 option_proc wxWidgets.use wxWidgets._set
 
-PortGroup   compiler_blacklist_versions 1.0
-
 ## TODO: it would be nice to make the changes reversible
 ##
 ## parameters:
@@ -173,6 +171,7 @@ PortGroup   compiler_blacklist_versions 1.0
 ## - wxGTK-2.8
 ## - wxWidgets-3.0
 ## - wxGTK-3.0
+## - wxGTK-3.0-cxx11
 ## - wxPython-3.0
 ## - wxWidgets-3.0-cxx11
 ## - wxWidgets-3.1
@@ -196,15 +195,15 @@ proc wxWidgets._set {option action args} {
         # wxWidgets-2.8 fails to build with clang
         compiler.blacklist  *clang*
 
-        pre-fetch {
+        pre-fetch { platform darwin {
             # 10.8 (or later) -or- 10.7 with Xcode 4.4 (or later)
-            if {${os.major} >= 12 || [vercmp $xcodeversion >= 4.4]} {
+            if {${os.major} >= 12 || [vercmp $xcodeversion 4.4] >= 0} {
                 ui_error "${wxWidgets.port} cannot be built on macOS >= 10.7 with Xcode >= 4.4; please use port wxWidgets-3.0 or wxgtk-2.8 instead"
                 return -code return "wxWidgets-2.8 cannot be built on macOS >= 10.7 with Xcode >= 4.4; please use port wxWidgets-3.0 or wxgtk-2.8 instead"
             } else {
                 # 10.7
                 if {${os.major} == 11} {
-                    if {[vercmp $xcodeversion < 4.3]} {
+                    if {[vercmp $xcodeversion 4.3] < 0} {
                         set sdks_dir "${developer_dir}/SDKs"
                     } else {
                         set sdks_dir "${developer_dir}/Platforms/MacOSX.platform/Developer/SDKs"
@@ -213,7 +212,7 @@ proc wxWidgets._set {option action args} {
                     wxWidgets.macosx_version_min "10.6"
                 }
             }
-        }
+        } }
     } elseif {${args} eq "wxGTK-2.8"} {
         wxWidgets.name      "wxGTK"
         wxWidgets.version   "2.8"
@@ -226,24 +225,24 @@ proc wxWidgets._set {option action args} {
         wxWidgets.name      "wxWidgets"
         wxWidgets.version   "3.0"
         wxWidgets.port      "wxWidgets-3.0"
-        if {${os.major} < 9} {
+        if {${os.major} < 9} { platform darwin {
             pre-fetch {
                 ui_error "${wxWidgets.port} requires macOS 10.5 or later."
                 return -code error "incompatible macOS version"
             }
-        }
+        } }
     } elseif {${args} eq "wxPython-3.0"} {
         wxWidgets.name      "wxPython"
         wxWidgets.version   "3.0"
         wxWidgets.port      "wxPython-3.0"
-        if {${os.major} < 9} {
+        if {${os.major} < 9} { platform darwin {
             pre-fetch {
                 ui_error "${wxWidgets.port} requires macOS 10.5 or later."
                 return -code error "incompatible macOS version"
             }
-        }
-    # ugly workaround to allow some C++11-only applications to be built on < 10.9
+        } }
     } elseif {${args} eq "wxWidgets-3.0-cxx11"} {
+        # ugly workaround to allow some C++11-only applications to be built on < 10.9
         global cxx_stdlib
         wxWidgets.name          "wxWidgets"
         if {${cxx_stdlib} eq "libstdc++"} {
@@ -253,14 +252,24 @@ proc wxWidgets._set {option action args} {
             wxWidgets.version   "3.0"
             wxWidgets.port      "wxWidgets-3.0"
         }
-        if {${os.major} < 9} {
+        if {${os.major} < 9} { platform darwin {
             pre-fetch {
                 ui_error "${wxWidgets.port} requires macOS 10.5 or later."
                 return -code error "incompatible macOS version"
             }
+        } }
+    } elseif {${args} eq "wxGTK-3.0-cxx11"} {
+        global cxx_stdlib
+        wxWidgets.name          "wxGTK"
+        if {${cxx_stdlib} eq "libstdc++"} {
+            wxWidgets.version   "3.0-cxx11"
+            wxWidgets.port      "wxgtk-3.0-cxx11"
+        } else {
+            wxWidgets.version   "3.0"
+            wxWidgets.port      "wxgtk-3.0"
         }
-    # temporary(?) port for Audacity
     } elseif {${args} eq "wxWidgets-3.1"} {
+        # temporary(?) port for Audacity
         wxWidgets.name      "wxWidgets"
         wxWidgets.version   "3.1"
         wxWidgets.port      "wxWidgets-3.1"
@@ -270,8 +279,8 @@ proc wxWidgets._set {option action args} {
                 return -code error "incompatible macOS version"
             }
         } }
-    # preliminary support for wxWidgets 3.1/3.2
     } elseif {${args} eq "wxWidgets-3.2"} {
+        # preliminary support for wxWidgets 3.1/3.2
         wxWidgets.name      "wxWidgets"
         wxWidgets.version   "3.2"
         wxWidgets.port      "wxWidgets-3.2"
@@ -313,4 +322,20 @@ proc wxWidgets._set {option action args} {
         # https://trac.macports.org/ticket/56096
         compiler.blacklist-append {clang < 500}
     }
+    if {[option os.platform] ne "darwin"} {
+        configure.ldflags-append \
+                        -Wl,-rpath=${wxWidgets.prefix}/lib
+    }
+}
+
+proc wxWidgets.installed_version {} {
+    if {[file exists [option wxWidgets.wxconfig]]} {
+        set vers [exec [option wxWidgets.wxconfig] --version]
+    } else {
+        set vers [option wxWidgets.version]
+        if {${vers} eq ""} {
+            set vers "0.0"
+        }
+    }
+    return ${vers}
 }
