@@ -8,28 +8,32 @@
 #
 
 # use osxfuse up to and including OS X 10.8
-if {${os.platform} eq "darwin" && ${os.major} < 13} {
+if {${os.platform} eq "darwin"} {
+    if {${os.major} < 13} {
 
-    set fuse_port "osxfuse"
-    set fuse_path "lib/pkgconfig/fuse.pc"
+        set fuse_port "osxfuse"
+        set fuse_path "lib/pkgconfig/fuse.pc"
 
-    configure.cflags-append -I${prefix}/include/osxfuse -I${prefix}/include/osxfuse/fuse
-    configure.cppflags-append -I${prefix}/include/osxfuse -I${prefix}/include/osxfuse/fuse
+        configure.cflags-append -I${prefix}/include/osxfuse -I${prefix}/include/osxfuse/fuse
+        configure.cppflags-append -I${prefix}/include/osxfuse -I${prefix}/include/osxfuse/fuse
 
+    } else {
+
+        set fuse_port "macfuse"
+        set fuse_path "lib/pkgconfig/fuse.pc"
+
+        configure.cflags-append -I${prefix}/include/fuse
+        configure.cppflags-append -I${prefix}/include/fuse
+
+    }
+
+    depends_lib-append \
+        path:${fuse_path}:${fuse_port}
 } else {
-
-    set fuse_port "macfuse"
-    set fuse_path "lib/pkgconfig/fuse.pc"
-
-    configure.cflags-append -I${prefix}/include/fuse
-    configure.cppflags-append -I${prefix}/include/fuse
-
+# get fuse from the host!
 }
 
-depends_lib-append \
-    path:${fuse_path}:${fuse_port}
-
 depends_build-append \
-    port:pkgconfig
+    path:bin/pkg-config:pkgconfig
 
 universal_variant no
