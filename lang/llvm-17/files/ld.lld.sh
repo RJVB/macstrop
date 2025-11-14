@@ -1,17 +1,13 @@
 #!/bin/sh
-# lld wrapper for Darwin
+# lld wrapper for Linux
 
-LLD=@SUBPREFIX@/bin/wrapped/ld64.lld
+LLD=@SUBPREFIX@/bin/wrapped/ld.lld
 
-PV=""
 verbose=0
 parse_args () {
 	# scan $@ in a function so we shift a copy and can still pass "${@}" to the actual binary below
 	while [ $# != 0 ] ;do
 		case $1 in
-			-macosx_version_min)
-				PV="-platform_version macos $2 $2"
-				;;
 			-v|--verbose)
 				verbose=1
 				;;

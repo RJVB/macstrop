@@ -50,7 +50,11 @@ set suffix              mp-${llvm_version}
 set sub_prefix          ${prefix}/libexec/llvm-${llvm_version}
 if {${subport} ne "lld-${llvm_version}"} {
     worksrcdir          ${worksrcdir}/llvm
+} elseif {![info exists lld_build_standalone]} {
+    set llvm_prefix     ${sub_prefix}
+    set sub_prefix      ${prefix}/libexec/lld-${llvm_version}
 }
+
 # https://github.com/macports/macports-ports/commit/a83a493bc21cbe7e14b1f5884379649ec8f31bae#commitcomment-132530885
 # RJVB : I created a devport containing the linker libraries so libunwind dependents (including htop)
 # don't have to be deactivated for the whole time llvm-17+ is being built.
@@ -86,6 +90,9 @@ switch ${subport} {
         build.pre_args  -k 0
     }
 }
+
+# NB: cmake.install_prefix must be set before accessing configure.pre_args
+# and changes made to it afterwards go unnoticed!!
 cmake.install_prefix    ${sub_prefix}
 # NB: LLVM no longer rejects custom CMAKE_BUILD_TYPEs!
 #cmake.build_type        Release
@@ -96,8 +103,8 @@ if {![variant_enabled no_libcxx]} {
     cmake.install_rpath
 
     configure.pre_args-delete \
-        -DCMAKE_INSTALL_NAME_DIR=${cmake.install_prefix}/lib \
-        -DCMAKE_INSTALL_RPATH=${cmake.install_prefix}/lib
+        -DCMAKE_INSTALL_NAME_DIR="${cmake.install_prefix}/lib" \
+        -DCMAKE_INSTALL_RPATH="${cmake.install_prefix}/lib"
 
     platform darwin {
         configure.pre_args-replace \
@@ -115,6 +122,46 @@ if {![variant_enabled no_libcxx]} {
         port:libcxx-dev
     depends_run-append \
         port:libcxx-dev
+}
+
+platform linux {
+    variant gcc description {automatic-only variant signalling that the port was built with gcc} {}
+    # let's build against libc++ as this is offered as a possibility
+    if {[string match macports-clang-* ${configure.compiler}]} {
+        depends_lib-append \
+            port:libcxx
+        depends_build-append \
+            port:libcxx-dev
+        configure.args-append \
+            -DLLVM_ENABLE_LIBCXX=ON
+        if {[variant_isset gcc]} {
+            ui_error "+gcc should not be set when building with ${configure.cxx}!"
+            pre-configure {
+                return -code error "Invalid compiler/variant combination!"
+            }
+        }
+    } else {
+        # lets make certain libc++ isn't picked up gratuitiously
+        configure.args-append \
+            -DLLVM_ENABLE_LIBCXX=OFF
+        # probably not really necessary:
+        conflicts_build-append libcxx-dev
+        default_variants-append +gcc
+        if {![variant_isset gcc]} {
+            ui_error "+gcc should be set when building with ${configure.cxx}!"
+            pre-configure {
+                return -code error "Invalid compiler/variant combination!"
+            }
+        }
+    }
+}
+switch -- ${os.platform} {
+    "darwin" {
+        set lld.exe ld64.lld
+    }
+    default {
+        set lld.exe ld.lld
+    }
 }
 
 configure.args-append \
@@ -411,9 +458,9 @@ if { ${subport} eq "lld-${llvm_version}" } {
     description         The LLVM linker
     # lld-17 is roughly 2x faster in linking the libLLVM.so from this port than ld64-latest 450.3 is
     long_description    LLD is a linker from the LLVM project that is a drop-in replacement \
-                        for system linkers and runs much faster than them (roughly up to 2x faster than ld64). \
-                        It also provides features that are useful for toolchain developers.\n\
-                        The ${version} version of lld is not yet on feature parity with ld64, \
+                        for system linkers and runs much faster than them (roughly up to 2x faster \
+                        than ld64, on Mac).  It also provides features that are useful for toolchain developers.\n\
+                        On Mac, the ${version} version of lld is not yet on feature parity with ld64, \
                         and cannot link 32-bit binaries.
 
     #depends_run-append  port:clang_select
@@ -434,6 +481,14 @@ if { ${subport} eq "lld-${llvm_version}" } {
     # lld isn't supported on 32 bit CPUs, or at least it won't link 32bit binaries
     supported_archs     arm64 x86_64
 
+    platforms-append    linux
+    platform linux {
+        depends_build-append \
+            port:binutils
+        default_variants-append \
+            +desktop +libstdcxx +no_libcxx +nortti +tests
+    }
+
     depends_lib-append \
         port:zstd \
         port:zlib
@@ -451,29 +506,28 @@ if { ${subport} eq "lld-${llvm_version}" } {
     }
     if {![info exists lld_build_standalone]} {
         worksrcdir ${worksrcdir}/llvm
-        set llvm_prefix ${sub_prefix}
-        set sub_prefix ${prefix}/libexec/lld-${llvm_version}
-        cmake.install_prefix ${sub_prefix}
 
         long_description-append \
             "\nThis port is independent from the other llvm-${llvm_version} ports and installs \
             under ${sub_prefix}."
 
-        variant libstdcxx description {experimental: build against libstdc++; requires GCC} {}
-        if {[variant_isset libstdcxx]} {
-            if {[string match macports-gcc* ${configure.compiler}]} {
-                post-configure {
-                    ui_warn "Only works with port:gccXY without +libcxx variant set"
-                }
-                configure.cxx_stdlib libstdc++
-                set configure.cxxflags "${configure.cxxflags} -stdlib=libstdc++"
-                # annoying: "base" seems to filter out -stdlib argument from cxxflags, so we
-                configure.ldflags-append \
-                                -stdlib=libstdc++
-            } else {
-                pre-configure {
-                    ui_error "Variant requires configure.compiler=macports-gcc-XY"
-                    return -code error "Variant requires building with GCC"
+        platform darwin {
+            variant libstdcxx description {experimental: build against libstdc++; requires GCC} {}
+            if {[variant_isset libstdcxx]} {
+                if {[string match macports-gcc* ${configure.compiler}]} {
+                    post-configure {
+                        ui_warn "Only works with port:gccXY without +libcxx variant set"
+                    }
+                    configure.cxx_stdlib libstdc++
+                    set configure.cxxflags "${configure.cxxflags} -stdlib=libstdc++"
+                    # annoying: "base" seems to filter out -stdlib argument from cxxflags, so we
+                    configure.ldflags-append \
+                                    -stdlib=libstdc++
+                } else {
+                    pre-configure {
+                        ui_error "Variant requires configure.compiler=macports-gcc-XY"
+                        return -code error "Variant requires building with GCC"
+                    }
                 }
             }
         }
@@ -495,7 +549,7 @@ if { ${subport} eq "lld-${llvm_version}" } {
 #         configure.args-append \
 #             -DLLVM_BUILD_LLVM_DYLIB=OFF \
 
-        # install just the things we need (and we probably don't need libLTO...)
+        # install just the things we need (and we probably don't need libLTO but who knows...)
         destroot.pre_args \
              tools/llvm-shlib/install \
              tools/lto/install \
@@ -511,9 +565,9 @@ if { ${subport} eq "lld-${llvm_version}" } {
             if {${sub_prefix} ne ${llvm_prefix}} {
                 # also expose the linker in the location where clang-${llvm_version} expects it
                 xinstall -m 755 -d ${destroot}${llvm_prefix}/bin
-                ln -s ${sub_prefix}/bin/ld64.lld ${destroot}${llvm_prefix}/bin
+                ln -s ${sub_prefix}/bin/${lld.exe} ${destroot}${llvm_prefix}/bin
                 # and in ${prefix}/bin!
-                ln -s ${sub_prefix}/bin/ld64.lld ${destroot}${prefix}/bin
+                ln -s ${sub_prefix}/bin/${lld.exe} ${destroot}${prefix}/bin
             }
         }
 ## build time with clang-16 on portia:
@@ -531,12 +585,12 @@ if { ${subport} eq "lld-${llvm_version}" } {
             -DLLVM_CMAKE_DIR=${sub_prefix}/lib/cmake/llvm
     }
     post-destroot {
-        file delete ${destroot}${sub_prefix}/bin/ld64.lld
+        file delete ${destroot}${sub_prefix}/bin/${lld.exe}
         xinstall -m 755 -d ${destroot}${sub_prefix}/bin/wrapped
-        ln -s ../lld ${destroot}${sub_prefix}/bin/wrapped/ld64.lld
+        ln -s ../lld ${destroot}${sub_prefix}/bin/wrapped/${lld.exe}
         # install a wrapper that adds a potentially missing required argument
-        xinstall -m 755 ${filespath}/ld64.lld.sh  ${destroot}${sub_prefix}/bin/ld64.lld
-        reinplace "s|@SUBPREFIX@|${sub_prefix}|g" ${destroot}${sub_prefix}/bin/ld64.lld
+        xinstall -m 755 ${filespath}/${lld.exe}.sh  ${destroot}${sub_prefix}/bin/${lld.exe}
+        reinplace "s|@SUBPREFIX@|${sub_prefix}|g" ${destroot}${sub_prefix}/bin/${lld.exe}
     }
     #ui_msg "C++ runtime: ${configure.cxx_stdlib} CXXFLAGS=${configure.cxxflags} LDFLAGS=${configure.ldflags}"
 }
@@ -706,7 +760,7 @@ post-destroot {
     # generate a versioned wrapper script for each file in the bin directory
     foreach bin [glob ${destroot}${sub_prefix}/bin/*] {
         set bname [file tail ${bin}]
-        if {${subport} eq "lld-${llvm_version}" && ${bname} ne "lld" && ${bname} ne "ld64.lld"} {
+        if {${subport} eq "lld-${llvm_version}" && ${bname} ne "lld" && ${bname} ne "${lld.exe}"} {
             # RJVB : for lld, only expose the ld64 version and the actual binary
             continue
         }
