@@ -549,7 +549,7 @@ if {[variant_isset builtwith]} {
 
 proc LTO::callback {} {
     # this callback could really also handle the disable and allow switches!
-    global supported_archs LTO.must_be_disabled LTO.gcc_lto_jobs build.cmd configure.cmd LTO.LTO_variant
+    global prefix supported_archs LTO.must_be_disabled LTO.gcc_lto_jobs build.cmd configure.cmd LTO.LTO_variant
 
     if {[variant_exists use_lld] && [variant_isset use_lld]} {
         # lld doesn't support 32bit architectures
@@ -568,7 +568,10 @@ proc LTO::callback {} {
                             port:gmake
     }
 
-    if {[string match macports-clang* [option configure.compiler]]} {
+    if {[variant_isset use_lld]} {
+        set ::env(LLVM_SYMBOLIZER_PATH) \
+                            ${prefix}/libexec/lld-17/bin/llvm-symbolizer
+    } elseif {[string match macports-clang* [option configure.compiler]]} {
         set ::env(LLVM_SYMBOLIZER_PATH) \
                             [string map {"clang" "llvm-symbolizer"} [option configure.cc]]
     }
