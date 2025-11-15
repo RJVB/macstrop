@@ -567,5 +567,10 @@ proc LTO::callback {} {
         depends_build-append \
                             port:gmake
     }
+
+    if {[string match macports-clang* [option configure.compiler]]} {
+        set ::env(LLVM_SYMBOLIZER_PATH) \
+                            [string map {"clang" "llvm-symbolizer"} [option configure.cc]]
+    }
 }
 port::register_callback LTO::callback
