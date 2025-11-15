@@ -492,12 +492,15 @@ if {[tbool LTO.allow_UseLLD] && ![variant_exists use_lld]} {
         variant use_lld description {use the LLD linker} {}
     }
     if {[variant_isset use_lld]} {
+        # NB: the below assumes that $LLD is always installed by
+        # the latest port:lld-XY which provides the lld linker
+        # for every "MacStropified" port:clang-XY!
         if {${os.platform} eq "darwin"} {
-            depends_build-append path:bin/ld64.lld-mp-17:lld-17
-            set LLD "${prefix}/bin/ld64.lld-mp-17"
+            depends_build-append path:bin/ld64.lld:lld-17
+            set LLD "${prefix}/bin/ld64.lld"
         } else {
-            depends_build-append path:bin/ld.lld-mp-12:lld-12
-            set LLD "${prefix}/bin/ld.lld-mp-12"
+            depends_build-append path:bin/ld.lld:lld-17
+            set LLD "${prefix}/bin/ld.lld"
         }
         if {[string match "macports-clang*" ${configure.compiler}]} {
             # TODO: figure out when --ld-path= was introduced ...
@@ -509,7 +512,7 @@ if {[tbool LTO.allow_UseLLD] && ![variant_exists use_lld]} {
         } else {
             pre-configure {
                 ui_warn "+use_lld : the -fuse-ld may or may not be supported!"
-                LTO.configure.flags_append {ldflags} "-fuse-ld=${LLD}"
+                LTO.configure.flags_append {ldflags} "-fuse-ld=lld"
             }
         }
     }
