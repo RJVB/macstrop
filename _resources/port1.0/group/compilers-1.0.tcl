@@ -757,7 +757,7 @@ proc compilers.setup {args} {
     global cdb compilers.variants compilers.clang_variants compilers.flang_variants \
         compilers.gcc_variants compilers.my_fortran_variants compilers.require_fortran \
         compilers.default_fortran compilers.setup_done compilers.list compilers.gcc_default \
-        compiler.blacklist os.major os.arch
+        compiler.blacklist os.platform os.major os.arch
 
     if {!${compilers.setup_done}} {
         set add_list [list]
