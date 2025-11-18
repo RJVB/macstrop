@@ -3,8 +3,9 @@
 PortSystem                                       1.0
 PortGroup           select                       1.0
 PortGroup           active_variants              1.1
-PortGroup           conflicts_build              1.0
+PortGroup           conflicts_build              1.1
 
+# bump to 1 when moving to libgcc14
 epoch               0
 name                gcc13
 
@@ -21,16 +22,16 @@ long_description    {*}${description}, including front ends for \
                     C, C++, Objective-C, Objective-C++ and Fortran.
 
 # Remember to reset all revision increments below to 0 on new versions
-version             13.3.0
+version             13.4.0 ; revision 1
 
 set libgccname      lib${name}
 subport             ${libgccname} { revision [ expr ${revision} + 0 ] }
 
 set libcxxname      ${name}-libcxx
 
-checksums           rmd160  a01df0d39af53b8bef8ff42f87469212589984ec \
-                    sha256  0845e9621c9543a13f484e94584a49ffc0129970e9914624235fc1d061a0c083
-#                     size    87909952
+checksums           rmd160  db87d281d0623f56b808b4e28c99f17d955f0524 \
+                    sha256  9c4ce6dbb040568fdc545588ac03c5cbc95a8dbf0c7aa490170843afb59ca8f5
+#                     size    88530720
 
 # Primary releases
 master_sites        https://ftpmirror.gnu.org/gcc/gcc-${version}/ \
@@ -67,8 +68,18 @@ license_noconflict  gmp mpfr ppl libmpc zlib
 
 set major           [lindex [split ${version} .-] 0]
 
+proc gcc_arch {arch} {
+    switch ${arch} {
+        arm64       {return aarch64}
+        ppc64       {return powerpc64}
+        ppc         {return powerpc}
+        default     {return ${arch}}
+    }
+}
+
 platform darwin {
-    configure.pre_args-append --build=${build_arch}-apple-darwin${os.major}
+    set gcc_triple [gcc_arch ${build_arch}]-apple-darwin${os.major}
+    configure.pre_args-append --build=${gcc_triple}
 }
 
 set gcc_configure_langs {c c++ objc obj-c++ lto fortran}
@@ -86,9 +97,20 @@ if {[variant_exists m2] && [variant_isset m2]} {
 }
 
 proc get_clean_sysroot {} {
-    global configure.sdkroot
-    # if the sdkroot is one of the current, rapidly changing SDKS, use the generic one
-    return [regsub {MacOSX1[1-9]\.[0-9]+\.sdk} ${configure.sdkroot} {MacOSX.sdk}]
+    global configure.sdkroot configure.sdk_version
+    set new_sdk ${configure.sdkroot}
+    if { [regexp {MacOSX(.*).sdk} ${configure.sdkroot} -> sdk_v] } {
+        if { ${sdk_v} != "" } {
+            # If present strip minor version from SDK version
+            set sdk_major [lindex [split $sdk_v .] 0]
+            ui_debug "Detected versioned SDK ${sdk_v} ${sdk_major} ${configure.sdkroot}"
+            set new_sdk [regsub {MacOSX1[1-9]\.[0-9]+\.sdk} ${configure.sdkroot} MacOSX${sdk_major}.sdk]
+            if { ${new_sdk} != ${configure.sdkroot} } {
+                ui_debug " New SDK ${new_sdk}"
+            }
+        }
+    }
+    return ${new_sdk}
 }
 
 set mp_extra_rpath  ${prefix}/lib/libgcc
@@ -97,7 +119,6 @@ configure.dir       ${workpath}/build
 configure.cmd       ${worksrcpath}/configure
 configure.args      --enable-languages=[join ${gcc_configure_langs} ","] \
                     --libdir=${prefix}/lib/${name} \
-                    --includedir=${prefix}/include/${name} \
                     --infodir=${prefix}/share/info \
                     --mandir=${prefix}/share/man \
                     --datarootdir=${prefix}/share/gcc-${major} \
@@ -146,37 +167,30 @@ if { ${subport} ne ${libcxxname} && ${os.platform} eq "darwin" } {
     # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=100340
     # https://trac.macports.org/ticket/62775
     # Update for gcc13 - Similar issues on macOS 10.6, 10.13 ...
-    if { ([vercmp ${xcodeversion}, 12.5] >= 0 && [vercmp ${xcodeversion}, 13] < 0) || \
-         ([vercmp ${xcodecltversion}, 12.5] >= 0 && [vercmp ${xcodecltversion}, 13] < 0) || \
+    if { ([vercmp ${xcodeversion} >= 12.5] && [vercmp ${xcodeversion} < 13]) || \
+         ([vercmp ${xcodecltversion} >= 12.5] && [vercmp ${xcodecltversion} < 13]) || \
              ${os.major} < 11 || ${os.major} == 17 } \
     {
         # Skip bootstrap comparison entirely
         configure.args-replace --with-build-config=bootstrap-Os --without-build-config
-        post-patch {
-            reinplace {s|^do-compare =|do-compare = /usr/bin/true|g} \
-                ${worksrcpath}/Makefile.in \
-                ${worksrcpath}/config/bootstrap-debug.mk \
-                ${worksrcpath}/config/bootstrap-debug-lean.mk \
-                ${worksrcpath}/config/bootstrap-debug-lib.mk
+    }
+    # RJVB : always do this:
+    post-patch {
+        pre-configure {
+            ui_warn "No comparisons are made between the bootstrap stages!"
         }
+        reinplace {s|^do-compare =|do-compare = /usr/bin/true|g} \
+            ${worksrcpath}/Makefile.in \
+            ${worksrcpath}/config/bootstrap-debug.mk \
+            ${worksrcpath}/config/bootstrap-debug-lean.mk \
+            ${worksrcpath}/config/bootstrap-debug-lib.mk
     }
 }
 
-configure.env-append \
-                    AR_FOR_TARGET=${prefix}/bin/ar \
-                    AS_FOR_TARGET=${prefix}/bin/as \
-                    LD_FOR_TARGET=${prefix}/bin/ld \
-                    NM_FOR_TARGET=${prefix}/bin/nm \
-                    OBJDUMP_FOR_TARGET=${prefix}/bin/objdump \
-                    RANLIB_FOR_TARGET=${prefix}/bin/ranlib \
-                    STRIP_FOR_TARGET=${prefix}/bin/strip \
-                    OTOOL=${prefix}/bin/otool \
-                    OTOOL64=${prefix}/bin/otool
-
 #if { ${os.platform} eq "darwin" } {
     # Patch generated from https://github.com/iains/gcc-13-branch
-    # git diff --no-prefix releases/gcc-13.1.0 gcc-13.1-darwin-r0
-    patchfiles-append       patch-darwin-gcc-${version}.diff
+    # git diff --no-prefix releases/gcc-13.4.0 gcc-13.4-darwin-r0
+    patchfiles-append      patch-darwin-gcc-${version}.diff
     # Do not abort if 'system' headers in /opt/local/include/gcc are missing
     patchfiles-append      patch-disable-sys-header-missing-abort.diff
     # GCC fixinc work-around for sys/ucred.h on OSX10.14.4 no longer seems to work ???
@@ -198,6 +212,12 @@ configure.env-append \
 #  - https://github.com/gcc-mirror/gcc/commit/b410cf1dc056aab195c5408871ffca932df8a78a
 patchfiles-append   patch-gcc10-disable-macports-cctools-as-changes.diff
 
+#RJVB : let's display a simple progress bar for bootstrap builds
+if {![variant_isset quick]} {
+    patchfiles-append \
+                    patch-simple-mp-build-progress-display.diff
+}
+
 configure.env-append \
                     DISABLE_MACPORTS_AS_CLANG_SEARCH=1 \
                     DISABLE_XCODE_AS_CLANG_SEARCH=1
@@ -205,8 +225,20 @@ configure.env-append \
 build.env-append    DISABLE_MACPORTS_AS_CLANG_SEARCH=1 \
                     DISABLE_XCODE_AS_CLANG_SEARCH=1
 
+configure.env-append \
+                    AR_FOR_TARGET=${prefix}/bin/ar \
+                    AS_FOR_TARGET=${prefix}/bin/as \
+                    LD_FOR_TARGET=${prefix}/bin/ld \
+                    NM_FOR_TARGET=${prefix}/bin/nm \
+                    OBJDUMP_FOR_TARGET=${prefix}/bin/objdump \
+                    RANLIB_FOR_TARGET=${prefix}/bin/ranlib \
+                    STRIP_FOR_TARGET=${prefix}/bin/strip \
+                    OTOOL=${prefix}/bin/otool \
+                    OTOOL64=${prefix}/bin/otool
+
 if {${os.platform} eq "darwin" && ${os.major} >= 22} {
-    if { [vercmp ${xcodeversion}, 15.0] >= 0 || [vercmp ${xcodecltversion}, 15.0] >= 0 } {
+    if { ([vercmp ${xcodeversion}    >= 15.0] && [vercmp ${xcodeversion}    < 16.0]) ||
+         ([vercmp ${xcodecltversion} >= 15.0] && [vercmp ${xcodecltversion} < 16.0]) } {
         # On macOS13 and newer ensure the 'legacy' linker is used as GCC currently has problems
         # with the new default linker in Xcode 15. See e.g.
         # https://developer.apple.com/documentation/xcode-release-notes/xcode-15-release-notes#Linking
@@ -256,11 +288,15 @@ subport ${libcxxname} {
     compilers.choose        cxx
     compilers.setup         -gcc -fortran -clangdevel -clang34 -clang35 -clang36 \
                             -clang37 -clang50 -clang60 -clang70 -clang80 -clang90
-    if { ![clang_variant_isset] } {
+    if { ![clang_variant_isset] && ![variant_exists libcxx] && ![variant_isset libcxx]} {
         if { ${os.platform} eq "darwin" && ${os.major} < 11 } {
             default_variants-append +clang11
         } else {
-            default_variants-append +clang16
+            if { ${os.major} < 25 } {
+                default_variants-append +clang16
+            } else {
+                default_variants-append +clang17
+            }
         }
     }
     revision                [ expr ${revision} + 0 ]
@@ -274,6 +310,7 @@ subport ${libcxxname} {
     depends_lib
     distfiles
     patchfiles
+    extract.rename          no
     use_configure           no
     supported_archs         noarch
     platforms               any
@@ -281,6 +318,11 @@ subport ${libcxxname} {
     if {[variant_exists libcxx] && [variant_isset libcxx]} {
         PortGroup stub 1.0
         long_description-append "\nIn +libcxx mode this is just a stub that depends on libcxx-dev"
+        if {[clang_variant_isset]} {
+            ui_warn "Variant +libcxx conflicts with +[clang_variant_name] (ignoring)!"
+            depends_build
+            set variations([clang_variant_name]) "-"
+        }
         depends_run-append port:libcxx-dev
     } else {
         # Find clang/llvm version to use from active variant
@@ -357,6 +399,14 @@ if { ${subport} ne ${libcxxname} } {
             require_active_variants libcxx-dev macports_libcxx
             patchfiles-append \
                     patch-use-libcxx-by-default.diff
+            # go to further lengths to ensure that GCC builds builds its C++-dependent components
+            # with -stdlib=libstdc++. Our changes to the *FLAGS_FOR_TARGET are enough for most
+            # components, but they are somehow ignored for the M2 components. Those *do* build
+            # using libstdc++ headers but then get linked against libc++, causing failures.
+            # The fix (for now): insert `-stdlib=libstdc++` before `-nostdinc++` in
+            # *CXX_FOR_TARGET (defined in the configure script)\; add the flag in the Makefile too.
+            patchfiles-append \
+                    patch-build-CXX-with-stdlib=libstdc.diff
         }
         configure.args-append --with-gxx-libcxx-include-dir="[libcxx_incpath]"
     }
@@ -386,8 +436,8 @@ platform darwin {
     # gcc can't be built by Xcode Clang 14.0.x
     # https://trac.macports.org/ticket/67416
     # https://github.com/iains/gcc-12-branch/issues/6
-    if { ([vercmp ${xcodeversion}, 14.0] >= 0 && [vercmp ${xcodeversion}, 14.1] < 0) || \
-        ([vercmp ${xcodecltversion}, 14.0] >= 0 && [vercmp ${xcodecltversion}, 14.1] < 0) } {
+    if { ([vercmp ${xcodeversion} >= 14.0] && [vercmp ${xcodeversion} < 14.1]) || \
+        ([vercmp ${xcodecltversion} >= 14.0] && [vercmp ${xcodecltversion} < 14.1]) } {
         pre-fetch {
             ui_error "${name} cannot be built with Xcode/CLT 14.0.x"
             ui_error "Either upgrade both Xcode and the Command Line Tools to 14.1 or later, or downgrade to 13.4."
@@ -427,7 +477,7 @@ if {${subport} eq ${libgccname}} {
             # Extract the epoch of the installed libgcc8
             set _epoch [lindex $installed 5]
             # If < 5 need to deactivate
-            if {[vercmp $_epoch, 5] < 0} {
+            if {[vercmp $_epoch < 5]} {
                 registry_deactivate_composite libgcc8 "" [list ports_nodepcheck 1]
             }
         }
@@ -435,7 +485,7 @@ if {${subport} eq ${libgccname}} {
             # Extract the epoch of the installed libgcc10
             set _epoch [lindex $installed 5]
             # If < 6 need to deactivate
-            if {[vercmp $_epoch, 6] < 0} {
+            if {[vercmp $_epoch < 6]} {
                 registry_deactivate_composite libgcc10 "" [list ports_nodepcheck 1]
             }
         }
@@ -443,7 +493,7 @@ if {${subport} eq ${libgccname}} {
             # Extract the epoch of the installed libgcc11
             set _epoch [lindex $installed 5]
             # If < 1 need to deactivate
-            if {[vercmp $_epoch, 1] < 0} {
+            if {[vercmp $_epoch < 1]} {
                 registry_deactivate_composite libgcc11 "" [list ports_nodepcheck 1]
             }
         }
@@ -451,7 +501,7 @@ if {${subport} eq ${libgccname}} {
             # Extract the epoch of the installed libgcc12
             set _epoch [lindex $installed 5]
             # If < 1 need to deactivate
-            if {[vercmp $_epoch, 1] < 0} {
+            if {[vercmp $_epoch < 1]} {
                 registry_deactivate_composite libgcc12 "" [list ports_nodepcheck 1]
             }
         }
@@ -459,11 +509,21 @@ if {${subport} eq ${libgccname}} {
             # Extract the epoch of the installed libgcc-devel
             set _epoch [lindex $installed 5]
             # If < 5 need to deactivate
-            if {[vercmp $_epoch, 5] < 0} {
+            if {[vercmp $_epoch < 5]} {
                 registry_deactivate_composite libgcc-devel "" [list ports_nodepcheck 1]
             }
         }
     }
+
+## RJVB: I cannot find any difference between destroot'ing with and without deactivating
+## ourselves, other than that it breaks the preserve_runtime_libraries variant.
+#     # Need to deactivate current libgcc before destrooting the new build otherwise
+#     # the right libs are not picked up to be included
+#     pre-destroot {
+#         if {![catch {registry_active ${libgccname}}]} {
+#             registry_deactivate_composite ${libgccname} "" [list ports_nodepcheck 1]
+#         }
+#     }
 
     # http://trac.macports.org/ticket/35770
     # http://trac.macports.org/ticket/38814
@@ -477,19 +537,25 @@ if {${subport} eq ${libgccname}} {
     # version should continue to provide a subport for that and older gcc
     # versions.
 
+# Pre-libgcc14:
     depends_run
     depends_lib-delete   port:zlib port:libiconv
     depends_build-append {*}${depends_lib}
     depends_lib          port:zlib port:libiconv
+# Prepare libgcc14:
+#     depends_build-append  {*}${depends_lib}
+#     depends_lib           port:zlib port:libiconv port:libgcc14
+#     depends_build-delete  {*}${depends_lib}
 
     configure.args-replace \
         --libdir=${prefix}/lib/${name} \
         --libdir=${prefix}/lib/libgcc
 
-    # see https://trac.macports.org/ticket/54766
-    configure.args-replace \
-        --includedir=${prefix}/include/${name} \
-        --includedir=${prefix}/include/gcc
+# RJVB: keep this for now
+#     # see https://trac.macports.org/ticket/54766
+#     configure.args-replace \
+#         --includedir=${prefix}/include/${name} \
+#         --includedir=${prefix}/include/gcc
 
     configure.args-replace \
         --with-gxx-include-dir=${prefix}/include/${name}/c++/ \
@@ -510,6 +576,12 @@ if {${subport} eq ${libgccname}} {
             if { ![file exists ${destroot}${prefix}/lib/libgcc/${dylib}] } {
                 continue
             }
+
+# Prepare libgcc14 
+#             # Skip anything provided by a newer libgcc version (i.e. already installed in prefix)
+#             if { [file exists ${prefix}/lib/libgcc/${dylib}] } {
+#                 continue
+#             }
 
             # Move dylib to temp area
             move ${destroot}${prefix}/lib/libgcc/${dylib} ${destroot}${prefix}/lib/libgcc.merged
@@ -542,12 +614,22 @@ if {${subport} eq ${libgccname}} {
             }
         }
 
+        # Remove stuff not provided by libgccX ports
         file delete -force ${destroot}${prefix}/bin
         file delete -force ${destroot}${prefix}/share
         file delete -force ${destroot}${prefix}/lib/libgcc
         file delete -force ${destroot}${prefix}/libexec
 
+        # Move temporary lib dir back in place
         move ${destroot}${prefix}/lib/libgcc.merged ${destroot}${prefix}/lib/libgcc
+
+# prepare libgcc14
+#         # Remove includes. Provided by newer libgcc.
+#         file delete -force ${destroot}${prefix}/include
+
+        set doc_dir ${destroot}${prefix}/share/doc/${subport}
+        xinstall -m 755 -d ${doc_dir}
+        system "echo ${subport} provides additional runtime libraries > ${doc_dir}/README"
 
         if {[variant_isset quick]} {
             ui_msg "--->  Generating the .dSYM bundles because of +quick: find ${destroot}${prefix} -type f '(' -name '*.dylib' -or -name '*.so' ')' -exec dsymutil {} +"
@@ -563,6 +645,15 @@ if {${subport} eq ${libgccname}} {
             ln -s ${prefix}/lib/libc++.1.dylib ${destroot}${prefix}/lib/libgcc/
             ln -s ${prefix}/lib/libc++abi.1.dylib ${destroot}${prefix}/lib/libgcc/
         }
+        ## sneaky way around stripping
+        foreach rlib {libstdc++-v3/src/.libs/libstdc++.6 libgcc/libgcc_s.1.1} {
+            set rlib ${build.dir}/${gcc_triple}/${rlib}.dylib
+            set dlib "${destroot}${prefix}/lib/libgcc/[file tail ${rlib}]"
+            if {[file size ${rlib}] > [file size ${dlib}]} {
+                ui_debug "Replacing ${dlib} with the bigger (non-stripped?!) ${rlib}"
+                xinstall -m 755 ${rlib} ${dlib}
+            }
+        }
 
         ### MacStrop private
         # user might want to preserve runtime libraries currently installed by previous libgccX ports:
@@ -575,8 +666,10 @@ if {${subport} eq ${libgccname}} {
 
 if {${subport} eq ${name}} {
 
-    # RJVB : should we add an explicit depends_run on port:${libgccname}?
     require_active_variants libgcc {} {gcc7 gcc8 gcc9 gcc10 gcc11 gcc12}
+    # RJVB : we use depends_run instead of mainstream's depends_lib; it'll be required once
+    # we upgrade to libgcc14 but shouldn't do any harm in the meantime.
+    depends_run-append  port:${libgccname}
 
     post-destroot {
 
@@ -610,6 +703,16 @@ if {${subport} eq ${name}} {
             }
         }
 
+        # Ensure all headers are in versioned dir
+        # Required after we stopped using the option the --includedir option
+        # See https://github.com/iains/gcc-13-branch/issues/20 for more details.
+        foreach h [glob -nocomplain ${destroot}${prefix}/include/*.h] {
+            set f [file tail ${h}]
+            set newh ${destroot}${prefix}/include/${name}/${f}
+            ui_debug "Moving ${h} to ${newh}"
+            file rename ${h} ${newh}
+        }
+
     }
 
     select.group        gcc
@@ -626,33 +729,34 @@ if { ${subport} ne ${libcxxname} } {
     }
 
     post-destroot {
-        # Ensure all dylibs in destroot have our extra rpath added ..
-        # https://trac.macports.org/ticket/65503
-        foreach dlib [ exec find ${destroot}${prefix} -type f -and -name "*.dylib" ] {
-            ui_debug "Ensuring DYLIB '${dlib}' has RPATH '${mp_extra_rpath}'"
-            # Note install_name_tool returns a failure if the dylib already has the entry
-            # We don't want that here so force final status to be true...
-            system "install_name_tool -add_rpath ${mp_extra_rpath} ${dlib} > /dev/null 2>&1 ; true"
+        if {${os.platform} eq "darwin" && ${os.major} > 8} {
+            # Ensure all dylibs in destroot have our extra rpath added ..
+            # https://trac.macports.org/ticket/65503
+            foreach dlib [ exec find ${destroot}${prefix} -type f -and -name "*.dylib" ] {
+                ui_debug "Ensuring DYLIB '${dlib}' has RPATH '${mp_extra_rpath}'"
+                # Note install_name_tool returns a failure if the dylib already has the entry
+                # We don't want that here so force final status to be true...
+                system "install_name_tool -add_rpath ${mp_extra_rpath} ${dlib} > /dev/null 2>&1 ; true"
+            }
         }
     }
 
-    platform powerpc {
-        configure.universal_archs ppc ppc64
-    }
-    if { ${os.platform} eq "darwin" && ${os.major} >= 20 } {
-        platform i386 {
-            configure.universal_archs x86_64 arm64
+    if {${os.platform} eq "darwin" && ${os.major} <= 18} {
+        switch -- $build_arch {
+            i386 -
+            x86_64 {
+                configure.universal_archs i386 x86_64
+            }
+            ppc -
+            ppc64 {
+                configure.universal_archs ppc ppc64
+            }
         }
-        platform arm {
-            configure.universal_archs x86_64 arm64
+        variant universal {
+            configure.args-delete --disable-multilib
         }
     } else {
-        platform i386 {
-            configure.universal_archs i386 x86_64
-        }
-    }
-    variant universal {
-        configure.args-delete --disable-multilib
+        universal_variant   no
     }
     # the generated compiler doesn't accept -arch
     configure.env-append \
@@ -703,10 +807,12 @@ if { ${subport} ne ${libcxxname} } {
         depends_build-append port:gmake
         build.cmd ${prefix}/bin/gmake
 
-        post-destroot {
-            # install symlinks to the libc++ linker interfaces in a place where GCC looks for its own link libraries:
-            ln -s ${prefix}/lib/libc++.dylib ${destroot}${prefix}/lib/${name}/
-            ln -s ${prefix}/lib/libc++abi.dylib ${destroot}${prefix}/lib/${name}/
+        if {${subport} eq "${name}"} {
+            post-destroot {
+                # install symlinks to the libc++ linker interfaces in a place where GCC looks for its own link libraries:
+                ln -s ${prefix}/lib/libc++.dylib ${destroot}${prefix}/lib/${name}/
+                ln -s ${prefix}/lib/libc++abi.dylib ${destroot}${prefix}/lib/${name}/
+            }
         }
     }
     configure.cc-append [get_canonical_archflags]
@@ -718,6 +824,7 @@ if { ${subport} ne ${libcxxname} } {
             --disable-bootstrap
         build.target all
     } else {
+        configure.cc-append [get_canonical_archflags]
         configure.cc_archflags
         configure.cxx-append ${configure.cxx_archflags}
         configure.cxx_archflags
