@@ -108,7 +108,7 @@ if {${os.platform} eq "linux"} {
 
         proc stdcxxabi::callback {} {
             global stdcxxabi.dependencies_concerned_by_ABI configure.compiler configure.cxx_stdlib \
-                configure.cxxflags configure.cxx subport
+                configure.cxxflags configure.cxx subport stdcxxabi.is_gcc_internal
             if {![variant_exists libcxx] || ![variant_isset libcxx]} {
                 foreach d ${stdcxxabi.dependencies_concerned_by_ABI} {
                     if {[variant_isset oldabi]} {
@@ -161,8 +161,13 @@ if {${os.platform} eq "linux"} {
                     ui_debug "####################################"
                 }
             } else {
-                ui_debug "Build against libc++ requested; ignoring stdcxxabi.dependencies_concerned_by_ABI\
-                    (${stdcxxabi.dependencies_concerned_by_ABI})"
+                if {![tbool stdcxxabi.is_gcc_internal]} {
+                    ui_debug "Build against libc++ requested; ignoring stdcxxabi.dependencies_concerned_by_ABI\
+                        (${stdcxxabi.dependencies_concerned_by_ABI})"
+                } else {
+                    ui_debug "Building GCC port:${subport}; ignoring stdcxxabi.dependencies_concerned_by_ABI\
+                        (${stdcxxabi.dependencies_concerned_by_ABI})"
+                }
             }
         }
         port::register_callback stdcxxabi::callback
