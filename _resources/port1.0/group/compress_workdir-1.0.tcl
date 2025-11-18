@@ -103,7 +103,7 @@ platform darwin {
                 set outfile "${outfile}.[file tail ${target}]"
                 ui_debug "sending background afsctool output to \"${outfile}\""
             }
-            if {[catch {exec sh -c "${prefix}/bin/afsctool -cfvv -8 ${compjobs} -S -L -n ${target}/ ; exit 0" >& ${outfile} &} result context]} {
+            if {[catch {exec sh -c "${prefix}/bin/afsctool -cfvv -8 ${compjobs} -S -L -n ${target}/ 2>&1 ; exit 0" >& ${outfile} &} result context]} {
                 ui_info "Compression failed: ${result}, ${context}; port:afsctool is probably installed without support for parallel compression"
                 hfscompress ${target}
             } else {
@@ -129,6 +129,7 @@ platform darwin {
             post-build {
                 if {[file exists ${prefix}/bin/afsctool]} {
                     ui_msg "--->  Compressing the build directory ..."
+                    catch {flush_logfile}
                     if {${compress.build_dir} ne "${worksrcpath}"} {
                         set compress.build_dir "${worksrcpath} ${compress.build_dir}"
                     }
@@ -141,6 +142,7 @@ platform darwin {
                             set extradirs "${extradirs} ${workpath}/cargo-cache"
                         }
                         ui_msg "--->  Compressing additional directories [string map [list ${workpath}/ ""] ${extradirs}] ..."
+                        catch {flush_logfile}
                         catch {hfscompress ${extradirs}}
                     }
                 }
@@ -149,11 +151,13 @@ platform darwin {
                 if {[file exists ${prefix}/bin/afsctool]} {
                     if {[tbool configure.ccache]} {
                         ui_msg "--->  Compressing the ccache directory ..."
+                        catch {flush_logfile}
                         catch {hfscompress_bg ${ccache_dir}}
                     }
                     set destroots [glob -nocomplain -type d ${destroot}-*]
                     if {${destroots} ne {}} {
                         ui_msg "--->  Compressing auxiliary destroot dirs ..."
+                        catch {flush_logfile}
                         catch {hfscompress ${destroots}}
                     }
                 }
@@ -161,6 +165,7 @@ platform darwin {
             post-activate {
                 if {[option compress.in_applications_dir] ne {}} {
                     ui_msg "--->  Compressing ${compress.in_applications_dir} ..."
+                    catch {flush_logfile}
                     catch {hfscompress ${compress.in_applications_dir}}
                 }
             }
