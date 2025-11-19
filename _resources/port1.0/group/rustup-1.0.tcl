@@ -181,6 +181,7 @@ namespace eval rustup {
                             # as of 250328, that is Rust 1.85.1 (250315).
                             # as of 250408, that is Rust 1.86.0 (250331).
                             # as of 250227, that is Rust 1.87.0 (250509).
+                            # as of 251119, that is Rust 1.91.1 (251107).
                             set toolchain_version stable
                         }
                         system "${rustup::home}/Cargo/bin/rustup install --profile minimal --no-self-update ${toolchain_version}"
@@ -368,10 +369,16 @@ if {[variant_isset cputuned] || [variant_isset cpucompat]} {
 
 if {[tbool configure.ccache] && [file exists ${prefix}/bin/sccache]} {
     # Enable sccache for rust caching
-    set ::env(RUSTC_WRAPPER) ${prefix}/bin/sccache
-    set ::env(SCCACHE_CACHE_SIZE) 2G
-    set ::env(SCCACHE_DIR) [string map {".ccache" ".sccache"} ${ccache_dir}]
-    set ::env(SCCACHE_STARTUP_NOTIFY) /tmp/mp-sccache-socket
+    proc set_ev {var val} {
+        set ::env(${var}) "${val}"
+        configure.env-append "${var}=${val}"
+        build.env-append "${var}=${val}"
+        destroot.env-append "${var}=${val}"
+    }
+    set_ev RUSTC_WRAPPER ${prefix}/bin/sccache
+    set_ev SCCACHE_CACHE_SIZE 2G
+    set_ev SCCACHE_DIR [string map {".ccache" ".sccache"} ${ccache_dir}]
+    set_ev SCCACHE_STARTUP_NOTIFY /tmp/mp-sccache-socket
 }
 
 if {![rustup::use_rustup]} {
