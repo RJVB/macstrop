@@ -58,6 +58,11 @@ default devport_variants            {}
 # has to be set in common code or by the main port, NOT exclusively by the devport!!
 default devport_excluded_variants   {}
 
+# an optionvar to declare a list of devports that should not be added
+# automatically by the devport_helper PG (because they're really not needed)
+options devport_ignore_devports
+default devport_ignore_devports     {}
+
 namespace eval dev {}
     # it shouldn't be necessary to record variants in the archive name
     # (NB: the one that's part of the main port!)

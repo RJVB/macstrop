@@ -346,9 +346,11 @@ if {![info exists configure.ld]} {
 if {${os.platform} eq "darwin"} {
     default configure.ld            ${configure.cc}
 } else {
+    PortGroup                       devport 1.0
     default configure.ld            ${prefix}/bin/ld
     depends_build-append            port:binutils \
                                     port:wrapped-syscalls
+    devport_ignore_devports-append  binutils-dev
     if {[info exists env(LD_PRELOAD)]} {
         set env(LD_PRELOAD)         "${prefix}/lib/libwrapped_syscalls.so:$env(LD_PRELOAD)"
     } else {

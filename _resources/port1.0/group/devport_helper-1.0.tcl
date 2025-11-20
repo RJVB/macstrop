@@ -62,7 +62,7 @@ namespace eval devport_helper {
     # from any other PGs will be executed after we've been read. So, we need to use a callback too in
     # order to scan the best possibly definitive depends_lib and depends_build lists.
     proc callback {} {
-        global depends_lib depends_build conflicts_build conflicts_configure
+        global depends_lib depends_build conflicts_build conflicts_configure devport_ignore_devports
         if {${devport_helper::useportgroup}} { ## this is where we do the actual PortGroup work:
             ui_debug "Looking for ${devport_helper::currentportgroupdir}/devport_db.tcl"
             if {![catch {source "${devport_helper::currentportgroupdir}/devport_db.tcl"} err] && [info exists devportDB]} {
@@ -86,6 +86,9 @@ namespace eval devport_helper {
                             if {${blisted} < 0 && [info exists conflicts_configure]} {
                                 set blisted [lsearch ${conflicts_configure} "${devdep}"]
                             }
+                            if {${blisted} < 0 && [info exists devport_ignore_devports]} {
+                                set blisted [lsearch ${devport_ignore_devports} "${devdep}"]
+                            }
                             if {${blisted} < 0} {
                                 ui_debug "port:${devdep} is missing from the build dependencies; adding it"
                                 depends_build-append "port:${devdep}"
@@ -97,7 +100,7 @@ namespace eval devport_helper {
                                     ui_info "WARNING: port:${devdep} not installed or not activated."
                                 }
                             } else {
-                                ui_debug "port:${devdep} is listed as a configure or build conflict; NOT adding it"
+                                ui_debug "port:${devdep} is listed as a configure or build conflict or to be ignored; NOT adding it"
                             }
                         }
                     }
