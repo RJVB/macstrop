@@ -10,11 +10,10 @@ if [ ! -d "$1" -o ! -e "$1/search.json.mozlz4" ] ;then
 	exit 1
 fi
 
-if [ "$1/.parentlock" -nt "$1/Telemetry.ShutdownTime.txt" ] ;then
+echo "Checking the profile directory..."
+lsof "$1/.parentlock" > /dev/null
+if [ $? == 0 ] ;then
 	echo "The selected profile appears to be open in a running browser!" 1>&2
-	echo 1>&2
-	echo "\nIF you are CERTAIN that this is not the case:" 1>&2
-	echo "then please remove \"$1/Telemetry.ShutdownTime.txt\" and try again." 1>&2
 	exit 1
 fi
 
