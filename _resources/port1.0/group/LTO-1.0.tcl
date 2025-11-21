@@ -132,7 +132,7 @@ if {${os.platform} eq "darwin"} {
     # in an appropriate location where compiler and build.dir are set
     # and before they inject ${configure.ldflags} where and how that's required.
     proc LTO.set_lto_cache {} {
-        global configure.compiler configure.ldflags build.dir
+        global configure.compiler configure.ldflags build.dir LTO.LTO_variant
         global muniversal.current_arch merger_configure_ldflags merger_arch_flag
         if {[LTO::variant_enabled ${LTO.LTO_variant}] && ${configure.compiler} ne "clang"} {
             xinstall -m 755 -d ${build.dir}/.lto_cache
