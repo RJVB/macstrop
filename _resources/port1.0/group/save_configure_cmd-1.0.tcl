@@ -127,7 +127,7 @@ namespace eval configure {
                 puts -nonewline ${fd} " configure.objc=\"${OBJC}\""
             }
             set OBJCXX [guess_compiler [option configure.objcxx]]
-            if {{$OBJCXX} ne "[guess_compiler [option configure.cxx]]"} {
+            if {"${OBJCXX}" ne "[guess_compiler [option configure.cxx]]"} {
                 puts -nonewline ${fd} " configure.objcxx=\"${OBJCXX}\""
             }
             if {[option configureccache] ne ""} {
