@@ -52,6 +52,26 @@ namespace eval configure {
         }
     }
 
+    # try to guess the actual compiler command from a command string
+    proc guess_compiler {cmd} {
+        global prefix configure.ccache configure.distcc
+        set nolauncher [string map \
+                    [list "${prefix}/bin/ccache " "" \
+                        "${prefix}/bin/sccache " "" \
+                        "ccache " "" \
+                        "sccache " "" \
+                        "${prefix}/bin/distcc " "" \
+                        "distcc " ""] \
+                    ${cmd}]
+        set compiler [lindex [split ${nolauncher} " "] 0]
+        if {[file executable ${compiler}]} {
+            return ${compiler}
+        } else {
+            ui_debug "guess_compiler failed on \"${cmd}\" (${compiler})"
+            return ${cmd}
+        }
+    }
+
     proc write_configure_cmd {fname} {
         global configure.env prefix
         if {![catch {set fd [open "${fname}" "w"]} err]} {
@@ -102,11 +122,13 @@ namespace eval configure {
             if {[option configure.compiler] ne ""} {
                 puts -nonewline ${fd} " configure.compiler=\"[option configure.compiler]\""
             }
-            if {[option configure.objc] ne "[option configure.cc]"} {
-                puts -nonewline ${fd} " configure.objc=\"[option configure.objc]\""
+            set OBJC [guess_compiler [option configure.objc]]
+            if {${OBJC} ne "[guess_compiler [option configure.cc]]"} {
+                puts -nonewline ${fd} " configure.objc=\"${OBJC}\""
             }
-            if {[option configure.objcxx] ne "[option configure.cxx]"} {
-                puts -nonewline ${fd} " configure.objcxx=\"[option configure.objcxx]\""
+            set OBJCXX [guess_compiler [option configure.objcxx]]
+            if {{$OBJCXX} ne "[guess_compiler [option configure.cxx]]"} {
+                puts -nonewline ${fd} " configure.objcxx=\"${OBJCXX}\""
             }
             if {[option configureccache] ne ""} {
                 puts -nonewline ${fd} " configureccache=\"[option configureccache]\""
