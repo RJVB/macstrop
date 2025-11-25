@@ -102,14 +102,16 @@ namespace eval configure {
                 puts ${fd} "OBJCXXFLAGS=\"[option configure.objcxxflags]\""
             }
             puts ${fd} "LDFLAGS=\"[option configure.ldflags]\""
-            if {[string match ${prefix}* [option configure.cxx]] \
-                    || [string match ${prefix}* [option configure.objcxx]]} {
-                set port [registry_file_registered [option configure.cxx]]
+            set CXX [guess_compiler [option configure.cxx]]
+            set OBJCXX [guess_compiler [option configure.objcxx]]
+            if {[string match ${prefix}* ${CXX}] \
+                    || [string match ${prefix}* ${OBJCXX}]} {
+                set port [registry_file_registered ${CXX}]
                 if {${port} != 0} {
                     puts ${fd} "#    C++ compiler provided by: [lrange [lindex [registry_active ${port}] 0] 0 3]"
                 }
-                if {[option configure.objcxx] ne [option configure.cxx]} {
-                    set port [registry_file_registered [option configure.objcxx]]
+                if {"${OBJCXX}" ne "${CXX}"} {
+                    set port [registry_file_registered ${OBJCXX}]
                     if {${port} != 0} {
                         puts ${fd} "# ObjC++ compiler provided by: [lrange [lindex [registry_active ${port}] 0] 0 3]"
                     }
@@ -126,8 +128,7 @@ namespace eval configure {
             if {${OBJC} ne "[guess_compiler [option configure.cc]]"} {
                 puts -nonewline ${fd} " configure.objc=\"${OBJC}\""
             }
-            set OBJCXX [guess_compiler [option configure.objcxx]]
-            if {"${OBJCXX}" ne "[guess_compiler [option configure.cxx]]"} {
+            if {"${OBJCXX}" ne "${CXX}"} {
                 puts -nonewline ${fd} " configure.objcxx=\"${OBJCXX}\""
             }
             if {[option configureccache] ne ""} {
