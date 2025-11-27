@@ -511,7 +511,7 @@ if {[tbool LTO.allow_UseLLD] && ![variant_exists use_lld]} {
             }
         } else {
             pre-configure {
-                ui_warn "+use_lld : the -fuse-ld may or may not be supported!"
+                ui_warn "+use_lld : the -fuse-ld option may or may not be supported by ${configure.compiler}!"
                 LTO.configure.flags_append {ldflags} "-fuse-ld=lld"
             }
         }
