@@ -5,22 +5,29 @@ PortGroup select                      1.0
 PortGroup active_variants             1.1
 PortGroup cmake                       1.1
 PortGroup legacysupport               1.1
-PortGroup conflicts_build             1.0
+PortGroup conflicts_build             1.1
+platform linux {
+    set LTO_needs_ranlib              yes
+}
 PortGroup LTO                         1.0
-PortGroup compress_workdir            1.0
+platform darwin {
+    PortGroup compress_workdir        1.0
+}
 PortGroup python-required             1.0
 
 # Do not propagate c/c++ standards as set by base
 cmake.set_c_standard                  no
 cmake.set_cxx_standard                no
 
-# link legacysupport statically for compilers
-legacysupport.use_static              yes
-# Sysconf wrapping causes issues so disable
-legacysupport.disable_function_wrap   yes
+platform darwin {
+    # link legacysupport statically for compilers
+    legacysupport.use_static          yes
+    # Sysconf wrapping causes issues so disable
+    legacysupport.disable_function_wrap yes
+}
 
 categories              lang
-platforms               {darwin >= 11}
+platforms               {darwin >= 10} linux
 license                 NCSA
 maintainers             nomaintainer
 
@@ -28,14 +35,20 @@ set llvm_version        17
 set clang_exe_version   ${llvm_version}
 version                 ${llvm_version}.0.6
 
-name                    llvm-${llvm_version}
-subport                 mlir-${llvm_version}  { revision [ expr ${revision} + 0 ] }
-subport                 clang-${llvm_version} { revision [ expr ${revision} + 0 ] }
-subport                 lldb-${llvm_version}  { revision [ expr ${revision} + 0 ] }
+name                    llvm-${llvm_version} ; revision 2
+subport                 clang-${llvm_version} { revision [ expr ${revision} + 4 ] }
+if {${os.platform} eq "darwin"} {
+    subport                 mlir-${llvm_version}  { revision 1 }
+    subport                 lldb-${llvm_version}  { revision [ expr ${revision} + 1 ] }
+    subport                 flang-${llvm_version} { revision 2 }
+} else {
+    subport                 mlir-${llvm_version}  { revision 1 ; pre-fetch {return -code error "Not yet supported"; } }
+    subport                 lldb-${llvm_version}  { revision [ expr ${revision} + 1 ] ; pre-fetch {return -code error "Not yet supported"; } }
+    subport                 flang-${llvm_version} { revision 2 ; pre-fetch {return -code error "Not yet supported"; } }
+}
 # for updated port:legacy-support
 # for fixed wrapper script
-subport                 lld-${llvm_version}   { revision [ expr ${revision} + 3 ] }
-subport                 flang-${llvm_version} { revision [ expr ${revision} + 0 ] }
+subport                 lld-${llvm_version}   { revision [ expr ${revision} + 1 ] }
 
 checksums               rmd160  10f44d5a8e3d0d5fc1a1961a8adaac945733ec07 \
                         sha256  58a8818c60e6627064f312dbf46c02d9949956558340938b71cf731ad8bc0813
@@ -50,10 +63,20 @@ set suffix              mp-${llvm_version}
 set sub_prefix          ${prefix}/libexec/llvm-${llvm_version}
 if {${subport} ne "lld-${llvm_version}"} {
     worksrcdir          ${worksrcdir}/llvm
-} elseif {![info exists lld_build_standalone]} {
+} elseif {![info exists lld_standalone_build]} {
     set llvm_prefix     ${sub_prefix}
     set sub_prefix      ${prefix}/libexec/lld-${llvm_version}
 }
+
+## try this hack if clang_standalone_build doesn't work:
+## it makes it possible to reuse port:llvm-${llvm_version}'s build directory
+# set workpath            ${portbuildpath}/${name}/work
+# ui_msg ${workpath}
+# pre-extract {
+#     if {${subport} ne "llvm-${llvm_version}" && [file exists ${workpath}]} {
+#         ui_warn "Reusing port:llvm-${llvm_version}'s work directory!"
+#     }
+# }
 
 # https://github.com/macports/macports-ports/commit/a83a493bc21cbe7e14b1f5884379649ec8f31bae#commitcomment-132530885
 # RJVB : I created a devport containing the linker libraries so libunwind dependents (including htop)
@@ -67,17 +90,23 @@ compiler.blacklist      *gcc* {clang < 1001} macports-clang-3.*
 compiler.blacklist-append {clang < 1204} {macports-clang-[5-9].0} {macports-clang-1[0-3]}
 compiler.fallback       clang macports-clang-14 macports-clang-15
 
-## llvm-17 needs a libc++ newer than the v13 we have in port:libcxx so we do have to build the static versions at least
-## and also install them as subports other than clang-17 might require them too.
-## It seems to be impossible also to build with hardcoded paths
 if {${subport} ne "llvm-${llvm_version}"} {
-    variant no_libcxx description {don't build/install with embedded shared libc++ (also uses hardcoded rpaths as in older llvm ports)} {}
-#     default_variants-append +no_libcxx
+    if {${os.platform} eq "darwin"} {
+        ## do we need to keep a platform distinction here?!
+        variant no_libcxx description {don't build/install with embedded *shared* libc++ (also uses hardcoded rpaths as in older llvm ports)} {}
+    } else {
+        variant no_libcxx description {don't build/install with embedded libc++ headers/libs (also uses hardcoded rpaths as in older llvm ports)} {}
+    }
 }
+
 proc variant_enabled {v} {
     return [expr [variant_exists ${v}] && [variant_isset ${v}]]
 }
 
+platform linux {
+    default_variants-append \
+        +desktop +libstdcxx +no_libcxx +nortti
+}
 
 switch ${subport} {
     "lldb-${llvm_version}" {
@@ -87,7 +116,7 @@ switch ${subport} {
     default {
         # most builds tested with Ninja
         cmake.generator Ninja
-        build.pre_args  -k 0
+        build.pre_args  -v -k 0
     }
 }
 
@@ -98,30 +127,37 @@ cmake.install_prefix    ${sub_prefix}
 #cmake.build_type        Release
 cmake.save_configure_cmd "install log"
 
-if {![variant_enabled no_libcxx]} {
+# ensure pre-compiled headers and the possible use of ccache can co-exist
+configure.env-append \
+                    "CCACHE_SLOPPINESS=pch_defines,time_macros"
+build.env-append    "CCACHE_SLOPPINESS=pch_defines,time_macros"
+
+platform darwin {
+    if {![variant_enabled no_libcxx]} {
 # clean up some cmake-PG added values we don't want to use, because we want @rpaths (why?)
-    cmake.install_rpath
+        cmake.install_rpath
 
-    configure.pre_args-delete \
-        -DCMAKE_INSTALL_NAME_DIR="${cmake.install_prefix}/lib" \
-        -DCMAKE_INSTALL_RPATH="${cmake.install_prefix}/lib"
+        configure.pre_args-delete \
+            -DCMAKE_INSTALL_NAME_DIR="${cmake.install_prefix}/lib" \
+            -DCMAKE_INSTALL_RPATH="${cmake.install_prefix}/lib"
 
-    platform darwin {
+        platform darwin {
+            configure.pre_args-replace \
+                -DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=ON \
+                -DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=OFF
+        }
+
         configure.pre_args-replace \
-            -DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=ON \
-            -DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=OFF
+            -DCMAKE_SYSTEM_PREFIX_PATH="${prefix}\;/usr" \
+            -DCMAKE_SYSTEM_PREFIX_PATH="${cmake.install_prefix}\;${prefix}\;/usr"
+    } else {
+        # with this config we need a libc++ under ${prefix}
+        require_active_variants port:libcxx macports_libcxx
+        depends_build-append \
+            port:libcxx-dev
+        depends_run-append \
+            port:libcxx-dev
     }
-
-    configure.pre_args-replace \
-        -DCMAKE_SYSTEM_PREFIX_PATH="${prefix}\;/usr" \
-        -DCMAKE_SYSTEM_PREFIX_PATH="${cmake.install_prefix}\;${prefix}\;/usr"
-} else {
-    # with this config we need a libc++ under ${prefix}
-    require_active_variants port:libcxx macports_libcxx
-    depends_build-append \
-        port:libcxx-dev
-    depends_run-append \
-        port:libcxx-dev
 }
 
 platform linux {
@@ -172,6 +208,10 @@ configure.args-append \
     -DLLVM_ENABLE_FFI=ON \
     -DFFI_INCLUDE_DIR=${prefix}/include \
     -DFFI_LIBRARY_DIR=${prefix}/lib
+# Go and ocaml are not dependencies so disable building bindings for them gratuitously
+configure.args-append \
+    -DLLVM_INCLUDE_GO_TESTS=OFF \
+    -DLLVM_ENABLE_BINDINGS=OFF
 
 # Disable iOS support
 # To Be reviewed with later versions
@@ -180,7 +220,7 @@ configure.args-append \
 configure.args-append -DCOMPILER_RT_ENABLE_IOS=OFF
 
 # cctools is needed to handle objects from newer clang toolchains
-if {[string match macports-clang-* ${configure.compiler}]} {
+if {${os.platform} eq "darwin" && [string match macports-clang-* ${configure.compiler}]} {
     depends_build-append            port:cctools
     depends_skip_archcheck-append   cctools
     configure.args-append           -DCMAKE_LIBTOOL=${prefix}/bin/libtool
@@ -232,10 +272,17 @@ patchfiles-append \
     0011-Fix-missing-long-long-math-prototypes-when-using-the.patch \
     0012-compiler-rt-add-some-defs-missing-in-older-SDKs.patch \
     0013-clang-add-back-runtime-libraries-used-on-10.4-and-10.patch \
-    0014-Fix-float.h-to-work-on-Snow-Leopard-and-earlier.patch \
-    0019-10.6-and-less-use-emulated-TLS-before-10.7.patch \
+    0014-Fix-float.h-to-work-on-Snow-Leopard-and-earlier.patch
+platform darwin {
+    ## RJVB : NB: the hunk that adds isMacOSXVersionLT(..) to
+    ## hasDefaultEmulatedTLS() in Triple.h is Mac-specific!!
+    patchfiles-append \
+        0019-10.6-and-less-use-emulated-TLS-before-10.7.patch
+}
+patchfiles-append \
     0025-lldb-add-defines-needed-for-older-SDKs.patch \
     0026-llvm-set-memrchr-unavailable.patch \
+    0043-builtins-Move-cfi-start-s-after-the-symbol-name-NFC.patch \
     0999-i386-fix.diff \
     add-missed-i386-host.diff
 
@@ -295,6 +342,11 @@ if {${os.platform} eq "darwin" && ${os.major} < 12} {
     }
 }
 
+# alter the default availability header to indicate no verbose_abort is in libcxx
+# the altered section is used only when macports-libcxx is being invoked
+# see: https://trac.macports.org/ticket/68640
+patchfiles-append      0120-clang-no-verbose-abort-in-library.diff
+
 # https://trac.macports.org/ticket/67686
 # revert commit that breaks rpath linkages in clang runtime
 if {${os.platform} eq "darwin"} {
@@ -311,12 +363,28 @@ if {${os.platform} eq "darwin" && ${os.major} <= 16} {
     patchfiles-append 0042-mbstate_t-not-defined.patch
 }
 
+if {${os.platform} eq "darwin" && ${os.major} < 19} {
+    # https://trac.macports.org/ticket/68522
+    # Undefined symbols for architecture x86_64:
+    #   "__availability_version_check", referenced from:
+    #       ___isPlatformVersionAtLeast in libclang_rt.osx.a(os_version_check.c.o)
+    #       __initializeAvailabilityCheck in libclang_rt.osx.a(os_version_check.c.o)
+    # Upstream discussion at https://reviews.llvm.org/D150397
+    patchfiles-append 0130-10.14-and-less-availability.patch
+}
 # RJVB
 patchfiles-append \
     patch-accept-build_types.diff
 # clangd requires RTLD_FIRST which may not be defined
 patchfiles-append \
     patch-RTLD_FIRST.diff
+
+if {![variant_enabled no_libcxx] && ${os.platform} eq "linux"} {
+    # provide bits/cxxabi_init_exceptions.h
+    # see https://discourse.llvm.org/t/libc-compiled-with-libstdc-abi-and-cxxabi-h-std-typeinfo/56553
+    # handled by port:libcxx if +no_libcxx
+    patchfiles-append patch-provide-cxxabi_init_exceptions-linux.diff
+}
 
 post-patch {
     reinplace "s|@@PREFIX@@|${prefix}|" \
@@ -357,11 +425,17 @@ if {${subport} eq "llvm-${llvm_version}"} {
 
     configure.args-append \
                         -DLLVM_ENABLE_PROJECTS="polly"
-#     if {[variant_enabled no_libcxx]} {
-        # makes no difference for the installed products (I checked), just possibly in the build time
-        configure.args-append \
+    # makes no difference for the installed products (I checked), just possibly in the build time
+    configure.args-append \
             -DLLVM_BUILD_RUNTIME=OFF
-#     }
+    platform linux {
+        depends_build-append \
+                        port:binutils \
+                        port:binutils-dev
+        # this makes certain (?) that LLVMgold.so gets build:
+        configure.args-append \
+                        -DLLVM_BINUTILS_INCDIR=${prefix}/include
+    }
 }
 
 if {${subport} eq "mlir-${llvm_version}"} {
@@ -401,31 +475,69 @@ if { ${subport} eq "clang-${llvm_version}" } {
     select.group        clang
     select.file         ${filespath}/mp-${subport}
 
-    variant full_cxx description {Don't limit the C++ std namespace by the system libc++ version} {
-        require_active_variants port:libcxx macports_libcxx
-    }
-    if {[variant_isset full_cxx]} {
-        patchfiles-append \
-            patch-config-availability+ABIhiding.diff
+    # make some space
+    post-extract {
+        file delete -force ${worksrcpath}/flang
+        file delete -force ${worksrcpath}/lld
+        file delete -force ${worksrcpath}/lldb
     }
 
+## I *THINK* that the effect of +full_cxx is NIL on Linux and probably clashes with
+# -DLIBCXX_ENABLE_VENDOR_AVAILABILITY_ANNOTATIONS=ON on Mac. It may be more appropriate
+# to preserve the ABIhiding patch in port:libcxx (on Mac), even if it no longer hides any ABIs.
+#     variant full_cxx description {Don't limit the C++ std namespace by the system libc++ version} {
+#         require_active_variants port:libcxx macports_libcxx
+#     }
+#     if {[variant_isset full_cxx]} {
+#         patchfiles-append \
+#             patch-config-availability+ABIhiding.diff
+#     }
+
+## Don't have any effect in preventing to build the equivalent of port:llvm again...
+#     configure.args-append \
+#             -DLLVM_CONFIG_PATH=${sub_prefix}/bin/llvm-config \
+#             -DLLVM_CMAKE_DIR=${sub_prefix}/lib/cmake/llvm
+
     configure.args-append   \
-        -DLLVM_ENABLE_PROJECTS="clang\;clang-tools-extra\;compiler-rt" \
-        -DLLVM_ENABLE_RUNTIMES="libcxx\;libcxxabi"
+        -DLLVM_ENABLE_PROJECTS="clang\;clang-tools-extra\;compiler-rt"
+    if {${os.platform} eq "darwin"} {
+        configure.args-append   \
+            -DLLVM_ENABLE_RUNTIMES="libcxx\;libcxxabi"
+    } else {
+        # this could be more OS-specific; on Linux we'll use the libstdc++ ABI.
+        # (see LIBCXX_CXX_ABI below.)
+        configure.args-append   \
+            -DLLVM_ENABLE_RUNTIMES="libcxx"
+    }
     if {[variant_enabled no_libcxx]} {
         # configure such that the libc++ headers will be prepared but the shared libraries not built nor installed
         configure.args-append \
             -DLIBCXXABI_ENABLE_SHARED=OFF  \
             -DLIBCXXABI_ENABLE_STATIC=ON  \
             -DLIBCXX_ENABLE_SHARED=OFF     \
-            -DLIBCXX_ENABLE_STATIC=ON     \
             -DLIBCXX_ENABLE_EXPERIMENTAL_LIBRARY=ON \
-            -DLIBCXX_INSTALL_HEADERS=ON    \
             -DLIBCXX_INSTALL_SHARED_LIBRARY=OFF \
-            -DLIBCXX_INSTALL_STATIC_LIBRARY=ON \
             -DLIBCXX_INSTALL_EXPERIMENTAL_LIBRARY=ON \
-            -DLIBCXXABI_INSTALL_SHARED_LIBRARY=OFF \
-            -DLIBCXXABI_INSTALL_STATIC_LIBRARY=ON
+            -DLIBCXXABI_INSTALL_SHARED_LIBRARY=OFF
+        if {${os.platform} eq "darwin"} {
+            # this needs to be reconsidered, I think!
+            configure.args-append \
+                -DLIBCXX_ENABLE_STATIC=ON     \
+                -DLIBCXX_INSTALL_STATIC_LIBRARY=ON \
+                -DLIBCXXABI_INSTALL_STATIC_LIBRARY=ON \
+                -DLIBCXX_INSTALL_HEADERS=ON
+        } else {
+            configure.args-append \
+                -DLIBCXX_ENABLE_STATIC=OFF     \
+                -DLIBCXX_INSTALL_STATIC_LIBRARY=OFF \
+                -DLIBCXXABI_INSTALL_STATIC_LIBRARY=OFF \
+                -DLIBCXX_INSTALL_HEADERS=OFF
+            # SIC! This is where port:libcxx installs its headers on Linux; into the actual system.
+            # (The internal search algorithm doesn't use the CMake variable below, so we'll just
+            # symlink to the indicated location under $sub_prefix, in the post-destroot.
+            configure.args-append \
+                -DLIBCXX_INSTALL_INCLUDE_DIR=/usr/include/c++/v1
+        }
 #         post-destroot {
 #             file delete -force {*}[glob -nocomplain ${destroot}${sub_prefix}/lib/libc++*]
 #         }
@@ -434,7 +546,13 @@ if { ${subport} eq "clang-${llvm_version}" } {
             -DLIBCXX_ENABLE_SHARED=ON      \
             -DLIBCXX_INSTALL_LIBRARY=ON
     }
-
+# On Mac, whatever libc++ related things we install (cf. +no_libcxx) we want them to
+# be compatible with the system libc++; if a port needs a more modern/capable libc++
+# it has to indicate that the version from port:libcxx must be used.
+# On other systems, the option must be OFF (= the default) because otherwise libc++
+# will throw a compilation error unless site-specific "vendor annotations" are inserted.
+    configure.args-append \
+            -DLIBCXX_ENABLE_VENDOR_AVAILABILITY_ANNOTATIONS=[expr {${os.platform} eq "darwin" ? ON : OFF}]
 ## obsolete:
 #     destroot {
 #         # we have to run the destroot like this, because individual targets for each of the
@@ -447,8 +565,11 @@ if { ${subport} eq "clang-${llvm_version}" } {
     destroot.pre_args \
             tools/clang/install \
             projects/compiler-rt/install \
-            install-cxxabi \
             install-cxx
+    platform darwin {
+        destroot.pre_args-append \
+            install-cxxabi
+    }
     destroot.target
 }
 
@@ -484,7 +605,6 @@ if { ${subport} eq "lld-${llvm_version}" } {
     # lld isn't supported on 32 bit CPUs, or at least it won't link 32bit binaries
     supported_archs     arm64 x86_64
 
-    platforms-append    linux
     platform linux {
         depends_build-append \
             port:binutils
@@ -510,7 +630,7 @@ if { ${subport} eq "lld-${llvm_version}" } {
         # avoid need for thread_local_storage
         configure.args-append    -DLLVM_ENABLE_BACKTRACES=OFF
     }
-    if {![info exists lld_build_standalone]} {
+    if {![info exists lld_standalone_build]} {
         worksrcdir ${worksrcdir}/llvm
 
         long_description-append \
@@ -614,13 +734,20 @@ if { ${subport} eq "flang-${llvm_version}" } {
     # CMakeLists.txt: flang isn't supported on 32 bit CPUs
     supported_archs     arm64 x86_64
 
+    post-patch {
+        reinplace -E "1s|^#!.*$|#!${prefix}/bin/bash|" ${worksrcpath}/../flang/tools/f18/flang-to-external-fc.in
+    }
+
     configure.args-append \
         -DLLVM_ENABLE_PROJECTS="clang\;flang\;compiler-rt\;mlir" \
         -DLIBCXX_ENABLE_SHARED=OFF          \
         -DLIBCXX_INSTALL_LIBRARY=OFF
 
     depends_lib-append  port:clang-${llvm_version} port:mlir-${llvm_version}
+    depends_run-append  port:bash
 
+    # https://trac.macports.org/ticket/72954
+    build.mem_per_job   4700
 #     destroot {
 #         # we have to run the destroot like this, because individual targets for each of the
 #         # components we want to install are not available; we want "everything but llvm"
@@ -634,8 +761,10 @@ if { ${subport} eq "flang-${llvm_version}" } {
 if { ${subport} eq "clang-${llvm_version}" || ${subport} eq "flang-${llvm_version}" } {
 
     depends_lib-append  port:libxml2 port:libomp port:llvm-${llvm_version}
-    depends_run-append  port:ld64
-    depends_skip_archcheck-append ld64
+    platform darwin {
+        depends_run-append port:ld64
+        depends_skip_archcheck-append ld64
+    }
 
     # CMAKE_LINKER is used to determine the value for HOST_LINK_VERSION
     configure.args-append \
@@ -646,43 +775,68 @@ if { ${subport} eq "clang-${llvm_version}" || ${subport} eq "flang-${llvm_versio
         -DDARWIN_PREFER_PUBLIC_SDK=ON      \
         -DLLVM_BUILD_RUNTIME=ON
 
-    # the orc submodule is not building at present - can't find c_api.h
-    # https://trac.macports.org/ticket/65578
-    configure.args-append        -DCOMPILER_RT_BUILD_ORC=OFF
+    if {${os.platform} eq "darwin"} {
+        # the orc submodule is not building at present - can't find c_api.h
+        # https://trac.macports.org/ticket/65578
+        configure.args-append        -DCOMPILER_RT_BUILD_ORC=OFF
 
-    if {${os.platform} eq "darwin" && ${os.major} <= 18} {
-        # on systems that might build i386, we need atomic builtins
-        # https://trac.macports.org/ticket/58712
-        configure.args-append    -DCOMPILER_RT_EXCLUDE_ATOMIC_BUILTIN=OFF
-    }
+        if {${os.platform} eq "darwin" && ${os.major} <= 18} {
+            # on systems that might build i386, we need atomic builtins
+            # https://trac.macports.org/ticket/58712
+            configure.args-append    -DCOMPILER_RT_EXCLUDE_ATOMIC_BUILTIN=OFF
+        }
 
-    if {${os.platform} eq "darwin" && ${os.major} <= 14} {
-        # compiler-rt does a broad search for an SDK it likes, but this
-        # search fails on older systems that don't have a MacOSX.sdk
-        # TODO: apply this always to all systems?
-        if {${configure.sdkroot} eq ""} {set configure.sdkroot "/"}
-        configure.args-append    -DDARWIN_osx_SYSROOT="${configure.sdkroot}"
-    }
+        if {${os.major} <= 14} {
+            # compiler-rt does a broad search for an SDK it likes, but this
+            # search fails on older systems that don't have a MacOSX.sdk
+            # TODO: apply this always to all systems?
+            if {${configure.sdkroot} eq ""} {set configure.sdkroot "/"}
+            configure.args-append    -DDARWIN_osx_SYSROOT="${configure.sdkroot}"
+        }
 
-    if {${os.platform} eq "darwin" && ${os.major} <= 15} {
-        # sanitizers in compiler_rt fail to build on older systems
-        # might be fixable with the use of newer SDK and/or effort if motivated
-        # all three toggles are needed to force them off
-        # Extended to 10.11 and older, see https://trac.macports.org/ticket/65887
-        configure.args-append    -DCOMPILER_RT_BUILD_SANITIZERS=OFF \
-                                 -DCOMPILER_RT_BUILD_XRAY=OFF \
-                                 -DCOMPILER_RT_BUILD_MEMPROF=OFF
-    }
+        if {${os.major} <= 15} {
+            # sanitizers in compiler_rt fail to build on older systems
+            # might be fixable with the use of newer SDK and/or effort if motivated
+            # all three toggles are needed to force them off
+            # Extended to 10.11 and older, see https://trac.macports.org/ticket/65887
+            configure.args-append    -DCOMPILER_RT_BUILD_SANITIZERS=OFF \
+                                     -DCOMPILER_RT_BUILD_XRAY=OFF \
+                                     -DCOMPILER_RT_BUILD_MEMPROF=OFF
+        }
 
-    if {${os.platform} eq "darwin" && ${os.major} <= 11} {
-        # xpc.h available 10.7 but doesn't support nullable features
-        configure.args-append    -DCLANGD_BUILD_XPC=OFF
-    }
+        if {${os.major} <= 11} {
+            # xpc.h available 10.7 but doesn't support nullable features
+            configure.args-append    -DCLANGD_BUILD_XPC=OFF
+        }
 
-    if {${os.platform} eq "darwin" && ${os.major} <= 10} {
-        # avoid need for thread_local_storage
-        configure.args-append    -DCLANG_ENABLE_CLANGD=OFF \
-                                 -DLLVM_ENABLE_BACKTRACES=OFF
+        if {${os.major} <= 10} {
+            # avoid need for thread_local_storage
+            configure.args-append    -DCLANG_ENABLE_CLANGD=OFF \
+                                     -DLLVM_ENABLE_BACKTRACES=OFF
+        }
+    } else {
+        # probably on Linux!
+        build.env-append            LD_LIBRARY_PATH=${build.dir}/lib/
+        destroot.env-append         LD_LIBRARY_PATH=${build.dir}/lib/
+        if {[file exists ${filespath}/find_abi_headers.sh]} {
+            # find the system C++ ABI headers so we don't have to depend on an older
+            # MacPorts compiler if that's what we're using for the build:
+            set abi_header_dirs [exec ${filespath}/find_abi_headers.sh /usr/bin/c++]
+            pre-configure {
+                ui_info "abi_header_dirs=${abi_header_dirs}"
+            }
+        } else {
+            # we're probably executed from the registry, e.g. while deactivating the port
+            set abi_header_dirs {}
+        }
+        configure.args-append   \
+            -DCMAKE_ASM_COMPILER=${configure.cc} \
+            -DCMAKE_ASM_COMPILER_AR=${configure.ar} \
+            -DCMAKE_ASM_COMPILER_RANLIB=${configure.ranlib} \
+            -DLIBCXX_CXX_ABI=libstdc++ \
+            -DLIBCXX_CXX_ABI_INCLUDE_PATHS="${abi_header_dirs}"
+        configure.args-append   \
+            -DLLVM_EXTRA_PROJECTS="" 
     }
 }
 
@@ -692,7 +846,7 @@ if {${subport} eq "lldb-${llvm_version}"} {
     description         the LLVM debugger
     long_description    lldb is the "LLVM native" debugger.
 
-    depends_lib-append  port:libedit port:libffi port:ncurses path:lib/libxar.dylib:xar port:zlib
+    depends_lib-append  port:libedit port:libffi port:ncurses port:python${py_ver_nodot} path:lib/libxar.dylib:xar port:zlib
     depends_lib-append  port:llvm-${llvm_version} port:clang-${llvm_version}
     depends_build-append port:swig-python path:bin/doxygen:doxygen
     depends_run-append  port:lldb_select
@@ -757,7 +911,7 @@ if {${subport} ne "lldb-${llvm_version}"} {
 
 post-destroot {
 
-    if {${subport} eq "clang-${llvm_version}"} {
+    if {[file exists ${destroot}${sub_prefix}/bin/clang]} {
         # remove the clang symlink and replace it with the actual binary
         delete      ${destroot}${sub_prefix}/bin/clang
         file rename ${destroot}${sub_prefix}/bin/clang-${clang_exe_version} ${destroot}${sub_prefix}/bin/clang
@@ -765,6 +919,13 @@ post-destroot {
         # Failed to 'dlopen' libhsa-runtime64.so
         # Failed to load libamdhip64.so: dlopen(libamdhip64.so, 9): image not found
         file delete ${destroot}${sub_prefix}/bin/amdgpu-arch
+    }
+
+    # If only 'flang-new' created, link to 'flang'
+    if {[file exists ${destroot}${sub_prefix}/bin/flang-new]} {
+        if {![file exists ${destroot}${sub_prefix}/bin/flang]} {
+            ln -s ${sub_prefix}/bin/flang-new ${destroot}${sub_prefix}/bin/flang
+        }
     }
 
     # generate a versioned wrapper script for each file in the bin directory
@@ -792,13 +953,18 @@ post-destroot {
         ln -s LLVMPolly.so ${destroot}${sub_prefix}/lib/LLVMPolly.dylib
     }
 
-    if {${subport} eq "clang-${llvm_version}"} {
+    set bt [string tolower ${cmake.build_type}] 
+    if {[file exists ${destroot}${sub_prefix}/lib/cmake/clang/ClangTargets-${bt}.cmake]} {
         # fix the cmake scripts to point to the versioned files
         reinplace "s|/bin/clang-${clang_exe_version}|/bin/clang|g" \
-                  "${destroot}${sub_prefix}/lib/cmake/clang/ClangTargets-[string tolower ${cmake.build_type}].cmake"
+                  "${destroot}${sub_prefix}/lib/cmake/clang/ClangTargets-${bt}.cmake"
+    }
 
-        # http://trac.macports.org/ticket/33207
-        ln -s ${prefix}/libexec/ld64/ld ${destroot}${sub_prefix}/bin/ld
+    if { ${subport} eq "clang-${llvm_version}" || ${subport} eq "flang-${llvm_version}" } {
+        platform darwin {
+            # http://trac.macports.org/ticket/33207
+            ln -s ${prefix}/libexec/ld64/ld ${destroot}${sub_prefix}/bin/ld
+        }
     }
 
     if {${subport} eq "lldb-${llvm_version}"} {
@@ -810,6 +976,53 @@ post-destroot {
         xinstall -m 755 -W ${lldb_scripts_srcdir} \
             macos-setup-codesign.sh \
             ${lldb_scripts_destdir}
+    }
+
+    if {${subport} ne "llvm-${llvm_version}"} {
+#         # Need to deactivate current version before traversing destroot to remove
+#         # 'already installed' files
+#         if {![catch {set installed [lindex [registry_active ${subport}] 0]}]} {
+#             registry_deactivate_composite ${subport} "" [list ports_nodepcheck 1]
+#         }
+
+        proc mpNormalise {filename} {
+            global prefix
+            set prefmap [list [file dirname [file normalize "${prefix}/foo"]] ${prefix}]
+            return [string map ${prefmap} [file normalize $filename]]
+        }
+
+        # Then search for files in destroot provided by other local (sub)ports deps and remove
+        ui_debug "Pruning files provided by other LLVM-${llvm_version} ports"
+        fs-traverse destroot_f ${destroot} {
+            if {![file isdirectory $destroot_f]} {
+                set f [string replace $destroot_f 0 [string length $destroot]-1]
+                if {[file exists ${f}]} {
+                    # we need to normalise the filename in case the local $prefix
+                    # is symlinked to some other location. In that case, $destroot$prefix
+                    # will be a regular directory, but the registry will contain
+                    # the normalised paths (on Mac, at least).
+                    set port [registry_file_registered [mpNormalise ${f}]]
+                    if { ${port} ne "${subport}" } {
+                        ui_debug "${f} is provided by port:${port} -> Removed from destroot"
+                        file delete ${destroot_f}
+                    }
+                }
+            }
+        }
+    }
+
+    if {${subport} eq "clang-${llvm_version}"} {
+        # move libc++ libraries out of default location to prevent accidental linkage
+        set libcxx_dir ${destroot}${sub_prefix}/lib/libc++
+        xinstall -d ${libcxx_dir}
+        foreach f [glob -nocomplain ${destroot}${sub_prefix}/lib/libc++*.*] {
+            ui_msg "Moving ${f} to ${libcxx_dir}"
+            move ${f} ${libcxx_dir}
+        }
+        if {[variant_enabled no_libcxx] && ${os.platform} eq "linux"} {
+            xinstall -m 755 -d ${destroot}${sub_prefix}/include/c++
+            ln -s /usr/include/c++/v1 ${destroot}${sub_prefix}/include/c++
+        }
     }
 }
 
@@ -833,14 +1046,21 @@ if {${subport} eq "clang-${llvm_version}"} {
     }
 
     # Avoid requiring a bootstrap version of perl5 on 10.6.
-    if {${os.major} >= 11} {
+    if {${os.platform} eq "darwin" && ${os.major} >= 11} {
         default_variants    +analyzer
     }
 
+#     if {${os.platform} eq "linux" && [variant_isset libstdcxx]} {
+#         pre-patch {
+#             ui_error "Fix 0005-clang-support-macports-libstdcxx.patch! (line [dict get [info frame 0] line])"
+#             ui_msg "${patch.dir}"
+#             return -code error "fixme!"
+#         }
+#     }
     variant libstdcxx description {-stdlib=libstdc++_macports searches for MacPorts libstdc++} {
 
         patchfiles-append 0005-clang-support-macports-libstdcxx.patch
-        if {${os.major} < 11} {
+        if {${os.platform} eq "darwin" && ${os.major} < 11} {
             # see https://trac.macports.org/ticket/61778
             depends_run-append  port:libstdcxx_clang_fix
         }
@@ -848,11 +1068,16 @@ if {${subport} eq "clang-${llvm_version}"} {
         post-patch {
             reinplace "s|@@MACPORTS_GCC_INCLUDE_DIR@@|${prefix}/include/gcc/c++|g" \
                 ${patch.dir}/clang/lib/Lex/InitHeaderSearch.cpp \
-                ${patch.dir}/clang/lib/Driver/ToolChains/Darwin.cpp
+                ${patch.dir}/clang/lib/Driver/ToolChains/Darwin.cpp \
+                ${patch.dir}/clang/lib/Driver/ToolChains/Gnu.cpp
             reinplace "s|@@MACPORTS_HOST_NAME@@|${configure.build_arch}-apple-darwin${os.major}|g" \
                 ${patch.dir}/clang/lib/Driver/ToolChains/Darwin.cpp
+            reinplace "s|@@MACPORTS_HOST_NAME@@|${build_arch}-pc-linux-gnu|g" \
+                ${patch.dir}/clang/lib/Driver/ToolChains/Gnu.cpp
             reinplace "s|@@MACPORTS_libstdc++@@|${prefix}/lib/libgcc/libstdc++.6.dylib|g" \
                 ${patch.dir}/clang/lib/Driver/ToolChains/Darwin.cpp
+            reinplace "s|@@MACPORTS_GCC_LIB_DIR@@|${prefix}/lib/libgcc|g" \
+                ${patch.dir}/clang/lib/Driver/ToolChain.cpp
 
             # GCC was built for ${configure.build_arch}-apple-darwin${os.major}
             # if GCC was also built universal, it has an extra include directory
@@ -883,7 +1108,7 @@ if {${subport} eq "clang-${llvm_version}"} {
             }
         }
     }
-    if { ${cxx_stdlib} eq "libstdc++" } {
+    if { ${configure.cxx_stdlib} eq "libstdc++" } {
         default_variants-append +libstdcxx
     }
 }
