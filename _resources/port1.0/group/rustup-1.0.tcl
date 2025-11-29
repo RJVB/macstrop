@@ -351,10 +351,12 @@ if {${os.platform} eq "darwin"} {
     depends_build-append            port:binutils \
                                     port:wrapped-syscalls
     devport_ignore_devports-append  binutils-dev
-    if {[info exists env(LD_PRELOAD)]} {
-        set env(LD_PRELOAD)         "${prefix}/lib/libwrapped_syscalls.so:$env(LD_PRELOAD)"
-    } else {
-        set env(LD_PRELOAD)         "${prefix}/lib/libwrapped_syscalls.so"
+    if {[file exists "${prefix}/lib/libwrapped_syscalls.so"]} {
+        if {[info exists env(LD_PRELOAD)]} {
+            set env(LD_PRELOAD)     "${prefix}/lib/libwrapped_syscalls.so:$env(LD_PRELOAD)"
+        } else {
+            set env(LD_PRELOAD)     "${prefix}/lib/libwrapped_syscalls.so"
+        }
     }
     extract.env-append              COPY_FILE_RANGE_VERBOSE=1 RENAME_VERBOSE=1 RENAME_ACROSS_DEVICES=1
     configure.env-append            COPY_FILE_RANGE_VERBOSE=1 RENAME_VERBOSE=1 RENAME_ACROSS_DEVICES=1
