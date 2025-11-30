@@ -116,7 +116,7 @@ default cmake.set_cxx_standard      {[expr {${compiler.cxx_standard} > 2011}]}
 # cmake.generator_blacklist <generator-pattern>
 # (patterns are case-insensitive, e.g. "*ninja*")
 #
-default cmake.generator             "CodeBlocks - Unix Makefiles"
+default cmake.generator             "Unix Makefiles"
 default cmake.generator_blacklist   {}
 # CMake generates Unix Makefiles that contain a special "fast" install target
 # which skips the whole "let's see if there's anything left to (re)build before
