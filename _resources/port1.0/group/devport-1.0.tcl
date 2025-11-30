@@ -520,11 +520,12 @@ proc create_devport {dependency {auto_generate_content {}}} {
                         ### counterproductive e.g. if the mainport and devport are being pulled in by a dependent.
                         if {![catch {registry_active ${devport_name}}]} {
                             # a version of the devport is already active; we are certain that
-                            # we can use the fastest safe solution: `upgrade --force`
+                            # we can use the fastest safe solution: `upgrade --force --no-rev`
+                            # (devports are not supposed to contain runtime libraries, so we can skip the rev-upgrade scan)
                             set dpinstmode upgrade
                             notes-append "port:${devport_name}@${cVersion}_${cRevision}${cVariants} will be upgraded and activated"
                             ui_msg "---->  port:${devport_name}@${cVersion}_${cRevision}${cVariants} will be upgraded and activated"
-                            exec port -no ${dpinstmode} --force ${devport_name} ${cVariants} configure.compiler=${configure.compiler} &
+                            exec port -no ${dpinstmode} --force --no-rev ${devport_name} ${cVariants} configure.compiler=${configure.compiler} &
                         } else {
                             # the devport is not active or not installed. We want to use `archive`
                             # to keep it inactive after the install of this new version, but we
