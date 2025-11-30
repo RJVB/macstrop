@@ -20,7 +20,7 @@ if {[catch {set cmake_available [registry_active cmake]}]} {
 # set llvm_version        13
 
 # NB : see the NB comment below about running $filespath/find_reexported_from_legacy-support.sh !
-version                 17.0.6 ; revision 3
+version                 17.0.6 ; revision 4
 set llvm_version        17
 
 # variant exp19 description {installs the still experimental libc++ v19.0.x version} {}
@@ -98,6 +98,11 @@ epoch                   1
 # built with different versions of libc++'s headers together may lead to ODR violations
 # and ABI issues. On the flipside, code size improvements should be expected for
 # everyone not defining the macro.
+## NB: the _LIBCPP_HIDE_FROM_ABI_PER_TU macros were retired somewhere around libc++ 13
+## but the ABIhiding patch also sets _LIBCPP_DISABLE_AVAILABILITY (which overrides whatever
+## the VENDOR_AVAILABILITY_ANNOTATIONS macro is set to). It still implies that the
+## resulting libc++ will be "full" and not limited as the system libc++ is.
+## NB: we should rename the patchfile...
 # Hence see patch-config-availability+ABIhiding.diff
 
 if {${llvm_version} >= 17} {
@@ -345,6 +350,10 @@ switch -- ${llvm_version} {
         # revert commit that breaks rpath linkages in clang runtime
         patchfiles-append \
             ${llvm_version}/b98da4c71edda3df0a0555b1ab63ec52e92252b4-inverse.patch
+
+        # backport a patch from 18.0.1
+        patchfiles-append \
+            ${llvm_version}/patch-make-pointer_traits-sfinae-friendly.diff
     }
 }
 
@@ -367,6 +376,11 @@ switch -- ${llvm_version} {
             post-patch {
                 reinplace "s|LIBCXX_LIBRARIES \"\"|LIBCXX_LIBRARIES \"[legacysupport::get_library_link_flags]\"|" ${patch.dir}/libcxx/CMakeLists.txt
             }
+        }
+
+        post-patch {
+            # we build the tests for the host architecture only
+            reinplace "s|@TESTARCHS@|${build_arch}|g" ${worksrcpath}/libcxx/benchmarks/CMakeLists.txt
         }
     }
 }
@@ -654,8 +668,8 @@ test.target     cxx-benchmarks
 test.post_args-append -wk
 pre-test {
     # this doesn't seem to have any effect?!"
-    test.env-append "SDKROOT=macosx${macosx_deployment_target}"
     set SDKPATH [exec xcrun -sdk macosx${macosx_deployment_target} --show-sdk-path]
+    test.env-append "SDKROOT=${SDKPATH}"
     test.env-append "SDKPATH=${SDKPATH}"
     # don't set LIBRARY_PATH (we don't want unexpected linking to $prefix/lib/libc++)!
     test.env-append "LIBRARY_PATH="
@@ -663,7 +677,21 @@ pre-test {
 post-test {
     # on Mac we don't build/run the "native" benchmarks as it is very tricky to link only the system libc++
     # and there is a good chance that it will be too old anyway.
-    system -W ${build.dir}/libcxx/benchmarks "time ./algorithms.libcxx.out --benchmark_repetitions=1 --benchmark_filter='_1$'\;\
-        time ./algorithms.libcxx.out --benchmark_repetitions=1 --benchmark_filter='_262144$'"
+    set nofilter {deque.libcxx.out dynamic_cast.libcxx.out formatter_float.libcxx.out \
+        formatter_int.libcxx.out function.libcxx.out map.libcxx.out ordered_set.libcxx.out \
+        std_format_spec_string_unicode.libcxx.out stringstream.libcxx.out to_chars.libcxx.out \
+        unordered_set_operations.libcxx.out util_smartptr.libcxx.out variant_visit_1.libcxx.out \
+        variant_visit_2.libcxx.out variant_visit_3.libcxx.out vector_operations.libcxx.out}
+    foreach b [glob ${build.dir}/libcxx/benchmarks/*.libcxx.out] {
+        set bm [file tail ${b}]
+        ui_info "\nBenchmark ${bm}:"
+        if {[lsearch ${nofilter} ${bm}] >= 0} {
+            system -W ${build.dir}/libcxx/benchmarks \
+                "time ./${bm} --benchmark_repetitions=1"
+        } else {
+            system -W ${build.dir}/libcxx/benchmarks \
+                "time ./${bm} --benchmark_repetitions=1 --benchmark_filter='\[25\]\[51\]\[62\]$'"
+        }
+    }
 }
 
