@@ -26,6 +26,8 @@ if {${os.platform} eq "darwin"} {
         variant libstdcxx description {build against GNU's libstdc++; installs in a subprefix} {}
     }
     if {[variant_exists libstdcxx] && [variant_isset libstdcxx]} {
+        depends_lib-append \
+                        port:libgcc
         if {[string match macports-clang* ${configure.compiler}]} {
             configure.cxx_stdlib \
                         macports-libstdc++
@@ -41,6 +43,7 @@ if {${os.platform} eq "darwin"} {
         # better once too often than too few!
         configure.ldflags-append \
                         -stdlib=${configure.cxx_stdlib}
+        set no_system_icu yes
     } else {
         configure.cxx_stdlib \
                         libc++
@@ -49,6 +52,37 @@ if {${os.platform} eq "darwin"} {
     }
 } else {
     set install_prefix  ${prefix}
+    if {${os.platform} eq "linux"} {
+        # on Linux, we take the risk of libc++/libstd++ clashes, which seem much
+        # less likely/frequent since libc++ is built against libstdc++'s ABI.
+        variant libcxx description {build against LLVM's libc++; experimental!} {}
+        if {[variant_exists libcxx] && [variant_isset libcxx]} {
+            if {![variant_isset use_lld]} {
+                pre-build {
+                    ui_error "Variant +libcxx requires +use_lld to be set explicitly!"
+                    return -code error "Please set +use_lld!"
+                }
+            }
+            # set +use_lld as default here. Its only effect is that the variant will
+            # be registered in the state file so the user can just restart the build
+            # command with +use_lld added, without further interventions.
+            # NB: this is because we also have to set LTO.LTO.maybe_ForceLD ...
+            default_variants-append +use_lld
+            depends_build-append \
+                        path:lib/pkgconfig/libcxx.pc:libcxx-dev
+            depends_lib-append \
+                        path:share/doc/libcxx/provider:libcxx
+            configure.cxx_stdlib \
+                        libc++
+            # better once too often than too few!
+            configure.ldflags-append \
+                        -stdlib=${configure.cxx_stdlib}
+            set no_system_icu yes
+        } else {
+            configure.cxx_stdlib \
+                        libstdc++
+        }
+    }
 }
 compiler.cxx_standard   2020
 # Has to be gnu++20 !
@@ -105,8 +139,7 @@ depends_build-append    port:pkgconfig \
                         port:python${py_ver_nodot} \
                         port:gmake
 
-depends_lib-append      path:lib/pkgconfig/icu-uc.pc:icu \
-                        port:zlib
+depends_lib-append      port:zlib
 
 # The Node.js docs says it requires "Xcode >= 16.1 (Apple LLVM >= 17)" [1].
 # [1] https://github.com/nodejs/node/blob/v24.x/BUILDING.md#supported-toolchains
@@ -174,6 +207,7 @@ platform linux {
         patchfiles-append \
                         patch-no-sys_random_h.diff
     }
+    patchfiles-append   patch-memfd_create.diff
 }
 patchfiles-append        patch-no-clang-only-werror-opts.diff
 
@@ -228,7 +262,12 @@ pre-configure {
 
 configure.args-append   --verbose
 configure.args-append   --without-npm
-configure.args-append   --with-intl=system-icu
+if {![info exists no_system_icu]} {
+    depends_lib-append      path:lib/pkgconfig/icu-uc.pc:icu
+    configure.args-append   --with-intl=system-icu
+} else {
+    configure.args-append   --with-intl=small-icu
+}
 configure.args-append   --shared-zlib
 configure.args-append   --shared-zlib-includes=${workpath}/zlib-inc
 configure.args-append   --shared-zlib-libpath=${prefix}/lib
@@ -292,12 +331,16 @@ build.args-append   CC=${configure.cc} \
                     "CXX=\"${configure.cxx}\"" \
                     "CXX.host=\"${configure.cxx}\"" \
                     CPP=${configure.cpp} \
+                    PYTHON=${configure.python} \
+                    V=1
+pre-build {
+    build.args-append \
                     CPPFLAGS="${configure.cppflags}" \
                     CFLAGS="${configure.cflags} ${configure.cppflags}" \
                     CXXFLAGS="${configure.cxxflags} ${configure.cppflags}" \
-                    LDFLAGS="${configure.ldflags} [legacysupport::get_library_link_flags]" \
-                    PYTHON=${configure.python} \
-                    V=1
+                    LDFLAGS="${configure.ldflags} [legacysupport::get_library_link_flags]"
+}
+
 build.post_args-append -wk
 
 configure.save_build_cmd "install"
