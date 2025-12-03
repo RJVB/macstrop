@@ -328,7 +328,6 @@ proc configure::callback {} {
     } elseif {${configure::statevar2}} {
         ui_debug "[dict get [info frame 0] proc]: save_build_cmd  already called directly by Portfile"
     } else {
-        ui_debug "cmake? ${configure.cmd}"
         if {[string match *cmake ${configure.cmd}]} {
             ui_debug "[dict get [info frame 0] proc]: calling `cmake.save_configure_cmd \"install log\"`"
             cmake.save_configure_cmd "install log"
@@ -342,6 +341,12 @@ proc configure::callback {} {
         } else {
             ui_debug "[dict get [info frame 0] proc]: calling `save_configure_cmd \"install log\"`"
             configure.save_configure_cmd "install log"
+            # check if the makefile PG is in use; in that case we also (!) want to save
+            # call save_build_cmd
+            if {[namespace eval [namespace parent] {namespace exists makefile_pg}]} {
+                ui_debug "[dict get [info frame 0] proc]: makefile PG in use; calling `save_build_cmd \"install\"`"
+                configure.save_build_cmd "install"
+            }
         }
     }
 }

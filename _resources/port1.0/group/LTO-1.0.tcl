@@ -10,6 +10,11 @@ namespace eval LTO {}
 
 set LTO.must_be_disabled no
 
+if {[namespace exists makefile_pg] && ![info exists LTO_needs_pre_build]} {
+    ui_debug "LTO PG: makefile PG is in use, defaulting LTO_needs_pre_build to yes"
+    set LTO_needs_pre_build yes
+}
+
 if {![info exists LTO.LTO_variant]} {
     set LTO.LTO_variant "LTO"
 
