@@ -41,12 +41,15 @@ variant langselect description "prune translations from ${prefix}/share/locale, 
 # the prefix:
 options langselect_prefix
 default langselect_prefix       {${prefix}}
-# optional directory (list) holding Qt translations (.qm) (fully specified)
+# optional directory (list) holding e.g. Qt translations (.qm) (fully specified)
 # the _dir and _basename options can both be lists of identical length for projects
 # that install translation files for multiple executables in as many individual dirs.
-options langselect_qm_dir langselect_qm_basename
+# The langselect_qm_ext option can be used to adapt this filter to other translation
+# files that follow the same general scheme of <dir>/<basename>*.<ext> .
+options langselect_qm_dir langselect_qm_basename langselect_qm_ext
 default langselect_qm_dir       {}
 default langselect_qm_basename  {}
+default langselect_qm_ext       {qm}
 # optional directory (list) holding <lang>.html files
 options langselect_html_dir
 default langselect_html_dir     {}
@@ -129,7 +132,7 @@ if {[variant_isset langselect]} {
                     set ld "${destroot}/${ld}"
                 }
                 ui_debug "locale checking ${ld}"
-                foreach l [glob -nocomplain ${ld}/*.qm] {
+                foreach l [glob -nocomplain ${ld}/*.${langselect_qm_ext}] {
                     set lang [file rootname [file tail ${l}]]
                     if {${langselect_qm_basename} ne {}} {
                         if {[llength ${langselect_qm_dir}] eq [llength ${langselect_qm_basename}]} {
