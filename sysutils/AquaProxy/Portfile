@@ -1,0 +1,178 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
+PortSystem          1.0
+if {${os.major} >= 13} {
+    PortGroup       code_sign 1.0
+}
+
+name                AquaProxy
+version             2025.07.14
+
+categories          audio
+supported_archs     x86_64 i386
+license             2024,Wowfunhappy
+maintainers         nomaintainer
+
+description         A proxy for fixing HTTPS connection issues in legacy OS X versions
+long_description    A mitm proxy which can be used to fix HTTPS connection issues in legacy versions of Mac OS X \
+                    This port provides an alternative to Wowfunhappy's installer, aimed at users who want to \
+                    modify the current system behaviour as little as possible. The Dictionary.app mod is not \
+                    currently installed, and the HTTPS proxy is exported via the HTTPS_PROXY env. var. only \
+                    when it corresponds to the Aqua Proxy.
+
+homepage            https://mavericksforever.com
+
+master_sites        https://mavericksforever.com/downloads
+distname            "Aqua Proxy"
+worksrcdir          AquaProxy
+use_dmg             yes
+supported_archs     x86_64
+
+checksums           rmd160  128a903097739991746128cc4f951e8d35e09558 \
+                    sha256  f2da4ea5488622ce94f995fe9da5dff82fe48ca26c1351bddc3aaa865a2589ba
+#                     size    7825603
+
+depends_extract     port:gzip
+depends_build       port:cctools
+
+variant mail description {install a proxy for IMAP functionality in Apple Mail} {}
+default_variants-append +mail
+
+post-extract {
+    if {[file exists "${workpath}/${distname}"]} {
+        file delete -force ${worksrcpath}
+        file rename "${workpath}/${distname}" ${worksrcpath}
+    }
+    set pkgname [join ${distname} " "]
+    system -W ${worksrcpath} \
+        "pkgutil --expand \"${pkgname}.pkg\" ${worksrcdir}"
+    system -W ${worksrcpath}/${worksrcdir} "gzip -dc Aqua_Proxy.pkg/Payload | cpio -id"
+    file rename ${worksrcpath}/${worksrcdir}/Modern_Root_Certificates.pkg/Scripts/postinstall \
+        ${worksrcpath}/${worksrcdir}/Modern_Root_Certificates.pkg/
+}
+
+patch.pre_args      -Np1
+patchfiles-append   patch-postinstall.diff \
+                    patch-launchd-plists.diff
+
+post-patch {
+    reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}|g" \
+                    AquaProxy/Aqua_Proxy.pkg/Scripts/postinstall \
+                    ${worksrcpath}/${worksrcdir}/Modern_Root_Certificates.pkg/postinstall \
+                    AquaProxy/Library/LaunchAgents/Wowfunhappy.AquaProxy.HTTP.plist \
+                    AquaProxy/Library/LaunchAgents/Wowfunhappy.AquaProxy.IMAP.plist \
+                    AquaProxy/Library/LaunchAgents/Wowfunhappy.AquaProxy.Restarter.plist
+}
+
+use_configure       no
+
+set srcdir          ${worksrcpath}/${worksrcdir}/Library/AquaProxy
+
+build {
+    # change the id of our shared libraries
+    foreach lib {libMacportsLegacySupport.dylib libWowfunhappyLegacySupport.dylib} {
+        system -W ${srcdir} "install_name_tool -id ${prefix}/Library/AquaProxy/${lib} \
+            ${srcdir}/${lib}"
+    }
+    # make certain the proxy applications use the libraries where we installed them
+    foreach exe {Aqua-HTTP-Proxy Aqua-IMAP-Proxy} {
+        system -W ${srcdir} "install_name_tool -change \
+            libWowfunhappyLegacySupport.dylib ${prefix}/Library/AquaProxy/libWowfunhappyLegacySupport.dylib \
+            ${exe}"
+        system -W ${srcdir} "install_name_tool -change \
+            libMacportsLegacySupport.dylib ${prefix}/Library/AquaProxy/libMacportsLegacySupport.dylib \
+            ${exe}"
+    }
+}
+
+destroot {
+    xinstall -m 755 -d ${destroot}${prefix}/Library/AquaProxy
+    foreach bin {libMacportsLegacySupport.dylib libWowfunhappyLegacySupport.dylib Aqua-HTTP-Proxy Aqua-IMAP-Proxy} {
+        xinstall -m 755 ${srcdir}/${bin} ${destroot}${prefix}/Library/AquaProxy/
+        codesign ${destroot}${prefix}/Library/AquaProxy/${bin} -
+    }
+    foreach txt [glob ${srcdir}/*.txt] {
+        xinstall -m 644 ${txt} ${destroot}${prefix}/Library/AquaProxy/[file tail ${txt}].sample
+    }
+
+    xinstall -m 755 -d ${destroot}${prefix}/Library/LaunchAgents
+    foreach f {HTTP IMAP Restarter SyncProxiesWithShell} {
+        xinstall -m 644 ${srcdir}/../LaunchAgents/Wowfunhappy.AquaProxy.${f}.plist \
+            ${destroot}${prefix}/Library/LaunchAgents/
+    }
+
+    xinstall -m 755 -d ${destroot}${prefix}/libexec/AquaProxy
+    xinstall -m 755 ${worksrcpath}/AquaProxy/Aqua_Proxy.pkg/Scripts/postinstall \
+            ${destroot}${prefix}/libexec/AquaProxy/activate.sh
+    xinstall -m 755 ${worksrcpath}/${worksrcdir}/Modern_Root_Certificates.pkg/postinstall \
+            ${destroot}${prefix}/libexec/AquaProxy/install-certificates.sh
+    xinstall -m 755 ${filespath}/pre-deactivate.sh \
+            ${destroot}${prefix}/libexec/AquaProxy/deactivate.sh
+    reinplace "s|@PREFIX@|${prefix}|g" \
+            ${destroot}${prefix}/libexec/AquaProxy/deactivate.sh
+
+    if {![variant_isset mail]} {
+        reinplace "/IMAP/d" \
+            ${destroot}${prefix}/libexec/AquaProxy/activate.sh \
+            ${destroot}${prefix}/libexec/AquaProxy/deactivate.sh
+    }
+
+    xinstall -m 755 -d ${destroot}${prefix}/etc/openssl
+    foreach cert [glob ${worksrcpath}/${worksrcdir}/Modern_Root_Certificates.pkg/Scripts/*] {
+        xinstall -m 644 ${cert} ${destroot}${prefix}/etc/openssl
+    }
+
+    xinstall -m 755 -d ${destroot}${prefix}/share/doc/AquaProxy
+    xinstall -m 644 ${worksrcpath}/Readme.rtf \
+            ${destroot}${prefix}/share/doc/AquaProxy
+
+    # create the AquaProxy certificates
+    system -W ${destroot}${prefix}/libexec/AquaProxy \
+        "env DESTROOT=${destroot} ./activate.sh --create-certificates"
+    file attributes ${destroot}${prefix}/Library/AquaProxy/AquaProxy-key.pem -permissions 0644
+}
+
+pre-install {
+    # YES, we (have to!) run the script from the destroot.
+    # there is no point in running it every time the port gets activated, after all.
+    ui_msg ">>> Installing missing modern certificates in to the system keychain"
+    system "env DESTROOT=${destroot} ${destroot}${prefix}/libexec/AquaProxy/install-certificates.sh"
+
+    # Currently, the proxy will be started under the UID of whomever is logged in which means
+    # that we have to pre-create the various output/log files and make them world-writable :-/
+    foreach p {Aqua-HTTP-Proxy Aqua-IMAP-Proxy} {
+        system "touch /var/log/${p}.log /var/log/${p}.error.log"
+        system "chmod 666 /var/log/${p}.log /var/log/${p}.error.log"
+    }
+}
+
+pre-deactivate {
+    if {[file exists ${prefix}/libexec/AquaProxy/deactivate.sh]} {
+        ui_msg "<<< Stopping ${name} processes and removing the associated certicate"
+        system "${prefix}/libexec/AquaProxy/deactivate.sh"
+    }
+}
+
+post-activate {
+    foreach txt {redirects flags no-mitm} {
+        if {![file exists ${prefix}/Library/AquaProxy/${txt}.txt]} {
+            xinstall -m 644 ${prefix}/Library/AquaProxy/${txt}.txt.sample \
+                ${prefix}/Library/AquaProxy/${txt}.txt
+        }
+    }
+
+    ui_msg ">>> Enabling the ${name} services and certificate"
+    system "${prefix}/libexec/AquaProxy/activate.sh"
+}
+
+notes-append "
+Aqua Proxy has been installed. Now, you need to tell Mac OS X to use your new proxy.
+
+In System Preferences -> Network -> <Your Active Connection> -> Advanced -> Proxies:
+	1.	Enable the checkbox for Secure Web Proxy (HTTPS).
+	2.	Under Secure Web Proxy Server, type localhost (or 127.0.0.1) and 6531 in the field after the ':'
+	3.	Click OK, then Apply.
+
+If you regularly use more than one network connection (for example, an Ethernet and a Wi-Fi connection), you should enable the proxy on all of those connections.
+
+"
