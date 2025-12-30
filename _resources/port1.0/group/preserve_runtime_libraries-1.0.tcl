@@ -63,6 +63,7 @@ default preserve_runtime_libraries_allow_unregistered {no}
 namespace eval PRL {
     set preserve_runtime_library_root "previous"
     set preserve_runtime_library_dir "${preserve_runtime_library_root}/${subport}"
+    set called 0
     proc variants {} {
         global PortInfo
         set variants ""
@@ -78,7 +79,7 @@ namespace eval PRL {
 }
 
 proc preserve_libraries {srcdir patternlist} {
-    global prefix subport destroot PRL::preserve_runtime_library_dir version revision
+    global prefix subport destroot PRL::preserve_runtime_library_dir version revision PRL::called
     set prlp [split [option preserve_runtime_libraries_ports] " "]
     if {[option preserve_runtime_libraries_allow_unregistered]} {
         lappend prlp 0
@@ -224,6 +225,7 @@ proc preserve_libraries {srcdir patternlist} {
     } else {
         ui_debug "The preserve_runtime_libraries variant isn't set; ignoring the call to preserve_libraries"
     }
+    set PRL::called [expr ${PRL::called} +1]
 }
 
 if {${os.platform} eq "darwin"} {
@@ -322,6 +324,43 @@ if {![variant_exists preserve_runtime_libraries]} {
     variant preserve_runtime_libraries description {Preserve the pre-existing runtime \
                                         libraries to ease the rebuilding load during upgrades.} {}
 }
+
+proc PRL::callback {} {
+    global PRL::called os.platform prefix destroot
+    post-destroot {
+        if {[variant_isset preserve_runtime_libraries] && ${PRL::called} == 0} {
+            ui_debug "+preserve_runtime_libraries is set but preserve_libraries hasn't been called by the Portfile;"
+            if {${os.platform} eq "darwin"} {
+                #set pattern "lib*.\[0-9\]\[0-9\.\]*.dylib"
+                set pattern "lib*.dylib"
+            } else {
+                #set pattern {lib*.so.[0-9][0-9\.]*}
+                set pattern {lib*.so.*}
+            }
+            set own [glob -nocomplain ${destroot}${prefix}/lib/${pattern}]
+            set patterns [list]
+            foreach f ${own} {
+                set f [file tail ${f}]
+                set rf [file root ${f}]
+                # find the base library name, = everything up to the first dot
+                while {${rf} ne ${f}} {
+                    set f ${rf}
+                    set rf [file root ${f}]
+                }
+                if {${os.platform} eq "darwin"} {
+                    lappend patterns "${f}.*.dylib"
+                } else {
+                    lappend patterns "${f}.*.so.*"
+                }
+            }
+            set patterns [lsort -unique ${patterns}]
+            ui_debug "\tpreserving a generic pattern of libraries in \"${prefix}/lib\": \"${patterns}\""
+            preserve_libraries ${prefix}/lib ${patterns}
+        }
+    }
+}
+
+port::register_callback PRL::callback
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
 
