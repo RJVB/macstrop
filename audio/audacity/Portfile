@@ -2,24 +2,7 @@
 
 PortSystem          1.0
 
-PortGroup           github 1.0
-# PortGroups for the main ports
-PortGroup           wxWidgets 1.0
-PortGroup           active_variants 1.1
-PortGroup           cmake 1.1
-platform darwin {
-    PortGroup       compiler_blacklist_versions 1.0
-}
-# platform darwin {
-#     PortGroup       legacysupport 1.1
-#     # 10.9-10.12 are "not officially supported but should work"
-#     legacysupport.newest_darwin_requires_legacy 16
-#     legacysupport.use_mp_libcxx yes
-# }
-#>> RJVB
-PortGroup           compress_workdir 1.0
-PortGroup           LTO 1.0
-#<< RJVB
+PortGroup           github 1.1
 
 # placeholder name
 name                audacity
@@ -29,7 +12,13 @@ platforms           darwin
 license             GPL-2+
 universal_variant   no
 
-set aud_app_path    ${applications_dir}/Audacity.app
+if {${os.platform} eq "darwin"} {
+    set aud_app_path ${applications_dir}/Audacity.app
+} else {
+    set aud_app_path ${prefix}/bin/audacity
+}
+
+patch.pre_args      -p1
 
 # The manual subport is defined first since it doesn't require a lot of setting up
 subport "${name}-manual" {}
@@ -37,12 +26,13 @@ if {${subport} eq "${name}-manual"} {
     description     The manual for audacity
     long_description {*}${description}. Users of port:audacity2-legacy may prefer to use the \
                     online manual instead of installing this port.
-    github.setup    audacity audacity-manual 3.3.0 vv
+    github.setup    audacity audacity-manual 3.5.1 v
     homepage        https://manual.audacityteam.org/
-    checksums       rmd160  d43c4df6b0945c370fe905120a364a288896631a \
-                    sha256  502d8ad2f2e2fc98556614ac0def466fea59fe816a8c9f9b6e8b4e1001accd8b
-#                     size    22921933
-    depends_run     path:${aud_app_path}/Contents:audacity
+    checksums       rmd160  a2394c21f7b5d27cc45208b226c743051278a41b \
+                    sha256  a87f9bdd774ee7ce5a4a4e5e0783ffa7cb28913dcffe7310efc065471a14cf93
+#                     size    22377404
+    depends_run     path:${aud_app_path}:audacity
+    worksrcdir      help
     use_configure   no
     build           {}
     installs_libs   no
@@ -60,6 +50,70 @@ if {${subport} eq "${name}-manual"} {
     }
     return          0
 }
+
+platform linux {
+    set VST3VERSION 3.7.7
+
+    subport vst3sdk-src {}
+    if {${subport} eq "vst3sdk-src"} {
+        description     VST 3 Plug-In SDK (sources)
+        long_description \
+                    VST 3 is a general rework of the long-serving VST plug-in interface. \
+                    It is not compatible with the older VST versions, but it includes some \
+                    new features and possibilities. We have redesigned the API to make it \
+                    not only far easier and more reliable for developers to work with, but \
+                    have also provided completely new possibilities for plug-ins.\n\
+                    This port installs the sources, patched for use by Audacity!
+        license         Steinberg-VST3
+        github.tarball_from \
+                    archive
+        github.setup steinbergmedia vst3sdk ${VST3VERSION} v _build_19
+        # the interesting things are all in submodules, so we need to git-fetch...
+        fetch.type  git
+        distname    vst3sdk
+
+        depends_build port:bzip2 \
+                    port:libarchive \
+                    port:coreutils
+
+        # patch applied by Audacity:
+        patchfiles-append \
+                    vst3/disable-validator.diff
+        # don't build Jack support:
+        patchfiles-append \
+                    vst3/patch-disable-jack.diff
+
+        use_configure no
+        installs_libs no
+        supported_archs noarch
+        platforms   any
+
+        set dest    ${prefix}/src/vst3sdk/
+        build       {
+            system -W ${workpath} "bsdtar -cvj --exclude .git --exclude .gitmodules -f ${version}.tar.bz2 vst3sdk"
+        }
+        destroot {
+            xinstall -m 755 -d ${destroot}${dest}
+            xinstall -m 644 ${workpath}/${version}.tar.bz2 ${destroot}${dest}/
+        }
+        return      0
+    }
+}
+
+# Now we can load the PortGroups for the main ports
+PortGroup           wxWidgets 1.0
+PortGroup           active_variants 1.1
+PortGroup           cmake 1.1
+
+#>> RJVB
+PortGroup           compress_workdir 1.0
+PortGroup           LTO 1.0
+PortGroup           from_ports_variant 1.0
+## only when upgrading the port version:
+## PortGroup           patch-updater 1.0
+#<< RJVB
+
+patch.pre_args      -Np1
 
 subport audacity-wxWidgets {}
 
@@ -94,8 +148,8 @@ if {${build.cmd} ne "ninja"} {
 cmake.save_configure_cmd "install log"
 #<< RJVB
 
-platform darwin {
-    compiler.blacklist *gcc* {clang < 602}
+# platform darwin {
+    compiler.blacklist {clang < 602}
     foreach clv {3.3 3.4 3.5 3.7 5.0 6.0 7.0 8.0 9.0 10 11 12 13 14} {
         compiler.blacklist-append macports-clang-${clv}
     }
@@ -105,7 +159,7 @@ platform darwin {
         }
         compiler.fallback-prepend macports-clang-${clv}
     }
-}
+# }
 
 # ensure pre-compiled headers and the possible use of ccache can co-exist
 configure.env-append \
@@ -138,9 +192,17 @@ long_description    Audacity is a free, easy-to-use, multi-track audio editor an
                     And more!
 
 conflicts           audacity2-legacy audacity3-legacy audacity-legacy audacity-gtk
-github.setup        audacity audacity c8c17426f6723781a9adc88eb1e1b5b3c2fc1b96
+## # 2 commits after the 3.5.1 release:
+## github.setup        audacity audacity 0ffa73b9f44acc339e12a350edadd96590dc4b17
+## version             3.5.1.2 ; revision 1
+## last commit with with 3.3 source code layout: 2677399f41473fd1cd13f607018475741350c0e1
+git.shallow_since   2024-01-01
+github.setup        audacity audacity 2677399f41473fd1cd13f607018475741350c0e1
+version             3.5.1.409 ; revision 1
+## From the CMake file:
+# Set this value to 0 for alpha, 1 for beta, 2 for release builds
+set build_level     2
 
-version             3.3.3.748 ; revision 3
 # this port is intended to facilitate development efforts shared with "upstreams"
 # so using git instead of a tarball fetch type is more appropriate for the current maintainer
 fetch.type          git
@@ -164,6 +226,9 @@ if {${os.platform} eq "darwin"} {
             default_variants +wxsystem
         }
     }
+} else {
+    variant wxsystem description {Depend on wxWidgets from MacPorts} {}
+    default_variants +wxsystem
 }
 
 compiler.cxx_standard 2017
@@ -205,8 +270,11 @@ if {[variant_isset wxsystem]} {
 depends_build-append \
                     port:pkgconfig \
                     port:rapidjson \
-                    port:cctools \
-                    port:ffmpeg-dev
+                    port:nasm
+platform darwin {
+    depends_build-append \
+                    port:cctools
+}
 
 depends_lib-append  port:freetype \
                     path:lib/pkgconfig/harfbuzz.pc:harfbuzz \
@@ -222,11 +290,6 @@ depends_lib-append  port:freetype \
                     port:libsndfile \
                     port:libvorbis \
                     port:sqlite3
-
-# platform linux {
-#     depends_lib-append \
-#                     path:lib/libuuid.so:ossp-uuid
-# }
 if {${os.arch} ne "arm"} {
     depends_lib-append \
                     port:libid3tag \
@@ -234,27 +297,30 @@ if {${os.arch} ne "arm"} {
 }
 depends_lib-append  port:mpg123 \
                     port:wavpack
+platform linux {
+    depends_lib-append \
+                    port:util-linux
+}
 # audacity could use port:lv2 and port:lilv but would also require a port:suil for that to be possible.
 
-patch.pre_args      -Np1
-
-# among other things, we add frameworks AudioToolbox, Cocoa and Carbon because somewhere after wxW 3.1.3
-# the wx build system no longer exports private libraries. Carbon could be temporary because wxW
-# dropped Carbon usage somewhere around 3.1.4 but drops support for 10.9- earlier. This is not
-# required when building against port:wxWidgets-3.1 but it won't hurt either.
+# 4 lines of Mac-specific comments
+#
+#
+#
 patchfiles-append   patch-cmakefiles-@prefix@.diff \
                     patch-build-preparations.diff \
-                    patch-fix_bundlepy-@prefix@.diff \
-                    patch-build-pre-1014.diff
+                    patch-fix_bundlepy-@prefix@.diff
 
-if {[variant_isset wxsystem]} {
-    # make certain we're not embedding any wxWidgets libraries
-    add_patchfile_ifexists \
+platform darwin {
+    if {[variant_isset wxsystem]} {
+        # make certain we're not embedding any wxWidgets libraries
+        add_patchfile_ifexists \
                     patch-no-embedded-wxW.diff
-} else {
-    # make certain we're embedding our wxWidgets libraries
-    add_patchfile_ifexists \
+    } else {
+        # make certain we're embedding our wxWidgets libraries
+        add_patchfile_ifexists \
                     patch-embed-wxW.diff
+    }
 }
 
 patchfiles-append   patch-aboutdlg.diff \
@@ -263,52 +329,37 @@ patchfiles-append   patch-aboutdlg.diff \
                     patch-ffmpeg-functions.diff
 
 platform darwin {
-    depends_build-append \
-                    port:nasm
-
     # use lame from MacPorts (partial revert of ae431bc5)
     patchfiles-append \
                     patch-more-decent-font-sizes.diff \
                     patch-use-MPlame.diff
-    # work around a missing implementation in wxCocoa's wxSound class
-    patchfiles-append \
-                    patch-implement-progdial=beep.diff
-    add_patchfile_ifexists \
-                    patch-no-sdk1013.diff
+#     add_patchfile_ifexists \
+#                     patch-no-sdk1013.diff
 }
-patchfiles-append   patch-enable-compact-menu.diff \
-                    patch-mac-wrapper.diff
+platform linux {
+    patchfiles-append \
+                    patch-rearrange-control-buttons.diff
+    # use lame from MacPorts (partial revert of ae431bc5)
+    patchfiles-append \
+                    patch-use-MPlame.diff
+    # I've begun to be hit by a known bug in libstdc++ and/or glibc, causing std::call_once
+    # to hang after a call to it was interrupted by an exception (cf. https://gcc.gnu.org/bugzilla/show_bug.cgi?id=66146
+    # and yes, it can happen on x86 too). Replace all calls to the function with something that
+    # has the same effect.
+    add_patchfile_ifexists \
+                    ${PPREFIX}patch-linux-call_once.diff \
+                    ${PPREFIX}patch-fix-owner_less.diff \
+                    patch-call-XInitThreads.diff
+}
+patchfiles-append   patch-enable-compact-menu.diff
 add_patchfile_ifexists \
                     ${PPREFIX}patch-temp-fixes.diff
 
 platform darwin {
-    add_patchfile_ifexists \
-                    ${PPREFIX}patch-cursor-fixes.diff
     variant suil description {Build the GUI library for LV2 plugins\; requires Qt5} {
         PortGroup   qt5 1.0
     }
 }
-
-# if {${subport} eq "${name}"} {
-# #>> RJVB
-#     ## uncomment only when intending to regenerate the patchfiles
-#     ## Prerequisites:
-#     ## - git-unpatch
-#     ## - checkout -b <some scratch branch>
-#     patch {
-#         foreach p ${patchfiles} {
-#             set pf [file join ${filespath} ${p}]
-#             ui_info "--> applying patch ${p} (${pf})"
-#             system -W ${worksrcpath} "${patch.cmd} ${patch.pre_args} -i ${pf}"
-#             if {${p} eq "add_enGB_translation.diff"} {
-#                 system -W ${worksrcpath} "git add locale/en_GB.po"
-#             }
-#             system -W ${worksrcpath} "git diff --no-ext-diff HEAD -- . > ${pf}"
-#             system -W ${worksrcpath} "git commit -v -a -m \"${pf}\""
-#         }
-#     }
-# #<< RJVB
-# }
 
 if {${os.platform} eq "darwin"} {
     if {${os.major} >= 17} {
@@ -336,10 +387,41 @@ patchfiles-append   patch-cmake-dont-strip.diff
 # avoid a race-like condition when quitting:
 patchfiles-append   patch-scrubui-issue-9585.diff
 
+patchfiles-append   patch-fix-@version@.diff \
+                    patch-conan-@cxx_stdlib@.diff \
+                    patch-viewport-racelike-condition.diff
+# restore theme blending to avoid psychedelic colours
+patchfiles-append   patch-restore-theme-blending.diff
+
+# backport FFmpeg8 support
+patchfiles-append   patch-ffmpeg8-support.diff
+
 # quelch a huge number of warnings
 configure.cxxflags-append \
                     -Wno-inconsistent-missing-override \
                     -Wno-overloaded-virtual
+
+# if {${subport} eq "${name}"} {
+# #>> RJVB
+#     ## uncomment only when intending to regenerate the patchfiles
+#     ## Prerequisites:
+#     ## - git-unpatch
+#     ## - checkout -b <some scratch branch>
+#     ## Or use the patch-updater 1.0 PortGroup !!
+#     patch {
+#         foreach p ${patchfiles} {
+#             set pf [file join ${filespath} ${p}]
+#             ui_info "--> applying patch ${p} (${pf})"
+#             system -W ${worksrcpath} "${patch.cmd} ${patch.pre_args} -i ${pf}"
+#             if {${p} eq "add_enGB_translation.diff"} {
+#                 system -W ${worksrcpath} "git add locale/en_GB.po"
+#             }
+#             system -W ${worksrcpath} "git diff --no-ext-diff HEAD -- . > ${pf}"
+#             system -W ${worksrcpath} "git commit -v -a -m \"${pf}\""
+#         }
+#     }
+# #<< RJVB
+# }
 
 platform darwin {
     # set the install_rpath first
@@ -361,6 +443,7 @@ platform darwin {
     configure.pre_args-replace \
                     -DCMAKE_INSTALL_NAME_DIR="${cmake.install_prefix}/lib" \
                     -DCMAKE_INSTALL_NAME_DIR="${aud_app_path}/Contents/Frameworks"
+    set AUDIOUNITS  on
 }
 platform linux {
     cmake.install_rpath-append \
@@ -371,10 +454,19 @@ platform linux {
                     ${wxWidgets.prefix}/lib/
     configure.ldflags-append \
                     -Wl,-rpath,${wxWidgets.prefix}/lib/
+    # just add the Qt5 lib path. We attempt not to build the Qt5 suil plugin
+    # but it seems the build system doesn't heed that instruction so we can
+    # just as well make certain it uses our libraries if they're there.
+    cmake.install_rpath-append \
+                    ${prefix}/libexec/qt5/lib
+    configure.ldflags-append \
+                    -Wl,-rpath,${prefix}/libexec/qt5/lib
+    set AUDIOUNITS  off
 }
 
 set _OPT "audacity_"
 configure.args-append \
+                    -DAUDACITY_BUILD_LEVEL=${build_level} \
                     -DCMAKE_MACOSX_RPATH=ON \
                     -DCMAKE_STRIP=/bin/echo \
                     -D${_OPT}lib_preference=system \
@@ -383,7 +475,7 @@ configure.args-append \
                     -D${_OPT}has_crashreports=off \
                     -D${_OPT}has_updates_check=off \
                     -D${_OPT}conan_allow_prebuilt_binaries=off \
-                    -D${_OPT}use_audio_units=on \
+                    -D${_OPT}use_audio_units=${AUDIOUNITS} \
                     -D${_OPT}use_ffmpeg=loaded \
                     -D${_OPT}use_soxr=system \
                     -D${_OPT}use_vamp=local \
@@ -393,13 +485,10 @@ configure.args-append \
                     -D${_OPT}use_soundtouch=system \
                     -D${_OPT}use_twolame=system \
                     -D${_OPT}use_midi=system \
-                    -D${_OPT}has_vst3=off \
+                    -D${_OPT}has_vst3=OFF \
                     -D${_OPT}use_sqlite=system \
                     -D${_OPT}use_pch=[if_not_ccache] \
                     -DCMAKE_DISABLE_FIND_PACKAGE_JACK=On
-
-require_active_variants portaudio "" jack
-
 ## Is this automatic nowadays?
 # if {${os.arch} eq "arm"} {
 #     configure.args-append \
@@ -407,18 +496,53 @@ require_active_variants portaudio "" jack
 #                     -D${_OPT}use_id3tag=off
 # }
 
-    # in this port implementation we always get wxWidgets from the system
-    # (but we embed the libraries if building -wxsystem)
-    configure.args-append \
+# in this port implementation we always get wxWidgets from the system
+# (but we embed the libraries if building -wxsystem)
+configure.args-append \
                     -DwxWidgets_CONFIG_EXECUTABLE=${wxWidgets.wxconfig} \
                     -D${_OPT}use_wxwidgets=system
-    configure.env-append \
+configure.env-append \
                     WX_CONFIG=${wxWidgets.wxconfig}
 
-if {[variant_isset suil]} {
+if {[variant_exists suil] && [variant_isset suil]} {
     configure.args-replace \
                     -D${_OPT}use_suil_qt5=OFF \
                     -D${_OPT}use_suil_qt5=ON
+}
+platform linux {
+    configure.cppflags-append \
+                    -I${prefix}/include -DUSE_AQUA_THEME
+    variant jack description {enable JACK support} {}
+    if {[variant_isset jack]} {
+        # disable the find_package disabler!
+        configure.args-replace \
+                    -DCMAKE_DISABLE_FIND_PACKAGE_JACK=On \
+                    -DCMAKE_DISABLE_FIND_PACKAGE_JACK=Off
+        require_active_variants portaudio jack
+    } else {
+        require_active_variants portaudio "" jack
+    }
+
+    variant vst3 description {enable support for VST3 plugins} {}
+    if {[variant_exists vst3] && [variant_isset vst3]} {
+        depends_build-append \
+                    port:vst3sdk-src \
+                    port:libarchive
+        patchfiles-append \
+                    patch-parallel-vst3-build.diff
+        pre-configure {
+            if {![file exists ${worksrcpath}/vst3sdk]} {
+                system -W ${worksrcpath} "bsdtar -x --exclude doc -f ${prefix}/src/vst3sdk/${VST3VERSION}.tar.bz2"
+            }
+        }
+        # The build system will build the vst3 sdk during the configure step
+        configure.env-append \
+                    CMAKE_BUILD_PARALLEL_LEVEL=${build.jobs} \
+                    BUILD_JOBS=${build.jobs}
+        configure.args-replace \
+                    -D${_OPT}has_vst3=OFF \
+                    -D${_OPT}use_vst3sdk=system
+    }
 }
 
 # make sure the C++ stdlib argument is added to the LDFLAGS too
@@ -427,11 +551,40 @@ if {${configure.cxx_stdlib} ne "" && [string match *clang* ${configure.cxx}]} {
                     -stdlib=${configure.cxx_stdlib}
 }
 
-# platform darwin {
-#     post-configure {
-#         reinplace -q "s|compiler.libcxx=libstdc++|compiler.libcxx=libc++|g" ${build.dir}/.conan/profiles/default
-#     }
-# }
+proc select_newer_ffmpeg {fvers} {
+    global prefix configure.args cmake.module_path cmake.install_rpath
+    PortGroup       conflicts_build 1.0
+    depends_lib-replace \
+                    path:bin/ffmpeg:ffmpeg \
+                    port:${fvers}
+    cmake.module_path-append \
+                    ${prefix}/libexec/${fvers}
+    cmake.install_rpath-append \
+                    ${prefix}/libexec/${fvers}/lib
+    conflicts_build ffmpeg-dev
+}
+
+variant ffmpeg6 conflicts ffmpeg7 ffmpeg8 description {build against ffmpeg6} {}
+variant ffmpeg7 conflicts ffmpeg6 ffmpeg8 description {build against ffmpeg7} {}
+variant ffmpeg8 conflicts ffmpeg6 ffmpeg7 description {build against ffmpeg8} {}
+if {[variant_isset ffmpeg8]} {
+    select_newer_ffmpeg ffmpeg8
+} elseif {[variant_isset ffmpeg7]} {
+    select_newer_ffmpeg ffmpeg7
+} elseif {[variant_isset ffmpeg6]} {
+    select_newer_ffmpeg ffmpeg6
+} else {
+    cmake.module_path
+    depends_build-append \
+                port:ffmpeg-dev
+}
+
+pre-configure {
+    if {![file exists ${build.dir}/conan]} {
+        ui_warn "The Conan build environment needs to be set up. It's as barbarian as the name suggests \
+            so this will take some time!"
+    }
+}
 
 # with everything defined/declared as intended we can now
 # handle the post-patch step with its reinplace statements.
@@ -439,17 +592,25 @@ post-patch {
     reinplace -W ${worksrcpath} "s|/usr/local|${prefix}|g" \
                                 src/effects/ladspa/LadspaEffect.cpp \
                                 src/effects/VST/VSTEffect.cpp \
-                                modules/mod-mp3/ExportMP3.cpp \
+                                modules/import-export/mod-mp3/ExportMP3.cpp \
                                 lib-src/lv2/lilv/wscript \
                                 lib-src/lv2/lilv/test/lilv_test.c
     reinplace -W ${worksrcpath} "s|/Library/Audio/Plug-Ins/Vamp|/Library/Audio/Plug-Ins/Vamp:${prefix}/lib/vamp|g" \
                                 lib-src/libvamp/src/vamp-hostsdk/PluginHostAdapter.cpp
-    reinplace -W ${worksrcpath} "s|/Library/Application Support/audacity/libs|${prefix}/lib|g" \
-                                modules/mod-ffmpeg/FFmpeg.h
+#     reinplace -W ${worksrcpath} "s|/Library/Application Support/audacity/libs|${prefix}/lib|g" \
+#                                 modules/import-export/mod-ffmpeg/FFmpeg.h
     reinplace -W ${worksrcpath} "s|@PREFIX@|/opt/local|g" \
                                 cmake-proxies/lv2/CMakeLists.txt \
                                 scripts/build/macOS/fix_bundle.py \
-                                modules/mod-ffmpeg/lib-ffmpeg-support/FFmpegFunctions.cpp
+                                modules/import-export/mod-ffmpeg/lib-ffmpeg-support/FFmpegFunctions.cpp
+    set varray [split ${version} "."]
+    reinplace -W ${worksrcpath} "s|@VERSION_MINOR@|[lindex ${varray} 1]|g" CMakeLists.txt
+    reinplace -W ${worksrcpath} "s|@VERSION_PATCH@|[lindex ${varray} 2]|g" CMakeLists.txt
+    if {${configure.cxx_stdlib} eq "" || [string match *libstdc* ${configure.cxx_stdlib}]} {
+        reinplace -W ${worksrcpath} "s|@CXX_STDLIB@|libstdc++11|g" conan/helpers/profiles.py
+    } else {
+        reinplace -W ${worksrcpath} "s|@CXX_STDLIB@|libc++|g" conan/helpers/profiles.py
+    }
 }
 
 pre-build {
@@ -460,6 +621,11 @@ pre-build {
     } else {
         system "echo '#define GIT_DESC \"${version}\"' > ${worksrcpath}/src/GitDesc.h"
     }
+}
+if {[info exists PatchUpdater::ignore_files]} {
+    PatchUpdater::ignore_files \
+            src/RevisionIdent.h \
+            src/GitDesc.h
 }
 
 platform darwin {
@@ -517,6 +683,27 @@ platform darwin {
         system "chmod 755 ${destroot}${prefix}/bin/audacity"
     }
 }
+platform linux {
+    post-destroot {
+        if {[variant_isset wxsystem]} {
+            # delete any of these
+            foreach l [glob -nocomplain ${destroot}${prefix}/lib/audacity/libwx*.so] {
+                file delete ${l}
+            }
+        } else {
+            foreach l [glob -nocomplain ${build.dir}/lib/libwx*.so] {
+                xinstall -m 755 ${l} ${destroot}${prefix}/lib/audacity/
+            }
+        }
+        file delete ${destroot}${prefix}/share/audacity/plug-ins/cmake_install.cmake
+        file delete ${destroot}${prefix}/share/audacity/nyquist/cmake_install.cmake
+        # install a wrapper script that sets LD_LIBRARY_PATH, which may be required
+        # for dynamic FFmpeg loading to work.
+	   file rename ${destroot}${prefix}/bin/audacity ${destroot}${prefix}/bin/audacity.bin
+	   xinstall -m 755 ${filespath}/audacity.sh ${destroot}${prefix}/bin/audacity
+	   reinplace "s|@PREFIX@|${prefix}|g" ${destroot}${prefix}/bin/audacity
+    }
+}
 
 post-destroot {
     if {${os.platform} ne "darwin"} {
@@ -526,11 +713,35 @@ post-destroot {
     }
 }
 
+if {${os.platform} eq "darwin"} {
+    set seedoc "installing_and_updating_audacity_on_mac_os_x"
+} else {
+    set seedoc "installing_and_updating_audacity_on_linux"
+}
+
 notes "
     In case Audacity complains about finding FFmpeg or Lame, please locate these libraries\
     under ${prefix}/lib in the Libraries section of the Preferences dialog (see\
-    https://manual.audacityteam.org/man/installing_and_updating_audacity_on_mac_os_x.html#locate)
+    https://manual.audacityteam.org/man/${seedoc}.html#locate).
+
+    In case you observe colours that seem off in Audacity's user interface after updating, find\
+    the text of this note in `port file ${subport}` and read the suggestions below on how you\
+    might be able to fix that.
 "
+
+## about weird colours appearing in the Audacity user interface:
+# Audacity uses bitmaps to define how buttons look (theming), and had a colour blend function (that
+# I bring back in this port). For this, it invokes an "image-compiler" utility during the build
+# process, which uses the lib-theme.so *shared* library Audacity will itself use too. The problem is
+# that this step is not well shielded from lib-theme.so libraries elsewhere on the system where the
+# loader can find them, in particular the one in the destination prefix. This can lead to weird
+# "glitches" and the aforementioned weird colours appearing in the user interface.
+# See https://forum.audacityteam.org/t/which-wxwidgets-version-and-gtk-engine-on-linux/149541/4?u=rjvb
+# If this happens, do `sudo port deactivate audacity` and rebuild the port. If you still have the
+# build directory you can do
+# > rm -rf `port work audacity`/build/libraries/lib-theme*
+# > touch `port work audacity`/build/CMakeCache.txt
+# followed by your usual build command (after deactivating the port, of course)..
 
 platform darwin {
     if {![variant_isset wxsystem]} {
@@ -579,7 +790,14 @@ platform darwin {
                         wxW/patch-fix-cocoa-process.diff \
                         wxW/patch-cocoa-build.diff
 
-    set wxtype          osx_cocoa
+    if {${os.platform} eq "darwin"} {
+        set wxtype      osx_cocoa
+    } else {
+        set wxtype      gtk2
+        # we take GTk2 deps from the system, preferably
+        fromPorts::depends lib-append \
+                        port:gtk2
+    }
     compiler.c_standard 2011
     compiler.cxx_standard 2014
 

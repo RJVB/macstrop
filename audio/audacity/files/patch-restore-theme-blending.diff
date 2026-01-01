@@ -1,0 +1,215 @@
+commit b78dcf3cb90cc95f2ea50892b88a39647d35b521
+Author: LWinterberg <87814144+LWinterberg@users.noreply.github.com>
+Date:   Thu Mar 14 15:17:46 2024 +0100
+
+    Remove theme blending
+
+diff --git b/libraries/image-compiler/imageCompilerMain.cpp a/libraries/image-compiler/imageCompilerMain.cpp
+index 12699e413..268db9a69 100644
+--- b/libraries/image-compiler/imageCompilerMain.cpp
++++ a/libraries/image-compiler/imageCompilerMain.cpp
+@@ -76,6 +76,8 @@ bool App::OnInit()
+ {
+    // Leave no persistent side-effect on preferences
+    SettingScope scope;
++   // Don't blend colors
++   GUIBlendThemes.Write(false);
+ 
+    // So that the program can interpret PNG
+    wxInitAllImageHandlers();
+diff --git b/libraries/lib-theme/Theme.cpp a/libraries/lib-theme/Theme.cpp
+index 4fa712965..0f20ba299 100644
+--- b/libraries/lib-theme/Theme.cpp
++++ a/libraries/lib-theme/Theme.cpp
+@@ -262,6 +262,28 @@ void ThemeBase::LoadTheme( teThemeType Theme )
+    RotateImageInto( bmpRecordBeside, bmpRecordBelow, false );
+    RotateImageInto( bmpRecordBesideDisabled, bmpRecordBelowDisabled, false );
+ 
++   // Other modifications of images happening only when the setting
++   // GUIBlendThemes is true
++   if ( mpSet->bRecolourOnLoad ) {
++      RecolourTheme();
++
++      wxColor Back        = theTheme.Colour( clrTrackInfo );
++      wxColor CurrentText = theTheme.Colour( clrTrackPanelText );
++      wxColor DesiredText = wxSystemSettings::GetColour( wxSYS_COLOUR_WINDOWTEXT );
++
++      int TextColourDifference =  ColourDistance( CurrentText, DesiredText );
++
++      // Theming is very accepting of alternative text colours.  They just need to
++      // have decent contrast to the background colour, if we're blending themes.
++      if ( TextColourDifference != 0 ) {
++         int ContrastLevel        =  ColourDistance( Back, DesiredText );
++         if ( ContrastLevel > 250 )
++            Colour( clrTrackPanelText ) = DesiredText;
++      }
++      mpSet->bRecolourOnLoad = false;
++   }
++
++
+    // Next line is not required as we haven't yet built the GUI
+    // when this function is (or should be) called.
+    // AColor::ApplyUpdatedImages();
+@@ -289,6 +311,42 @@ int ThemeBase::ColourDistance( wxColour & From, wxColour & To ){
+       + abs( From.Blue() - To.Blue() );
+ }
+ 
++// This function coerces a theme to be more like the system colours.
++// Only used for built in themes.  For custom themes a user
++// will choose a better theme for them and just not use a mismatching one.
++void ThemeBase::RecolourTheme()
++{
++   wxColour From = Colour( clrMedium );
++#if defined( __WXGTK__ )
++   wxColour To = wxSystemSettings::GetColour( wxSYS_COLOUR_BACKGROUND );
++#else
++   wxColour To = wxSystemSettings::GetColour( wxSYS_COLOUR_3DFACE );
++#endif
++   // only recolour if recolouring is slight.
++   int d = ColourDistance( From, To );
++
++   // Don't recolour if difference is too big.
++   if( d  > 120 )
++      return;
++
++   // A minor tint difference from standard does not need 
++   // to be recouloured either.  Includes case of d==0 which is nothing
++   // needs to be done.
++   if( d < 40 )
++      return;
++
++   Colour( clrMedium ) = To;
++   RecolourBitmap( bmpUpButtonLarge, From, To );
++   RecolourBitmap( bmpDownButtonLarge, From, To );
++   RecolourBitmap( bmpHiliteButtonLarge, From, To );
++   RecolourBitmap( bmpUpButtonSmall, From, To );
++   RecolourBitmap( bmpDownButtonSmall, From, To );
++   RecolourBitmap( bmpHiliteButtonSmall, From, To );
++
++   Colour( clrTrackInfo ) = To;
++   RecolourBitmap( bmpUpButtonExpand, From, To );
++}
++
+ wxImage ThemeBase::MaskedImage( char const ** pXpm, char const ** pMask )
+ {
+    wxBitmap Bmp1( pXpm );
+@@ -851,6 +909,8 @@ bool ThemeBase::ReadImageCache( teThemeType type, bool bOkIfNotFound)
+ //      ImageCache.InitAlpha();
+ //   }
+ 
++   mpSet->bRecolourOnLoad = GUIBlendThemes.Read();
++
+    using namespace BasicUI;
+ 
+    if( type.empty() || type == "custom" )
+@@ -1317,3 +1377,5 @@ ChoiceSetting &GUITheme()
+ 
+    return setting;
+ }
++
++BoolSetting GUIBlendThemes{ wxT("/GUI/BlendThemes"), true };
+diff --git b/libraries/lib-theme/Theme.h a/libraries/lib-theme/Theme.h
+index e3317f19a..0dfbb6517 100644
+--- b/libraries/lib-theme/Theme.h
++++ a/libraries/lib-theme/Theme.h
+@@ -105,6 +105,7 @@ struct ThemeSet
+    std::vector<wxColour> mColours;
+ 
+    bool bInitialised = false;
++   bool bRecolourOnLoad = false;  // Request to recolour.
+ };
+ 
+ struct ThemeChangeMessage {
+@@ -171,6 +172,7 @@ public:
+    void WriteOneImageMap( teThemeType id );
+    static bool LoadPreferredTheme();
+    void RecolourBitmap( int iIndex, wxColour From, wxColour To );
++   void RecolourTheme();
+ 
+    int ColourDistance( wxColour & From, wxColour & To );
+    wxColour & Colour( int iIndex );
+@@ -219,6 +221,10 @@ public:
+ 
+ extern THEME_API Theme theTheme;
+ 
++extern THEME_API BoolSetting
++     GUIBlendThemes
++;
++
+ extern THEME_API ChoiceSetting
+      &GUITheme()
+ ;
+diff --git b/src/prefs/GUIPrefs.cpp a/src/prefs/GUIPrefs.cpp
+index 3b53a8d01..7cabb7a65 100644
+--- b/src/prefs/GUIPrefs.cpp
++++ a/src/prefs/GUIPrefs.cpp
+@@ -177,6 +177,8 @@ void GUIPrefs::PopulateOrExchange(ShuttleGui & S)
+       S.TieCheckBox(XXO("Re&tain labels if selection snaps to a label"),
+                     {wxT("/GUI/RetainLabels"),
+                      false});
++      S.TieCheckBox(XXO("B&lend system and Audacity theme"),
++                     GUIBlendThemes);
+ #ifndef __WXMAC__
+       /* i18n-hint: RTL stands for 'Right to Left'  */
+       S.TieCheckBox(XXO("Use mostly Left-to-Right layouts in RTL languages"),
+@@ -217,6 +219,7 @@ bool GUIPrefs::Commit()
+    }
+    AColor::ApplyUpdatedImages();
+ 
++   GUIBlendThemes.Invalidate();
+    DecibelScaleCutoff.Invalidate();
+ 
+    return true;
+diff --git b/src/prefs/ThemePrefs.cpp a/src/prefs/ThemePrefs.cpp
+index 1b95cb379..f337a28bf 100644
+--- b/src/prefs/ThemePrefs.cpp
++++ a/src/prefs/ThemePrefs.cpp
+@@ -57,6 +57,21 @@ BEGIN_EVENT_TABLE(ThemePrefs, PrefsPanel)
+    EVT_BUTTON(idSaveThemeAsCode,     ThemePrefs::OnSaveThemeAsCode)
+ END_EVENT_TABLE()
+ 
++static bool ConfirmSave()
++{
++   if (!GUIBlendThemes.Read())
++      return true;
++
++   using namespace BasicUI;
++   const auto message = Verbatim(
++"\"Blend system and Audacity theme\" in Interface Preferences was on.\n"
++"This may cause images to to be re-saved with slight changes of color."
++   );
++
++   return MessageBoxResult::Cancel != ShowMessageBox(message,
++      MessageBoxOptions{}.CancelButton().IconStyle(Icon::Warning));
++}
++
+ ThemePrefs::ThemePrefs(wxWindow * parent, wxWindowID winid)
+ /* i18n-hint: A theme is a consistent visual style across an application's
+  graphical user interface, including choices of colors, and similarity of images
+@@ -181,6 +196,8 @@ void ThemePrefs::OnLoadThemeComponents(wxCommandEvent & WXUNUSED(event))
+ /// Save Theme to multiple png files.
+ void ThemePrefs::OnSaveThemeComponents(wxCommandEvent & WXUNUSED(event))
+ {
++   if (!ConfirmSave())
++      return;
+    wxBusyCursor busy;
+    theTheme.SaveThemeComponents();
+ }
+@@ -196,6 +213,8 @@ void ThemePrefs::OnLoadThemeCache(wxCommandEvent & WXUNUSED(event))
+ /// Save Themes, each to a single png file.
+ void ThemePrefs::OnSaveThemeCache(wxCommandEvent & WXUNUSED(event))
+ {
++   if (!ConfirmSave())
++      return;
+    wxBusyCursor busy;
+    theTheme.CreateImageCache();
+    theTheme.WriteImageMap();// bonus - give them the html version.
+@@ -212,6 +231,8 @@ void ThemePrefs::OnReadThemeInternal(wxCommandEvent & WXUNUSED(event))
+ /// Save Theme as C source code.
+ void ThemePrefs::OnSaveThemeAsCode(wxCommandEvent & WXUNUSED(event))
+ {
++   if (!ConfirmSave())
++      return;
+    wxBusyCursor busy;
+    theTheme.SaveThemeAsCode();
+    theTheme.WriteImageDefs();// bonus - give them the Defs too.
