@@ -165,7 +165,7 @@ proc portfetch::gitfetch {args} {
 
     if {${git.branch} ne ""} {
         set env "GIT_DIR=[shellescape ${worksrcpath}/.git] GIT_WORK_TREE=[shellescape ${worksrcpath}]"
-        set cmdstring "$env ${git.cmd} checkout -q ${git.branch} 2>&1"
+        set cmdstring "$env ${git.cmd} checkout --recurse-submodules ${git.branch} 2>&1"
         ui_debug "Executing $cmdstring"
         if {[catch {system $cmdstring} result]} {
             return -code error [msgcat::mc "Git checkout failed"]
