@@ -1,39 +1,10 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
-DIRS="@PREFIX@"
-LIBDIRS=""
-
-for d in ${DIRS} ;do
-	for sd in lib lib/x86_64-linux-gnu libexec/qt5/lib libexec/ffmpeg8/lib libexec/ffmpeg7/lib libexec/ffmpeg6/lib ;do
-		if [ -d ${d}/${sd} ] ;then
-			case ${LD_LIBRARY_PATH} in
-				*${d}/${sd}*)
-					# already included
-					;;
-				*)
-					if [ "${LIBDIRS}" = "" ] ;then
-						LIBDIRS="${d}/${sd}"
-					else
-						LIBDIRS="${LIBDIRS}:${d}/${sd}"
-					fi
-					;;
-			esac
-		fi
-	done
-done
-
-if [ "${LD_LIBRARY_PATH}" != "" ] ;then
-	export LD_LIBRARY_PATH="${LIBDIRS}:${LD_LIBRARY_PATH}"
+if launchctl list | egrep -i '^[0-9].*audacityteam.audacity|^[0-9].*anonymous.audacity' > /dev/null ;then
+	# on Mac, we need to open via LaunchServices if Audacity is already running, or else the process will hang.
+	# NB: we do need to check if launchctl returns a PID (a number) in the 1st column, because phantom
+	# labels can remain with a '-' to indicate that the application isn't running.
+	exec open -W -a "@APPDIR@/Audacity.app" "$@"
 else
-	export LD_LIBRARY_PATH="${LIBDIRS}"
+	exec "@APPDIR@/Audacity.app/Contents/MacOS/Wrapper" "$@"
 fi
-if [ -x @PREFIX@/lib/libwrapped_syscalls.so ] ;then
-	if [ "${LD_PRELOAD}" != "" ] ;then
-		export LD_PRELOAD="@PREFIX@/lib/libwrapped_syscalls.so:${LD_PRELOAD}"
-	else
-		export LD_PRELOAD="@PREFIX@/lib/libwrapped_syscalls.so"
-	fi
-fi
-
-unset GTK_IM_MODULE
-exec -a audacity @PREFIX@/bin/audacity.bin "$@"
