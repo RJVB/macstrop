@@ -15,7 +15,11 @@ if {[namespace exists makefile_pg] && ![info exists LTO_needs_pre_build]} {
     set LTO_needs_pre_build yes
 }
 
+# this is necessary is some as-yet unexplained situations?!
+global LTO.LTO_variant
+
 if {![info exists LTO.LTO_variant]} {
+    ui_msg here
     set LTO.LTO_variant "LTO"
 
     if {[variant_exists ${LTO.LTO_variant}]} {
