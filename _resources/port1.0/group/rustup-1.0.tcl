@@ -423,6 +423,7 @@ if {![rustup::use_rustup]} {
         # we're not building port:rustup itself so we can depend on it
         # and use the openssl PG
         PortGroup openssl 1.0
+        openssl.depends_type        build
         depends_build-append        port:rustup
     }
     if {${os.platform} eq "darwin"} {
