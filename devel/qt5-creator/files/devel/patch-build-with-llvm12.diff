@@ -1,0 +1,181 @@
+diff --git src/tools/clangpchmanagerbackend/source/collectusedmacroactionfactory.h src/tools/clangpchmanagerbackend/source/collectusedmacroactionfactory.h
+index b3f1cc0029..c4e5fdc6ae 100644
+--- src/tools/clangpchmanagerbackend/source/collectusedmacroactionfactory.h
++++ src/tools/clangpchmanagerbackend/source/collectusedmacroactionfactory.h
+@@ -63,14 +63,14 @@ public:
+                                                                     diagnosticConsumer);
+     }
+ 
+-    clang::FrontendAction *create() override
++    std::unique_ptr<clang::FrontendAction> create() override
+     {
+-        return new CollectUsedMacrosAction(m_usedMacros,
++        return std::unique_ptr<clang::FrontendAction>(new CollectUsedMacrosAction(m_usedMacros,
+                                            m_filePathCache,
+                                            m_sourcesManager,
+                                            m_sourceDependencies,
+                                            m_sourceFiles,
+-                                           m_fileStatuses);
++                                           m_fileStatuses));
+     }
+ 
+ private:
+diff --git src/tools/clangpchmanagerbackend/source/generatepchactionfactory.h src/tools/clangpchmanagerbackend/source/generatepchactionfactory.h
+index 50061a9e6c..192a55a10d 100644
+--- src/tools/clangpchmanagerbackend/source/generatepchactionfactory.h
++++ src/tools/clangpchmanagerbackend/source/generatepchactionfactory.h
+@@ -43,7 +43,7 @@ public:
+ 
+     bool BeginInvocation(clang::CompilerInstance &compilerInstance) override
+     {
+-        compilerInstance.getPreprocessorOpts().DisablePCHValidation = true;
++        compilerInstance.getPreprocessorOpts().DisablePCHOrModuleValidation = clang::DisableValidationForModuleKind::All;
+         std::unique_ptr<llvm::MemoryBuffer> Input = llvm::MemoryBuffer::getMemBuffer(m_fileContent);
+         compilerInstance.getPreprocessorOpts().addRemappedFile(m_filePath, Input.release());
+ 
+@@ -63,9 +63,9 @@ public:
+         , m_fileContent(fileContent)
+     {}
+ 
+-    clang::FrontendAction *create() override
++    std::unique_ptr<clang::FrontendAction> create() override
+     {
+-        return new GeneratePCHAction{m_filePath, m_fileContent};
++        return std::unique_ptr<clang::FrontendAction>(new GeneratePCHAction{m_filePath, m_fileContent});
+     }
+ 
+ private:
+diff --git src/tools/clangpchmanagerbackend/source/collectbuilddependencytoolaction.h src/tools/clangpchmanagerbackend/source/collectbuilddependencytoolaction.h
+index 4f28d0f7c8..181a384e94 100644
+--- src/tools/clangpchmanagerbackend/source/collectbuilddependencytoolaction.h
++++ src/tools/clangpchmanagerbackend/source/collectbuilddependencytoolaction.h
+@@ -62,13 +62,13 @@ public:
+                                                                     diagnosticConsumer);
+     }
+ 
+-    clang::FrontendAction *create() override
++    std::unique_ptr<clang::FrontendAction> create() override
+     {
+-        return new CollectBuildDependencyAction(m_buildDependency,
++        return std::unique_ptr<clang::FrontendAction>(new CollectBuildDependencyAction(m_buildDependency,
+                                                 m_filePathCache,
+                                                 m_excludedIncludeUIDs,
+                                                 m_alreadyIncludedFileUIDs,
+-                                                m_sourcesManager);
++                                                m_sourcesManager));
+     }
+ 
+     std::vector<uint> generateExcludedIncludeFileUIDs(clang::FileManager &fileManager) const
+@@ -77,7 +77,7 @@ public:
+         fileUIDs.reserve(m_excludedFilePaths.size());
+ 
+         for (const ClangBackEnd::FilePath &filePath : m_excludedFilePaths) {
+-            const clang::FileEntry *file = fileManager.getFile({filePath.data(), filePath.size()},
++            auto file = fileManager.getFileRef({filePath.data(), filePath.size()},
+                                                                true);
+ 
+             if (file)
+diff --git src/tools/clangpchmanagerbackend/clangpchmanagerbackend.pro src/tools/clangpchmanagerbackend/clangpchmanagerbackend.pro
+index 0997b0ec96..948370022d 100644
+--- src/tools/clangpchmanagerbackend/clangpchmanagerbackend.pro
++++ src/tools/clangpchmanagerbackend/clangpchmanagerbackend.pro
+@@ -15,6 +15,7 @@ win32 {
+ QT += core network
+ QT -= gui
+ 
++LIBS += @LLVM_LIB@
+ LIBS += $$LIBTOOLING_LIBS
+ INCLUDEPATH += $$LLVM_INCLUDEPATH
+ 
+diff --git src/tools/clangrefactoringbackend/source/collectsymbolsaction.h src/tools/clangrefactoringbackend/source/collectsymbolsaction.h
+index 2074a25a6e..80d6c9154e 100644
+--- src/tools/clangrefactoringbackend/source/collectsymbolsaction.h
++++ src/tools/clangrefactoringbackend/source/collectsymbolsaction.h
+@@ -59,7 +59,7 @@ private:
+         WrappedIndexAction(std::shared_ptr<clang::index::IndexDataConsumer> indexDataConsumer,
+                            clang::index::IndexingOptions indexingOptions)
+             : clang::WrapperFrontendAction(
+-                  clang::index::createIndexingAction(indexDataConsumer, indexingOptions, nullptr))
++                  clang::index::createIndexingAction(indexDataConsumer, indexingOptions))
+         {}
+ 
+         std::unique_ptr<clang::ASTConsumer>
+diff --git src/tools/clangrefactoringbackend/source/clangquery.cpp src/tools/clangrefactoringbackend/source/clangquery.cpp
+index 21ebeb8367..612c7ba39d 100644
+--- src/tools/clangrefactoringbackend/source/clangquery.cpp
++++ src/tools/clangrefactoringbackend/source/clangquery.cpp
+@@ -78,7 +78,8 @@ void ClangQuery::findLocations()
+                    std::make_move_iterator(asts.end()),
+                    [&] (std::unique_ptr<clang::ASTUnit> &&ast) {
+         Diagnostics diagnostics;
+-        auto optionalMatcher = Parser::parseMatcherExpression({m_query.data(), m_query.size()},
++        llvm::StringRef matcherCode = {m_query.data(), m_query.size()};
++        auto optionalMatcher = Parser::parseMatcherExpression(matcherCode,
+                                                               nullptr,
+                                                               &diagnostics);
+         parseDiagnostics(diagnostics);
+diff --git src/tools/clangrefactoringbackend/source/symbolscollector.cpp src/tools/clangrefactoringbackend/source/symbolscollector.cpp
+index 1ceb4a14ce..6493b5a193 100644
+--- src/tools/clangrefactoringbackend/source/symbolscollector.cpp
++++ src/tools/clangrefactoringbackend/source/symbolscollector.cpp
+@@ -78,8 +78,8 @@ newFrontendActionFactory(Factory *consumerFactory,
+               m_sourceFileCallbacks(sourceFileCallbacks)
+         {}
+ 
+-        clang::FrontendAction *create() override {
+-            return new ConsumerFactoryAdaptor(m_consumerFactory, m_sourceFileCallbacks);
++        std::unique_ptr<clang::FrontendAction> create() override {
++            return std::unique_ptr<clang::FrontendAction>(new ConsumerFactoryAdaptor(m_consumerFactory, m_sourceFileCallbacks));
+         }
+ 
+     private:
+diff --git src/tools/clangrefactoringbackend/clangrefactoringbackend.pro src/tools/clangrefactoringbackend/clangrefactoringbackend.pro
+index 630afdf618..2d2c8bd970 100644
+--- src/tools/clangrefactoringbackend/clangrefactoringbackend.pro
++++ src/tools/clangrefactoringbackend/clangrefactoringbackend.pro
+@@ -15,6 +15,7 @@ win32 {
+ QT += core network
+ QT -= gui
+ 
++LIBS += @LLVM_LIB@
+ LIBS += $$LIBTOOLING_LIBS
+ INCLUDEPATH += $$LLVM_INCLUDEPATH
+ INCLUDEPATH += ../clangpchmanagerbackend/source
+diff --git src/plugins/clangformat/clangformatbaseindenter.cpp src/plugins/clangformat/clangformatbaseindenter.cpp
+index 1b316bea55..f5b9eb6c78 100644
+--- src/plugins/clangformat/clangformatbaseindenter.cpp
++++ src/plugins/clangformat/clangformatbaseindenter.cpp
+@@ -245,7 +245,7 @@ static TextEditor::Replacements utf16Replacements(const QTextBlock &block,
+                                     .size();
+         convertedReplacements.emplace_back(utf16Offset,
+                                            utf16Length,
+-                                           QString::fromStdString(replacement.getReplacementText()));
++                                           QString::fromStdString(replacement.getReplacementText().str()));
+     }
+ 
+     return convertedReplacements;
+diff --git src/plugins/clangformat/clangformatutils.cpp src/plugins/clangformat/clangformatutils.cpp
+index 6b151020d6..b130525089 100644
+--- src/plugins/clangformat/clangformatutils.cpp
++++ src/plugins/clangformat/clangformatutils.cpp
+@@ -67,7 +67,7 @@ static void applyCppCodeStyleSettings(clang::format::FormatStyle &style,
+                                       const CppCodeStyleSettings &settings)
+ {
+     style.IndentCaseLabels = settings.indentSwitchLabels;
+-    style.AlignOperands = settings.alignAssignments;
++    style.AlignOperands = settings.alignAssignments ? clang::format::FormatStyle::OAS_AlignAfterOperator : clang::format::FormatStyle::OAS_DontAlign ;
+     style.NamespaceIndentation = FormatStyle::NI_None;
+     if (settings.indentNamespaceBody)
+         style.NamespaceIndentation = FormatStyle::NI_All;
+diff --git src/plugins/clangformat/clangformat.pro src/plugins/clangformat/clangformat.pro
+index 653dacdaba..813d0149e0 100644
+--- src/plugins/clangformat/clangformat.pro
++++ src/plugins/clangformat/clangformat.pro
+@@ -11,6 +11,7 @@ win32 {
+     CONFIG(debug, debug|release):requires(equals(LLVM_BUILDMODE, "Debug"))
+ }
+ 
++LIBS += @LLVM_LIB@
+ LIBS += $$CLANGFORMAT_LIBS
+ INCLUDEPATH += $$LLVM_INCLUDEPATH
+ 
