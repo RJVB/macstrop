@@ -203,7 +203,7 @@ if {[variant_isset ${LTO.LTO_variant}] && ![info exists building_qt5]} {
     if {[info exists LTO.configure_option]} {
         if {[LTO::variant_enabled ${LTO.LTO_variant}]} {
             ui_debug "LTO: setting custom configure option(s) \"${LTO.configure_option}\""
-            configure.args-append       ${LTO.configure_option}
+            configure.args-append       {*}${LTO.configure_option}
         } else {
             ui_warn "LTO PG: LTO.configure_option is set but so is LTO.disable_LTO - seems fishy!"
         }
