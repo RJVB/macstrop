@@ -350,6 +350,7 @@ proc PRL::callback {} {
                 if {${os.platform} eq "darwin"} {
                     lappend patterns "${f}.*.dylib"
                 } else {
+                    lappend patterns "${f}.so.*"
                     lappend patterns "${f}.*.so.*"
                 }
             }
