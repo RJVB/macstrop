@@ -1,8 +1,40 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 749c306..a1023a3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -27,6 +27,8 @@ set(PROJECT_COPYRIGHT "© 2013-2025 Oleg Shparber and other contributors")
+ if(NOT ZEAL_USE_QT5)
+     find_package(QT NAMES Qt6 COMPONENTS Core)
+     set(QT_MINIMUM_VERSION 6.2.0)
++else()
++    option(USE_WEBKIT "Use the faster, leaner, legacy QtWebKit instead of QtWebEngine" OFF)
+ endif()
+ 
+ if(NOT QT_FOUND)
+diff --git a/src/app/CMakeLists.txt b/src/app/CMakeLists.txt
+index d2521b0..549a40b 100644
+--- a/src/app/CMakeLists.txt
++++ b/src/app/CMakeLists.txt
+@@ -1,6 +1,11 @@
+-find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Concurrent WebEngineWidgets Widgets REQUIRED)
+-if (Qt${QT_VERSION_MAJOR}Widgets_VERSION VERSION_LESS QT_MINIMUM_VERSION)
+-    message(FATAL_ERROR "Qt version >= ${QT_MINIMUM_VERSION} is required.")
++if (USE_WEBKIT)
++    add_definitions(-DUSE_WEBKIT)
++    find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Concurrent WebKitWidgets Widgets REQUIRED)
++else()
++    find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Concurrent WebEngineWidgets Widgets REQUIRED)
++    if (Qt${QT_VERSION_MAJOR}Widgets_VERSION VERSION_LESS QT_MINIMUM_VERSION)
++        message(WARNING "Qt version >= ${QT_MINIMUM_VERSION} might be required.")
++    endif()
+ endif()
+ 
+ # Define output binary name.
 diff --git a/src/libs/browser/CMakeLists.txt b/src/libs/browser/CMakeLists.txt
-index 5f242bc..4ec66fe 100644
+index 5f242bc..5e10e4a 100644
 --- a/src/libs/browser/CMakeLists.txt
 +++ b/src/libs/browser/CMakeLists.txt
-@@ -1,12 +1,26 @@
+@@ -1,12 +1,27 @@
 -add_library(Browser STATIC
 -    searchtoolbar.cpp
 -    settings.cpp
@@ -13,6 +45,7 @@ index 5f242bc..4ec66fe 100644
 -    webview.cpp
 -)
 +if(USE_QTWEBKIT)
++    add_definitions(-DUSE_WEBKIT)
 +    add_library(Browser STATIC
 +        webcontrol.cpp
 +        searchtoolbar.cpp
@@ -24,8 +57,8 @@ index 5f242bc..4ec66fe 100644
 -target_link_libraries(Browser PRIVATE Qt${QT_VERSION_MAJOR}::WebChannel Qt${QT_VERSION_MAJOR}::WebEngineWidgets)
 +    target_link_libraries(Browser)
 +
-+    find_package(Qt5 COMPONENTS WebKitWidgets REQUIRED)
-+    target_link_libraries(Browser Qt5::WebKitWidgets)
++    find_package(Qt${QT_VERSION_MAJOR} COMPONENTS WebKitWidgets REQUIRED)
++    target_link_libraries(Browser PRIVATE Qt${QT_VERSION_MAJOR}::WebKitWidgets)
 +else()
 +    add_library(Browser STATIC
 +        searchtoolbar.cpp
@@ -525,3 +558,316 @@ index eb6137d..7d3e6a6 100644
      bool handleMouseReleaseEvent(QMouseEvent *event);
      bool handleWheelEvent(QWheelEvent *event);
  
+diff --git a/src/libs/core/CMakeLists.txt b/src/libs/core/CMakeLists.txt
+index 0cc20e1..1cb3c09 100644
+--- a/src/libs/core/CMakeLists.txt
++++ b/src/libs/core/CMakeLists.txt
+@@ -10,15 +10,24 @@ add_library(Core STATIC
+ 
+ target_link_libraries(Core PRIVATE Registry Ui)
+ 
+-find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Network WebEngineCore Widgets REQUIRED)
+-target_link_libraries(Core PRIVATE Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::WebEngineCore Qt${QT_VERSION_MAJOR}::Widgets)
++if (USE_WEBKIT)
++     add_definitions(-DUSE_WEBKIT)
++     find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Network WebKit Widgets REQUIRED)
++     target_link_libraries(Core PRIVATE Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::WebKit Qt${QT_VERSION_MAJOR}::Widgets)
++else()
++	find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Network WebEngineCore Widgets REQUIRED)
++	target_link_libraries(Core PRIVATE Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::WebEngineCore Qt${QT_VERSION_MAJOR}::Widgets)
++endif()
+ 
+ if(QT_VERSION_MAJOR EQUAL 6)
+     find_package(Qt6 COMPONENTS WebEngineCore REQUIRED)
+     target_link_libraries(Core PRIVATE Qt6::WebEngineCore)
+ else()
+-    find_package(Qt5 COMPONENTS WebEngineWidgets REQUIRED)
+-    target_link_libraries(Core PRIVATE Qt5::WebEngineWidgets)
++    if (USE_WEBKIT)
++    else()
++        find_package(Qt5 COMPONENTS WebEngineWidgets REQUIRED)
++        target_link_libraries(Core PRIVATE Qt5::WebEngineWidgets)
++    endif()
+ endif()
+ 
+ find_package(LibArchive QUIET)
+diff --git a/src/libs/core/settings.cpp b/src/libs/core/settings.cpp
+index 4ed53bb..c879b1c 100644
+--- a/src/libs/core/settings.cpp
++++ b/src/libs/core/settings.cpp
+@@ -12,8 +12,14 @@
+ #include <QStandardPaths>
+ #include <QUrl>
+ #include <QUuid>
++#ifdef USE_WEBKIT
++#include <QWebSettings>
++using QWEBSETTINGS = QWebSettings;
++#else
+ #include <QWebEngineProfile>
+ #include <QWebEngineSettings>
++using QWEBSETTINGS = QWebEngineSettings;
++#endif
+ 
+ #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+ #include <QStyleHints>
+@@ -45,6 +51,12 @@ Settings::Settings(QObject *parent)
+ #else
+     qRegisterMetaType<ContentAppearance>("ContentAppearance");
+     qRegisterMetaType<ExternalLinkPolicy>("ExternalLinkPolicy");
++#ifdef USE_WEBKIT
++    // Enable local storage due to https://github.com/zealdocs/zeal/issues/872.
++    QWebSettings *webSettings = QWebSettings::globalSettings();
++    webSettings->setLocalStoragePath(Application::cacheLocation() + QLatin1String("/localStorage"));
++    webSettings->setAttribute(QWebSettings::LocalStorageEnabled, true);
++#endif
+ #endif
+ 
+     load();
+@@ -124,19 +136,23 @@ void Settings::load()
+     }
+ #endif
+ 
++#ifdef USE_WEBKIT
++    QWEBSETTINGS *webSettings = QWebSettings::globalSettings();
++#else
+     // Fonts
+-    QWebEngineSettings *webSettings = QWebEngineProfile::defaultProfile()->settings();
++    QWEBSETTINGS *webSettings = QWebEngineProfile::defaultProfile()->settings();
++#endif
+     serifFontFamily = settings->value(QStringLiteral("serif_font_family"),
+-                                      webSettings->fontFamily(QWebEngineSettings::SerifFont)).toString();
++                                      webSettings->fontFamily(QWEBSETTINGS::SerifFont)).toString();
+     sansSerifFontFamily = settings->value(QStringLiteral("sans_serif_font_family"),
+-                                          webSettings->fontFamily(QWebEngineSettings::SansSerifFont)).toString();
++                                          webSettings->fontFamily(QWEBSETTINGS::SansSerifFont)).toString();
+     fixedFontFamily = settings->value(QStringLiteral("fixed_font_family"),
+-                                      webSettings->fontFamily(QWebEngineSettings::FixedFont)).toString();
++                                      webSettings->fontFamily(QWEBSETTINGS::FixedFont)).toString();
+ 
+-    static const QMap<QString, QWebEngineSettings::FontFamily> fontFamilies = {
+-        {QStringLiteral("sans-serif"), QWebEngineSettings::SansSerifFont},
+-        {QStringLiteral("serif"), QWebEngineSettings::SerifFont},
+-        {QStringLiteral("monospace"), QWebEngineSettings::FixedFont}
++    static const QMap<QString, QWEBSETTINGS::FontFamily> fontFamilies = {
++        {QStringLiteral("sans-serif"), QWEBSETTINGS::SansSerifFont},
++        {QStringLiteral("serif"), QWEBSETTINGS::SerifFont},
++        {QStringLiteral("monospace"), QWEBSETTINGS::FixedFont}
+     };
+ 
+     defaultFontFamily = settings->value(QStringLiteral("default_font_family"),
+@@ -147,23 +163,23 @@ void Settings::load()
+         defaultFontFamily = QStringLiteral("serif");
+     }
+ 
+-    webSettings->setFontFamily(QWebEngineSettings::SansSerifFont, sansSerifFontFamily);
+-    webSettings->setFontFamily(QWebEngineSettings::SerifFont, serifFontFamily);
+-    webSettings->setFontFamily(QWebEngineSettings::FixedFont, fixedFontFamily);
++    webSettings->setFontFamily(QWEBSETTINGS::SansSerifFont, sansSerifFontFamily);
++    webSettings->setFontFamily(QWEBSETTINGS::SerifFont, serifFontFamily);
++    webSettings->setFontFamily(QWEBSETTINGS::FixedFont, fixedFontFamily);
+ 
+     const QString defaultFontFamilyResolved = webSettings->fontFamily(fontFamilies.value(defaultFontFamily));
+-    webSettings->setFontFamily(QWebEngineSettings::StandardFont, defaultFontFamilyResolved);
++    webSettings->setFontFamily(QWEBSETTINGS::StandardFont, defaultFontFamilyResolved);
+ 
+     defaultFontSize = settings->value(QStringLiteral("default_font_size"),
+-                                      webSettings->fontSize(QWebEngineSettings::DefaultFontSize)).toInt();
++                                      webSettings->fontSize(QWEBSETTINGS::DefaultFontSize)).toInt();
+     defaultFixedFontSize = settings->value(QStringLiteral("default_fixed_font_size"),
+-                                           webSettings->fontSize(QWebEngineSettings::DefaultFixedFontSize)).toInt();
++                                           webSettings->fontSize(QWEBSETTINGS::DefaultFixedFontSize)).toInt();
+     minimumFontSize = settings->value(QStringLiteral("minimum_font_size"),
+-                                      webSettings->fontSize(QWebEngineSettings::MinimumFontSize)).toInt();
++                                      webSettings->fontSize(QWEBSETTINGS::MinimumFontSize)).toInt();
+ 
+-    webSettings->setFontSize(QWebEngineSettings::DefaultFontSize, defaultFontSize);
+-    webSettings->setFontSize(QWebEngineSettings::DefaultFixedFontSize, defaultFixedFontSize);
+-    webSettings->setFontSize(QWebEngineSettings::MinimumFontSize, minimumFontSize);
++    webSettings->setFontSize(QWEBSETTINGS::DefaultFontSize, defaultFontSize);
++    webSettings->setFontSize(QWEBSETTINGS::DefaultFixedFontSize, defaultFixedFontSize);
++    webSettings->setFontSize(QWEBSETTINGS::MinimumFontSize, minimumFontSize);
+ 
+     isHighlightOnNavigateEnabled = settings->value(QStringLiteral("highlight_on_navigate"), true).toBool();
+     customCssFile = settings->value(QStringLiteral("custom_css_file")).toString();
+@@ -340,6 +356,7 @@ void Settings::migrate(QSettings *settings) const
+         }
+     }
+ 
++
+     //
+     // Pre 0.3
+     //
+diff --git a/src/libs/ui/CMakeLists.txt b/src/libs/ui/CMakeLists.txt
+index 3015ea2..75f2d95 100644
+--- a/src/libs/ui/CMakeLists.txt
++++ b/src/libs/ui/CMakeLists.txt
+@@ -22,5 +22,11 @@ add_library(Ui STATIC
+ 
+ target_link_libraries(Ui PRIVATE Browser Sidebar QxtGlobalShortcut Widgets Registry Util)
+ 
+-find_package(Qt${QT_VERSION_MAJOR} COMPONENTS WebEngineWidgets REQUIRED)
+-target_link_libraries(Ui PRIVATE Qt${QT_VERSION_MAJOR}::WebEngineWidgets)
++if (USE_WEBKIT)
++    add_definitions(-DUSE_WEBKIT)
++    find_package(Qt${QT_VERSION_MAJOR} COMPONENTS WebKitWidgets REQUIRED)
++    target_link_libraries(Ui PRIVATE Qt${QT_VERSION_MAJOR}::WebKitWidgets)
++else()
++    find_package(Qt${QT_VERSION_MAJOR} COMPONENTS WebEngineWidgets REQUIRED)
++    target_link_libraries(Ui PRIVATE Qt${QT_VERSION_MAJOR}::WebEngineWidgets)
++endif()
+diff --git a/src/libs/ui/browsertab.cpp b/src/libs/ui/browsertab.cpp
+index b6611bf..1a33f88 100644
+--- a/src/libs/ui/browsertab.cpp
++++ b/src/libs/ui/browsertab.cpp
+@@ -20,7 +20,15 @@
+ #include <QStyle>
+ #include <QToolButton>
+ #include <QVBoxLayout>
++#ifdef USE_WEBKIT
++#include <QWebHistory>
++using QWEBHISTORY = QWebHistory;
++using QWEBHISTORYITEM = QWebHistoryItem;
++#else
+ #include <QWebEngineHistory>
++using QWEBHISTORY = QWebEngineHistory;
++using QWEBHISTORYITEM = QWebEngineHistoryItem;
++#endif
+ 
+ using namespace Zeal;
+ using namespace Zeal::WidgetUi;
+@@ -64,11 +72,11 @@ BrowserTab::BrowserTab(QWidget *parent)
+     auto backMenu = new QMenu(m_backButton);
+     connect(backMenu, &QMenu::aboutToShow, this, [this, backMenu]() {
+         backMenu->clear();
+-        QWebEngineHistory *history = m_webControl->history();
+-        QList<QWebEngineHistoryItem> items = history->backItems(10);
++        QWEBHISTORY *history = m_webControl->history();
++        QList<QWEBHISTORYITEM> items = history->backItems(10);
+         for (auto it = items.crbegin(); it != items.crend(); ++it) {
+             const QIcon icon = docsetIcon(it->url());
+-            const QWebEngineHistoryItem item = *it;
++            const QWEBHISTORYITEM item = *it;
+             backMenu->addAction(icon, it->title(), this, [=](bool) { history->goToItem(item); });
+         }
+     });
+@@ -86,9 +94,9 @@ BrowserTab::BrowserTab(QWidget *parent)
+     auto forwardMenu = new QMenu(m_forwardButton);
+     connect(forwardMenu, &QMenu::aboutToShow, this, [this, forwardMenu]() {
+         forwardMenu->clear();
+-        QWebEngineHistory *history = m_webControl->history();
++        QWEBHISTORY *history = m_webControl->history();
+         const auto forwardItems = history->forwardItems(10);
+-        for (const QWebEngineHistoryItem &item : forwardItems) {
++        for (const QWEBHISTORYITEM &item : forwardItems) {
+             const QIcon icon = docsetIcon(item.url());
+             forwardMenu->addAction(icon, item.title(), this, [=](bool) { history->goToItem(item); });
+         }
+@@ -135,7 +143,6 @@ BrowserTab::BrowserTab(QWidget *parent)
+ 
+         // TODO: Add custom 'Page has been removed' page.
+         navigateToStartPage();
+-
+         // TODO: Cleanup history.
+     });
+ }
+diff --git a/src/libs/ui/settingsdialog.cpp b/src/libs/ui/settingsdialog.cpp
+index e6d4221..38e87f5 100644
+--- a/src/libs/ui/settingsdialog.cpp
++++ b/src/libs/ui/settingsdialog.cpp
+@@ -13,8 +13,14 @@
+ 
+ #include <QDir>
+ #include <QFileDialog>
++#ifdef USE_WEBKIT
++#include <QWebSettings>
++using QWEBSETTINGS = QWebSettings;
++#else
+ #include <QWebEngineProfile>
+ #include <QWebEngineSettings>
++using QWEBSETTINGS = QWebEngineSettings;
++#endif
+ 
+ using namespace Zeal;
+ using namespace Zeal::WidgetUi;
+@@ -24,9 +30,9 @@ namespace {
+ constexpr int AvailableFontSizes[] = {9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+                                       20, 22, 24, 26, 28, 30, 32, 34, 36,
+                                       40, 44, 48, 56, 64, 72};
+-constexpr QWebEngineSettings::FontFamily BasicFontFamilies[] = {QWebEngineSettings::SerifFont,
+-                                                                QWebEngineSettings::SansSerifFont,
+-                                                                QWebEngineSettings::FixedFont};
++constexpr QWEBSETTINGS::FontFamily BasicFontFamilies[] = {QWEBSETTINGS::SerifFont,
++                                                                QWEBSETTINGS::SansSerifFont,
++                                                                QWEBSETTINGS::FixedFont};
+ } // namespace
+ 
+ SettingsDialog::SettingsDialog(QWidget *parent)
+@@ -66,51 +72,55 @@ SettingsDialog::SettingsDialog(QWidget *parent)
+         ui->globalHotKeyGroupBox->setToolTip(tr("Global shortcuts are not supported on the current platform."));
+     }
+ 
+-    QWebEngineSettings *webSettings = Browser::Settings::defaultProfile()->settings();
++#ifdef USE_WEBKIT
++    QWEBSETTINGS *webSettings = QWebSettings::globalSettings();
++#else
++    QWEBSETTINGS *webSettings = Browser::Settings::defaultProfile()->settings();
++#endif
+ 
+     // Avoid casting in each connect.
+     auto currentIndexChangedSignal
+             = static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged);
+ 
+-    auto syncStandardFont = [this, webSettings](QWebEngineSettings::FontFamily fontFamily,
++    auto syncStandardFont = [this, webSettings](QWEBSETTINGS::FontFamily fontFamily,
+             const QFont &font) {
+         const int index = ui->defaultFontComboBox->currentIndex();
+         if (BasicFontFamilies[index] == fontFamily) {
+-            webSettings->setFontFamily(QWebEngineSettings::StandardFont, font.family());
++            webSettings->setFontFamily(QWEBSETTINGS::StandardFont, font.family());
+         }
+     };
+ 
+     connect(ui->defaultFontComboBox, currentIndexChangedSignal,
+             this, [webSettings](int index) {
+         const QString fontFamily = webSettings->fontFamily(BasicFontFamilies[index]);
+-        webSettings->setFontFamily(QWebEngineSettings::StandardFont, fontFamily);
++        webSettings->setFontFamily(QWEBSETTINGS::StandardFont, fontFamily);
+     });
+ 
+     connect(ui->serifFontComboBox, &QFontComboBox::currentFontChanged,
+             this, [webSettings, syncStandardFont](const QFont &font) {
+-        webSettings->setFontFamily(QWebEngineSettings::SerifFont, font.family());
+-        syncStandardFont(QWebEngineSettings::SerifFont, font);
++        webSettings->setFontFamily(QWEBSETTINGS::SerifFont, font.family());
++        syncStandardFont(QWEBSETTINGS::SerifFont, font);
+     });
+     connect(ui->sansSerifFontComboBox, &QFontComboBox::currentFontChanged,
+             this, [webSettings, syncStandardFont](const QFont &font) {
+-        webSettings->setFontFamily(QWebEngineSettings::SansSerifFont, font.family());
+-        syncStandardFont(QWebEngineSettings::SansSerifFont, font);
++        webSettings->setFontFamily(QWEBSETTINGS::SansSerifFont, font.family());
++        syncStandardFont(QWEBSETTINGS::SansSerifFont, font);
+     });
+     connect(ui->fixedFontComboBox, &QFontComboBox::currentFontChanged,
+             this, [webSettings, syncStandardFont](const QFont &font) {
+-        webSettings->setFontFamily(QWebEngineSettings::FixedFont, font.family());
+-        syncStandardFont(QWebEngineSettings::FixedFont, font);
++        webSettings->setFontFamily(QWEBSETTINGS::FixedFont, font.family());
++        syncStandardFont(QWEBSETTINGS::FixedFont, font);
+     });
+ 
+     connect(ui->fontSizeComboBox, currentIndexChangedSignal, this, [webSettings](int index) {
+-        webSettings->setFontSize(QWebEngineSettings::DefaultFontSize, AvailableFontSizes[index]);
++        webSettings->setFontSize(QWEBSETTINGS::DefaultFontSize, AvailableFontSizes[index]);
+     });
+     connect(ui->fixedFontSizeComboBox, currentIndexChangedSignal, this, [webSettings](int index) {
+-        webSettings->setFontSize(QWebEngineSettings::DefaultFixedFontSize, AvailableFontSizes[index]);
++        webSettings->setFontSize(QWEBSETTINGS::DefaultFixedFontSize, AvailableFontSizes[index]);
+     });
+     connect(ui->minFontSizeComboBox, currentIndexChangedSignal, this, [webSettings](int index) {
+         const int fontSize = index == 0 ? 0 : AvailableFontSizes[index-1];
+-        webSettings->setFontSize(QWebEngineSettings::MinimumFontSize, fontSize);
++        webSettings->setFontSize(QWEBSETTINGS::MinimumFontSize, fontSize);
+     });
+ 
+     loadSettings();
