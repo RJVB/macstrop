@@ -599,23 +599,23 @@ platform darwin {
         universal_cflags universal_cxxflags universal_ldflags universal_objcflags universal_objcxxflags}
     pre-configure {
         # cmake will add the correct -arch flag(s) based on the value of CMAKE_OSX_ARCHITECTURES.
-        if {[variant_exists universal] && [variant_isset universal]} {
-            if {[info exists universal_archs_supported]} {
-                merger_arch_compiler no
-                merger_arch_flag no
-                if {${cmake.set_osx_architectures}} {
+        if {${cmake.set_osx_architectures}} {
+            if {[variant_exists universal] && [variant_isset universal]} {
+                if {[info exists universal_archs_supported]} {
                     global merger_configure_args
+                    merger_arch_compiler no
+                    merger_arch_flag no
                     foreach arch ${universal_archs_to_use} {
                         lappend merger_configure_args(${arch}) -DCMAKE_OSX_ARCHITECTURES=${arch}
                     }
+                } else {
+                    configure.universal_args-append \
+                        -DCMAKE_OSX_ARCHITECTURES="[join ${configure.universal_archs} \;]"
                 }
-            } elseif {${cmake.set_osx_architectures}} {
-                configure.universal_args-append \
-                    -DCMAKE_OSX_ARCHITECTURES="[join ${configure.universal_archs} \;]"
+            } else {
+                configure.args-append \
+                    -DCMAKE_OSX_ARCHITECTURES="${configure.build_arch}"
             }
-        } elseif {${cmake.set_osx_architectures}} {
-            configure.args-append \
-                -DCMAKE_OSX_ARCHITECTURES="${configure.build_arch}"
         }
 
         # Setting our own -arch flags is unnecessary (in the case of a non-universal build) or even
