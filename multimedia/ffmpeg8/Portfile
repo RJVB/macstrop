@@ -3,12 +3,15 @@
 PortSystem          1.0
 PortGroup           active_variants 1.1
 PortGroup           preserve_runtime_libraries 1.0
-PortGroup           compress_workdir 1.0
+platform darwin {
+    PortGroup       compress_workdir 1.0
+}
 PortGroup           save_configure_cmd 1.0
 
 # For 'TARGET_OS_OSX', 'TARGET_CPU_ARM64' macros
 PortGroup           legacysupport 1.1
 
+name                ffmpeg8
 set LTO.configure_option --enable-lto
 PortGroup           LTO 1.0
 platform darwin {
@@ -17,10 +20,9 @@ platform darwin {
 }
 PortGroup           xcodeversion 1.0
 
-name                ffmpeg8
 set my_name         ffmpeg
 
-version             8.0.1 ; revision 1
+version             8.0.1 ; revision 2
 
 # FIXME: drop this upon next update
 # drop "configure.ldflags-append -Wl,-ld_classic"; this was required at some point to build the port
@@ -134,10 +136,10 @@ patchfiles-append   patch-libavcodec-profvidworkflow.diff
 # so the FFMpeg team does not seem to care to include this functionality
 patchfiles-append   patch-add-pixeldensity.diff
 
-# allow making the ff_sbr_noise_table visible, for building +LTO with GCC
-patchfiles-append   patch-libavcodec-unhide_ff_sbr_table.diff
-
 platform darwin {
+    # allow making the ff_sbr_noise_table visible, for building +LTO with GCC
+    patchfiles-append   patch-libavcodec-unhide_ff_sbr_table.diff
+
     # Typedef AVMediaType to NSString* on older systems
     # Patch submitted to upstream, remove once upstream has included it
     if {${os.major} < 17} {
@@ -146,6 +148,9 @@ platform darwin {
 }
 
 patchfiles-append  patch-ladspa-path-@PREFIX@.diff
+
+# fixed in 8.0.2?!
+patchfiles-append  patch-84fa37f2e4138f1ef943685870bda894e79c3fe1.diff
 
 # enable auto configure of asm optimizations
 # requires Xcode 3.1 or better on Leopard
@@ -249,7 +254,8 @@ configure.args-append \
                     --enable-pthreads \
                     --enable-shared \
                     --enable-swscale \
-                    --enable-zlib
+                    --enable-zlib \
+                    --mandir=${port_prefix}/share/man
 
 # RJVB: don't depend on texinfo opportunistically
 configure.args-append \
@@ -266,19 +272,6 @@ post-extract {
     system "find ${worksrcpath} -type f -print0 | xargs -0 chmod a+r"
 }
 
-post-configure {
-    # (parallel?) LTO builds with GCC can fail *initially* because of a supposedly missing symbol
-    # `ff_sbr_noise_table` when creating the libavcodec library. Surprisingly, the library does get
-    # created and when the build is restarted it will complete just fine. So this is really a
-    # toolchain issue, which can be solved by keeping the symbol visible instead of hidden.
-    file delete -force ${worksrcpath}/libavcodec/sbr_noise_table_visibility.h
-    xinstall -m 644 ${filespath}/sbr_noise_table_visibility.h ${worksrcpath}/libavcodec/sbr_noise_table_visibility.h
-    if {[variant_isset LTO] && [string match *gcc* ${configure.compiler}]} {
-        reinplace "s|@VISIBILITY@|/**/|g" ${worksrcpath}/libavcodec/sbr_noise_table_visibility.h
-    } else {
-        reinplace "s|@VISIBILITY@|attribute_visibility_hidden|g" ${worksrcpath}/libavcodec/sbr_noise_table_visibility.h
-    }
-}
 
 post-patch {
     platform darwin 8 {
@@ -288,6 +281,20 @@ post-patch {
 }
 
 platform darwin {
+    post-configure {
+        # (parallel?) LTO builds with GCC can fail *initially* because of a supposedly missing symbol
+        # `ff_sbr_noise_table` when creating the libavcodec library. Surprisingly, the library does get
+        # created and when the build is restarted it will complete just fine. So this is really a
+        # toolchain issue, which can be solved by keeping the symbol visible instead of hidden.
+        file delete -force ${worksrcpath}/libavcodec/sbr_noise_table_visibility.h
+        xinstall -m 644 ${filespath}/sbr_noise_table_visibility.h ${worksrcpath}/libavcodec/sbr_noise_table_visibility.h
+        if {[variant_isset LTO] && [string match *gcc* ${configure.compiler}]} {
+            reinplace "s|@VISIBILITY@|/**/|g" ${worksrcpath}/libavcodec/sbr_noise_table_visibility.h
+        } else {
+            reinplace "s|@VISIBILITY@|attribute_visibility_hidden|g" ${worksrcpath}/libavcodec/sbr_noise_table_visibility.h
+        }
+    }
+
     # disable asm on Tiger
     # libblueray doesn't build on Tiger so disable for now (#39442)
     if {${os.major} < 9} {
@@ -495,10 +502,14 @@ variant no_symlink description {Disable binary suffices and symlinks} {
 
 variant x11 {
     # enable x11grab_xcb input device
-    depends_lib-append \
+    platform darwin {
+        # Re libXv see: https://trac.macports.org/ticket/58617
+        depends_lib-append \
                     port:xorg-libxcb \
                     port:xorg-libXext \
-                    port:xorg-libXfixes
+                    port:xorg-libXfixes \
+                    port:xorg-libXv
+    }
     configure.args-delete \
                     --disable-xlib \
                     --disable-libxcb \
@@ -592,6 +603,14 @@ variant gpl3 requires gpl2 description {Enable GPL code, license will be GPL-3+}
                     bin:smbclient:samba4
 }
 
+variant placebo requires gpl2 description {Make use of libplacebo} {
+    depends_lib-append \
+                    port:libplacebo
+    configure.args-replace \
+                    --disable-libplacebo \
+                    --enable-libplacebo
+}
+
 # the build server uses the default variants, and we want distributable binaries
 # nonfree code is disabled by default but can be enabled using the +nonfree variant
 variant nonfree description {enable nonfree code, libraries and binaries will not be redistributable} {
@@ -604,11 +623,13 @@ variant nonfree description {enable nonfree code, libraries and binaries will no
                     port:libfdk-aac
 }
 
-variant rav1e description {Enable codec rav1e} {
-    configure.args-append \
+platform darwin {
+    variant rav1e description {Enable codec rav1e} {
+        configure.args-append \
                     --enable-librav1e
-    depends_lib-append \
+        depends_lib-append \
                     port:rav1e
+    }
 }
 
 variant flite description {Enable flite audio source} {
