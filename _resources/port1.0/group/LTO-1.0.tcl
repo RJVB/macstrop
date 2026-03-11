@@ -526,7 +526,15 @@ proc LTO::set_use_lld {{verbose no}} {
                 ui_debug "LTO::set_use_lld: pre-configure will set linker to lld"
             }
         }
+        if {[variant_isset LTO] && ${os.platform} ne "darwin" && [option LTO.gcc_lto_jobs] ne "auto"} {
+            LTO.configure.flags_append {ldflags} "-Wl,--lto-partitions=[option LTO.gcc_lto_jobs]"
+        }
         set LTO::use_lld_set 1
+    } elseif {${os.platform} ne "darwin"} {
+        if {[string match "macports-clang*" ${configure.compiler}]
+                && [variant_isset LTO] && [option LTO.gcc_lto_jobs] ne "auto"} {
+            LTO.configure.flags_append {ldflags} "-Wl,--plugin-opt=lto-partitions=[option LTO.gcc_lto_jobs]"
+        }
     }
     if {![variant_exists use_lld] || ![variant_isset use_lld]} {
         if {(![tbool LTO.allow_UseLLD] || [tbool LTO.LTO.maybe_ForceLD]) && [string match "macports-clang*" ${configure.compiler}]} {
