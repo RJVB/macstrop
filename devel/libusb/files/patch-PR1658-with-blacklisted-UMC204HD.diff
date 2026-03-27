@@ -1,0 +1,181 @@
+From 5b27a2b8d2215aec5dc339a19b27bad55f0f236c Mon Sep 17 00:00:00 2001
+From: Tormod Volden <debian.tormod@gmail.com>
+Date: Thu, 12 Sep 2024 21:32:39 +0200
+Subject: [PATCH] darwin: Create device descriptor from OS cached values
+
+Read bcdUSB from ioregistry.
+
+References #1564
+
+Signed-off-by: Tormod Volden <debian.tormod@gmail.com>
+
+diff --git a/libusb/os/darwin_usb.c b/libusb/os/darwin_usb.c
+index 75738154..fc504084 100644
+--- a/libusb/os/darwin_usb.c
++++ b/libusb/os/darwin_usb.c
+@@ -82,6 +82,8 @@ static pthread_t libusb_darwin_at;
+ /* protected by libusb_darwin_at_mutex */
+ static bool libusb_darwin_at_started;
+ 
++static CFMutableDictionaryRef *libusb_io_registry = nil;
++
+ static void darwin_exit(struct libusb_context *ctx);
+ static int darwin_get_config_descriptor(struct libusb_device *dev, uint8_t config_index, void *buffer, size_t len);
+ static int darwin_claim_interface(struct libusb_device_handle *dev_handle, uint8_t iface);
+@@ -536,8 +538,24 @@ static IOReturn usb_setup_device_iterator (io_iterator_t *deviceIterator, UInt32
+ }
+ 
+ /* Returns 1 on success, 0 on failure. */
+-static bool get_ioregistry_value_number (io_service_t service, CFStringRef property, CFNumberType type, void *p) {
+-  CFTypeRef cfNumber = IORegistryEntryCreateCFProperty (service, property, kCFAllocatorDefault, 0);
++static bool get_internal_or_ioregistry_value_number (io_service_t service, CFStringRef property, CFNumberType type, void *p, Boolean internal) {
++  CFTypeRef cfNumber = nil;
++  if (internal && libusb_io_registry) {
++    CFStringRef key = CFStringCreateWithFormat (kCFAllocatorDefault, NULL, CFSTR("%@[%p]"), property, service);
++    if (key) {
++      if (CFDictionaryGetValueIfPresent (libusb_io_registry, key, &cfNumber)) {
++        usbi_info (NULL, "libusb_io_registry has key %s", CFStringGetCStringPtr (key, kCFStringEncodingUTF8));
++      } else {
++        usbi_info (NULL, "libusb_io_registry does NOT have key %s", CFStringGetCStringPtr (key, kCFStringEncodingUTF8));
++      }
++      CFRelease(key);
++    } else {
++      usbi_err (NULL, "failure to create key for service %p, property %s", service, CFStringGetCStringPtr (property, kCFStringEncodingUTF8));
++    }
++  }
++  if (!cfNumber) {
++    cfNumber = IORegistryEntryCreateCFProperty (service, property, kCFAllocatorDefault, 0);
++  }
+   Boolean success = 0;
+ 
+   if (cfNumber) {
+@@ -551,6 +569,11 @@ static bool get_ioregistry_value_number (io_service_t service, CFStringRef prope
+   return (success != 0);
+ }
+ 
++/* Returns 1 on success, 0 on failure. */
++static bool get_ioregistry_value_number (io_service_t service, CFStringRef property, CFNumberType type, void *p) {
++  return get_internal_or_ioregistry_value_number (service, property, type, p, false);
++}
++
+ /* Returns 1 on success, 0 on failure. */
+ static bool get_ioregistry_value_data (io_service_t service, CFStringRef property, ssize_t size, void *p) {
+   CFTypeRef cfData = IORegistryEntryCreateCFProperty (service, property, kCFAllocatorDefault, 0);
+@@ -573,6 +596,40 @@ static bool get_ioregistry_value_data (io_service_t service, CFStringRef propert
+   return success;
+ }
+ 
++/* Returns 1 on success, 0 on failure. */
++static bool set_internal_ioregistry_value_number (io_service_t service, CFStringRef property, CFNumberType type, void *p) {
++  Boolean success = 0;
++  if (!libusb_io_registry) {
++    libusb_io_registry = CFDictionaryCreateMutable (kCFAllocatorDefault, 0,
++                                                    &kCFTypeDictionaryKeyCallBacks,
++                                                    &kCFTypeDictionaryValueCallBacks);
++  }
++  if (libusb_io_registry) {
++    CFStringRef key = CFStringCreateWithFormat (kCFAllocatorDefault, NULL, CFSTR("%@[%p]"), property, service);
++    if (key) {
++      CFNumberRef cfNumber = CFNumberCreate (kCFAllocatorDefault, type, p);
++      if (cfNumber) {
++        if (CFNumberGetType (cfNumber) == type) {
++          CFDictionarySetValue (libusb_io_registry, key, cfNumber);
++          CFStringRef val = CFStringCreateWithFormat (kCFAllocatorDefault, NULL, CFSTR("%@"), cfNumber);
++          usbi_dbg (NULL, "Stored %s=0x%x", CFStringGetCStringPtr (key, kCFStringEncodingUTF8), CFStringGetCStringPtr (val, kCFStringEncodingUTF8));
++          CFRelease(val);
++          success = CFDictionaryContainsKey (libusb_io_registry, key);
++        } else {
++          usbi_err (NULL, "Tried to create CFNumber of type %d, got type %d", type, CFNumberGetType(cfNumber));
++        }
++        CFRelease (cfNumber);
++      }
++      CFRelease(key);
++    } else {
++      usbi_err (NULL, "failure to create key for service %p, property %s", service, CFStringGetCStringPtr (property, kCFStringEncodingUTF8));
++    }
++  } else {
++    usbi_err (NULL, "failure to create internal ioregistry");
++  }
++  return (success != 0);
++}
++
+ static int darwin_device_from_service (struct libusb_context *ctx, io_service_t service, usb_device_t* device)
+ {
+   io_cf_plugin_ref_t *plugInInterface = NULL;
+@@ -1180,12 +1237,47 @@ static enum libusb_error darwin_cache_device_descriptor (struct libusb_context *
+   (*device)->GetDeviceProduct (device, &idProduct);
+   (*device)->GetDeviceVendor (device, &idVendor);
+ 
++  /* Try synthesize a device descriptor from OS cached values.
++     If anything fails, fall back to requesting descriptor from device. */
++  do {
++    IOUSBDeviceDescriptor *desc = &dev->dev_descriptor;
++    UInt16 bcdDevice, bcdUSB;
++
++    if (!get_internal_or_ioregistry_value_number (dev->service, CFSTR("bcdUSB"), kCFNumberSInt16Type, &bcdUSB, true))
++      break;
++    desc->bcdUSB = libusb_cpu_to_le16(bcdUSB); // TODO: verify on BE
++
++    if (!get_internal_or_ioregistry_value_number (dev->service, CFSTR("bMaxPacketSize0"), kCFNumberSInt8Type, &desc->bMaxPacketSize0, true))
++      break;
++
++    desc->bDeviceClass = bDeviceClass;
++    (*device)->GetDeviceSubClass (device, &desc->bDeviceSubClass);
++    (*device)->GetDeviceProtocol (device, &desc->bDeviceProtocol);
++
++    desc->idVendor = libusb_cpu_to_le16(idVendor); // TODO: verify on BE
++    desc->idProduct = libusb_cpu_to_le16(idProduct);
++    (*device)->GetDeviceReleaseNumber (device, &bcdDevice);
++    desc->bcdDevice = libusb_cpu_to_le16(bcdDevice);
++
++    (*device)->USBGetManufacturerStringIndex (device, &desc->iManufacturer);
++    (*device)->USBGetProductStringIndex (device, &desc->iProduct);
++    (*device)->USBGetSerialNumberStringIndex (device, &desc->iSerialNumber);
++    (*device)->GetNumberOfConfigurations (device, &desc->bNumConfigurations);
++
++    // if needed do validity checks here (and reset descriptor on failure?)
++
++    desc->bDescriptorType = LIBUSB_DT_DEVICE;
++    desc->bLength = LIBUSB_DT_DEVICE_SIZE;
++    goto done_desc;
++  } while (0);
++
+   /* According to Apple's documentation the device must be open for DeviceRequest but we may not be able to open some
+    * devices and Apple's USB Prober doesn't bother to open the device before issuing a descriptor request.  Still,
+    * to follow the spec as closely as possible, try opening the device */
+   is_open = ((*device)->USBDeviceOpenSeize(device) == kIOReturnSuccess);
+ 
+   do {
++    usbi_dbg (ctx, "requesting device descriptor from device");
+     /**** retrieve device descriptor ****/
+     ret = darwin_request_descriptor (device, kUSBDeviceDesc, 0, &dev->dev_descriptor, sizeof(dev->dev_descriptor));
+ 
+@@ -1277,6 +1369,28 @@ static enum libusb_error darwin_cache_device_descriptor (struct libusb_context *
+     return LIBUSB_ERROR_NO_DEVICE;
+   }
+ 
++  {
++    UInt16 bcdUSB;
++    UInt8 bMaxPacketSize0;
++    bcdUSB = libusb_le16_to_cpu (dev->dev_descriptor.bcdUSB);
++    if (set_internal_ioregistry_value_number (dev->service, CFSTR("bcdUSB"), kCFNumberSInt16Type, &bcdUSB)) {
++      usbi_info (ctx, "Stored bcdUSB=0x%04x in the IO registry", bcdUSB);
++      if (ctx && ctx->debug >= LIBUSB_LOG_LEVEL_DEBUG) {
++        if (get_internal_or_ioregistry_value_number (dev->service, CFSTR("bcdUSB"), kCFNumberSInt16Type, &bcdUSB, true)) {
++          usbi_dbg (ctx, "Retrieved bcdUSB=0x%04x from the IO registry", bcdUSB);
++        }
++      }
++    }
++    if (set_internal_ioregistry_value_number (dev->service, CFSTR("bMaxPacketSize0"), kCFNumberSInt8Type, &dev->dev_descriptor.bMaxPacketSize0)) {
++      usbi_info (ctx, "Stored bMaxPacketSize0=0x%02x in the IO registry", dev->dev_descriptor.bMaxPacketSize0);
++      if (ctx && ctx->debug >= LIBUSB_LOG_LEVEL_DEBUG) {
++        if (get_internal_or_ioregistry_value_number (dev->service, CFSTR("bMaxPacketSize0"), kCFNumberSInt8Type, &bMaxPacketSize0, true)) {
++          usbi_dbg (ctx, "Retrieved bMaxPacketSize0=0x%02x from the IO registry", bMaxPacketSize0);
++        }
++      }
++    }
++  }
++done_desc:
+   usbi_dbg (ctx, "cached device descriptor:");
+   usbi_dbg (ctx, "  bDescriptorType:    0x%02x", dev->dev_descriptor.bDescriptorType);
+   usbi_dbg (ctx, "  bcdUSB:             0x%04x", libusb_le16_to_cpu (dev->dev_descriptor.bcdUSB));
