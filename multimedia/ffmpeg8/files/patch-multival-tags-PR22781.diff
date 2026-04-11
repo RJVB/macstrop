@@ -1,0 +1,68 @@
+From 16600097897ec2bce0208ae3c03612239367788b Mon Sep 17 00:00:00 2001
+From: Jun Zhao <barryjzhao@tencent.com>
+Date: Fri, 10 Apr 2026 23:05:05 +0800
+Subject: [PATCH] lavf/mov: read multi-valued metadata tags
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When a metadata tag (e.g. ©ART) contains multiple values, either as
+multiple 'data' child atoms within one tag or as multiple sibling tag
+atoms with the same key, only the first value was read.
+
+Fix by joining multiple values with semicolons using AV_DICT_APPEND,
+consistent with Ogg Vorbis Comment handling in oggparsevorbis.c, and
+reusing the existing 'goto retry' loop that covr already uses.
+Also add the missing atom.size -= str_size to correctly track remaining
+bytes in the tag atom, matching the covr path.
+
+Limitation: on remux the joined string is written back as a single
+value, same lossy behavior as Ogg Vorbis. Lossless round-trip would
+require AV_DICT_MULTIKEY support throughout the metadata pipeline.
+
+Fix #22367
+Signed-off-by: Jun Zhao <barryjzhao@tencent.com>
+
+diff --git libavformat/mov.c libavformat/mov.c
+index dc9233b8a8..eb7487e2c2 100644
+--- libavformat/mov.c
++++ libavformat/mov.c
+@@ -579,10 +579,14 @@ retry:
+             str[str_size] = 0;
+         }
+         c->fc->event_flags |= AVFMT_EVENT_FLAG_METADATA_UPDATED;
+-        av_dict_set(metadata, key, str, 0);
++        if (av_dict_get(*metadata, key, NULL, 0))
++            av_dict_set(metadata, key, ";", AV_DICT_APPEND);
++        av_dict_set(metadata, key, str, AV_DICT_APPEND);
+         if (*language && strcmp(language, "und")) {
+             snprintf(key2, sizeof(key2), "%s-%s", key, language);
+-            av_dict_set(metadata, key2, str, 0);
++            if (av_dict_get(*metadata, key2, NULL, 0))
++                av_dict_set(metadata, key2, ";", AV_DICT_APPEND);
++            av_dict_set(metadata, key2, str, AV_DICT_APPEND);
+         }
+         if (!strcmp(key, "encoder")) {
+             int major, minor, micro;
+@@ -590,6 +594,18 @@ retry:
+                 c->handbrake_version = 1000000*major + 1000*minor + micro;
+             }
+         }
++
++        atom.size -= str_size;
++        av_freep(&str);
++
++        // Read remaining data atoms for multi-valued iTunes tags (e.g. multiple
++        // artists stored as multiple data atoms within one tag atom), consistent
++        // with how covr already handles multiple data atoms (line 483).
++        // Note: multiple sibling tag atoms with the same key (e.g. three separate
++        // ©ART atoms under ilst) are handled by the AV_DICT_APPEND logic above,
++        // since mov_read_udta_string() is called once per tag atom.
++        if (c->itunes_metadata && atom.size > 8)
++            goto retry;
+     }
+ 
+     av_freep(&str);
+-- 
+2.52.0
+
