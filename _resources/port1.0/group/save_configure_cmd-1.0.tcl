@@ -322,12 +322,12 @@ proc configure.save_build_cmd {{save ""}} {
 }
 
 proc configure::callback {} {
-    global configure.cmd
+    global configure.cmd use_configure
     if {${configure::statevar}} {
         ui_debug "[dict get [info frame 0] proc]: save_configure_cmd  already called directly by Portfile"
     } elseif {${configure::statevar2}} {
         ui_debug "[dict get [info frame 0] proc]: save_build_cmd  already called directly by Portfile"
-    } else {
+    } elseif {[tbool use_configure]} {
         if {[string match *cmake ${configure.cmd}]} {
             ui_debug "[dict get [info frame 0] proc]: calling `cmake.save_configure_cmd \"install log\"`"
             cmake.save_configure_cmd "install log"
