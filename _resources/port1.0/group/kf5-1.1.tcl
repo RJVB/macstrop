@@ -512,12 +512,15 @@ proc kf5.git.setup {first {second ""} args} {
     if {[llength ${args}] > 0} {
         # this implies `second` isn't empty either!
         PortGroup       github 1.1
-        global          git.shallow_since
+        global          git.shallow_since version
         ui_debug        "Checking out through github PortGroup"
         ui_debug        "## github.setup \"${first}\" \"${second}\" \"{*}${args}\""
+        set vv          ${version}
         git.shallow_since \
                         ${kf5.git.shallowbefore}
         github.setup    ${first} ${second} {*}${args}
+        version         ${vv}
+        unset vv
     } else {
         fetch.type      git
         if {${second} eq ""} {
