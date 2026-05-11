@@ -516,8 +516,10 @@ proc kf5.git.setup {first {second ""} args} {
         ui_debug        "Checking out through github PortGroup"
         ui_debug        "## github.setup \"${first}\" \"${second}\" \"{*}${args}\""
         set vv          ${version}
-        git.shallow_since \
+        if {[tbool kf5.git.shallowbefore]} {
+            git.shallow_since \
                         ${kf5.git.shallowbefore}
+        }
         github.setup    ${first} ${second} {*}${args}
         version         ${vv}
         unset vv
