@@ -134,7 +134,7 @@ if {![info exists kf5.version]} {
     # When upgrading, don't forget that port:kf5-breeze-icons and port:kf5-oxygen-icons5
     # are part of the frameworks universe and should be kept in sync.
 }
-set kf5.frameworks_attic 5.69.0
+set kf5.frameworks_attic 5.249.0
 
 # KF5 Applications version
 if {![ info exists kf5.release ]} {
@@ -150,7 +150,7 @@ if {![ info exists kf5.plasma ]} {
     set kf5.latest_plasma \
                         5.11.1
 }
-set kf5.plasma_attic    5.16.5
+set kf5.plasma_attic    6.4.91
 
 # the software quality. Defaults to "stable" but can be set to "unstable" before calling kf5.set_project
 set kf5.quality         "stable"
@@ -588,7 +588,7 @@ proc kf5.set_project {project} {
                         set dbranch "Attic"
                     }
                     set f   "${kf5.virtualPath}/${kf5.plasma}"
-                    if {![info exists version]} {
+                    if {![info exists version] || ${version} eq {}} {
                         version \
                             ${kf5.plasma}
                     }
@@ -600,7 +600,7 @@ proc kf5.set_project {project} {
                     } else {
                         set f   "release-service/${kf5.release}/src"
                     }
-                    if {![info exists version]} {
+                    if {![info exists version] || ${version} eq {}} {
                         version \
                             ${kf5.release}
                     }
@@ -613,7 +613,7 @@ proc kf5.set_project {project} {
             }
         }
     } else {
-        if {![info exists version]} {
+        if {![info exists version] || ${version} eq {}} {
             version         ${kf5.version}
         }
         if {[vercmp ${kf5.version} ${kf5.frameworks_attic}] < 0} {
@@ -782,26 +782,32 @@ if {${kf5::includecounter} == 0} {
             kf5.version     {
                 ui_debug "Using kf5.version=${kf5.latest_version} instead of ${v} for ${subport}"
                 set v ${kf5.latest_version}
+                set vv ${v}
             }
             kf5.release     {
                 ui_debug "Using kf5.release=${kf5.latest_release} instead of ${r} for ${subport}"
                 set r ${kf5.latest_release}
+                set vv ${r}
             }
             kf5.plasma      {
                 ui_debug "Using kf5.plasma=${kf5.latest_plasma} instead of ${p} for ${subport}"
                 set p ${kf5.latest_plasma}
+                set vv ${p}
             }
             frameworks      {
                 ui_debug "Using kf5.version=${kf5.latest_version} instead of ${v} for ${subport}"
                 set v ${kf5.latest_version}
+                set vv ${v}
             }
             applications    {
                 ui_debug "Using kf5.release=${kf5.latest_release} instead of ${r} for ${subport}"
                 set r ${kf5.latest_release}
+                set vv ${r}
             }
             plasma          {
                 ui_debug "Using kf5.plasma=${kf5.latest_plasma} instead of ${p} for ${subport}"
                 set p ${kf5.latest_plasma}
+                set vv ${p}
             }
             default         {
                 ui_error "Illegal argument ${lversion} to kf5.use_latest"
@@ -812,9 +818,12 @@ if {${kf5::includecounter} == 0} {
         set b               [join [lrange [split ${v} .] 0 1] .]
         # and ditto for the paths.
         kf5.set_paths
-        unset version
         if {[info exists kf5.project]} {
+            unset version
             kf5.set_project ${kf5.project}
+        } elseif {[info exists vv]} {
+            version         ${vv}
+            unset vv
         }
     }
 
