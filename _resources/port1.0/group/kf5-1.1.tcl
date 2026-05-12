@@ -508,7 +508,7 @@ default kf5.git.branch {}
 ## that setting to be respected.
 ## NB2: the other forms set fetch.type=git .
 proc kf5.git.setup {first {second ""} args} {
-    global kf5.version kf5.git.depth kf5.git.shallowbefore kf5.git.branch 0i// filespath fetch.type
+    global kf5.version kf5.git.depth kf5.git.shallowbefore kf5.git.branch filespath fetch.type
     if {[llength ${args}] > 0} {
         # this implies `second` isn't empty either!
         PortGroup       github 1.1
@@ -538,12 +538,14 @@ proc kf5.git.setup {first {second ""} args} {
         } else {
             ui_debug    "cloning \"${project}\" from host \"${host}\""
             set uri ${host}${project}
+            # reset the URL first!
+            git.url
             if {${kf5.git.branch} ne {}} {
                 git.url-append -b ${kf5.git.branch}
             }
             if {${kf5.git.depth} ne {} && ${kf5.git.depth} > 0} {
                 git.url-append -n --depth ${kf5.git.depth} ${uri}
-            } elseif {${kf5.git.shallowbefore} ne {}} {
+            } elseif {[tbool kf5.git.shallowbefore] && ${kf5.git.shallowbefore} ne {}} {
                 git.url-append -n --shallow-since ${kf5.git.shallowbefore} ${uri}
             } else {
                 git.url-append -n ${uri}
