@@ -1,0 +1,284 @@
+diff --git a/kcmkwin/kwincompositing/CMakeLists.txt b/kcmkwin/kwincompositing/CMakeLists.txt
+index 3162ec406d..55e98cda29 100644
+--- a/kcmkwin/kwincompositing/CMakeLists.txt
++++ b/kcmkwin/kwincompositing/CMakeLists.txt
+@@ -20,6 +20,7 @@ set(kwincomposing_SRC
+     main.cpp
+     compositing.cpp
+     effectconfig.cpp)
++kconfig_add_kcfg_files(kwincomposing_SRC kwincompositing_setting.kcfgc GENERATE_MOC)
+ 
+ qt5_add_dbus_interface( kwincomposing_SRC
+   ${KWIN_SOURCE_DIR}/org.kde.kwin.Compositing.xml kwin_compositing_interface)
+diff --git a/kcmkwin/kwincompositing/kwincompositing_setting.kcfg b/kcmkwin/kwincompositing/kwincompositing_setting.kcfg
+new file mode 100644
+index 0000000000..162c82b2c7
+--- /dev/null
++++ b/kcmkwin/kwincompositing/kwincompositing_setting.kcfg
+@@ -0,0 +1,74 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
++       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++       xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
++       http://www.kde.org/standards/kcfg/1.0/kcfg.xsd" >
++   <kcfgfile name="kwinrc"/>
++
++   <group name="KDE">
++       <entry name="AnimationDurationFactor" type="Double">
++          <default>1.0</default>
++       </entry>
++   </group>
++
++   <group name="Compositing">
++
++       <entry name="HiddenPreviews" type="Enum">
++           <default>Shown</default>
++           <choices>
++               <choice name="Off" value="4"/>
++               <choice name="Shown" value="5"/>
++               <choice name="Always" value="6"/>
++           </choices>
++       </entry>
++
++       <entry name="glTextureFilter" key="GLTextureFilter" type="Int">
++           <default>2</default>
++       </entry>
++
++       <entry name="XRenderSmoothScale" type="Enum">
++        <default>Crisp</default>
++        <choices>
++            <choice name="Crisp" value="false" />
++            <choice name="Smooth" value="true" />
++        </choices>
++       </entry>
++
++       <entry name="Enabled" type="Bool">
++        <default>true</default>
++       </entry>
++
++       <entry name="OpenGLIsUnsafe" type="Bool">
++        <default>true</default>
++       </entry>
++
++       <entry name="glPreferBufferSwap" key="GLPreferBufferSwap" type="Enum">
++           <default>AutoSwapStrategy</default>
++           <choices>
++               <choice name="NoSwapEncourage" value="n" />
++               <choice name="AutoSwapStrategy" value="a" />
++               <choice name="ExtendDamage" value="e" />
++               <choice name="PaintFullScreen" value="p" />
++               <choice name="CopyFrontBuffer" value="c" />
++           </choices>
++       </entry>
++
++       <entry name="Backend" type="Enum">
++           <default>OpenGL</default>
++           <choices>
++               <choice name="OpenGL" />
++               <choice name="XRender" />
++           </choices>
++       </entry>
++
++       <entry name="glCore" key="GLCore" type="Bool">
++           <default>false</default>
++       </entry>
++
++       <entry name="WindowsBlockCompositing" type="Bool">
++           <default>true</default>
++       </entry>
++
++    </group>
++
++</kcfg>
+diff --git a/kcmkwin/kwincompositing/kwincompositing_setting.kcfgc b/kcmkwin/kwincompositing/kwincompositing_setting.kcfgc
+new file mode 100644
+index 0000000000..4b6ac59268
+--- /dev/null
++++ b/kcmkwin/kwincompositing/kwincompositing_setting.kcfgc
+@@ -0,0 +1,5 @@
++File=kwincompositing_setting.kcfg
++ClassName=KWinCompositingSetting
++Mutators=true
++DefaultValueGetters=true
++ParentInConstructor=true
+diff --git a/kcmkwin/kwincompositing/main.cpp b/kcmkwin/kwincompositing/main.cpp
+index 8389b3d186..55090ef88f 100644
+--- a/kcmkwin/kwincompositing/main.cpp
++++ b/kcmkwin/kwincompositing/main.cpp
+@@ -30,6 +30,9 @@
+ #include <kcmodule.h>
+ #include <kservice.h>
+ 
++#include "kwincompositing_setting.h"
++#include "kconfigwidgets_version.h"
++
+ class KWinCompositingKCM : public KCModule
+ {
+     Q_OBJECT
+@@ -68,17 +71,47 @@ public Q_SLOTS:
+     void save() override;
+     void defaults() override;
+ 
++private Q_SLOTS:
++    void onBackendChanged();
++    void reenableGl();
++
+ private:
+     void init();
++    void updateUnmanagedItemStatus();
++    bool compositingRequired() const;
++    // from v5.15.5 options.cpp
++    double animationTimeFactor() const
++    {           
++        const double factors[] = { 0, 0.2, 0.5, 1, 2, 4, 20 };
++        return factors[ m_compositing->animationSpeed() ];
++    }       
++
+     KWin::Compositing::Compositing *m_compositing;
+     Ui_CompositingForm m_form;
++    KWinCompositingSetting *m_settings;
++
++    // unmanaged states
++    int m_backend;
++    bool m_glCore;
++    double m_animationDurationFactor;
+ };
+ 
++// reversed w.r.t. the vector in v5.18.5 !!
++static const QVector<qreal> s_animationMultipliers = {0, 0.125, 0.25, 0.5, 1, 2, 4, 8};
++
++bool KWinCompositingSettings::compositingRequired() const
++{
++    return m_compositing->compositingRequired();
++}
++
+ KWinCompositingSettings::KWinCompositingSettings(QWidget *parent, const QVariantList &args)
+     : KCModule(parent, args)
+     , m_compositing(new KWin::Compositing::Compositing(this))
++    , m_settings(new KWinCompositingSetting(this))
+ {
+     m_form.setupUi(this);
++    addConfig(m_settings, this);
++
+     m_form.glCrashedWarning->setIcon(QIcon::fromTheme(QStringLiteral("dialog-warning")));
+     QAction *reenableGLAction = new QAction(i18n("Re-enable OpenGL detection"), this);
+     connect(reenableGLAction, &QAction::triggered, m_compositing, &KWin::Compositing::Compositing::reenableOpenGLDetection);
+@@ -94,6 +127,12 @@ KWinCompositingSettings::KWinCompositingSettings(QWidget *parent, const QVariant
+     init();
+ }
+ 
++void KWinCompositingSettings::reenableGl()
++{
++    m_settings->setOpenGLIsUnsafe(false);
++    m_settings->save();
++}
++
+ void KWinCompositingSettings::init()
+ {
+     using namespace KWin::Compositing;
+@@ -106,10 +145,17 @@ void KWinCompositingSettings::init()
+     connect(m_compositing, &Compositing::compositingEnabledChanged, m_form.compositingEnabled, &QCheckBox::setChecked);
+     connect(m_form.compositingEnabled, &QCheckBox::toggled, m_compositing, &Compositing::setCompositingEnabled);
+ 
+-    // animation speed
++    // animation speed, which is actually a duration factor nowadays
++    m_form.animationSpeed->setMaximum(s_animationMultipliers.size() - 1);
+     m_form.animationSpeed->setValue(m_compositing->animationSpeed());
+     connect(m_compositing, &Compositing::animationSpeedChanged, m_form.animationSpeed, &QSlider::setValue);
+     connect(m_form.animationSpeed, &QSlider::valueChanged, m_compositing, &Compositing::setAnimationSpeed);
++    connect(m_form.animationSpeed, &QSlider::valueChanged, this, [this]() {
++        m_settings->setAnimationDurationFactor(s_animationMultipliers[m_form.animationSpeed->value()]);
++        updateUnmanagedItemStatus();
++        qWarning() << Q_FUNC_INFO << "animationSpeed=" << m_form.animationSpeed->value()
++            << "-> a.DurationFactor=" << m_settings->animationDurationFactor();
++    });
+ 
+     // gl scale filter
+     m_form.glScaleFilter->setCurrentIndex(m_compositing->glScaleFilter());
+@@ -212,10 +258,77 @@ void KWinCompositingSettings::init()
+     }
+ }
+ 
++void KWinCompositingSettings::onBackendChanged()
++{
++    updateUnmanagedItemStatus();
++}
++
++void KWinCompositingSettings::updateUnmanagedItemStatus()
++{
++    int backend = KWinCompositingSetting::EnumBackend::OpenGL;
++    bool glCore = true;
++    const int currentType = m_compositing->compositingType();
++    switch (currentType) {
++    case KWin::Compositing::CompositingType::OPENGL31_INDEX:
++        // default already set
++        break;
++    case KWin::Compositing::CompositingType::OPENGL20_INDEX:
++        glCore = false;
++        break;
++    case KWin::Compositing::CompositingType::XRENDER_INDEX:
++        backend = KWinCompositingSetting::EnumBackend::XRender;
++        glCore = false;
++        break;
++    }
++    const auto animationDuration = s_animationMultipliers[m_form.animationSpeed->value()];
++
++    const bool inPlasma = false; //isRunningPlasma();
++
++    bool changed = glCore != m_glCore;
++    changed |= backend != m_backend;
++    if (!inPlasma) {
++        changed |= (animationDuration != m_animationDurationFactor);
++    }
++    unmanagedWidgetChangeState(changed);
++
++    bool defaulted = glCore == m_settings->defaultGlCoreValue();
++    defaulted &= backend == m_settings->defaultBackendValue();
++    if (!inPlasma) {
++        defaulted &= animationDuration == m_settings->defaultAnimationDurationFactorValue();
++    }
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
++    unmanagedWidgetDefaultState(defaulted);
++#endif
++}
++
+ void KWinCompositingSettings::load()
+ {
+     KCModule::load();
+     m_compositing->reset();
++
++    // unmanaged items
++    m_settings->findItem("AnimationDurationFactor")->readConfig(m_settings->config());
++    double multiplier = m_settings->animationDurationFactor();
++    qWarning() << Q_FUNC_INFO << "legacy animationSpeed=" << m_form.animationSpeed->value()
++        << "-> a.DurationFactor=" << s_animationMultipliers[m_form.animationSpeed->value()]
++        << "and read a.DurationFactor=" << multiplier;
++    if (s_animationMultipliers[m_form.animationSpeed->value()] != multiplier) {
++        // the animationSpeed value read by m_compositing->reset() takes precedence
++        multiplier = s_animationMultipliers[m_form.animationSpeed->value()];
++        qWarning() << "\tmultiplier overridden by legacy value";
++    }
++    auto const it = std::lower_bound(s_animationMultipliers.begin(), s_animationMultipliers.end(), multiplier, std::less<qreal>());
++    const int index = static_cast<int>(std::distance(s_animationMultipliers.begin(), it));
++    qWarning() << "\tFound closest entry" << index << "-> DurationFactor" << s_animationMultipliers[index];
++    m_form.animationSpeed->setValue(index);
++    m_form.animationSpeed->setDisabled(m_settings->isAnimationDurationFactorImmutable());
++
++    m_settings->findItem("Backend")->readConfig(m_settings->config());
++    m_backend = m_compositing->compositingType();
++    m_settings->findItem("glCore")->readConfig(m_settings->config());
++    m_glCore = m_settings->glCore();
++
++    onBackendChanged();
+ }
+ 
+ void KWinCompositingSettings::defaults()
+@@ -227,6 +340,8 @@ void KWinCompositingSettings::defaults()
+ void KWinCompositingSettings::save()
+ {
+     KCModule::save();
++    m_settings->save();
++    // let the older code have the last word
+     m_compositing->save();
+ }
+ 
