@@ -1,0 +1,4479 @@
+commit f5202608dfe2d4e56b37e4c2c42765b2659a56ef
+Author: René Bertin <rjvbertin@gmail.com>
+Date:   Sat May 16 13:41:02 2026 +0200
+
+    /opt/local/site-ports/Linux/kf5/kf5-kwin/files/kwin-devel/patch-older-deps.diff
+    
+    /opt/local/site-ports/Linux/kf5/kf5-kwin/files/kwin-devel/patch-fix-for-newer-kdecoration.diff
+    using the correct KDecoration version check!
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index d25d4de098..d00e0b74b2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -4,8 +4,8 @@ project(KWin)
+ set(PROJECT_VERSION "5.18.80")
+ set(PROJECT_VERSION_MAJOR 5)
+ 
+-set(QT_MIN_VERSION "5.14.0")
+-set(KF5_MIN_VERSION "5.70.0")
++set(QT_MIN_VERSION "5.9.8")
++set(KF5_MIN_VERSION "5.60.0")
+ 
+ set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules ${CMAKE_MODULE_PATH})
+ 
+@@ -110,14 +110,15 @@ set_package_properties(KF5DocTools PROPERTIES
+ )
+ add_feature_info("KF5DocTools" KF5DocTools_FOUND "Enable building documentation")
+ 
+-find_package(KF5Kirigami2 ${KF5_MIN_VERSION} CONFIG)
++find_package(KF5Kirigami2 5.56.0 CONFIG)
+ set_package_properties(KF5Kirigami2 PROPERTIES
+     DESCRIPTION "A QtQuick based components set"
+     PURPOSE "Required at runtime for Virtual desktop KCM and the virtual keyboard"
+     TYPE RUNTIME
+ )
+ 
+-find_package(KDecoration2 5.18.0 CONFIG REQUIRED)
++# let's see if 5.16.5 suffices!
++find_package(KDecoration2 5.16.5 CONFIG REQUIRED)
+ 
+ find_package(KScreenLocker CONFIG REQUIRED)
+ set_package_properties(KScreenLocker PROPERTIES
+diff --git a/dbusinterface.cpp b/dbusinterface.cpp
+index 5b9d6e9c7c..34893e9105 100644
+--- a/dbusinterface.cpp
++++ b/dbusinterface.cpp
+@@ -239,7 +239,11 @@ QVariantMap DBusInterface::queryWindowInfo()
+ 
+ QVariantMap DBusInterface::getWindowInfo(const QString &uuid)
+ {
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++    const auto id = QUuid(uuid);
++#else
+     const auto id = QUuid::fromString(uuid);
++#endif
+     const auto client = workspace()->findAbstractClient([&id] (const AbstractClient *c) { return c->internalId() == id; });
+     if (client) {
+         return clientToVariantMap(client);
+diff --git a/decorations/decoratedclient.cpp b/decorations/decoratedclient.cpp
+index 311a278139..10480e9f93 100644
+--- a/decorations/decoratedclient.cpp
++++ b/decorations/decoratedclient.cpp
+@@ -67,7 +67,11 @@ DecoratedClientImpl::DecoratedClientImpl(AbstractClient *client, KDecoration2::D
+             if (oldSize.height() != m_clientSize.height()) {
+                 emit decoratedClient->heightChanged(m_clientSize.height());
+             }
++#if KDECORATION2_VERSION >= QT_VERSION_CHECK(5, 18, 0)
+             emit decoratedClient->sizeChanged(m_clientSize);
++#else
++            emit sizeChanged(m_clientSize);
++#endif
+         }
+     );
+     connect(client, &AbstractClient::desktopChanged, this,
+diff --git a/decorations/decoratedclient.h b/decorations/decoratedclient.h
+index 576b62c3c4..b7f0488384 100644
+--- a/decorations/decoratedclient.h
++++ b/decorations/decoratedclient.h
+@@ -27,6 +27,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #include <QObject>
+ #include <QTimer>
+ 
++#include <kdecoration2_version.h>
++
+ namespace KWin
+ {
+ 
+@@ -66,7 +68,11 @@ public:
+     QPalette palette() const override;
+     QColor color(KDecoration2::ColorGroup group, KDecoration2::ColorRole role) const override;
+     bool providesContextHelp() const override;
++#if KDECORATION2_VERSION >= QT_VERSION_CHECK(5, 18, 0)
+     QSize size() const override;
++#else
++    QSize size() const;
++#endif
+     int width() const override;
+     WId windowId() const override;
+ 
+@@ -102,6 +108,11 @@ public:
+ 
+     void signalShadeChange();
+ 
++#if KDECORATION2_VERSION < QT_VERSION_CHECK(5, 18, 0)
++Q_SIGNALS:
++    void sizeChanged(QSize&);
++#endif
++
+ private Q_SLOTS:
+     void delayedRequestToggleMaximization(Options::WindowOperation operation);
+ 
+diff --git a/decorations/decorationrenderer.cpp b/decorations/decorationrenderer.cpp
+index 5e28e40b71..3cec11fb2c 100644
+--- a/decorations/decorationrenderer.cpp
++++ b/decorations/decorationrenderer.cpp
+@@ -45,7 +45,9 @@ Renderer::Renderer(DecoratedClientImpl *client)
+     };
+     connect(client->client(), &AbstractClient::screenScaleChanged, this, markImageSizesDirty);
+     connect(client->decoration(), &KDecoration2::Decoration::bordersChanged, this, markImageSizesDirty);
++#if KDECORATION2_VERSION >= QT_VERSION_CHECK(5, 18, 0)
+     connect(client->decoratedClient(), &KDecoration2::DecoratedClient::sizeChanged, this, markImageSizesDirty);
++#endif
+ }
+ 
+ Renderer::~Renderer() = default;
+diff --git a/effects/CMakeLists.txt b/effects/CMakeLists.txt
+index cec729accd..536d04c051 100644
+--- a/effects/CMakeLists.txt
++++ b/effects/CMakeLists.txt
+@@ -142,7 +142,7 @@ kconfig_add_kcfg_files(kwin4_effect_builtins_sources
+ 
+ # scripted effects
+ function(install_scripted_effect name)
+-    kpackage_install_package(${name}/package kwin4_effect_${name} effects kwin)
++#     kpackage_install_package(${name}/package kwin4_effect_${name} effects kwin)
+ 
+     # necessary so tests are found without installing
+     file(COPY ${name}/package/contents ${name}/package/metadata.desktop DESTINATION ${CMAKE_BINARY_DIR}/bin/kwin/effects/kwin4_effect_${name})
+diff --git a/effects/desktopgrid/desktopgrid_config.cpp b/effects/desktopgrid/desktopgrid_config.cpp
+index 23f6e2572c..39a70e767b 100644
+--- a/effects/desktopgrid/desktopgrid_config.cpp
++++ b/effects/desktopgrid/desktopgrid_config.cpp
+@@ -36,6 +36,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ #include <QVBoxLayout>
+ 
++#include <kconfigwidgets_version.h>
++
+ K_PLUGIN_FACTORY_WITH_JSON(DesktopGridEffectConfigFactory,
+                            "desktopgrid_config.json",
+                            registerPlugin<KWin::DesktopGridEffectConfig>();)
+@@ -87,9 +89,13 @@ DesktopGridEffectConfig::DesktopGridEffectConfig(QWidget* parent, const QVariant
+     DesktopGridConfig::instance(KWIN_CONFIG);
+     addConfig(DesktopGridConfig::self(), m_ui);
+     connect(m_ui->kcfg_LayoutMode, qOverload<int>(&KComboBox::currentIndexChanged), this, &DesktopGridEffectConfig::layoutSelectionChanged);
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 64, 0)
+     connect(m_ui->desktopNameAlignmentCombo, qOverload<int>(&KComboBox::currentIndexChanged), this, &DesktopGridEffectConfig::markAsChanged);
+     connect(m_ui->shortcutEditor, &KShortcutsEditor::keyChange, this, &DesktopGridEffectConfig::markAsChanged);
+-
++#else
++    connect(m_ui->desktopNameAlignmentCombo, SIGNAL(currentIndexChanged()), this, SLOT(changed()));
++    connect(m_ui->shortcutEditor, SIGNAL(keyChange), this, SLOT(changed()));
++#endif
+     load();
+     layoutSelectionChanged();
+ }
+diff --git a/effects/invert/invert_config.cpp b/effects/invert/invert_config.cpp
+index efd53e1a86..3276b488f5 100644
+--- a/effects/invert/invert_config.cpp
++++ b/effects/invert/invert_config.cpp
+@@ -32,6 +32,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ #include <QVBoxLayout>
+ 
++#include <kconfigwidgets_version.h>
++
+ K_PLUGIN_FACTORY_WITH_JSON(InvertEffectConfigFactory,
+                            "invert_config.json",
+                            registerPlugin<KWin::InvertEffectConfig>();)
+@@ -62,7 +64,11 @@ InvertEffectConfig::InvertEffectConfig(QWidget* parent, const QVariantList& args
+ 
+     mShortcutEditor = new KShortcutsEditor(actionCollection, this,
+                                            KShortcutsEditor::GlobalAction, KShortcutsEditor::LetterShortcutsDisallowed);
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 64, 0)
+     connect(mShortcutEditor, &KShortcutsEditor::keyChange, this, &InvertEffectConfig::markAsChanged);
++#else
++    connect(mShortcutEditor, SIGNAL(keyChange()), this, SLOT(changed()));
++#endif
+     layout->addWidget(mShortcutEditor);
+ 
+     load();
+diff --git a/effects/lookingglass/lookingglass_config.cpp b/effects/lookingglass/lookingglass_config.cpp
+index b802ae27fe..f2e1484849 100644
+--- a/effects/lookingglass/lookingglass_config.cpp
++++ b/effects/lookingglass/lookingglass_config.cpp
+@@ -38,6 +38,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #include <QWidget>
+ #include <QVBoxLayout>
+ 
++#include <kconfigwidgets_version.h>
++
+ K_PLUGIN_FACTORY_WITH_JSON(LookingGlassEffectConfigFactory,
+                            "lookingglass_config.json",
+                            registerPlugin<KWin::LookingGlassEffectConfig>();)
+@@ -61,7 +63,11 @@ LookingGlassEffectConfig::LookingGlassEffectConfig(QWidget* parent, const QVaria
+ 
+     LookingGlassConfig::instance(KWIN_CONFIG);
+     addConfig(LookingGlassConfig::self(), m_ui);
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 64, 0)
+     connect(m_ui->editor, &KShortcutsEditor::keyChange, this, &LookingGlassEffectConfig::markAsChanged);
++#else
++    connect(m_ui->editor, SIGNAL(keyChange()), this, SLOT(changed()));
++#endif
+ 
+     // Shortcut config. The shortcut belongs to the component "kwin"!
+     m_actionCollection = new KActionCollection(this, QStringLiteral("kwin"));
+diff --git a/effects/magnifier/magnifier_config.cpp b/effects/magnifier/magnifier_config.cpp
+index a5e77ef0dc..d7d06212a4 100644
+--- a/effects/magnifier/magnifier_config.cpp
++++ b/effects/magnifier/magnifier_config.cpp
+@@ -37,6 +37,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #include <QWidget>
+ #include <QVBoxLayout>
+ 
++#include <kconfigwidgets_version.h>
++
+ K_PLUGIN_FACTORY_WITH_JSON(MagnifierEffectConfigFactory,
+                            "magnifier_config.json",
+                            registerPlugin<KWin::MagnifierEffectConfig>();)
+@@ -61,7 +63,11 @@ MagnifierEffectConfig::MagnifierEffectConfig(QWidget* parent, const QVariantList
+     MagnifierConfig::instance(KWIN_CONFIG);
+     addConfig(MagnifierConfig::self(), m_ui);
+ 
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 64, 0)
+     connect(m_ui->editor, &KShortcutsEditor::keyChange, this, &MagnifierEffectConfig::markAsChanged);
++#else
++    connect(m_ui->editor, SIGNAL(keyChange()), this, SLOT(changed()));
++#endif
+ 
+     // Shortcut config. The shortcut belongs to the component "kwin"!
+     m_actionCollection = new KActionCollection(this, QStringLiteral("kwin"));
+diff --git a/effects/mouseclick/mouseclick_config.cpp b/effects/mouseclick/mouseclick_config.cpp
+index f9be52e49f..fb501fbc84 100644
+--- a/effects/mouseclick/mouseclick_config.cpp
++++ b/effects/mouseclick/mouseclick_config.cpp
+@@ -34,6 +34,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ #include <QWidget>
+ 
++#include <kconfigwidgets_version.h>
++
+ K_PLUGIN_FACTORY_WITH_JSON(MouseClickEffectConfigFactory,
+                            "mouseclick_config.json",
+                            registerPlugin<KWin::MouseClickEffectConfig>();)
+@@ -54,7 +56,11 @@ MouseClickEffectConfig::MouseClickEffectConfig(QWidget* parent, const QVariantLi
+     QVBoxLayout* layout = new QVBoxLayout(this);
+     layout->addWidget(m_ui);
+ 
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 64, 0)
+     connect(m_ui->editor, &KShortcutsEditor::keyChange, this, &MouseClickEffectConfig::markAsChanged);
++#else
++    connect(m_ui->editor, SIGNAL(keyChange()), this, SLOT(changed()));
++#endif
+ 
+     // Shortcut config. The shortcut belongs to the component "kwin"!
+     m_actionCollection = new KActionCollection(this, QStringLiteral("kwin"));
+diff --git a/effects/presentwindows/presentwindows_config.cpp b/effects/presentwindows/presentwindows_config.cpp
+index c7a8740772..43fc37eabe 100644
+--- a/effects/presentwindows/presentwindows_config.cpp
++++ b/effects/presentwindows/presentwindows_config.cpp
+@@ -35,6 +35,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ #include <QVBoxLayout>
+ 
++#include <kconfigwidgets_version.h>
++
+ K_PLUGIN_FACTORY_WITH_JSON(PresentWindowsEffectConfigFactory,
+                            "presentwindows_config.json",
+                            registerPlugin<KWin::PresentWindowsEffectConfig>();)
+@@ -83,7 +85,11 @@ PresentWindowsEffectConfig::PresentWindowsEffectConfig(QWidget* parent, const QV
+ 
+     m_ui->shortcutEditor->addCollection(m_actionCollection);
+ 
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 64, 0)
+     connect(m_ui->shortcutEditor, &KShortcutsEditor::keyChange, this, &PresentWindowsEffectConfig::markAsChanged);
++#else
++    connect(m_ui->shortcutEditor, SIGNAL(keyChange()), this, SLOT(changed()));
++#endif
+ 
+     PresentWindowsConfig::instance(KWIN_CONFIG);
+     addConfig(PresentWindowsConfig::self(), m_ui);
+diff --git a/effects/screenshot/screenshot.cpp b/effects/screenshot/screenshot.cpp
+index 140377dae0..7b9ee4c26a 100644
+--- a/effects/screenshot/screenshot.cpp
++++ b/effects/screenshot/screenshot.cpp
+@@ -38,6 +38,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ #include <unistd.h>
+ 
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++#   define sizeInBytes()   byteCount()
++#endif
++
+ class ComparableQPoint : public QPoint
+ {
+ public:
+diff --git a/effects/showpaint/showpaint_config.cpp b/effects/showpaint/showpaint_config.cpp
+index 6094299fa9..6010fc5076 100644
+--- a/effects/showpaint/showpaint_config.cpp
++++ b/effects/showpaint/showpaint_config.cpp
+@@ -29,6 +29,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ #include <QAction>
+ 
++#include <kconfigwidgets_version.h>
++
+ K_PLUGIN_FACTORY_WITH_JSON(ShowPaintEffectConfigFactory,
+                            "showpaint_config.json",
+                            registerPlugin<KWin::ShowPaintEffectConfig>();)
+@@ -56,8 +58,13 @@ ShowPaintEffectConfig::ShowPaintEffectConfig(QWidget *parent, const QVariantList
+ 
+     m_ui->shortcutsEditor->addCollection(actionCollection);
+ 
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 64, 0)
+     connect(m_ui->shortcutsEditor, &KShortcutsEditor::keyChange,
+             this, &ShowPaintEffectConfig::markAsChanged);
++#else
++    connect(m_ui->shortcutsEditor, &KShortcutsEditor::keyChange,
++            this, qOverload<>(&ShowPaintEffectConfig::changed));
++#endif
+ 
+     load();
+ }
+diff --git a/effects/thumbnailaside/thumbnailaside_config.cpp b/effects/thumbnailaside/thumbnailaside_config.cpp
+index aed7ac5719..8f0f7fba07 100644
+--- a/effects/thumbnailaside/thumbnailaside_config.cpp
++++ b/effects/thumbnailaside/thumbnailaside_config.cpp
+@@ -36,6 +36,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #include <QWidget>
+ #include <QVBoxLayout>
+ 
++#include <kconfigwidgets_version.h>
++
+ K_PLUGIN_FACTORY_WITH_JSON(ThumbnailAsideEffectConfigFactory,
+                            "thumbnailaside_config.json",
+                            registerPlugin<KWin::ThumbnailAsideEffectConfig>();)
+@@ -57,7 +59,11 @@ ThumbnailAsideEffectConfig::ThumbnailAsideEffectConfig(QWidget* parent, const QV
+ 
+     layout->addWidget(m_ui);
+ 
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 64, 0)
+     connect(m_ui->editor, &KShortcutsEditor::keyChange, this, &ThumbnailAsideEffectConfig::markAsChanged);
++#else
++    connect(m_ui->editor, SIGNAL(keyChange()), this, SLOT(changed()));
++#endif
+ 
+     ThumbnailAsideConfig::instance(KWIN_CONFIG);
+     addConfig(ThumbnailAsideConfig::self(), this);
+diff --git a/effects/windowgeometry/windowgeometry_config.cpp b/effects/windowgeometry/windowgeometry_config.cpp
+index 20bd7c83bf..2959c2a964 100644
+--- a/effects/windowgeometry/windowgeometry_config.cpp
++++ b/effects/windowgeometry/windowgeometry_config.cpp
+@@ -32,6 +32,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #include <KAboutData>
+ #include <KPluginFactory>
+ 
++#include <kconfigwidgets_version.h>
++
+ K_PLUGIN_FACTORY_WITH_JSON(WindowGeometryEffectConfigFactory,
+                            "windowgeometry_config.json",
+                            registerPlugin<KWin::WindowGeometryConfig>();)
+@@ -62,7 +64,11 @@ WindowGeometryConfig::WindowGeometryConfig(QWidget* parent, const QVariantList&
+     KGlobalAccel::self()->setShortcut(a, QList<QKeySequence>() << Qt::CTRL + Qt::SHIFT + Qt::Key_F11);
+     myUi->shortcuts->addCollection(myActionCollection);
+ 
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 64, 0)
+     connect(myUi->shortcuts, &KShortcutsEditor::keyChange, this, &WindowGeometryConfig::markAsChanged);
++#else
++    connect(myUi->shortcuts,    SIGNAL(keyChange()), this, SLOT(changed()));
++#endif
+ 
+     addConfig(WindowGeometryConfiguration::self(), myUi);
+ 
+diff --git a/effects/zoom/zoom_config.cpp b/effects/zoom/zoom_config.cpp
+index 78dafd2bff..fce94c191a 100644
+--- a/effects/zoom/zoom_config.cpp
++++ b/effects/zoom/zoom_config.cpp
+@@ -35,6 +35,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ #include <QVBoxLayout>
+ 
++#include <kconfigwidgets_version.h>
++
+ K_PLUGIN_FACTORY_WITH_JSON(ZoomEffectConfigFactory,
+                            "zoom_config.json",
+                            registerPlugin<KWin::ZoomEffectConfig>();)
+@@ -58,7 +60,11 @@ ZoomEffectConfig::ZoomEffectConfig(QWidget* parent, const QVariantList& args) :
+ 
+     addConfig(ZoomConfig::self(), m_ui);
+ 
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 64, 0)
+     connect(m_ui->editor, &KShortcutsEditor::keyChange, this, &ZoomEffectConfig::markAsChanged);
++#else
++    connect(m_ui->editor, SIGNAL(keyChange()), this, SLOT(changed()));
++#endif
+ 
+     // Shortcut config. The shortcut belongs to the component "kwin"!
+     KActionCollection *actionCollection = new KActionCollection(this, QStringLiteral("kwin"));
+diff --git a/kcmkwin/common/effectsmodel.cpp b/kcmkwin/common/effectsmodel.cpp
+index 60e733b5ed..e916066d55 100644
+--- a/kcmkwin/common/effectsmodel.cpp
++++ b/kcmkwin/common/effectsmodel.cpp
+@@ -42,6 +42,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #include <QPushButton>
+ #include <QVBoxLayout>
+ 
++#include <kconfigwidgets_version.h>
++
+ namespace KWin
+ {
+ 
+@@ -658,9 +660,11 @@ void EffectsModel::requestConfigure(const QModelIndex &index, QWindow *transient
+     connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+     connect(buttons->button(QDialogButtonBox::RestoreDefaults), &QPushButton::clicked,
+         module, &KCModule::defaults);
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     connect(module, &KCModule::defaulted, this, [=](bool defaulted) {
+         buttons->button(QDialogButtonBox::RestoreDefaults)->setEnabled(!defaulted);
+     });
++#endif
+ 
+     auto layout = new QVBoxLayout(dialog);
+     layout->addWidget(module);
+diff --git a/kcmkwin/kwincompositing/main.cpp b/kcmkwin/kwincompositing/main.cpp
+index 31c611fa9f..6516acb9bf 100644
+--- a/kcmkwin/kwincompositing/main.cpp
++++ b/kcmkwin/kwincompositing/main.cpp
+@@ -35,6 +35,8 @@
+ 
+ #include "kwincompositing_setting.h"
+ 
++#include <kconfigwidgets_version.h>
++
+ static bool isRunningPlasma()
+ {
+     return qgetenv("XDG_CURRENT_DESKTOP") == "KDE";
+@@ -227,7 +229,9 @@ void KWinCompositingKCM::updateUnmanagedItemStatus()
+     if (!inPlasma) {
+         defaulted &= animationDuration == m_settings->defaultAnimationDurationFactorValue();
+     }
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     unmanagedWidgetDefaultState(defaulted);
++#endif
+ }
+ 
+ void KWinCompositingKCM::load()
+diff --git a/kcmkwin/kwindecoration/CMakeLists.txt b/kcmkwin/kwindecoration/CMakeLists.txt
+index 5be0504848..a1e8b612dd 100644
+--- a/kcmkwin/kwindecoration/CMakeLists.txt
++++ b/kcmkwin/kwindecoration/CMakeLists.txt
+@@ -3,31 +3,39 @@ add_definitions(-DTRANSLATION_DOMAIN=\"kcm_kwindecoration\")
+ 
+ add_subdirectory(declarative-plugin)
+ 
+-set(kcmkwindecoration_SRCS
+-    declarative-plugin/buttonsmodel.cpp
+-    decorationmodel.cpp
++set(kcm_kwindecoration_PART_SRCS
+     kcm.cpp
+-    utils.cpp
++    decorationmodel.cpp
++    declarative-plugin/buttonsmodel.cpp
+ )
+ 
+-kconfig_add_kcfg_files(kcmkwindecoration_SRCS kwindecorationsettings.kcfgc GENERATE_MOC)
+-
+-add_library(kcm_kwindecoration MODULE ${kcmkwindecoration_SRCS})
++ki18n_wrap_ui(kcm_kwindecoration_PART_SRCS
++    kcm.ui
++)
+ 
++add_library(kcm_kwindecoration MODULE ${kcm_kwindecoration_PART_SRCS})
+ target_link_libraries(kcm_kwindecoration
+     KDecoration2::KDecoration
++    Qt5::DBus
++    Qt5::Quick
++    Qt5::QuickWidgets
++    Qt5::UiTools
++    KF5::Completion
++    KF5::ConfigWidgets
++    KF5::Declarative
+     KF5::I18n
+     KF5::NewStuff
+-    KF5::QuickAddons
+-    Qt5::Quick
++    KF5::WindowSystem
++    KF5::Service
+ )
++install(TARGETS kcm_kwindecoration  DESTINATION ${PLUGIN_INSTALL_DIR} )
+ 
+-kcoreaddons_desktop_to_json(kcm_kwindecoration "kwindecoration.desktop" SERVICE_TYPES kcmodule.desktop)
+-
+-# This desktop file is installed only for retrocompatibility with sycoca
+-install(FILES kwindecorationsettings.kcfg DESTINATION ${KDE_INSTALL_KCFGDIR})
+-install(FILES kwindecoration.desktop DESTINATION ${KDE_INSTALL_KSERVICES5DIR})
+-install(FILES window-decorations.knsrc DESTINATION ${KDE_INSTALL_KNSRCDIR})
+-install(TARGETS kcm_kwindecoration DESTINATION ${KDE_INSTALL_PLUGINDIR}/kcms)
++########### install files ###############
+ 
+-kpackage_install_package(package kcm_kwindecoration kcms)
++install( FILES kwindecoration.desktop  DESTINATION  ${SERVICES_INSTALL_DIR} )
++install( FILES
++    qml/main.qml
++    qml/Buttons.qml
++    qml/ButtonGroup.qml
++    qml/Previews.qml
++    DESTINATION ${DATA_INSTALL_DIR}/kwin/kcm_kwindecoration)
+diff --git a/kcmkwin/kwindecoration/Messages.sh b/kcmkwin/kwindecoration/Messages.sh
+index 97ccd22454..d1d5819863 100644
+--- a/kcmkwin/kwindecoration/Messages.sh
++++ b/kcmkwin/kwindecoration/Messages.sh
+@@ -1,2 +1,4 @@
+-#! /usr/bin/env bash
+-$XGETTEXT `find . -name "*.cpp" -o -name "*.qml"` -o $podir/kcm_kwindecoration.pot
++#!bin/sh
++$EXTRACTRC `find . -name \*.rc -o -name \*.ui -o -name \*.kcfg` >> rc.cpp
++$XGETTEXT `find . -name \*.qml -o -name \*.cpp -o -name \*.h` -o $podir/kcm_kwindecoration.pot
++rm -f rc.cpp
+diff --git a/kcmkwin/kwindecoration/declarative-plugin/buttonsmodel.cpp b/kcmkwin/kwindecoration/declarative-plugin/buttonsmodel.cpp
+index 371a6161a1..b417525048 100644
+--- a/kcmkwin/kwindecoration/declarative-plugin/buttonsmodel.cpp
++++ b/kcmkwin/kwindecoration/declarative-plugin/buttonsmodel.cpp
+@@ -153,8 +153,8 @@ void ButtonsModel::add(DecorationButtonType type)
+ 
+ void ButtonsModel::add(int index, int type)
+ {
+-    beginInsertRows(QModelIndex(), index, index);
+-    m_buttons.insert(index, KDecoration2::DecorationButtonType(type));
++    beginInsertRows(QModelIndex(), index + 1, index+1);
++    m_buttons.insert(index+1, KDecoration2::DecorationButtonType(type));
+     endInsertRows();
+ }
+ 
+@@ -166,7 +166,7 @@ void ButtonsModel::move(int sourceIndex, int targetIndex)
+ 
+     /* When moving an item down, the destination index needs to be incremented
+        by one, as explained in the documentation:
+-       https://doc.qt.io/qt-5/qabstractitemmodel.html#beginMoveRows */
++       http://doc.qt.nokia.com/qabstractitemmodel.html#beginMoveRows */
+     if (targetIndex > sourceIndex) {
+         // Row will be moved down
+         beginMoveRows(QModelIndex(), sourceIndex, sourceIndex, QModelIndex(), targetIndex + 1);
+@@ -178,24 +178,6 @@ void ButtonsModel::move(int sourceIndex, int targetIndex)
+     endMoveRows();
+ }
+ 
+-void ButtonsModel::clear()
+-{
+-    beginResetModel();
+-    m_buttons.clear();
+-    endResetModel();
+-}
+-
+-void ButtonsModel::replace(const QVector< DecorationButtonType > &buttons)
+-{
+-    if (buttons.isEmpty()) {
+-        return;
+-    }
+-
+-    beginResetModel();
+-    m_buttons = buttons;
+-    endResetModel();
+-}
+-
+ }
+ }
+ 
+diff --git a/kcmkwin/kwindecoration/declarative-plugin/buttonsmodel.h b/kcmkwin/kwindecoration/declarative-plugin/buttonsmodel.h
+index ae0a1c2afd..13f628dd64 100644
+--- a/kcmkwin/kwindecoration/declarative-plugin/buttonsmodel.h
++++ b/kcmkwin/kwindecoration/declarative-plugin/buttonsmodel.h
+@@ -34,9 +34,9 @@ class ButtonsModel : public QAbstractListModel
+ {
+     Q_OBJECT
+ public:
+-    explicit ButtonsModel(const QVector< DecorationButtonType > &buttons, QObject *parent = nullptr);
++    explicit ButtonsModel(const QVector< DecorationButtonType > &buttons, QObject *parent = 0);
+     explicit ButtonsModel(QObject *parent = nullptr);
+-    ~ButtonsModel() override;
++    virtual ~ButtonsModel();
+     QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
+     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
+     QHash< int, QByteArray > roleNames() const override;
+@@ -45,13 +45,11 @@ public:
+         return m_buttons;
+     }
+ 
+-    Q_INVOKABLE void clear();
+     Q_INVOKABLE void remove(int index);
+     Q_INVOKABLE void up(int index);
+     Q_INVOKABLE void down(int index);
+     Q_INVOKABLE void move(int sourceIndex, int targetIndex);
+ 
+-    void replace(const QVector< DecorationButtonType > &buttons);
+     void add(DecorationButtonType type);
+     Q_INVOKABLE void add(int index, int type);
+ 
+diff --git a/kcmkwin/kwindecoration/declarative-plugin/plugin.cpp b/kcmkwin/kwindecoration/declarative-plugin/plugin.cpp
+index 878f5a1c80..1eb823b52c 100644
+--- a/kcmkwin/kwindecoration/declarative-plugin/plugin.cpp
++++ b/kcmkwin/kwindecoration/declarative-plugin/plugin.cpp
+@@ -28,6 +28,8 @@
+ #include <KDecoration2/Decoration>
+ #include <KDecoration2/DecorationShadow>
+ 
++#include <qqml.h>
++
+ namespace KDecoration2
+ {
+ namespace Preview
+@@ -41,17 +43,10 @@ void Plugin::registerTypes(const char *uri)
+     qmlRegisterType<KDecoration2::Preview::PreviewItem>(uri, 1, 0, "Decoration");
+     qmlRegisterType<KDecoration2::Preview::PreviewButtonItem>(uri, 1, 0, "Button");
+     qmlRegisterType<KDecoration2::Preview::ButtonsModel>(uri, 1, 0, "ButtonsModel");
+-#if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
+     qmlRegisterType<KDecoration2::Preview::PreviewClient>();
+     qmlRegisterType<KDecoration2::Decoration>();
+     qmlRegisterType<KDecoration2::DecorationShadow>();
+     qmlRegisterType<KDecoration2::Preview::PreviewBridge>();
+-#else
+-    qmlRegisterAnonymousType<KDecoration2::Preview::PreviewClient>(uri, 1);
+-    qmlRegisterAnonymousType<KDecoration2::Decoration>(uri, 1);
+-    qmlRegisterAnonymousType<KDecoration2::DecorationShadow>(uri, 1);
+-    qmlRegisterAnonymousType<KDecoration2::Preview::PreviewBridge>(uri, 1);
+-#endif
+ }
+ 
+ }
+diff --git a/kcmkwin/kwindecoration/declarative-plugin/previewbridge.cpp b/kcmkwin/kwindecoration/declarative-plugin/previewbridge.cpp
+index bad4cc1190..7a74077280 100644
+--- a/kcmkwin/kwindecoration/declarative-plugin/previewbridge.cpp
++++ b/kcmkwin/kwindecoration/declarative-plugin/previewbridge.cpp
+@@ -60,7 +60,7 @@ std::unique_ptr<DecoratedClientPrivate> PreviewBridge::createClient(DecoratedCli
+ {
+     auto ptr = std::unique_ptr<PreviewClient>(new PreviewClient(client, decoration));
+     m_lastCreatedClient = ptr.get();
+-    return ptr;
++    return std::move(ptr);
+ }
+ 
+ void PreviewBridge::update(Decoration *decoration, const QRect &geometry)
+@@ -78,7 +78,7 @@ std::unique_ptr<DecorationSettingsPrivate> PreviewBridge::settings(DecorationSet
+ {
+     auto ptr = std::unique_ptr<PreviewSettings>(new PreviewSettings(parent));
+     m_lastCreatedSettings = ptr.get();
+-    return ptr;
++    return std::move(ptr);
+ }
+ 
+ void PreviewBridge::registerPreviewItem(PreviewItem *item)
+@@ -97,6 +97,7 @@ void PreviewBridge::setPlugin(const QString &plugin)
+         return;
+     }
+     m_plugin = plugin;
++    qDebug() << "Plugin changed to: " << m_plugin;
+     emit pluginChanged();
+ }
+ 
+@@ -122,20 +123,22 @@ QString PreviewBridge::plugin() const
+ void PreviewBridge::createFactory()
+ {
+     m_factory.clear();
+-
+     if (m_plugin.isNull()) {
+         setValid(false);
+-        qWarning() << "Plugin not set";
++        qDebug() <<"Plugin not set";
+         return;
+     }
+-
+-    const auto offers = KPluginTrader::self()->query(s_pluginName, s_pluginName);
+-    auto item = std::find_if(offers.constBegin(), offers.constEnd(), [this](const auto &plugin) { return plugin.pluginName() == m_plugin; });
+-    if (item != offers.constEnd()) {
+-        KPluginLoader loader(item->libraryPath());
+-        m_factory = loader.factory();
++    const auto offers = KPluginTrader::self()->query(s_pluginName,
++                                                     s_pluginName,
++                                                     QStringLiteral("[X-KDE-PluginInfo-Name] == '%1'").arg(m_plugin));
++    if (offers.isEmpty()) {
++        setValid(false);
++        qDebug() << "no offers";
++        return;
+     }
+-
++    KPluginLoader loader(offers.first().libraryPath());
++    m_factory = loader.factory();
++    qDebug() << "Factory: " << !m_factory.isNull();
+     setValid(!m_factory.isNull());
+ }
+ 
+@@ -209,17 +212,22 @@ void PreviewBridge::configure()
+ 
+     QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok |
+                                                      QDialogButtonBox::Cancel |
++                                                     QDialogButtonBox::Apply |
+                                                      QDialogButtonBox::RestoreDefaults |
+                                                      QDialogButtonBox::Reset,
+                                                      &dialog);
+ 
++    QPushButton *apply = buttons->button(QDialogButtonBox::Apply);
+     QPushButton *reset = buttons->button(QDialogButtonBox::Reset);
++    apply->setEnabled(false);
+     reset->setEnabled(false);
+     // Here we connect our buttons with the dialog
+     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
++    connect(apply, &QPushButton::clicked, this, save);
+     connect(reset, &QPushButton::clicked, kcm, &KCModule::load);
+     auto changedSignal = static_cast<void(KCModule::*)(bool)>(&KCModule::changed);
++    connect(kcm, changedSignal, apply, &QPushButton::setEnabled);
+     connect(kcm, changedSignal, reset, &QPushButton::setEnabled);
+     connect(buttons->button(QDialogButtonBox::RestoreDefaults), &QPushButton::clicked, kcm, &KCModule::defaults);
+ 
+diff --git a/kcmkwin/kwindecoration/declarative-plugin/previewbridge.h b/kcmkwin/kwindecoration/declarative-plugin/previewbridge.h
+index 7e1d8f3d45..fe366eb42e 100644
+--- a/kcmkwin/kwindecoration/declarative-plugin/previewbridge.h
++++ b/kcmkwin/kwindecoration/declarative-plugin/previewbridge.h
+@@ -45,7 +45,7 @@ class PreviewBridge : public DecorationBridge
+     Q_PROPERTY(bool valid READ isValid NOTIFY validChanged)
+ public:
+     explicit PreviewBridge(QObject *parent = nullptr);
+-    ~PreviewBridge() override;
++    virtual ~PreviewBridge();
+     std::unique_ptr<DecoratedClientPrivate> createClient(DecoratedClient *client, Decoration *decoration) override;
+     void update(Decoration* decoration, const QRect& geometry) override;
+     std::unique_ptr<DecorationSettingsPrivate> settings(DecorationSettings *parent) override;
+@@ -99,7 +99,7 @@ class BridgeItem : public QObject
+ 
+ public:
+     explicit BridgeItem(QObject *parent = nullptr);
+-    ~BridgeItem() override;
++    virtual ~BridgeItem();
+ 
+     void setPlugin(const QString &plugin) {
+         m_bridge->setPlugin(plugin);
+diff --git a/kcmkwin/kwindecoration/declarative-plugin/previewbutton.cpp b/kcmkwin/kwindecoration/declarative-plugin/previewbutton.cpp
+index d86949dafa..2a5d34288d 100644
+--- a/kcmkwin/kwindecoration/declarative-plugin/previewbutton.cpp
++++ b/kcmkwin/kwindecoration/declarative-plugin/previewbutton.cpp
+@@ -24,7 +24,7 @@
+ 
+ #include <KDecoration2/Decoration>
+ 
+-#include <QPainter>
++#include <QDebug>
+ 
+ namespace KDecoration2
+ {
+@@ -132,17 +132,7 @@ void PreviewButtonItem::paint(QPainter *painter)
+     if (!m_button) {
+         return;
+     }
+-    QRect size { 0, 0, (int)width(), (int)height() };
+-    m_button->paint(painter, size);
+-    painter->setCompositionMode(QPainter::CompositionMode_SourceAtop);
+-    painter->fillRect(size, m_color);
+-}
+-
+-void PreviewButtonItem::setColor(const QColor &color)
+-{
+-    m_color = color;
+-    m_color.setAlpha(127);
+-    update();
++    m_button->paint(painter, QRect(0, 0, width(), height()));
+ }
+ 
+ }
+diff --git a/kcmkwin/kwindecoration/declarative-plugin/previewbutton.h b/kcmkwin/kwindecoration/declarative-plugin/previewbutton.h
+index e1895c32ec..0afdf301b4 100644
+--- a/kcmkwin/kwindecoration/declarative-plugin/previewbutton.h
++++ b/kcmkwin/kwindecoration/declarative-plugin/previewbutton.h
+@@ -21,7 +21,6 @@
+ #define KDECOARTIONS_PREVIEW_BUTTON_ITEM_H
+ 
+ #include <QQuickPaintedItem>
+-#include <QColor>
+ #include <QPointer>
+ #include <KDecoration2/DecorationButton>
+ 
+@@ -40,11 +39,10 @@ class PreviewButtonItem : public QQuickPaintedItem
+     Q_PROPERTY(KDecoration2::Preview::PreviewBridge *bridge READ bridge WRITE setBridge NOTIFY bridgeChanged)
+     Q_PROPERTY(KDecoration2::Preview::Settings *settings READ settings WRITE setSettings NOTIFY settingsChanged)
+     Q_PROPERTY(int type READ typeAsInt WRITE setType NOTIFY typeChanged)
+-    Q_PROPERTY(QColor color READ color WRITE setColor)
+ 
+ public:
+     explicit PreviewButtonItem(QQuickItem *parent = nullptr);
+-    ~PreviewButtonItem() override;
++    virtual ~PreviewButtonItem();
+     void paint(QPainter *painter) override;
+ 
+     PreviewBridge *bridge() const;
+@@ -58,9 +56,6 @@ public:
+     void setType(KDecoration2::DecorationButtonType type);
+     void setType(int type);
+ 
+-    const QColor &color() const { return m_color; }
+-    void setColor(const QColor &color);
+-
+ Q_SIGNALS:
+     void bridgeChanged();
+     void typeChanged();
+@@ -72,7 +67,6 @@ protected:
+ private:
+     void createButton();
+     void syncGeometry();
+-    QColor m_color;
+     QPointer<KDecoration2::Preview::PreviewBridge> m_bridge;
+     QPointer<KDecoration2::Preview::Settings> m_settings;
+     KDecoration2::Decoration *m_decoration = nullptr;
+diff --git a/kcmkwin/kwindecoration/declarative-plugin/previewclient.cpp b/kcmkwin/kwindecoration/declarative-plugin/previewclient.cpp
+index fd9f9f278b..4caa52464a 100644
+--- a/kcmkwin/kwindecoration/declarative-plugin/previewclient.cpp
++++ b/kcmkwin/kwindecoration/declarative-plugin/previewclient.cpp
+@@ -69,6 +69,7 @@ PreviewClient::PreviewClient(DecoratedClient *c, Decoration *decoration)
+     connect(this, &PreviewClient::maximizedVerticallyChanged,   c, &DecoratedClient::maximizedVerticallyChanged);
+     connect(this, &PreviewClient::maximizedHorizontallyChanged, c, &DecoratedClient::maximizedHorizontallyChanged);
+     connect(this, &PreviewClient::minimizableChanged,           c, &DecoratedClient::minimizeableChanged);
++//         connect(this, &PreviewClient::modalChanged, c, &DecoratedClient::modalChanged);
+     connect(this, &PreviewClient::movableChanged,               c, &DecoratedClient::moveableChanged);
+     connect(this, &PreviewClient::onAllDesktopsChanged,         c, &DecoratedClient::onAllDesktopsChanged);
+     connect(this, &PreviewClient::resizableChanged,             c, &DecoratedClient::resizeableChanged);
+@@ -78,8 +79,12 @@ PreviewClient::PreviewClient(DecoratedClient *c, Decoration *decoration)
+     connect(this, &PreviewClient::onAllDesktopsChanged,         c, &DecoratedClient::onAllDesktopsChanged);
+     connect(this, &PreviewClient::widthChanged,                 c, &DecoratedClient::widthChanged);
+     connect(this, &PreviewClient::heightChanged,                c, &DecoratedClient::heightChanged);
++#if KDECORATION2_VERSION >= QT_VERSION_CHECK(5, 18, 0)
++    connect(this, &PreviewClient::sizeChanged,                  c, &DecoratedClient::sizeChanged);
++#endif
+     connect(this, &PreviewClient::iconChanged,                  c, &DecoratedClient::iconChanged);
+     connect(this, &PreviewClient::paletteChanged,               c, &DecoratedClient::paletteChanged);
++//         connect(this, &PreviewClient::, c, &DecoratedClient::);
+     connect(this, &PreviewClient::maximizedVerticallyChanged, this,
+         [this]() {
+             emit maximizedChanged(isMaximized());
+@@ -111,11 +116,6 @@ PreviewClient::PreviewClient(DecoratedClient *c, Decoration *decoration)
+     connect(this, &PreviewClient::bordersLeftEdgeChanged,   this, emitEdgesChanged);
+     connect(this, &PreviewClient::bordersRightEdgeChanged,  this, emitEdgesChanged);
+     connect(this, &PreviewClient::bordersBottomEdgeChanged, this, emitEdgesChanged);
+-    auto emitSizeChanged = [c]() {
+-        emit c->sizeChanged(c->size());
+-    };
+-    connect(this, &PreviewClient::widthChanged, this, emitSizeChanged);
+-    connect(this, &PreviewClient::heightChanged, this, emitSizeChanged);
+ 
+     qApp->installEventFilter(this);
+ }
+@@ -140,7 +140,8 @@ int PreviewClient::height() const
+ 
+ QSize PreviewClient::size() const
+ {
+-    return QSize(m_width, m_height);
++    QSize size(m_width, m_height);
++    return size;
+ }
+ 
+ QString PreviewClient::caption() const
+@@ -361,11 +362,12 @@ void PreviewClient::setBordersTopEdge(bool enabled)
+ 
+ void PreviewClient::requestShowToolTip(const QString &text)
+ {
+-    Q_UNUSED(text);
++    qDebug() << "tooltip show requested with text:" << text;
+ }
+ 
+ void PreviewClient::requestHideToolTip()
+ {
++    qDebug() << "tooltip hide requested";
+ }
+ 
+ void PreviewClient::requestClose()
+@@ -375,6 +377,7 @@ void PreviewClient::requestClose()
+ 
+ void PreviewClient::requestContextHelp()
+ {
++    qDebug() << "context help requested";
+ }
+ 
+ void PreviewClient::requestToggleMaximization(Qt::MouseButtons buttons)
+@@ -437,6 +440,7 @@ void PreviewClient::name(type variable) \
+     if (m_##variable == variable) { \
+         return; \
+     } \
++    qDebug() << "Setting " << #variable << ":" << variable;\
+     m_##variable = variable; \
+     emit variable##Changed(m_##variable); \
+ }
+diff --git a/kcmkwin/kwindecoration/declarative-plugin/previewclient.h b/kcmkwin/kwindecoration/declarative-plugin/previewclient.h
+index c37db74854..1beec592c1 100644
+--- a/kcmkwin/kwindecoration/declarative-plugin/previewclient.h
++++ b/kcmkwin/kwindecoration/declarative-plugin/previewclient.h
+@@ -26,6 +26,8 @@
+ #include <QObject>
+ #include <QPalette>
+ 
++#include <kdecoration2_version.h>
++
+ class QAbstractItemModel;
+ 
+ namespace KDecoration2
+@@ -64,7 +66,7 @@ class PreviewClient : public QObject, public ApplicationMenuEnabledDecoratedClie
+     Q_PROPERTY(bool bordersBottomEdge READ bordersBottomEdge WRITE setBordersBottomEdge NOTIFY bordersBottomEdgeChanged)
+ public:
+     explicit PreviewClient(DecoratedClient *client, Decoration *decoration);
+-    ~PreviewClient() override;
++    virtual ~PreviewClient();
+ 
+     QString caption() const override;
+     WId decorationId() const override;
+@@ -90,7 +92,11 @@ public:
+ 
+     int width() const override;
+     int height() const override;
++#if KDECORATION2_VERSION >= QT_VERSION_CHECK(5, 18, 0)
+     QSize size() const override;
++#else
++    QSize size() const;
++#endif
+     QPalette palette() const override;
+     QColor color(ColorGroup group, ColorRole role) const override;
+     Qt::Edges adjacentScreenEdges() const override;
+@@ -111,7 +117,11 @@ public:
+     void requestShowApplicationMenu(const QRect &rect, int actionId) override;
+     void requestToggleOnAllDesktops() override;
+ 
++#if KDECORATION2_VERSION >= QT_VERSION_CHECK(5, 18, 0)
+     void showApplicationMenu(int actionId) override;
++#else
++    void showApplicationMenu(int actionId);
++#endif
+ 
+     void setCaption(const QString &caption);
+     void setActive(bool active);
+@@ -170,6 +180,7 @@ Q_SIGNALS:
+     void desktopChanged(int);
+     void widthChanged(int);
+     void heightChanged(int);
++    void sizeChanged(QSize&);
+     void paletteChanged(const QPalette&);
+     void bordersTopEdgeChanged(bool);
+     void bordersLeftEdgeChanged(bool);
+diff --git a/kcmkwin/kwindecoration/declarative-plugin/previewitem.cpp b/kcmkwin/kwindecoration/declarative-plugin/previewitem.cpp
+index 616b88ae2d..534f6e17cd 100644
+--- a/kcmkwin/kwindecoration/declarative-plugin/previewitem.cpp
++++ b/kcmkwin/kwindecoration/declarative-plugin/previewitem.cpp
+@@ -43,7 +43,7 @@ namespace Preview
+ PreviewItem::PreviewItem(QQuickItem *parent)
+     : QQuickPaintedItem(parent)
+     , m_decoration(nullptr)
+-    , m_windowColor(QPalette().window().color())
++    , m_windowColor(QPalette().background().color())
+ {
+     setAcceptHoverEvents(true);
+     setFiltersChildMouseEvents(true);
+@@ -78,9 +78,15 @@ void PreviewItem::createDecoration()
+     if (m_bridge.isNull() || m_settings.isNull() || m_decoration) {
+         return;
+     }
+-    Decoration *decoration = m_bridge->createDecoration(nullptr);
++    m_decoration = m_bridge->createDecoration(0);
++    if (!m_decoration) {
++        return;
++    }
++    m_decoration->setProperty("visualParent", QVariant::fromValue(this));
+     m_client = m_bridge->lastCreatedClient();
+-    setDecoration(decoration);
++    connect(m_decoration, &Decoration::bordersChanged, this, &PreviewItem::syncSize);
++    connect(m_decoration, &Decoration::shadowChanged, this, &PreviewItem::syncSize);
++    emit decorationChanged(m_decoration);
+ }
+ 
+ Decoration *PreviewItem::decoration() const
+@@ -90,15 +96,41 @@ Decoration *PreviewItem::decoration() const
+ 
+ void PreviewItem::setDecoration(Decoration *deco)
+ {
+-    if (!deco || m_decoration == deco) {
++    if (m_decoration == deco) {
+         return;
+     }
+-
++    auto updateSlot = static_cast<void (QQuickItem::*)()>(&QQuickItem::update);
++    if (m_decoration) {
++        disconnect(m_decoration, &Decoration::bordersChanged, this, updateSlot);
++    }
+     m_decoration = deco;
+     m_decoration->setProperty("visualParent", QVariant::fromValue(this));
+-    connect(m_decoration, &Decoration::bordersChanged, this, &PreviewItem::syncSize);
+-    connect(m_decoration, &Decoration::shadowChanged, this, &PreviewItem::syncSize);
+-    connect(m_decoration, &Decoration::shadowChanged, this, &PreviewItem::shadowChanged);
++    connect(m_decoration, &Decoration::bordersChanged, this, updateSlot);
++    connect(m_decoration, &Decoration::sectionUnderMouseChanged, this,
++        [this](Qt::WindowFrameSection section) {
++            switch (section) {
++                case Qt::TopRightSection:
++            case Qt::BottomLeftSection:
++                setCursor(Qt::SizeBDiagCursor);
++                return;
++            case Qt::TopLeftSection:
++            case Qt::BottomRightSection:
++                setCursor(Qt::SizeFDiagCursor);
++                return;
++            case Qt::TopSection:
++            case Qt::BottomSection:
++                setCursor(Qt::SizeVerCursor);
++                return;
++            case Qt::LeftSection:
++            case Qt::RightSection:
++                setCursor(Qt::SizeHorCursor);
++                return;
++            default:
++                setCursor(Qt::ArrowCursor);
++            }
++        }
++    );
++    connect(m_decoration, &KDecoration2::Decoration::shadowChanged, this, &PreviewItem::shadowChanged);
+     emit decorationChanged(m_decoration);
+ }
+ 
+diff --git a/kcmkwin/kwindecoration/declarative-plugin/previewitem.h b/kcmkwin/kwindecoration/declarative-plugin/previewitem.h
+index cd9ed6dade..e052751ef5 100644
+--- a/kcmkwin/kwindecoration/declarative-plugin/previewitem.h
++++ b/kcmkwin/kwindecoration/declarative-plugin/previewitem.h
+@@ -47,8 +47,8 @@ class PreviewItem : public QQuickPaintedItem
+     Q_PROPERTY(bool drawBackground READ isDrawingBackground WRITE setDrawingBackground NOTIFY drawingBackgroundChanged)
+ public:
+     PreviewItem(QQuickItem *parent = nullptr);
+-    ~PreviewItem() override;
+-    void paint(QPainter *painter) override;
++    virtual ~PreviewItem();
++    void paint(QPainter *painter);
+ 
+     KDecoration2::Decoration *decoration() const;
+     void setDecoration(KDecoration2::Decoration *deco);
+diff --git a/kcmkwin/kwindecoration/declarative-plugin/previewsettings.h b/kcmkwin/kwindecoration/declarative-plugin/previewsettings.h
+index abace01eb3..bcb58b6dfe 100644
+--- a/kcmkwin/kwindecoration/declarative-plugin/previewsettings.h
++++ b/kcmkwin/kwindecoration/declarative-plugin/previewsettings.h
+@@ -37,8 +37,8 @@ class BorderSizesModel : public QAbstractListModel
+ {
+     Q_OBJECT
+ public:
+-    explicit BorderSizesModel(QObject *parent = nullptr);
+-    ~BorderSizesModel() override;
++    explicit BorderSizesModel(QObject *parent = 0);
++    virtual ~BorderSizesModel();
+     QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
+     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
+     QHash< int, QByteArray > roleNames() const override;
+@@ -61,7 +61,8 @@ class PreviewSettings : public QObject, public DecorationSettingsPrivate
+     Q_OBJECT
+     Q_PROPERTY(bool onAllDesktopsAvailable READ isOnAllDesktopsAvailable WRITE setOnAllDesktopsAvailable NOTIFY onAllDesktopsAvailableChanged)
+     Q_PROPERTY(bool alphaChannelSupported READ isAlphaChannelSupported WRITE setAlphaChannelSupported NOTIFY alphaChannelSupportedChanged)
+-    Q_PROPERTY(bool closeOnDoubleClickOnMenu READ isCloseOnDoubleClickOnMenu WRITE setCloseOnDoubleClickOnMenu NOTIFY closeOnDoubleClickOnMenuChanged)
++//     Q_PROPERTY(bool closeOnDoubleClickOnMenu READ isCloseOnDoubleClickOnMenu WRITE setCloseOnDoubleClickOnMenu NOTIFY closeOnDoubleClickOnMenuChanged)
++    Q_PROPERTY(bool closeOnDoubleClickOnMenu READ closeOnDoubleClickOnMenu WRITE setCloseOnDoubleClickOnMenu NOTIFY closeOnDoubleClickOnMenuChanged)
+     Q_PROPERTY(QAbstractItemModel *leftButtonsModel READ leftButtonsModel CONSTANT)
+     Q_PROPERTY(QAbstractItemModel *rightButtonsModel READ rightButtonsModel CONSTANT)
+     Q_PROPERTY(QAbstractItemModel *availableButtonsModel READ availableButtonsModel CONSTANT)
+@@ -70,12 +71,15 @@ class PreviewSettings : public QObject, public DecorationSettingsPrivate
+     Q_PROPERTY(QFont font READ font WRITE setFont NOTIFY fontChanged)
+ public:
+     explicit PreviewSettings(DecorationSettings *parent);
+-    ~PreviewSettings() override;
++    virtual ~PreviewSettings();
+     bool isAlphaChannelSupported() const override;
+     bool isOnAllDesktopsAvailable() const override;
+     bool isCloseOnDoubleClickOnMenu() const override {
+         return m_closeOnDoubleClick;
+     }
++    bool closeOnDoubleClickOnMenu() const {
++        return isCloseOnDoubleClickOnMenu();
++    }
+     BorderSize borderSize() const override;
+ 
+     void setOnAllDesktopsAvailable(bool available);
+@@ -100,7 +104,7 @@ public:
+     }
+     void setBorderSizesIndex(int index);
+ 
+-    QFont font() const override {
++    QFont font() const {
+         return m_font;
+     }
+     void setFont(const QFont &font);
+@@ -132,7 +136,7 @@ class Settings : public QObject
+     Q_PROPERTY(int borderSizesIndex READ borderSizesIndex WRITE setBorderSizesIndex NOTIFY borderSizesIndexChanged)
+ public:
+     explicit Settings(QObject *parent = nullptr);
+-    ~Settings() override;
++    virtual ~Settings();
+ 
+     PreviewBridge *bridge() const;
+     void setBridge(PreviewBridge *bridge);
+diff --git a/kcmkwin/kwindecoration/decorationmodel.cpp b/kcmkwin/kwindecoration/decorationmodel.cpp
+index 988410b8c7..2bd1735901 100644
+--- a/kcmkwin/kwindecoration/decorationmodel.cpp
++++ b/kcmkwin/kwindecoration/decorationmodel.cpp
+@@ -22,6 +22,7 @@
+ #include <KDecoration2/DecorationSettings>
+ #include <KDecoration2/Decoration>
+ // KDE
++#include <KPluginInfo>
+ #include <KPluginLoader>
+ #include <KPluginFactory>
+ #include <KPluginTrader>
+@@ -59,15 +60,14 @@ QVariant DecorationsModel::data(const QModelIndex &index, int role) const
+     switch (role) {
+     case Qt::DisplayRole:
+         return d.visibleName;
+-    case PluginNameRole:
++    case Qt::UserRole +4:
+         return d.pluginName;
+-    case ThemeNameRole:
++    case Qt::UserRole +5:
+         return d.themeName;
+-    case ConfigurationRole:
++    case Qt::UserRole +6:
+         return d.configuration;
+-    case RecommendedBorderSizeRole:
+-        return Utils::borderSizeToString(d.recommendedBorderSize);
+     }
++
+     return QVariant();
+ }
+ 
+@@ -75,10 +75,9 @@ QHash< int, QByteArray > DecorationsModel::roleNames() const
+ {
+     QHash<int, QByteArray> roles({
+         {Qt::DisplayRole, QByteArrayLiteral("display")},
+-        {PluginNameRole, QByteArrayLiteral("plugin")},
+-        {ThemeNameRole, QByteArrayLiteral("theme")},
+-        {ConfigurationRole, QByteArrayLiteral("configureable")},
+-        {RecommendedBorderSizeRole, QByteArrayLiteral("recommendedbordersize")}
++        {Qt::UserRole + 4, QByteArrayLiteral("plugin")},
++        {Qt::UserRole + 5, QByteArrayLiteral("theme")},
++        {Qt::UserRole +6, QByteArrayLiteral("configureable")}
+     });
+     return roles;
+ }
+@@ -101,15 +100,6 @@ static bool isConfigureable(const QVariantMap &decoSettingsMap)
+     return it.value().toBool();
+ }
+ 
+-static KDecoration2::BorderSize recommendedBorderSize(const QVariantMap &decoSettingsMap)
+-{
+-    auto it = decoSettingsMap.find(QStringLiteral("recommendedBorderSize"));
+-    if (it == decoSettingsMap.end()) {
+-        return KDecoration2::BorderSize::Normal;
+-    }
+-    return Utils::stringToBorderSize(it.value().toString());
+-}
+-
+ static QString themeListKeyword(const QVariantMap &decoSettingsMap)
+ {
+     auto it = decoSettingsMap.find(QStringLiteral("themeListKeyword"));
+@@ -140,12 +130,12 @@ void DecorationsModel::init()
+             continue;
+         }
+         auto metadata = loader.metaData().value(QStringLiteral("MetaData")).toObject().value(s_pluginName);
+-        Data data;
++        bool config = false;
+         if (!metadata.isUndefined()) {
+             const auto decoSettingsMap = metadata.toObject().toVariantMap();
+             const QString &kns = findKNewStuff(decoSettingsMap);
+-            if (!kns.isEmpty() && !m_knsProviders.contains(kns)) {
+-                m_knsProviders.append(kns);
++            if (!kns.isEmpty()) {
++                m_knsProvides.insert(kns, info.name().isEmpty() ? info.pluginName() : info.name());
+             }
+             if (isThemeEngine(decoSettingsMap)) {
+                 const QString keyword = themeListKeyword(decoSettingsMap);
+@@ -176,12 +166,12 @@ void DecorationsModel::init()
+                 // it's a theme engine, we don't want to show this entry
+                 continue;
+             }
+-            data.configuration = isConfigureable(decoSettingsMap);
+-            data.recommendedBorderSize = recommendedBorderSize(decoSettingsMap);
++            config = isConfigureable(decoSettingsMap);
+         }
++        Data data;
+         data.pluginName = info.pluginName();
+         data.visibleName = info.name().isEmpty() ? info.pluginName() : info.name();
+-        data.themeName = data.visibleName;
++        data.configuration = config;
+ 
+         m_plugins.emplace_back(std::move(data));
+     }
+diff --git a/kcmkwin/kwindecoration/decorationmodel.h b/kcmkwin/kwindecoration/decorationmodel.h
+index 9fde4bffe9..41af88d3e1 100644
+--- a/kcmkwin/kwindecoration/decorationmodel.h
++++ b/kcmkwin/kwindecoration/decorationmodel.h
+@@ -20,8 +20,6 @@
+ #ifndef KDECORATION_DECORATION_MODEL_H
+ #define KDECORATION_DECORATION_MODEL_H
+ 
+-#include "utils.h"
+-
+ #include <QAbstractListModel>
+ 
+ namespace KDecoration2
+@@ -33,17 +31,9 @@ namespace Configuration
+ class DecorationsModel : public QAbstractListModel
+ {
+     Q_OBJECT
+-public:
+-    enum DecorationRole {
+-        PluginNameRole = Qt::UserRole + 1,
+-        ThemeNameRole,
+-        ConfigurationRole,
+-        RecommendedBorderSizeRole,
+-    };
+-
+ public:
+     explicit DecorationsModel(QObject *parent = nullptr);
+-    ~DecorationsModel() override;
++    virtual ~DecorationsModel();
+ 
+     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+@@ -51,8 +41,8 @@ public:
+ 
+     QModelIndex findDecoration(const QString &pluginName, const QString &themeName = QString()) const;
+ 
+-    QStringList knsProviders() const {
+-        return m_knsProviders;
++    QMap<QString, QString> knsProviders() const {
++        return m_knsProvides;
+     }
+ 
+ public Q_SLOTS:
+@@ -64,10 +54,9 @@ private:
+         QString themeName;
+         QString visibleName;
+         bool configuration = false;
+-        KDecoration2::BorderSize recommendedBorderSize = KDecoration2::BorderSize::Normal;
+     };
+     std::vector<Data> m_plugins;
+-    QStringList m_knsProviders;
++    QMap<QString, QString> m_knsProvides;
+ };
+ 
+ }
+diff --git a/kcmkwin/kwindecoration/kcm.cpp b/kcmkwin/kwindecoration/kcm.cpp
+index afd5236462..b0a6f00221 100644
+--- a/kcmkwin/kwindecoration/kcm.cpp
++++ b/kcmkwin/kwindecoration/kcm.cpp
+@@ -1,278 +1,432 @@
+ /*
+- * Copyright (c) 2019 Valerio Pilo <vpilo@coldshock.net>
+- * Copyright (c) 2019 Cyril Rossi <cyril.rossi@enioka.com>
++ * Copyright 2014  Martin Gräßlin <mgraesslin@kde.org>
+  *
+- * This library is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU Library General Public
+- * License version 2 as published by the Free Software Foundation.
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of
++ * the License or (at your option) version 3 or any later version
++ * accepted by the membership of KDE e.V. (or its successor approved
++ * by the membership of KDE e.V.), which shall act as a proxy
++ * defined in Section 14 of version 3 of the license.
+  *
+- * This library is distributed in the hope that it will be useful,
++ * This program is distributed in the hope that it will be useful,
+  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+- * Library General Public License for more details.
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
+  *
+- * You should have received a copy of the GNU Library General Public License
+- * along with this library; see the file COPYING.LIB.  If not, write to
+- * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+- * Boston, MA 02110-1301, USA.
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
+-
+ #include "kcm.h"
+ #include "decorationmodel.h"
+ #include "declarative-plugin/buttonsmodel.h"
+ #include <config-kwin.h>
+ 
+-#include <KAboutData>
++// KDE
+ #include <KConfigGroup>
+-#include <KLocalizedString>
+ #include <KPluginFactory>
+-#include <KNSCore/Engine>
+-
++#include <KSharedConfig>
++#include <KDecoration2/DecorationButton>
++#include <KNewStuff3/KNS3/DownloadDialog>
++#include <kdeclarative/kdeclarative.h>
++// Qt
+ #include <QDBusConnection>
+ #include <QDBusMessage>
+-#include <QDebug>
++#include <QFontDatabase>
++#include <QMenu>
++#include <QQmlContext>
++#include <QQmlEngine>
+ #include <QQuickItem>
+-#include <QQuickWindow>
++#include <QQuickView>
+ #include <QSortFilterProxyModel>
++#include <QStandardPaths>
++#include <QVBoxLayout>
+ 
+-#include <KNewStuff3/KNS3/DownloadDialog>
+-
+-#include "kwindecorationsettings.h"
+-
+-K_PLUGIN_FACTORY_WITH_JSON(KCMKWinDecorationFactory, "kwindecoration.json", registerPlugin<KCMKWinDecoration>();)
++K_PLUGIN_FACTORY(KDecorationFactory,
++                 registerPlugin<KDecoration2::Configuration::ConfigurationModule>();
++                )
+ 
+ Q_DECLARE_METATYPE(KDecoration2::BorderSize)
+ 
+-
+-namespace
++namespace KDecoration2
+ {
+-const KDecoration2::BorderSize s_defaultRecommendedBorderSize = KDecoration2::BorderSize::Normal;
+-}
+ 
+-KCMKWinDecoration::KCMKWinDecoration(QObject *parent, const QVariantList &arguments)
+-    : KQuickAddons::ManagedConfigModule(parent, arguments)
+-    , m_themesModel(new KDecoration2::Configuration::DecorationsModel(this))
+-    , m_proxyThemesModel(new QSortFilterProxyModel(this))
+-    , m_leftButtonsModel(new KDecoration2::Preview::ButtonsModel(DecorationButtonsList(), this))
+-    , m_rightButtonsModel(new KDecoration2::Preview::ButtonsModel(DecorationButtonsList(), this))
+-    , m_availableButtonsModel(new KDecoration2::Preview::ButtonsModel(this))
+-    , m_settings(new KWinDecorationSettings(this))
++namespace Configuration
+ {
+-    auto about = new KAboutData(QStringLiteral("kcm_kwindecoration"),
+-                                i18n("Window Decorations"),
+-                                QStringLiteral("1.0"),
+-                                QString(),
+-                                KAboutLicense::GPL);
+-    about->addAuthor(i18n("Valerio Pilo"),
+-                     i18n("Author"),
+-                     QStringLiteral("vpilo@coldshock.net"));
+-    setAboutData(about);
+-    setButtons(Apply | Default | Help);
+-#if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
+-    qmlRegisterType<QAbstractListModel>();
+-    qmlRegisterType<QSortFilterProxyModel>();
+-    qmlRegisterType<KWinDecorationSettings>();
++static const QString s_pluginName = QStringLiteral("org.kde.kdecoration2");
++#if HAVE_BREEZE_DECO
++static const QString s_defaultPlugin = QStringLiteral(BREEZE_KDECORATION_PLUGIN_ID);
++static const QString s_defaultTheme;
+ #else
+-    qmlRegisterAnonymousType<QAbstractListModel>("org.kde.kwin.KWinDecoration", 1);
+-    qmlRegisterAnonymousType<QSortFilterProxyModel>("org.kde.kwin.KWinDecoration", 1);
+-    qmlRegisterAnonymousType<KWinDecorationSettings>("org.kde.kwin.KWinDecoration", 1);
++static const QString s_defaultPlugin = QStringLiteral("org.kde.kwin.aurorae");
++static const QString s_defaultTheme = QStringLiteral("kwin4_decoration_qml_plastik");
+ #endif
+-    m_proxyThemesModel->setSourceModel(m_themesModel);
+-    m_proxyThemesModel->setFilterCaseSensitivity(Qt::CaseInsensitive);
+-    m_proxyThemesModel->setSortCaseSensitivity(Qt::CaseInsensitive);
+-    m_proxyThemesModel->sort(0);
+-
+-    connect(m_settings, &KWinDecorationSettings::themeChanged, this, &KCMKWinDecoration::themeChanged);
+-    connect(m_settings, &KWinDecorationSettings::borderSizeChanged, this, &KCMKWinDecoration::borderSizeChanged);
+-
+-    connect(m_leftButtonsModel, &QAbstractItemModel::rowsInserted, this, &KCMKWinDecoration::onLeftButtonsChanged);
+-    connect(m_leftButtonsModel, &QAbstractItemModel::rowsMoved, this, &KCMKWinDecoration::onLeftButtonsChanged);
+-    connect(m_leftButtonsModel, &QAbstractItemModel::rowsRemoved, this, &KCMKWinDecoration::onLeftButtonsChanged);
+-    connect(m_leftButtonsModel, &QAbstractItemModel::modelReset, this, &KCMKWinDecoration::onLeftButtonsChanged);
++static const QString s_borderSizeNormal = QStringLiteral("Normal");
++static const QString s_ghnsIcon = QStringLiteral("get-hot-new-stuff");
+ 
+-    connect(m_rightButtonsModel, &QAbstractItemModel::rowsInserted, this, &KCMKWinDecoration::onRightButtonsChanged);
+-    connect(m_rightButtonsModel, &QAbstractItemModel::rowsMoved, this, &KCMKWinDecoration::onRightButtonsChanged);
+-    connect(m_rightButtonsModel, &QAbstractItemModel::rowsRemoved, this, &KCMKWinDecoration::onRightButtonsChanged);
+-    connect(m_rightButtonsModel, &QAbstractItemModel::modelReset, this, &KCMKWinDecoration::onRightButtonsChanged);
+-
+-    connect(this, &KCMKWinDecoration::borderSizeChanged, this, &KCMKWinDecoration::settingsChanged);
+-
+-    // Update the themes when the color scheme or a theme's settings change
+-    QDBusConnection::sessionBus()
+-        .connect(QString(), QStringLiteral("/KWin"), QStringLiteral("org.kde.KWin"), QStringLiteral("reloadConfig"),
+-            this, SLOT(reloadKWinSettings()));
+-
+-    QMetaObject::invokeMethod(m_themesModel, "init", Qt::QueuedConnection);
+-}
+-
+-KWinDecorationSettings *KCMKWinDecoration::settings() const
++ConfigurationForm::ConfigurationForm(QWidget *parent)
++    : QWidget(parent)
+ {
+-    return m_settings;
++    setupUi(this);
+ }
+ 
+-void KCMKWinDecoration::reloadKWinSettings()
+-{
+-    QMetaObject::invokeMethod(m_themesModel, "init", Qt::QueuedConnection);
+-}
++static bool s_loading = false;
+ 
+-void KCMKWinDecoration::getNewStuff(QQuickItem *context)
++ConfigurationModule::ConfigurationModule(QWidget *parent, const QVariantList &args)
++    : KCModule(parent, args)
++    , m_model(new DecorationsModel(this))
++    , m_proxyModel(new QSortFilterProxyModel(this))
++    , m_ui(new ConfigurationForm(this))
++    , m_leftButtons(new Preview::ButtonsModel(QVector<DecorationButtonType>(), this))
++    , m_rightButtons(new Preview::ButtonsModel(QVector<DecorationButtonType>(), this))
++    , m_availableButtons(new Preview::ButtonsModel(this))
+ {
+-    if (!m_newStuffDialog) {
+-        m_newStuffDialog = new KNS3::DownloadDialog(QStringLiteral("window-decorations.knsrc"));
+-        m_newStuffDialog->setWindowTitle(i18n("Download New Window Decorations"));
+-        m_newStuffDialog->setWindowModality(Qt::WindowModal);
+-        connect(m_newStuffDialog, &KNS3::DownloadDialog::accepted, this, &KCMKWinDecoration::load);
+-    }
+-
+-    if (context && context->window()) {
+-        m_newStuffDialog->winId(); // so it creates the windowHandle()
+-        m_newStuffDialog->windowHandle()->setTransientParent(context->window());
+-    }
+-
+-    connect(m_newStuffDialog, &QDialog::finished, this, &KCMKWinDecoration::reloadKWinSettings);
+-
+-    m_newStuffDialog->show();
+-}
+-
+-void KCMKWinDecoration::load()
+-{
+-    ManagedConfigModule::load();
+-
+-    m_leftButtonsModel->replace(Utils::buttonsFromString(m_settings->buttonsOnLeft()));
+-    m_rightButtonsModel->replace(Utils::buttonsFromString(m_settings->buttonsOnRight()));
+-
+-    setBorderSize(borderSizeIndexFromString(m_settings->borderSize()));
+-
+-    emit themeChanged();
+-}
+-
+-void KCMKWinDecoration::save()
+-{
+-    if (!m_settings->borderSizeAuto()) {
+-        m_settings->setBorderSize(borderSizeIndexToString(m_borderSizeIndex));
+-    } else {
+-        m_settings->setBorderSize(m_settings->defaultBorderSizeValue());
++    m_proxyModel->setSourceModel(m_model);
++    m_proxyModel->setFilterCaseSensitivity(Qt::CaseInsensitive);
++    m_proxyModel->setSortCaseSensitivity(Qt::CaseInsensitive);
++    m_proxyModel->sort(0);
++    connect(m_ui->filter, &QLineEdit::textChanged, m_proxyModel, &QSortFilterProxyModel::setFilterFixedString);
++
++    m_quickView = new QQuickView(0);
++    KDeclarative::KDeclarative kdeclarative;
++    kdeclarative.setDeclarativeEngine(m_quickView->engine());
++    kdeclarative.setTranslationDomain(QStringLiteral(TRANSLATION_DOMAIN));
++    kdeclarative.setupContext();
++    kdeclarative.setupEngine(m_quickView->engine());
++
++    qmlRegisterType<QAbstractItemModel>();
++    QWidget *widget = QWidget::createWindowContainer(m_quickView, this);
++    QVBoxLayout* layout = new QVBoxLayout(m_ui->view);
++    layout->setContentsMargins(0,0,0,0);
++    layout->addWidget(widget);
++
++    m_quickView->rootContext()->setContextProperty(QStringLiteral("decorationsModel"), m_proxyModel);
++    updateColors();
++    m_quickView->rootContext()->setContextProperty("_borderSizesIndex", 3); // 3 is normal
++    m_quickView->rootContext()->setContextProperty("leftButtons", m_leftButtons);
++    m_quickView->rootContext()->setContextProperty("rightButtons", m_rightButtons);
++    m_quickView->rootContext()->setContextProperty("availableButtons", m_availableButtons);
++    m_quickView->rootContext()->setContextProperty("initialThemeIndex", -1);
++
++    m_quickView->rootContext()->setContextProperty("titleFont", QFontDatabase::systemFont(QFontDatabase::TitleFont));
++    m_quickView->setResizeMode(QQuickView::SizeRootObjectToView);
++    m_quickView->setSource(QUrl::fromLocalFile(QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("kwin/kcm_kwindecoration/main.qml"))));
++    if (m_quickView->status() == QQuickView::Ready) {
++        auto listView = m_quickView->rootObject()->findChild<QQuickItem*>("listView");
++        if (listView) {
++            connect(listView, SIGNAL(userChangedSelection()), this, SLOT(changed()));
++        }
+     }
+ 
+-    ManagedConfigModule::save();
++    m_ui->tabWidget->tabBar()->disconnect();
++    auto setCurrentTab = [this](int index) {
++        if (index == 0)
++            m_ui->doubleClickMessage->hide();
++        m_ui->filter->setVisible(index == 0);
++        m_ui->knsButton->setVisible(index == 0);
++        if (auto themeList = m_quickView->rootObject()->findChild<QQuickItem*>("themeList")) {
++            themeList->setVisible(index == 0);
++        }
++        m_ui->borderSizesLabel->setVisible(index == 0);
++        m_ui->borderSizesCombo->setVisible(index == 0);
+ 
+-    // Send a signal to all kwin instances
+-    QDBusMessage message = QDBusMessage::createSignal(QStringLiteral("/KWin"),
+-                                                      QStringLiteral("org.kde.KWin"),
+-                                                      QStringLiteral("reloadConfig"));
+-    QDBusConnection::sessionBus().send(message);
++        m_ui->closeWindowsDoubleClick->setVisible(index == 1);
++        if (auto buttonLayout = m_quickView->rootObject()->findChild<QQuickItem*>("buttonLayout")) {
++            buttonLayout->setVisible(index == 1);
++        }
++    };
++    connect(m_ui->tabWidget->tabBar(), &QTabBar::currentChanged, this, setCurrentTab);
++    setCurrentTab(0);
++
++    m_ui->doubleClickMessage->setVisible(false);
++    m_ui->doubleClickMessage->setText(i18n("Close by double clicking:\n To open the menu, keep the button pressed until it appears."));
++    m_ui->doubleClickMessage->setCloseButtonVisible(true);
++    m_ui->borderSizesCombo->setItemData(0, QVariant::fromValue(BorderSize::None));
++    m_ui->borderSizesCombo->setItemData(1, QVariant::fromValue(BorderSize::NoSides));
++    m_ui->borderSizesCombo->setItemData(2, QVariant::fromValue(BorderSize::Tiny));
++    m_ui->borderSizesCombo->setItemData(3, QVariant::fromValue(BorderSize::Normal));
++    m_ui->borderSizesCombo->setItemData(4, QVariant::fromValue(BorderSize::Large));
++    m_ui->borderSizesCombo->setItemData(5, QVariant::fromValue(BorderSize::VeryLarge));
++    m_ui->borderSizesCombo->setItemData(6, QVariant::fromValue(BorderSize::Huge));
++    m_ui->borderSizesCombo->setItemData(7, QVariant::fromValue(BorderSize::VeryHuge));
++    m_ui->borderSizesCombo->setItemData(8, QVariant::fromValue(BorderSize::Oversized));
++    m_ui->knsButton->setIcon(QIcon::fromTheme(s_ghnsIcon));
++
++    auto changedSlot = static_cast<void (ConfigurationModule::*)()>(&ConfigurationModule::changed);
++    connect(m_ui->closeWindowsDoubleClick, &QCheckBox::stateChanged, this, changedSlot);
++    connect(m_ui->closeWindowsDoubleClick, &QCheckBox::toggled, this,
++        [this] (bool toggled) {
++            if (s_loading) {
++                return;
++            }
++            if (toggled)
++                m_ui->doubleClickMessage->animatedShow();
++            else
++                m_ui->doubleClickMessage->animatedHide();
++        }
++    );
++    connect(m_ui->borderSizesCombo, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
++            this, [this] (int index) {
++            auto listView = m_quickView->rootObject()->findChild<QQuickItem*>("listView");
++            if (listView) {
++                listView->setProperty("borderSizesIndex", index);
++            }
++            changed();
++        }
++    );
++    connect(m_model, &QAbstractItemModel::modelReset, this,
++        [this] {
++            const auto &kns = m_model->knsProviders();
++            m_ui->knsButton->setEnabled(!kns.isEmpty());
++            if (kns.isEmpty()) {
++                return;
++            }
++            if (kns.count() > 1) {
++                QMenu *menu = new QMenu(m_ui->knsButton);
++                for (auto it = kns.begin(); it != kns.end(); ++it) {
++                    QAction *action = menu->addAction(QIcon::fromTheme(s_ghnsIcon), it.value());
++                    action->setData(it.key());
++                    connect(action, &QAction::triggered, this, [this, action] { showKNS(action->data().toString());});
++                }
++                m_ui->knsButton->setMenu(menu);
++            }
++        }
++    );
++    connect(m_ui->knsButton, &QPushButton::clicked, this,
++        [this] {
++            const auto &kns = m_model->knsProviders();
++            if (kns.isEmpty()) {
++                return;
++            }
++            showKNS(kns.firstKey());
++        }
++    );
++    connect(m_leftButtons, &QAbstractItemModel::rowsInserted, this, changedSlot);
++    connect(m_leftButtons, &QAbstractItemModel::rowsMoved, this, changedSlot);
++    connect(m_leftButtons, &QAbstractItemModel::rowsRemoved, this, changedSlot);
++    connect(m_rightButtons, &QAbstractItemModel::rowsInserted, this, changedSlot);
++    connect(m_rightButtons, &QAbstractItemModel::rowsMoved, this, changedSlot);
++    connect(m_rightButtons, &QAbstractItemModel::rowsRemoved, this, changedSlot);
++
++    QVBoxLayout *l = new QVBoxLayout(this);
++    l->addWidget(m_ui);
++    QMetaObject::invokeMethod(m_model, "init", Qt::QueuedConnection);
++
++    m_ui->installEventFilter(this);
+ }
+ 
+-void KCMKWinDecoration::defaults()
+-{
+-    ManagedConfigModule::defaults();
+-
+-    setBorderSize(recommendedBorderSize());
++ConfigurationModule::~ConfigurationModule() = default;
+ 
+-    m_leftButtonsModel->replace(Utils::buttonsFromString(m_settings->buttonsOnLeft()));
+-    m_rightButtonsModel->replace(Utils::buttonsFromString(m_settings->buttonsOnRight()));
+-}
+-
+-void KCMKWinDecoration::onLeftButtonsChanged()
++void ConfigurationModule::showEvent(QShowEvent *ev)
+ {
+-    m_settings->setButtonsOnLeft(Utils::buttonsToString(m_leftButtonsModel->buttons()));
++    KCModule::showEvent(ev);
+ }
+ 
+-void KCMKWinDecoration::onRightButtonsChanged()
++static const QMap<QString, KDecoration2::BorderSize> s_sizes = QMap<QString, KDecoration2::BorderSize>({
++    {QStringLiteral("None"), BorderSize::None},
++    {QStringLiteral("NoSides"), BorderSize::NoSides},
++    {QStringLiteral("Tiny"), BorderSize::Tiny},
++    {s_borderSizeNormal, BorderSize::Normal},
++    {QStringLiteral("Large"), BorderSize::Large},
++    {QStringLiteral("VeryLarge"), BorderSize::VeryLarge},
++    {QStringLiteral("Huge"), BorderSize::Huge},
++    {QStringLiteral("VeryHuge"), BorderSize::VeryHuge},
++    {QStringLiteral("Oversized"), BorderSize::Oversized}
++});
++
++static BorderSize stringToSize(const QString &name)
+ {
+-    m_settings->setButtonsOnRight(Utils::buttonsToString(m_rightButtonsModel->buttons()));
++    auto it = s_sizes.constFind(name);
++    if (it == s_sizes.constEnd()) {
++        // non sense values are interpreted just like normal
++        return BorderSize::Normal;
++    }
++    return it.value();
+ }
+ 
+-QSortFilterProxyModel *KCMKWinDecoration::themesModel() const
++static QString sizeToString(BorderSize size)
+ {
+-    return m_proxyThemesModel;
++    return s_sizes.key(size, s_borderSizeNormal);
+ }
+ 
+-QAbstractListModel *KCMKWinDecoration::leftButtonsModel()
++static QHash<KDecoration2::DecorationButtonType, QChar> s_buttonNames;
++static void initButtons()
+ {
+-    return m_leftButtonsModel;
++    if (!s_buttonNames.isEmpty()) {
++        return;
++    }
++    s_buttonNames[KDecoration2::DecorationButtonType::Menu]            = QChar('M');
++    s_buttonNames[KDecoration2::DecorationButtonType::ApplicationMenu] = QChar('N');
++    s_buttonNames[KDecoration2::DecorationButtonType::OnAllDesktops]   = QChar('S');
++    s_buttonNames[KDecoration2::DecorationButtonType::ContextHelp]     = QChar('H');
++    s_buttonNames[KDecoration2::DecorationButtonType::Minimize]        = QChar('I');
++    s_buttonNames[KDecoration2::DecorationButtonType::Maximize]        = QChar('A');
++    s_buttonNames[KDecoration2::DecorationButtonType::Close]           = QChar('X');
++    s_buttonNames[KDecoration2::DecorationButtonType::KeepAbove]       = QChar('F');
++    s_buttonNames[KDecoration2::DecorationButtonType::KeepBelow]       = QChar('B');
++    s_buttonNames[KDecoration2::DecorationButtonType::Shade]           = QChar('L');
+ }
+ 
+-QAbstractListModel *KCMKWinDecoration::rightButtonsModel()
++static QString buttonsToString(const QVector<KDecoration2::DecorationButtonType> &buttons)
+ {
+-    return m_rightButtonsModel;
++    auto buttonToString = [](KDecoration2::DecorationButtonType button) -> QChar {
++        const auto it = s_buttonNames.constFind(button);
++        if (it != s_buttonNames.constEnd()) {
++            return it.value();
++        }
++        return QChar();
++    };
++    QString ret;
++    for (auto button : buttons) {
++        ret.append(buttonToString(button));
++    }
++    return ret;
+ }
+ 
+-QAbstractListModel *KCMKWinDecoration::availableButtonsModel() const
++static
++QVector< KDecoration2::DecorationButtonType > readDecorationButtons(const KConfigGroup &config,
++                                                                    const char *key,
++                                                                    const QVector< KDecoration2::DecorationButtonType > &defaultValue)
+ {
+-    return m_availableButtonsModel;
++    initButtons();
++    auto buttonsFromString = [](const QString &buttons) -> QVector<KDecoration2::DecorationButtonType> {
++        QVector<KDecoration2::DecorationButtonType> ret;
++        for (auto it = buttons.begin(); it != buttons.end(); ++it) {
++            for (auto it2 = s_buttonNames.constBegin(); it2 != s_buttonNames.constEnd(); ++it2) {
++                if (it2.value() == (*it)) {
++                    ret << it2.key();
++                }
++            }
++        }
++        return ret;
++    };
++    return buttonsFromString(config.readEntry(key, buttonsToString(defaultValue)));
+ }
+ 
+-QStringList KCMKWinDecoration::borderSizesModel() const
++void ConfigurationModule::load()
+ {
+-    return Utils::getBorderSizeNames().values();
+-}
++    s_loading = true;
++    const KConfigGroup config = KSharedConfig::openConfig("kwinrc")->group(s_pluginName);
++    const QString plugin = config.readEntry("library", s_defaultPlugin);
++    const QString theme = config.readEntry("theme", s_defaultTheme);
++    m_ui->closeWindowsDoubleClick->setChecked(config.readEntry("CloseOnDoubleClickOnMenu", false));
++    const QVariant border = QVariant::fromValue(stringToSize(config.readEntry("BorderSize", s_borderSizeNormal)));
++    m_ui->borderSizesCombo->setCurrentIndex(m_ui->borderSizesCombo->findData(border));
++
++    int themeIndex = m_proxyModel->mapFromSource(m_model->findDecoration(plugin, theme)).row();
++    m_quickView->rootContext()->setContextProperty("initialThemeIndex", themeIndex);
++
++    // buttons
++    const auto &left = readDecorationButtons(config, "ButtonsOnLeft", QVector<KDecoration2::DecorationButtonType >{
++        KDecoration2::DecorationButtonType::Menu,
++        KDecoration2::DecorationButtonType::OnAllDesktops
++    });
++    while (m_leftButtons->rowCount() > 0) {
++        m_leftButtons->remove(0);
++    }
++    for (auto it = left.begin(); it != left.end(); ++it) {
++        m_leftButtons->add(*it);
++    }
++    const auto &right = readDecorationButtons(config, "ButtonsOnRight", QVector<KDecoration2::DecorationButtonType >{
++        KDecoration2::DecorationButtonType::ContextHelp,
++        KDecoration2::DecorationButtonType::Minimize,
++        KDecoration2::DecorationButtonType::Maximize,
++        KDecoration2::DecorationButtonType::Close
++    });
++    while (m_rightButtons->rowCount() > 0) {
++        m_rightButtons->remove(0);
++    }
++    for (auto it = right.begin(); it != right.end(); ++it) {
++        m_rightButtons->add(*it);
++    }
+ 
+-int KCMKWinDecoration::borderSize() const
+-{
+-    return m_borderSizeIndex;
++    KCModule::load();
++    s_loading = false;
+ }
+ 
+-int KCMKWinDecoration::recommendedBorderSize() const
++void ConfigurationModule::save()
+ {
+-    typedef KDecoration2::Configuration::DecorationsModel::DecorationRole DecoRole;
+-    const QModelIndex proxyIndex = m_proxyThemesModel->index(theme(), 0);
+-    if (proxyIndex.isValid()) {
+-        const QModelIndex index = m_proxyThemesModel->mapToSource(proxyIndex);
+-        if (index.isValid()) {
+-            QVariant ret = m_themesModel->data(index, DecoRole::RecommendedBorderSizeRole);
+-            return Utils::getBorderSizeNames().keys().indexOf(Utils::stringToBorderSize(ret.toString()));
++    KConfigGroup config = KSharedConfig::openConfig("kwinrc")->group(s_pluginName);
++    config.writeEntry("CloseOnDoubleClickOnMenu", m_ui->closeWindowsDoubleClick->isChecked());
++    config.writeEntry("BorderSize", sizeToString(m_ui->borderSizesCombo->currentData().value<BorderSize>()));
++    if (auto listView = m_quickView->rootObject()->findChild<QQuickItem*>("listView")) {
++        const int currentIndex = listView->property("currentIndex").toInt();
++        if (currentIndex != -1) {
++            const QModelIndex index = m_proxyModel->index(currentIndex, 0);
++            if (index.isValid()) {
++                config.writeEntry("library", index.data(Qt::UserRole + 4).toString());
++                const QString theme = index.data(Qt::UserRole +5).toString();
++                config.writeEntry("theme", theme);
++            }
+         }
+     }
+-    return Utils::getBorderSizeNames().keys().indexOf(s_defaultRecommendedBorderSize);
+-}
+-
+-int KCMKWinDecoration::theme() const
+-{
+-    return m_proxyThemesModel->mapFromSource(m_themesModel->findDecoration(m_settings->pluginName(), m_settings->theme())).row();
++    config.writeEntry("ButtonsOnLeft", buttonsToString(m_leftButtons->buttons()));
++    config.writeEntry("ButtonsOnRight", buttonsToString(m_rightButtons->buttons()));
++    config.sync();
++    KCModule::save();
++    // Send signal to all kwin instances
++    QDBusMessage message = QDBusMessage::createSignal(QStringLiteral("/KWin"),
++                                                      QStringLiteral("org.kde.KWin"),
++                                                      QStringLiteral("reloadConfig"));
++    QDBusConnection::sessionBus().send(message);
+ }
+ 
+-void KCMKWinDecoration::setBorderSize(int index)
++void ConfigurationModule::defaults()
+ {
+-    if (m_borderSizeIndex != index) {
+-        m_borderSizeIndex = index;
+-        emit borderSizeChanged();
++    if (auto listView = m_quickView->rootObject()->findChild<QQuickItem*>("listView")) {
++        const QModelIndex index = m_proxyModel->mapFromSource(m_model->findDecoration(s_defaultPlugin));
++        listView->setProperty("currentIndex", index.isValid() ? index.row() : -1);
+     }
++    m_ui->borderSizesCombo->setCurrentIndex(m_ui->borderSizesCombo->findData(QVariant::fromValue(stringToSize(s_borderSizeNormal))));
++    m_ui->closeWindowsDoubleClick->setChecked(false);
++    KCModule::defaults();
+ }
+ 
+-void KCMKWinDecoration::setBorderSize(KDecoration2::BorderSize size)
+-{
+-    m_settings->setBorderSize(Utils::borderSizeToString(size));
+-}
+-
+-void KCMKWinDecoration::setTheme(int index)
++void ConfigurationModule::showKNS(const QString &config)
+ {
+-    QModelIndex dataIndex = m_proxyThemesModel->index(index, 0);
+-    if (dataIndex.isValid()) {
+-        m_settings->setTheme(m_proxyThemesModel->data(dataIndex, KDecoration2::Configuration::DecorationsModel::ThemeNameRole).toString());
+-        m_settings->setPluginName(m_proxyThemesModel->data(dataIndex, KDecoration2::Configuration::DecorationsModel::PluginNameRole).toString());
+-        emit themeChanged();
++    QPointer<KNS3::DownloadDialog> downloadDialog = new KNS3::DownloadDialog(config, this);
++    if (downloadDialog->exec() == QDialog::Accepted && !downloadDialog->changedEntries().isEmpty()) {
++        auto listView = m_quickView->rootObject()->findChild<QQuickItem*>("listView");
++        QString selectedPluginName;
++        QString selectedThemeName;
++        if (listView) {
++            const QModelIndex index = m_proxyModel->index(listView->property("currentIndex").toInt(), 0);
++            if (index.isValid()) {
++                selectedPluginName = index.data(Qt::UserRole + 4).toString();
++                selectedThemeName = index.data(Qt::UserRole + 5).toString();
++            }
++        }
++        m_model->init();
++        if (!selectedPluginName.isEmpty()) {
++            const QModelIndex index = m_model->findDecoration(selectedPluginName, selectedThemeName);
++            const QModelIndex proxyIndex = m_proxyModel->mapFromSource(index);
++            if (listView) {
++                listView->setProperty("currentIndex", proxyIndex.isValid() ? proxyIndex.row() : -1);
++            }
++        }
+     }
++    delete downloadDialog;
+ }
+ 
+-bool KCMKWinDecoration::isSaveNeeded() const
++bool ConfigurationModule::eventFilter(QObject *watched, QEvent *e)
+ {
+-    return !m_settings->borderSizeAuto() && borderSizeIndexFromString(m_settings->borderSize()) != m_borderSizeIndex;
++    if (watched != m_ui) {
++        return false;
++    }
++    if (e->type() == QEvent::PaletteChange) {
++        updateColors();
++    }
++    return false;
+ }
+ 
+-bool KCMKWinDecoration::isDefaults() const
++void ConfigurationModule::updateColors()
+ {
+-    return m_settings->borderSizeAuto() && recommendedBorderSize() == m_borderSizeIndex;
++    m_quickView->rootContext()->setContextProperty("backgroundColor", m_ui->palette().color(QPalette::Active, QPalette::Window));
++    m_quickView->rootContext()->setContextProperty("highlightColor", m_ui->palette().color(QPalette::Active, QPalette::Shadow));
++    m_quickView->rootContext()->setContextProperty("baseColor", m_ui->palette().color(QPalette::Active, QPalette::Base));
+ }
+ 
+-int KCMKWinDecoration::borderSizeIndexFromString(const QString &size) const
+-{
+-    return Utils::getBorderSizeNames().keys().indexOf(Utils::stringToBorderSize(size));
+ }
+-
+-QString KCMKWinDecoration::borderSizeIndexToString(int index) const
+-{
+-    return Utils::borderSizeToString(Utils::getBorderSizeNames().keys().at(index));
+ }
+ 
+ #include "kcm.moc"
+diff --git a/kcmkwin/kwindecoration/kcm.h b/kcmkwin/kwindecoration/kcm.h
+index 75944695aa..99fa431143 100644
+--- a/kcmkwin/kwindecoration/kcm.h
++++ b/kcmkwin/kwindecoration/kcm.h
+@@ -1,117 +1,80 @@
+ /*
+- * Copyright (c) 2019 Valerio Pilo <vpilo@coldshock.net>
+- * Copyright (c) 2019 Cyril Rossi <cyril.rossi@enioka.com>
++ * Copyright 2014  Martin Gräßlin <mgraesslin@kde.org>
+  *
+- * This library is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU Library General Public
+- * License version 2 as published by the Free Software Foundation.
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of
++ * the License or (at your option) version 3 or any later version
++ * accepted by the membership of KDE e.V. (or its successor approved
++ * by the membership of KDE e.V.), which shall act as a proxy
++ * defined in Section 14 of version 3 of the license.
+  *
+- * This library is distributed in the hope that it will be useful,
++ * This program is distributed in the hope that it will be useful,
+  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+- * Library General Public License for more details.
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
+  *
+- * You should have received a copy of the GNU Library General Public License
+- * along with this library; see the file COPYING.LIB.  If not, write to
+- * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+- * Boston, MA 02110-1301, USA.
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
++#ifndef KDECORATIONS_KCM_H
++#define KDECORATIONS_KCM_H
+ 
+-#pragma once
++#include <kcmodule.h>
++#include <ui_kcm.h>
++#include <QAbstractItemModel>
+ 
+-#include "utils.h"
+-
+-#include <KQuickAddons/ManagedConfigModule>
+-
+-
+-class QAbstractItemModel;
+ class QSortFilterProxyModel;
+-class QQuickItem;
+-
+-namespace KNS3
+-{
+-class DownloadDialog;
+-}
++class QQuickView;
+ 
+ namespace KDecoration2
+ {
+-enum class BorderSize;
+-
+ namespace Preview
+ {
++class PreviewBridge;
+ class ButtonsModel;
+ }
+ namespace Configuration
+ {
+ class DecorationsModel;
+-}
+-}
+ 
+-class KWinDecorationSettings;
++class ConfigurationForm : public QWidget, public Ui::KCMForm
++{
++public:
++    explicit ConfigurationForm(QWidget* parent);
++};
+ 
+-class KCMKWinDecoration : public KQuickAddons::ManagedConfigModule
++class ConfigurationModule : public KCModule
+ {
+     Q_OBJECT
+-    Q_PROPERTY(KWinDecorationSettings *settings READ settings CONSTANT)
+-    Q_PROPERTY(QSortFilterProxyModel *themesModel READ themesModel CONSTANT)
+-    Q_PROPERTY(QStringList borderSizesModel READ borderSizesModel CONSTANT)
+-    Q_PROPERTY(int borderSize READ borderSize WRITE setBorderSize NOTIFY borderSizeChanged)
+-    Q_PROPERTY(int recommendedBorderSize READ recommendedBorderSize CONSTANT)
+-    Q_PROPERTY(int theme READ theme WRITE setTheme NOTIFY themeChanged)
+-    Q_PROPERTY(QAbstractListModel *leftButtonsModel READ leftButtonsModel NOTIFY buttonsChanged)
+-    Q_PROPERTY(QAbstractListModel *rightButtonsModel READ rightButtonsModel NOTIFY buttonsChanged)
+-    Q_PROPERTY(QAbstractListModel *availableButtonsModel READ availableButtonsModel CONSTANT)
+-
+ public:
+-    KCMKWinDecoration(QObject *parent, const QVariantList &arguments);
+-
+-    KWinDecorationSettings *settings() const;
+-    QSortFilterProxyModel *themesModel() const;
+-    QAbstractListModel *leftButtonsModel();
+-    QAbstractListModel *rightButtonsModel();
+-    QAbstractListModel *availableButtonsModel() const;
+-    QStringList borderSizesModel() const;
+-    int borderSize() const;
+-    int recommendedBorderSize() const;
+-    int theme() const;
+-
+-    void setBorderSize(int index);
+-    void setBorderSize(KDecoration2::BorderSize size);
+-    void setTheme(int index);
++    explicit ConfigurationModule(QWidget *parent = nullptr, const QVariantList &args = QVariantList());
++    virtual ~ConfigurationModule();
+ 
+-    Q_INVOKABLE void getNewStuff(QQuickItem *context);
+-
+-Q_SIGNALS:
+-    void themeChanged();
+-    void buttonsChanged();
+-    void borderSizeChanged();
++    bool eventFilter(QObject *watched, QEvent *e) override;
+ 
+ public Q_SLOTS:
++    void defaults() override;
+     void load() override;
+     void save() override;
+-    void defaults() override;
+ 
+-private Q_SLOTS:
+-    void onLeftButtonsChanged();
+-    void onRightButtonsChanged();
+-    void reloadKWinSettings();
++protected:
++    void showEvent(QShowEvent *ev) override;
+ 
+ private:
+-    bool isSaveNeeded() const override;
+-    bool isDefaults() const override;
+-
+-    int borderSizeIndexFromString(const QString &size) const;
+-    QString borderSizeIndexToString(int index) const;
+-
+-    KDecoration2::Configuration::DecorationsModel *m_themesModel;
+-    QSortFilterProxyModel *m_proxyThemesModel;
++    void showKNS(const QString &config);
++    void updateColors();
++    DecorationsModel *m_model;
++    QSortFilterProxyModel *m_proxyModel;
++    ConfigurationForm *m_ui;
++    QQuickView *m_quickView;
++    Preview::ButtonsModel *m_leftButtons;
++    Preview::ButtonsModel *m_rightButtons;
++    Preview::ButtonsModel *m_availableButtons;
++};
+ 
+-    KDecoration2::Preview::ButtonsModel *m_leftButtonsModel;
+-    KDecoration2::Preview::ButtonsModel *m_rightButtonsModel;
+-    KDecoration2::Preview::ButtonsModel *m_availableButtonsModel;
++}
+ 
+-    QPointer<KNS3::DownloadDialog> m_newStuffDialog;
++}
+ 
+-    int m_borderSizeIndex = -1;
+-    KWinDecorationSettings *m_settings;
+-};
++#endif
+diff --git a/kcmkwin/kwindecoration/kcm.ui b/kcmkwin/kwindecoration/kcm.ui
+new file mode 100644
+index 0000000000..57abceeb37
+--- /dev/null
++++ b/kcmkwin/kwindecoration/kcm.ui
+@@ -0,0 +1,182 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<ui version="4.0">
++ <class>KCMForm</class>
++ <widget class="QWidget" name="KCMForm">
++  <property name="geometry">
++   <rect>
++    <x>0</x>
++    <y>0</y>
++    <width>386</width>
++    <height>272</height>
++   </rect>
++  </property>
++  <layout class="QVBoxLayout" name="verticalLayout_2">
++   <item>
++    <widget class="QTabWidget" name="tabWidget">
++     <property name="currentIndex">
++      <number>0</number>
++     </property>
++     <widget class="QWidget" name="theTab">
++      <attribute name="title">
++       <string>Theme</string>
++      </attribute>
++      <layout class="QVBoxLayout" name="verticalLayout_3">
++       <item>
++        <layout class="QHBoxLayout" name="horizontalLayout">
++         <item>
++          <widget class="QLineEdit" name="filter">
++           <property name="placeholderText">
++            <string>Search...</string>
++           </property>
++           <property name="clearButtonEnabled">
++            <bool>true</bool>
++           </property>
++          </widget>
++         </item>
++        </layout>
++       </item>
++       <item>
++        <widget class="QCheckBox" name="closeWindowsDoubleClick">
++         <property name="toolTip">
++          <string extracomment="Check this option if you want windows to be closed when you double click the menu button."/>
++         </property>
++         <property name="text">
++          <string>Close windows by double clicking &amp;the menu button</string>
++         </property>
++        </widget>
++       </item>
++       <item>
++        <widget class="KMessageWidget" name="doubleClickMessage"/>
++       </item>
++       <item>
++        <widget class="QWidget" name="view">
++         <property name="sizePolicy">
++          <sizepolicy hsizetype="MinimumExpanding" vsizetype="MinimumExpanding">
++           <horstretch>0</horstretch>
++           <verstretch>0</verstretch>
++          </sizepolicy>
++         </property>
++         <property name="minimumSize">
++          <size>
++           <width>0</width>
++           <height>100</height>
++          </size>
++         </property>
++        </widget>
++       </item>
++       <item>
++        <layout class="QHBoxLayout" name="horizontalLayout_2">
++         <item>
++          <widget class="QLabel" name="borderSizesLabel">
++           <property name="text">
++            <string>Border si&amp;ze:</string>
++           </property>
++           <property name="alignment">
++            <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
++           </property>
++           <property name="buddy">
++            <cstring>borderSizesCombo</cstring>
++           </property>
++          </widget>
++         </item>
++         <item>
++          <widget class="KComboBox" name="borderSizesCombo">
++           <item>
++            <property name="text">
++             <string comment="@item:inlistbox Border size:">No Borders</string>
++            </property>
++           </item>
++           <item>
++            <property name="text">
++             <string comment="@item:inlistbox Border size:">No Side Borders</string>
++            </property>
++           </item>
++           <item>
++            <property name="text">
++             <string comment="@item:inlistbox Border size:">Tiny</string>
++            </property>
++           </item>
++           <item>
++            <property name="text">
++             <string comment="@item:inlistbox Border size:">Normal</string>
++            </property>
++           </item>
++           <item>
++            <property name="text">
++             <string comment="@item:inlistbox Border size:">Large</string>
++            </property>
++           </item>
++           <item>
++            <property name="text">
++             <string comment="@item:inlistbox Border size:">Very Large</string>
++            </property>
++           </item>
++           <item>
++            <property name="text">
++             <string comment="@item:inlistbox Border size:">Huge</string>
++            </property>
++           </item>
++           <item>
++            <property name="text">
++             <string comment="@item:inlistbox Border size:">Very Huge</string>
++            </property>
++           </item>
++           <item>
++            <property name="text">
++             <string comment="@item:inlistbox Border size:">Oversized</string>
++            </property>
++           </item>
++          </widget>
++         </item>
++         <item>
++          <spacer name="borderSizesSpacer">
++           <property name="orientation">
++            <enum>Qt::Horizontal</enum>
++           </property>
++           <property name="sizeHint" stdset="0">
++            <size>
++             <width>40</width>
++             <height>20</height>
++            </size>
++           </property>
++          </spacer>
++         </item>
++         <item>
++          <widget class="QPushButton" name="knsButton">
++           <property name="enabled">
++            <bool>false</bool>
++           </property>
++           <property name="text">
++            <string>Get New Window Decorations...</string>
++           </property>
++          </widget>
++         </item>
++        </layout>
++       </item>
++      </layout>
++     </widget>
++     <widget class="QWidget" name="tab_2">
++      <attribute name="title">
++       <string>Buttons</string>
++      </attribute>
++     </widget>
++    </widget>
++   </item>
++  </layout>
++ </widget>
++ <customwidgets>
++  <customwidget>
++   <class>KComboBox</class>
++   <extends>QComboBox</extends>
++   <header>kcombobox.h</header>
++  </customwidget>
++  <customwidget>
++   <class>KMessageWidget</class>
++   <extends>QFrame</extends>
++   <header location="global">kmessagewidget.h</header>
++   <container>1</container>
++  </customwidget>
++ </customwidgets>
++ <resources/>
++ <connections/>
++</ui>
+diff --git a/kcmkwin/kwindecoration/kwindecoration.desktop b/kcmkwin/kwindecoration/kwindecoration.desktop
+index 597173654a..7992bb4cbc 100644
+--- a/kcmkwin/kwindecoration/kwindecoration.desktop
++++ b/kcmkwin/kwindecoration/kwindecoration.desktop
+@@ -1,17 +1,15 @@
+ [Desktop Entry]
+-Icon=preferences-desktop-theme-windowdecorations
+ Exec=kcmshell5 kwindecoration
+-
+-Categories=Qt;KDE;X-KDE-settings-looknfeel;
++Icon=preferences-system-windows-action
+ Type=Service
+ X-KDE-ServiceTypes=KCModule
++X-DocPath=kcontrol/kwindecoration/index.html
++
+ X-KDE-Library=kcm_kwindecoration
+ X-KDE-ParentApp=kcontrol
++
+ X-KDE-System-Settings-Parent-Category=applicationstyle
+ X-KDE-Weight=40
+-X-DocPath=kcontrol/kwindecoration/index.html
+-
+-X-KDE-FormFactors=desktop,tablet
+ 
+ Name=Window Decorations
+ Name[ar]=زخارف النوافذ
+@@ -44,7 +42,7 @@ Name[kk]=Терезенің безендірулері
+ Name[km]=ការ​តុបតែង​បង្អួច
+ Name[kn]=ವಿಂಡೋ ಅಲಂಕಾರಗಳು
+ Name[ko]=창 장식
+-Name[lt]=Langų dekoracijos
++Name[lt]=Lango dekoracijos
+ Name[lv]=Logu dekorācijas
+ Name[mr]=चौकट सजावट
+ Name[nb]=Vinduspynt
+@@ -74,36 +72,50 @@ Name[x-test]=xxWindow Decorationsxx
+ Name[zh_CN]=窗口装饰
+ Name[zh_TW]=視窗裝飾
+ 
+-Comment=Configure window titlebars and borders
+-Comment[ca]=Configura la barra de títol i les vores de les finestres
+-Comment[ca@valencia]=Configura la barra de títol i les vores de les finestres
+-Comment[da]=Indstil vinduets titellinjer og kanter
+-Comment[de]=Titelleiste und Ränder von Fenstern einrichten
+-Comment[en_GB]=Configure window titlebars and borders
+-Comment[es]=Configurar barra de título y bordes de las ventanas
+-Comment[et]=Akende tiitliriba ja raami seadistamine
+-Comment[eu]=Konfiguratu leihoen titulu-barrak eta ertzak
+-Comment[fi]=Ikkunan otsikkopalkkien ja reunojen asetukset
+-Comment[fr]=Configure les barres de titre et les bordures de la fenêtre
+-Comment[gl]=Configurar as barras de título e os bordos das xanelas
+-Comment[ia]=Configura barras de titulo e margines
+-Comment[id]=Konfigurasikan bingkai dan bilah-judul window
+-Comment[it]=Configura la barra del titolo e i bordi delle finestre
+-Comment[ko]=창 제목 표시줄과 경계선 설정
+-Comment[lt]=Konfigūruoti langų antraštės juostas ir rėmelius
+-Comment[nl]=Titelbalken en randen van venster configureren
+-Comment[nn]=Set opp tittellinjer og vindaugsrammer
+-Comment[pl]=Ustawienia pasków tytułów i obramowań okien
+-Comment[pt]=Configurar as barras de título e contornos das janelas
+-Comment[pt_BR]=Configure as barras de títulos e bordas da janela
+-Comment[ru]=Настройка заголовка и границ окон
+-Comment[sk]=Nastaviť záhlavia a okraje okna
+-Comment[sl]=Nastavi naslovne vrstice in robove oken
+-Comment[sv]=Anpassa namnlister och kanter för fönster
+-Comment[uk]=Налаштовування смужок заголовків та рамок вікон
+-Comment[x-test]=xxConfigure window titlebars and bordersxx
+-Comment[zh_CN]=配置窗口标题栏和边框
+-Comment[zh_TW]=設定視窗的標題列和邊框
++Comment=Look and Feel of Window Titles
++Comment[bs]=Izgled i osjećaj naslova prozora
++Comment[ca]=Aspecte i comportament dels títols de les finestres
++Comment[ca@valencia]=Aspecte i comportament dels títols de les finestres
++Comment[cs]=Vzhled a dekorace titulků oken
++Comment[da]=Udseendet af vinduestitler
++Comment[de]=Erscheinungsbild von Fenstertiteln
++Comment[el]=Διαμόρφωση της εμφάνισης και αίσθησης του τίτλου των παραθύρων
++Comment[en_GB]=Look and Feel of Window Titles
++Comment[es]=Aspecto visual de los títulos de las ventanas
++Comment[et]=Akna tiitliribade välimus ja tunnetus
++Comment[eu]=Leiho-tituluen itxura eta izaera
++Comment[fi]=Ikkunoiden kehysten ulkoasu
++Comment[fr]=Apparence des titres de fenêtre
++Comment[gl]=Aparencia e o comportamento dos títulos das xanelas
++Comment[he]=הגדרת המראה והתחושה של מסגרות החלונות
++Comment[hu]=Az ablakok címsorának megjelenése
++Comment[ia]=Semblantia de titulos de fenestra
++Comment[id]=Look and Feel pada Judul Window
++Comment[it]=Aspetto dei titoli delle finestre
++Comment[ja]=ウィンドウタイトルの外観を設定
++Comment[ko]=창 제목 표시줄의 모습과 느낌 설정
++Comment[lt]=Langų antraščių išvaizda ir elgsena
++Comment[nb]=Utseende og virkemåte for vindustitlene
++Comment[nds]=Dat Utsehn vun de Finstertiteln instellen
++Comment[nl]=Uiterlijk en gedrag van venstertitels
++Comment[nn]=Utsjånad og åtferd for vindaugstitlar
++Comment[pa]=ਵਿੰਡੋ ਟਾਇਟਲਾਂ ਦੇ ਰੰਗ-ਰੂਪ ਦੀ ਸੰਰਚਨਾ
++Comment[pl]=Tytuły okien - wrażenia wzrokowe i dotykowe 
++Comment[pt]=Aparência e Comportamento dos Títulos das Janelas
++Comment[pt_BR]=Aparência do título das janelas
++Comment[ru]=Настройка внешнего вида заголовков окон
++Comment[sk]=Nastavenie vzhľadu titulkov okien
++Comment[sl]=Videz in občutek naslovnih vrstic okna
++Comment[sr]=Изглед и осећај за наслове прозора
++Comment[sr@ijekavian]=Изглед и осјећај за наслове прозора
++Comment[sr@ijekavianlatin]=Izgled i osjećaj za naslove prozora
++Comment[sr@latin]=Izgled i osećaj za naslove prozora
++Comment[sv]=Namnlisternas utseende och känsla
++Comment[tr]=Pencere Başlıklarının Görünüm ve Davranışlarını Yapılandır
++Comment[uk]=Вигляд і поведінка смужок заголовків вікон
++Comment[x-test]=xxLook and Feel of Window Titlesxx
++Comment[zh_CN]=窗口标题的观感
++Comment[zh_TW]=視窗標題列的外觀與感覺
+ 
+ X-KDE-Keywords=kwin,window,manager,border,style,theme,look,feel,layout,button,handle,edge,kwm,decoration
+ X-KDE-Keywords[bs]=kwin,prozor,upravitelj,granica,stil,tema,izgled,osjećati,izgled,dugme,držati,ivica,kwm,dekoracija
+@@ -128,7 +140,6 @@ X-KDE-Keywords[it]=kwin,gestore,finestre,bordo,stile,tema,aspetto,disposizione,p
+ X-KDE-Keywords[kk]=kwin,window,manager,border,style,theme,look,feel,layout,button,handle,edge,kwm,decoration
+ X-KDE-Keywords[km]=kwin,window,manager,border,style,theme,look,feel,layout,button,handle,edge,kwm,decoration
+ X-KDE-Keywords[ko]=kwin,window,manager,border,style,theme,look,feel,layout,button,handle,edge,kwm,decoration,창,관리자,테두리,스타일,테마,단추,핸들,경계
+-X-KDE-Keywords[lt]=kwin,langai,langas,langų,tvarkytuvė,tvarkytuve,rėmelis,remelis,stilius,apipavidalinimas,tema,išvaizda,isvaizda,turinys,išdėstymas,isdestymas,mygtukai,mygtukas,rankena,rankenėlė,rankenele,kraštas,krastas,kraštai,krastai,kwm,dekoracija,dekoracijos
+ X-KDE-Keywords[nb]=kwin,vindu,behandler,ramme,stil,tema,lås,utforming,knapp,håndtak,kant,kwm
+ X-KDE-Keywords[nds]=KWin,Finster,Pleger,Rahmen,Stil,Muster,Utsehn,Bedenen,Knoop,Greep,Kant,kwm,Dekoratschoon
+ X-KDE-Keywords[nl]=kwin,venster,beheerder,grens,stijl,thema,look,feel,indeling,knop,handel,rand,kwm,decoratie
+@@ -149,3 +160,6 @@ X-KDE-Keywords[uk]=kwin,window,manager,border,style,theme,look,feel,layout,butto
+ X-KDE-Keywords[x-test]=xxkwinxx,xxwindowxx,xxmanagerxx,xxborderxx,xxstylexx,xxthemexx,xxlookxx,xxfeelxx,xxlayoutxx,xxbuttonxx,xxhandlexx,xxedgexx,xxkwmxx,xxdecorationxx
+ X-KDE-Keywords[zh_CN]=kwin,window,manager,border,style,theme,look,feel,layout,button,handle,edge,kwm,decoration,窗口,管理,边框,样式,主题,外怪,布局,按钮,边界,装饰
+ X-KDE-Keywords[zh_TW]=kwin,window,manager,border,style,theme,look,feel,layout,button,handle,edge,kwm,decoration
++
++Categories=Qt;KDE;X-KDE-settings-looknfeel;
++
+diff --git a/kcmkwin/kwindecoration/kwindecorationsettings.kcfg b/kcmkwin/kwindecoration/kwindecorationsettings.kcfg
+deleted file mode 100644
+index b13b7d7067..0000000000
+--- a/kcmkwin/kwindecoration/kwindecorationsettings.kcfg
++++ /dev/null
+@@ -1,54 +0,0 @@
+-<?xml version="1.0" encoding="UTF-8"?>
+-<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+-      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+-      http://www.kde.org/standards/kcfg/1.0/kcfg.xsd" >
+-  <include>config-kwin.h</include>
+-  <kcfgfile name="kwinrc" />
+-  <group name="org.kde.kdecoration2">
+-    <entry name="pluginName" key="library" type="String">
+-      <label>Plugin name</label>
+-      <code>#if HAVE_BREEZE_DECO
+-              const QString s_defaultPlugin { QStringLiteral(BREEZE_KDECORATION_PLUGIN_ID) };
+-          #else
+-              const QString s_defaultPlugin { QStringLiteral("org.kde.kwin.aurorae") };
+-          #endif
+-      </code>
+-      <default code="true">s_defaultPlugin</default>
+-    </entry>
+-    <entry name="theme" key="theme" type="String">
+-      <label>Theme name</label>
+-      <code>#if HAVE_BREEZE_DECO
+-                const QString s_defaultTheme { QStringLiteral("Breeze") };
+-            #else
+-                const QString s_defaultTheme { QStringLiteral("kwin4_decoration_qml_plastik") };
+-            #endif
+-      </code>
+-      <default code="true">s_defaultTheme</default>
+-    </entry>
+-    <entry name="borderSize" key="BorderSize" type="String">
+-      <label>Window border size</label>
+-      <default>Normal</default>
+-    </entry>
+-    <entry name="borderSizeAuto" key="BorderSizeAuto" type="Bool">
+-      <label>Use theme's default window border size</label>
+-      <default>true</default>
+-    </entry>
+-    <entry name="closeOnDoubleClickOnMenu" key="CloseOnDoubleClickOnMenu" type="Bool">
+-      <label>Close windows by double clicking the menu button</label>
+-      <default>false</default>
+-    </entry>
+-    <entry name="showToolTips" key="ShowToolTips" type="Bool">
+-      <label>Show titlebar button tooltips</label>
+-      <default>true</default>
+-    </entry>
+-    <entry name="buttonsOnLeft" key="ButtonsOnLeft" type="String">
+-      <label>Titlebar left buttons</label>
+-      <default>MS</default>
+-    </entry>
+-    <entry name="buttonsOnRight" key="ButtonsOnRight" type="String">
+-      <label>Titlebar right buttons</label>
+-      <default>HIAX</default>
+-    </entry>
+-  </group>
+-</kcfg>
+diff --git a/kcmkwin/kwindecoration/kwindecorationsettings.kcfgc b/kcmkwin/kwindecoration/kwindecorationsettings.kcfgc
+deleted file mode 100644
+index f42a6f723e..0000000000
+--- a/kcmkwin/kwindecoration/kwindecorationsettings.kcfgc
++++ /dev/null
+@@ -1,7 +0,0 @@
+-File=kwindecorationsettings.kcfgc
+-ClassName=KWinDecorationSettings
+-Mutators=true
+-DefaultValueGetters=true
+-GenerateProperties=true
+-ParentInConstructor=true
+-Notifiers=buttonsOnLeft,buttonsOnRight
+diff --git a/kcmkwin/kwindecoration/package/contents/ui/Themes.qml b/kcmkwin/kwindecoration/package/contents/ui/Themes.qml
+deleted file mode 100644
+index 28e5899db2..0000000000
+--- a/kcmkwin/kwindecoration/package/contents/ui/Themes.qml
++++ /dev/null
+@@ -1,119 +0,0 @@
+-/*
+- * Copyright 2014  Martin Gräßlin <mgraesslin@kde.org>
+- * Copyright (c) 2019 Valerio Pilo <vpilo@coldshock.net>
+- *
+- * This program is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU General Public License as
+- * published by the Free Software Foundation; either version 2 of
+- * the License or (at your option) version 3 or any later version
+- * accepted by the membership of KDE e.V. (or its successor approved
+- * by the membership of KDE e.V.), which shall act as a proxy
+- * defined in Section 14 of version 3 of the license.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-import QtQuick 2.7
+-import org.kde.kcm 1.1 as KCM
+-import org.kde.kirigami 2.2 as Kirigami
+-import org.kde.kwin.private.kdecoration 1.0 as KDecoration
+-
+-KCM.GridView {
+-    function updateDecoration(item, marginTopLeft, marginBottomRight) {
+-        var mainMargin = units.largeSpacing
+-        var shd = item.shadow
+-        item.anchors.leftMargin   = mainMargin + marginTopLeft     - (shd ? shd.paddingLeft   : 0)
+-        item.anchors.rightMargin  = mainMargin + marginBottomRight - (shd ? shd.paddingRight  : 0)
+-        item.anchors.topMargin    = mainMargin + marginTopLeft     - (shd ? shd.paddingTop    : 0)
+-        item.anchors.bottomMargin = mainMargin + marginBottomRight - (shd ? shd.paddingBottom : 0)
+-    }
+-
+-    view.model: kcm.themesModel
+-    view.currentIndex: kcm.theme
+-    view.onContentHeightChanged: view.positionViewAtIndex(view.currentIndex, GridView.Visible)
+-
+-    view.implicitCellWidth: Kirigami.Units.gridUnit * 18
+-
+-    view.delegate: KCM.GridDelegate {
+-        text: model.display
+-
+-        thumbnailAvailable: true
+-        thumbnail: Rectangle {
+-            anchors.fill: parent
+-            color: palette.base
+-            clip: true
+-
+-            KDecoration.Bridge {
+-                id: bridgeItem
+-                plugin: model.plugin
+-                theme: model.theme
+-            }
+-            KDecoration.Settings {
+-                id: settingsItem
+-                bridge: bridgeItem.bridge
+-            }
+-            KDecoration.Decoration {
+-                id: inactivePreview
+-                bridge: bridgeItem.bridge
+-                settings: settingsItem
+-                anchors.fill: parent
+-                onShadowChanged: updateDecoration(inactivePreview, 0, client.decoration.titleBar.height)
+-                Component.onCompleted: {
+-                    client.active = false
+-                    client.caption = model.display
+-                    updateDecoration(inactivePreview, 0, client.decoration.titleBar.height)
+-                }
+-            }
+-            KDecoration.Decoration {
+-                id: activePreview
+-                bridge: bridgeItem.bridge
+-                settings: settingsItem
+-                anchors.fill: parent
+-                onShadowChanged: updateDecoration(activePreview, client.decoration.titleBar.height, 0)
+-                Component.onCompleted: {
+-                    client.active = true
+-                    client.caption = model.display
+-                    updateDecoration(activePreview, client.decoration.titleBar.height, 0)
+-                }
+-            }
+-            MouseArea {
+-                anchors.fill: parent
+-                onClicked: {
+-                    kcm.theme = index
+-                    view.currentIndex = index
+-                }
+-            }
+-            Connections {
+-                target: kcm
+-                onBorderSizeChanged: settingsItem.borderSizesIndex = kcm.borderSize
+-            }
+-        }
+-        actions: [
+-            Kirigami.Action {
+-                iconName: "edit-entry"
+-                tooltip: i18n("Edit %1 Theme", model.display)
+-                enabled: model.configureable
+-                onTriggered: {
+-                    kcm.theme = index
+-                    view.currentIndex = index
+-                    bridgeItem.bridge.configure()
+-                }
+-            }
+-        ]
+-
+-        onClicked: {
+-            kcm.theme = index
+-            view.currentIndex = index
+-        }
+-    }
+-    Connections {
+-        target: kcm
+-        onThemeChanged: view.currentIndex = kcm.theme
+-    }
+-}
+-
+diff --git a/kcmkwin/kwindecoration/package/contents/ui/main.qml b/kcmkwin/kwindecoration/package/contents/ui/main.qml
+deleted file mode 100644
+index 677bcd5f66..0000000000
+--- a/kcmkwin/kwindecoration/package/contents/ui/main.qml
++++ /dev/null
+@@ -1,167 +0,0 @@
+-/*
+-   Copyright (c) 2019 Valerio Pilo <vpilo@coldshock.net>
+-
+-   This library is free software; you can redistribute it and/or
+-   modify it under the terms of the GNU Library General Public
+-   License version 2 as published by the Free Software Foundation.
+-
+-   This library is distributed in the hope that it will be useful,
+-   but WITHOUT ANY WARRANTY; without even the implied warranty of
+-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+-   Library General Public License for more details.
+-
+-   You should have received a copy of the GNU Library General Public License
+-   along with this library; see the file COPYING.LIB.  If not, write to
+-   the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+-   Boston, MA 02110-1301, USA.
+-*/
+-
+-import QtQuick 2.7
+-import QtQuick.Layouts 1.3
+-import QtQuick.Controls 2.4 as Controls
+-import org.kde.kcm 1.1 as KCM
+-import org.kde.kconfig 1.0 // for KAuthorized
+-import org.kde.kirigami 2.4 as Kirigami
+-
+-Kirigami.Page {
+-    KCM.ConfigModule.quickHelp: i18n("This module lets you configure the window decorations.")
+-    title: kcm.name
+-
+-    SystemPalette {
+-        id: palette
+-        colorGroup: SystemPalette.Active
+-    }
+-
+-    // To match SimpleKCM's borders of Page + headerParent/footerParent (also specified in raw pixels)
+-    leftPadding: Kirigami.Settings.isMobile ? 0 : 8
+-    topPadding: leftPadding
+-    rightPadding: leftPadding
+-    bottomPadding: leftPadding
+-
+-    implicitWidth: Kirigami.Units.gridUnit * 48
+-    implicitHeight: Kirigami.Units.gridUnit * 33
+-
+-    // TODO: replace this TabBar-plus-Frame-in-a-ColumnLayout with whatever shakes
+-    // out of https://bugs.kde.org/show_bug.cgi?id=394296
+-    ColumnLayout {
+-        id: tabLayout
+-        anchors.fill: parent
+-        spacing: 0
+-
+-        Controls.TabBar {
+-            id: tabBar
+-            // Tab styles generally assume that they're touching the inner layout,
+-            // not the frame, so we need to move the tab bar down a pixel and make
+-            // sure it's drawn on top of the frame
+-            z: 1
+-            Layout.bottomMargin: -1
+-            Layout.fillWidth: true
+-
+-            Controls.TabButton {
+-                text: i18nc("tab label", "Theme")
+-            }
+-
+-            Controls.TabButton {
+-                text: i18nc("tab label", "Titlebar Buttons")
+-            }
+-        }
+-        Controls.Frame {
+-            Layout.fillWidth: true
+-            Layout.fillHeight: true
+-
+-            StackLayout {
+-                anchors.fill: parent
+-
+-                currentIndex: tabBar.currentIndex
+-
+-                ColumnLayout {
+-                    Themes {
+-                        Layout.fillWidth: true
+-                        Layout.fillHeight: true
+-                        enabled: !kcm.settings.isImmutable("pluginName") && !kcm.settings.isImmutable("theme")
+-                    }
+-
+-                    RowLayout {
+-                        Controls.CheckBox {
+-                            id: borderSizeAutoCheckbox
+-                            // Let it elide but don't make it push the ComboBox away from it
+-                            Layout.fillWidth: true
+-                            Layout.maximumWidth: implicitWidth
+-                            text: i18nc("checkbox label", "Use theme's default window border size")
+-                            enabled: !kcm.settings.isImmutable("borderSizeAuto")
+-                            checked: kcm.settings.borderSizeAuto
+-                            onToggled: {
+-                                kcm.settings.borderSizeAuto = checked;
+-                                borderSizeComboBox.autoBorderUpdate()
+-                            }
+-                        }
+-                        Controls.ComboBox {
+-                            id: borderSizeComboBox
+-                            enabled: !borderSizeAutoCheckbox.checked && !kcm.settings.isImmutable("borderSize")
+-                            model: kcm.borderSizesModel
+-                            currentIndex: kcm.borderSize
+-                            onActivated: {
+-                                kcm.borderSize = currentIndex
+-                            }
+-                            function autoBorderUpdate() {
+-                                if (borderSizeAutoCheckbox.checked) {
+-                                    kcm.borderSize = kcm.recommendedBorderSize
+-                                }
+-                            }
+-
+-                            Connections {
+-                                target: kcm
+-                                onThemeChanged: borderSizeComboBox.autoBorderUpdate()
+-                            }
+-                        }
+-                        Item {
+-                            Layout.fillWidth: true
+-                        }
+-                        Controls.Button {
+-                            text: i18nc("button text", "Get New Window Decorations...")
+-                            icon.name: "get-hot-new-stuff"
+-                            onClicked: kcm.getNewStuff(this)
+-                            visible: KAuthorized.authorize("ghns")
+-                        }
+-                    }
+-                }
+-
+-                ColumnLayout {
+-                    Buttons {
+-                        Layout.fillWidth: true
+-                        Layout.fillHeight: true
+-                        enabled: !kcm.settings.isImmutable("buttonsOnLeft") && !kcm.settings.isImmutable("buttonsOnRight")
+-                    }
+-
+-                    Controls.CheckBox {
+-                        id: closeOnDoubleClickOnMenuCheckBox
+-                        text: i18nc("checkbox label", "Close windows by double clicking the menu button")
+-                        enabled: !kcm.settings.isImmutable("closeOnDoubleClickOnMenu")
+-                        checked: kcm.settings.closeOnDoubleClickOnMenu
+-                        onToggled: {
+-                            kcm.settings.closeOnDoubleClickOnMenu = checked
+-                            infoLabel.visible = checked
+-                        }
+-                    }
+-
+-                    Kirigami.InlineMessage {
+-                        Layout.fillWidth: true
+-                        id: infoLabel
+-                        type: Kirigami.MessageType.Information
+-                        text: i18nc("popup tip", "Close by double clicking: Keep the window's Menu button pressed until it appears.")
+-                        showCloseButton: true
+-                        visible: false
+-                    }
+-
+-                    Controls.CheckBox {
+-                        id: showToolTipsCheckBox
+-                        text: i18nc("checkbox label", "Show titlebar button tooltips")
+-                        enabled: !kcm.settings.isImmutable("showToolTips")
+-                        checked: kcm.settings.showToolTips
+-                        onToggled: kcm.settings.showToolTips = checked
+-                    }
+-                }
+-            }
+-        }
+-    }
+-}
+diff --git a/kcmkwin/kwindecoration/package/metadata.desktop b/kcmkwin/kwindecoration/package/metadata.desktop
+deleted file mode 100644
+index 4755ca9366..0000000000
+--- a/kcmkwin/kwindecoration/package/metadata.desktop
++++ /dev/null
+@@ -1,107 +0,0 @@
+-[Desktop Entry]
+-Icon=preferences-system-windows-action
+-Type=Service
+-Keywords=
+-X-KDE-ParentApp=
+-X-KDE-System-Settings-Parent-Category=applicationstyle
+-X-KDE-PluginInfo-Author=Valerio Pilo
+-X-KDE-PluginInfo-Email=vpilo@coldshock.net
+-X-KDE-PluginInfo-License=GPL-2.0+
+-X-KDE-PluginInfo-Name=kcm_kwindecoration
+-X-KDE-PluginInfo-Version=
+-X-KDE-PluginInfo-Website=https://www.kde.org/plasma-desktop
+-X-KDE-ServiceTypes=Plasma/Generic
+-X-Plasma-API=declarativeappletscript
+-X-Plasma-MainScript=ui/main.qml
+-X-KDE-FormFactors=desktop,tablet
+-
+-Name=Window Decorations
+-Name[ar]=زخارف النوافذ
+-Name[bg]=Декорации на прозорците
+-Name[bs]=Dekoracije prozora
+-Name[ca]=Decoració de les finestres
+-Name[ca@valencia]=Decoració de les finestres
+-Name[cs]=Dekorace oken
+-Name[da]=Vinduesdekorationer
+-Name[de]=Fensterdekoration
+-Name[el]=Διακοσμήσεις παραθύρου
+-Name[en_GB]=Window Decorations
+-Name[es]=Decoración de ventanas
+-Name[et]=Akna dekoratsioonid
+-Name[eu]=Leiho-apaindurak
+-Name[fi]=Ikkunakehykset
+-Name[fr]=Décorations de fenêtres
+-Name[ga]=Maisiúcháin Fhuinneog
+-Name[gl]=Decoración da xanela
+-Name[he]=מסגרת חלון
+-Name[hi]=विंडो सजावट
+-Name[hr]=Ukrasi prozora
+-Name[hu]=Ablakdekorációk
+-Name[ia]=Decorationes de fenestra
+-Name[id]=Dekorasi Window
+-Name[is]=Gluggaskreytingar
+-Name[it]=Decorazioni delle finestre
+-Name[ja]=ウィンドウの飾り
+-Name[kk]=Терезенің безендірулері
+-Name[km]=ការ​តុបតែង​បង្អួច
+-Name[kn]=ವಿಂಡೋ ಅಲಂಕಾರಗಳು
+-Name[ko]=창 장식
+-Name[lt]=Langų dekoracijos
+-Name[lv]=Logu dekorācijas
+-Name[mr]=चौकट सजावट
+-Name[nb]=Vinduspynt
+-Name[nds]=Finstern opfladusen
+-Name[nl]=Vensterdecoraties
+-Name[nn]=Vindaugspynt
+-Name[pa]=ਵਿੰਡੋ ਸਜਾਵਟ
+-Name[pl]=Wygląd okien
+-Name[pt]=Decorações das Janelas
+-Name[pt_BR]=Decorações da janela
+-Name[ro]=Decorații fereastră
+-Name[ru]=Оформление окон
+-Name[si]=කවුළු සැරසිලි
+-Name[sk]=Dekorácie okien
+-Name[sl]=Okraski oken
+-Name[sr]=Декорације прозора
+-Name[sr@ijekavian]=Декорације прозора
+-Name[sr@ijekavianlatin]=Dekoracije prozora
+-Name[sr@latin]=Dekoracije prozora
+-Name[sv]=Fönsterdekorationer
+-Name[th]=ส่วนตกแต่งหน้าต่าง
+-Name[tr]=Pencere Dekorasyonları
+-Name[ug]=كۆزنەك بېزەكلىرى
+-Name[uk]=Обрамлення вікон
+-Name[wa]=Gåyotaedjes des fniesses
+-Name[x-test]=xxWindow Decorationsxx
+-Name[zh_CN]=窗口装饰
+-Name[zh_TW]=視窗裝飾
+-Comment=Configure window titlebars and borders
+-Comment[ca]=Configura la barra de títol i les vores de les finestres
+-Comment[ca@valencia]=Configura la barra de títol i les vores de les finestres
+-Comment[da]=Indstil vinduets titellinjer og kanter
+-Comment[de]=Titelleiste und Ränder von Fenstern einrichten
+-Comment[en_GB]=Configure window titlebars and borders
+-Comment[es]=Configurar barra de título y bordes de las ventanas
+-Comment[et]=Akende tiitliriba ja raami seadistamine
+-Comment[eu]=Konfiguratu leihoen titulu-barrak eta ertzak
+-Comment[fi]=Ikkunan otsikkopalkkien ja reunojen asetukset
+-Comment[fr]=Configure les barres de titre et les bordures de la fenêtre
+-Comment[gl]=Configurar as barras de título e os bordos das xanelas
+-Comment[ia]=Configura barras de titulo e margines
+-Comment[id]=Konfigurasikan bingkai dan bilah-judul window
+-Comment[it]=Configura la barra del titolo e i bordi delle finestre
+-Comment[ko]=창 제목 표시줄과 경계선 설정
+-Comment[lt]=Konfigūruoti langų antraštės juostas ir rėmelius
+-Comment[nl]=Titelbalken en randen van venster configureren
+-Comment[nn]=Set opp tittellinjer og vindaugsrammer
+-Comment[pl]=Ustawienia pasków tytułów i obramowań okien
+-Comment[pt]=Configurar as barras de título e contornos das janelas
+-Comment[pt_BR]=Configure as barras de títulos e bordas da janela
+-Comment[ru]=Настройка заголовка и границ окон
+-Comment[sk]=Nastaviť záhlavia a okraje okna
+-Comment[sl]=Nastavi naslovne vrstice in robove oken
+-Comment[sv]=Anpassa namnlister och kanter för fönster
+-Comment[uk]=Налаштовування смужок заголовків та рамок вікон
+-Comment[x-test]=xxConfigure window titlebars and bordersxx
+-Comment[zh_CN]=配置窗口标题栏和边框
+-Comment[zh_TW]=設定視窗的標題列和邊框
+diff --git a/kcmkwin/kwindecoration/package/contents/ui/ButtonGroup.qml b/kcmkwin/kwindecoration/qml/ButtonGroup.qml
+similarity index 88%
+rename from kcmkwin/kwindecoration/package/contents/ui/ButtonGroup.qml
+rename to kcmkwin/kwindecoration/qml/ButtonGroup.qml
+index fcff634e34..37da84da7e 100644
+--- a/kcmkwin/kwindecoration/package/contents/ui/ButtonGroup.qml
++++ b/kcmkwin/kwindecoration/qml/ButtonGroup.qml
+@@ -17,22 +17,24 @@
+  * You should have received a copy of the GNU General Public License
+  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
+-import QtQuick 2.7
++import QtQuick 2.1
++import QtQuick.Controls 1.2
++import QtQuick.Layouts 1.1
+ import org.kde.kwin.private.kdecoration 1.0 as KDecoration
++import org.kde.plasma.core 2.0 as PlasmaCore;
+ 
+ ListView {
+     id: view
+     property string key
+     property bool dragging: false
+-    property int iconSize: units.iconSizes.small
+     orientation: ListView.Horizontal
+     interactive: false
+     spacing: units.smallSpacing
+-    implicitHeight: iconSize
+-    implicitWidth: count * (iconSize + units.smallSpacing) - Math.min(1, count) * units.smallSpacing
++    implicitHeight: units.iconSizes.small
++    implicitWidth: count * (units.iconSizes.small + units.smallSpacing) - Math.min(1, count) * units.smallSpacing
+     delegate: Item {
+-        width: iconSize
+-        height: iconSize
++        width: units.iconSizes.small
++        height: units.iconSizes.small
+         KDecoration.Button {
+             id: button
+             property int itemIndex: index
+@@ -40,13 +42,10 @@ ListView {
+             bridge: bridgeItem.bridge
+             settings: settingsItem
+             type: model["button"]
+-            width: iconSize
+-            height: iconSize
+             anchors.fill: Drag.active ? undefined : parent
+             Drag.keys: [ "decoButtonRemove", view.key ]
+             Drag.active: dragArea.drag.active
+             Drag.onActiveChanged: view.dragging = Drag.active
+-            color: palette.windowText
+         }
+         MouseArea {
+             id: dragArea
+diff --git a/kcmkwin/kwindecoration/package/contents/ui/Buttons.qml b/kcmkwin/kwindecoration/qml/Buttons.qml
+similarity index 50%
+rename from kcmkwin/kwindecoration/package/contents/ui/Buttons.qml
+rename to kcmkwin/kwindecoration/qml/Buttons.qml
+index ee7e6e2419..5a09a79c60 100644
+--- a/kcmkwin/kwindecoration/package/contents/ui/Buttons.qml
++++ b/kcmkwin/kwindecoration/qml/Buttons.qml
+@@ -1,6 +1,5 @@
+ /*
+  * Copyright 2014  Martin Gräßlin <mgraesslin@kde.org>
+- * Copyright (c) 2019 Valerio Pilo <vpilo@coldshock.net>
+  *
+  * This program is free software; you can redistribute it and/or
+  * modify it under the terms of the GNU General Public License as
+@@ -18,22 +17,16 @@
+  * You should have received a copy of the GNU General Public License
+  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
+-import QtQuick 2.7
+-import QtQuick.Layouts 1.3
+-import QtQuick.Controls 2.4 as Controls
+-
+-import org.kde.plasma.core 2.0 as PlasmaCore
+-import org.kde.kirigami 2.5 as Kirigami
++import QtQuick 2.3
++import QtQuick.Controls 1.2
++import QtQuick.Controls 2.0 as QQC2
++import QtQuick.Layouts 1.1
+ import org.kde.kwin.private.kdecoration 1.0 as KDecoration
++import org.kde.kquickcontrolsaddons 2.0 as KQuickControlsAddons;
+ 
+-ColumnLayout {
+-    Layout.fillWidth: true
+-    Layout.fillHeight: true
+-    property int buttonIconSize: units.iconSizes.medium
+-    property int titleBarSpacing: units.smallSpacing * 2
+-    readonly property bool draggingTitlebarButtons: leftButtonsView.dragging || rightButtonsView.dragging
+-    readonly property bool hideDragHint: draggingTitlebarButtons || availableButtonsGrid.dragging
+-
++Item {
++    objectName: "buttonLayout"
++    Layout.preferredHeight: layout.height
+     KDecoration.Bridge {
+         id: bridgeItem
+         plugin: "org.kde.breeze"
+@@ -42,62 +35,58 @@ ColumnLayout {
+         id: settingsItem
+         bridge: bridgeItem.bridge
+     }
+-
+     Rectangle {
+-        Layout.fillWidth: true
+-        color: palette.base
+-        radius: units.smallSpacing
+-        height: fakeWindow.height
+-        Layout.margins: units.smallSpacing
+-
++        anchors.fill: parent
++        border.width: Math.ceil(units.gridUnit / 16.0)
++        border.color: highlightColor
++        color: baseColor
+         ColumnLayout {
+-            id: fakeWindow
++            id: layout
+             width: parent.width
+-
++            height: titlebarRect.height + availableGrid.height + dragHint.height + 5*layout.spacing
+             Rectangle {
+-                id: titleBar
++                id: titlebarRect
++                height: buttonPreviewRow.height + units.smallSpacing
++                border.width: Math.ceil(units.gridUnit / 16.0)
++                border.color: highlightColor
++                color: backgroundColor
+                 Layout.fillWidth: true
+-                height: buttonPreviewRow.height + 2 * titleBarSpacing
+-                radius: units.smallSpacing
+-                gradient: Gradient {
+-                    GradientStop { position: 0.0; color: palette.midlight }
+-                    GradientStop { position: 1.0; color: palette.window }
+-                }
+-
++                Layout.topMargin: -border.width // prevent a double top border
+                 RowLayout {
+                     id: buttonPreviewRow
+-                    anchors {
+-                        margins: titleBarSpacing
+-                        left: parent.left
+-                        right: parent.right
+-                        top: parent.top
+-                    }
+-
++                    anchors.top: parent.top;
++                    anchors.left: parent.left;
++                    anchors.right: parent.right;
++                    anchors.margins: units.smallSpacing / 2
++                    height: Math.max(units.iconSizes.small, titlebar.implicitHeight) + units.smallSpacing/2
+                     ButtonGroup {
+                         id: leftButtonsView
+-                        iconSize: buttonIconSize
+-                        model: kcm.leftButtonsModel
++                        height: buttonPreviewRow.height
++                        model: leftButtons
+                         key: "decoButtonLeft"
+                     }
+-                    Controls.Label {
+-                        id: titleBarLabel
++                    QQC2.Label {
++                        id: titlebar
+                         Layout.fillWidth: true
+                         horizontalAlignment: Text.AlignHCenter
+-                        font.bold: true
++                        font: titleFont
+                         text: i18n("Titlebar")
+                     }
++
+                     ButtonGroup {
+                         id: rightButtonsView
+-                        iconSize: buttonIconSize
+-                        model: kcm.rightButtonsModel
++                        height: buttonPreviewRow.height
++                        model: rightButtons
+                         key: "decoButtonRight"
+                     }
+                 }
+                 DropArea {
+-                    id: titleBarDropArea
+                     anchors {
+-                        fill: parent
+-                        margins: -titleBarSpacing
++                        fill: titlebarRect
++                        leftMargin:   -units.iconSizes.small
++                        topMargin:    -units.iconSizes.small
++                        rightMargin:  +units.iconSizes.small
++                        bottomMargin: +units.iconSizes.small
+                     }
+                     keys: [ "decoButtonAdd", "decoButtonRight", "decoButtonLeft" ]
+                     onEntered: {
+@@ -116,20 +105,16 @@ ColumnLayout {
+                             return;
+                         }
+                         var point = mapToItem(view, drag.x, drag.y);
+-                        var index = 0
+-                        for(var childIndex = 0 ; childIndex < (view.count - 1) ; childIndex++) {
+-                            var child = view.contentItem.children[childIndex]
+-                            if (child.x > point.x) {
+-                                break
+-                            }
+-                            index = childIndex + 1
++                        var index = view.indexAt(point.x, point.y);
++                        if (index == -1 && (view.x + view.width <= drag.x)) {
++                            index = view.count - 1;
+                         }
+-                        if (drop.keys.indexOf("decoButtonAdd") !== -1) {
++                        if (drop.keys.indexOf("decoButtonAdd") != -1) {
+                             view.model.add(index, drag.source.type);
+-                        } else if (drop.keys.indexOf("decoButtonLeft") !== -1) {
+-                            if (view === leftButtonsView) {
++                        } else if (drop.keys.indexOf("decoButtonLeft") != -1) {
++                            if (view == leftButtonsView) {
+                                 // move in same view
+-                                if (index !== drag.source.itemIndex) {
++                                if (index != drag.source.itemIndex) {
+                                     drag.source.buttonsModel.move(drag.source.itemIndex, index);
+                                 }
+                             } else  {
+@@ -137,10 +122,10 @@ ColumnLayout {
+                                 view.model.add(index, drag.source.type);
+                                 drag.source.buttonsModel.remove(drag.source.itemIndex);
+                             }
+-                        } else if (drop.keys.indexOf("decoButtonRight") !== -1) {
+-                            if (view === rightButtonsView) {
++                        } else if (drop.keys.indexOf("decoButtonRight") != -1) {
++                            if (view == rightButtonsView) {
+                                 // move in same view
+-                                if (index !== drag.source.itemIndex) {
++                                if (index != drag.source.itemIndex) {
+                                     drag.source.buttonsModel.move(drag.source.itemIndex, index);
+                                 }
+                             } else {
+@@ -153,66 +138,52 @@ ColumnLayout {
+                 }
+             }
+             GridView {
+-                id: availableButtonsGrid
+-                property bool dragging: false
++                id: availableGrid
+                 Layout.fillWidth: true
+-                Layout.minimumHeight: availableButtonsGrid.cellHeight * 2
+-                Layout.margins: units.largeSpacing
+-                model: kcm.availableButtonsModel
++                model: availableButtons
+                 interactive: false
++                height: Math.ceil(cellHeight * 3)
+                 delegate: Item {
+                     id: availableDelegate
+-                    Layout.margins: units.largeSpacing
+-                    width: availableButtonsGrid.cellWidth
+-                    height: availableButtonsGrid.cellHeight
+-                    opacity: draggingTitlebarButtons ? 0.15 : 1.0
+-                    Rectangle {
+-                        id: availableButtonFrame
+-                        anchors.horizontalCenter: parent.horizontalCenter
+-                        color: palette.window
+-                        radius: units.smallSpacing
+-                        width: buttonIconSize + units.largeSpacing
+-                        height: buttonIconSize + units.largeSpacing
+-
+-                        KDecoration.Button {
+-                            id: availableButton
+-                            anchors.centerIn: Drag.active ? undefined : availableButtonFrame
+-                            bridge: bridgeItem.bridge
+-                            settings: settingsItem
+-                            type: model["button"]
+-                            width: buttonIconSize
+-                            height: buttonIconSize
+-                            Drag.keys: [ "decoButtonAdd" ]
+-                            Drag.active: dragArea.drag.active
+-                            Drag.onActiveChanged: availableButtonsGrid.dragging = Drag.active
+-                            color: palette.windowText
+-                        }
+-                        MouseArea {
+-                            id: dragArea
+-                            anchors.fill: availableButton
+-                            drag.target: availableButton
+-                            cursorShape: Qt.SizeAllCursor
+-                            onReleased: {
+-                                if (availableButton.Drag.target) {
+-                                    availableButton.Drag.drop();
+-                                } else {
+-                                    availableButton.Drag.cancel();
+-                                }
+-                            }
+-                        }
++                    Layout.margins: units.gridUnit
++                    width: availableGrid.cellWidth
++                    height: availableGrid.cellHeight
++                    opacity: (leftButtonsView.dragging || rightButtonsView.dragging) ? 0.25 : 1.0
++                    KDecoration.Button {
++                        id: availableButton
++                        anchors.centerIn: Drag.active ? undefined : parent
++                        bridge: bridgeItem.bridge
++                        settings: settingsItem
++                        type: model["button"]
++                        width: units.iconSizes.small
++                        height: units.iconSizes.small
++                        Drag.keys: [ "decoButtonAdd" ]
++                        Drag.active: dragArea.drag.active
+                     }
+-                    Controls.Label {
++                    QQC2.Label {
+                         id: iconLabel
+                         text: model["display"]
+                         horizontalAlignment: Text.AlignHCenter
+                         verticalAlignment: Text.AlignTop
+-                        anchors.top: availableButtonFrame.bottom
+-                        anchors.topMargin: units.smallSpacing
++                        anchors.bottom: parent.bottom
+                         anchors.left: parent.left
+                         anchors.right: parent.right
+                         elide: Text.ElideRight
+                         wrapMode: Text.Wrap
+-                        height: 2 * implicitHeight + lineHeight
++                        height: 2 * dragHint.implicitHeight + lineHeight
++                    }
++                    MouseArea {
++                        id: dragArea
++                        anchors.fill: availableButton
++                        drag.target: availableButton
++                        cursorShape: Qt.SizeAllCursor
++                        onReleased: {
++                            if (availableButton.Drag.target) {
++                                availableButton.Drag.drop();
++                            } else {
++                                availableButton.Drag.cancel();
++                            }
++                        }
+                     }
+                 }
+                 DropArea {
+@@ -224,24 +195,34 @@ ColumnLayout {
+                     onDropped: {
+                         drag.source.buttonsModel.remove(drag.source.itemIndex);
+                     }
+-                    Kirigami.Heading {
+-                        text: i18n("Drop button here to remove it")
+-                        font.weight: Font.Bold
+-                        level: 2
++                    ColumnLayout {
+                         anchors.centerIn: parent
+-                        opacity: draggingTitlebarButtons ? 1.0 : 0.0
++                        opacity: (leftButtonsView.dragging || rightButtonsView.dragging) ? 1.0 : 0.0
++                        QQC2.Label {
++                            text: i18n("Drop here to remove button")
++                            font.weight: Font.Bold
++                            Layout.bottomMargin: units.smallSpacing
++                        }
++                        KQuickControlsAddons.QIconItem {
++                            id: icon
++                            width: units.iconSizes.smallMedium
++                            height: units.iconSizes.smallMedium
++                            icon: "emblem-remove"
++                            Layout.alignment: Qt.AlignHCenter
++                        }
++                        Item {
++                            Layout.fillHeight: true
++                        }
+                     }
+                 }
+             }
+             Text {
+                 id: dragHint
+-                readonly property real dragHintOpacitiy: enabled ? 1.0 : 0.3
+-                color: palette.windowText
+-                opacity: hideDragHint ? 0.0 : dragHintOpacitiy
++                opacity: (leftButtonsView.dragging || rightButtonsView.dragging || availableGrid.dragging) ? 0.0 : 0.50
+                 Layout.fillWidth: true
+-                Layout.topMargin: titleBarSpacing
+-                Layout.bottomMargin: titleBarSpacing
++                Layout.bottomMargin: units.smallSpacing
+                 horizontalAlignment: Text.AlignHCenter
++                verticalAlignment: Text.AlignTop
+                 wrapMode: Text.NoWrap
+                 text: i18n("Drag buttons between here and the titlebar")
+             }
+diff --git a/kcmkwin/kwindecoration/qml/Previews.qml b/kcmkwin/kwindecoration/qml/Previews.qml
+new file mode 100644
+index 0000000000..9a04f87499
+--- /dev/null
++++ b/kcmkwin/kwindecoration/qml/Previews.qml
+@@ -0,0 +1,160 @@
++/*
++ * Copyright 2014  Martin Gräßlin <mgraesslin@kde.org>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of
++ * the License or (at your option) version 3 or any later version
++ * accepted by the membership of KDE e.V. (or its successor approved
++ * by the membership of KDE e.V.), which shall act as a proxy
++ * defined in Section 14 of version 3 of the license.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++import QtQuick 2.1
++import QtQuick.Controls 1.2
++import QtQuick.Layouts 1.1
++import org.kde.kwin.private.kdecoration 1.0 as KDecoration
++
++ScrollView {
++    objectName: "themeList"
++    frameVisible: true
++    GridView {
++        id: gridView
++        objectName: "listView"
++        signal userChangedSelection()
++        model: decorationsModel
++        cellWidth: 20 * units.gridUnit
++        cellHeight: cellWidth / 1.6
++        highlightFollowsCurrentItem: true
++        onContentHeightChanged: {
++            if (gridView.currentIndex == -1 && initialThemeIndex != -1) {
++                gridView.currentIndex = initialThemeIndex
++            }
++            gridView.positionViewAtIndex(gridView.currentIndex, GridView.Visible)
++        }
++        Rectangle {
++            z: -1
++            anchors.fill: parent
++            color: baseColor
++        }
++        highlight: Rectangle {
++            color: highlightColor
++            opacity: 0.6
++        }
++        highlightMoveDuration: units.longDuration
++        boundsBehavior: Flickable.StopAtBounds
++        property int borderSizesIndex: 3 // 3 == Normal
++        delegate: Item {
++            width: gridView.cellWidth
++            height: gridView.cellHeight
++            KDecoration.Bridge {
++                id: bridgeItem
++                plugin: model["plugin"]
++                theme: model["theme"]
++            }
++            KDecoration.Settings {
++                id: settingsItem
++                bridge: bridgeItem.bridge
++                borderSizesIndex: gridView.borderSizesIndex
++            }
++            Component.onCompleted: {
++                if (gridView.currentIndex == -1 && initialThemeIndex != -1) {
++                    gridView.currentIndex = initialThemeIndex
++                }
++            }
++            MouseArea {
++                hoverEnabled: false
++                anchors.fill: parent
++                onClicked: {
++                    gridView.currentIndex = index
++                    gridView.userChangedSelection()
++                }
++            }
++            ColumnLayout {
++                id: decorationPreviews
++                property string themeName: model["display"]
++                anchors.fill: parent
++                Item {
++                    KDecoration.Decoration {
++                        id: inactivePreview
++                        bridge: bridgeItem.bridge
++                        settings: settingsItem
++                        anchors.fill: parent
++                        Component.onCompleted: {
++                            client.caption = decorationPreviews.themeName
++                            client.active = false;
++                            anchors.leftMargin = Qt.binding(function() { return 40 - (inactivePreview.shadow ? inactivePreview.shadow.paddingLeft : 0);});
++                            anchors.rightMargin = Qt.binding(function() { return 10 - (inactivePreview.shadow ? inactivePreview.shadow.paddingRight : 0);});
++                            anchors.topMargin = Qt.binding(function() { return 10 - (inactivePreview.shadow ? inactivePreview.shadow.paddingTop : 0);});
++                            anchors.bottomMargin = Qt.binding(function() { return 40 - (inactivePreview.shadow ? inactivePreview.shadow.paddingBottom : 0);});
++                        }
++                    }
++                    KDecoration.Decoration {
++                        id: activePreview
++                        bridge: bridgeItem.bridge
++                        settings: settingsItem
++                        anchors.fill: parent
++                        Component.onCompleted: {
++                            client.caption = decorationPreviews.themeName
++                            client.active = true;
++                            anchors.leftMargin = Qt.binding(function() { return 10 - (activePreview.shadow ? activePreview.shadow.paddingLeft : 0);});
++                            anchors.rightMargin = Qt.binding(function() { return 40 - (activePreview.shadow ? activePreview.shadow.paddingRight : 0);});
++                            anchors.topMargin = Qt.binding(function() { return 40 - (activePreview.shadow ? activePreview.shadow.paddingTop : 0);});
++                            anchors.bottomMargin = Qt.binding(function() { return 10 - (activePreview.shadow ? activePreview.shadow.paddingBottom : 0);});
++                        }
++                    }
++                    MouseArea {
++                        hoverEnabled: false
++                        anchors.fill: parent
++                        onClicked: {
++                            gridView.currentIndex = index
++                            gridView.userChangedSelection()
++                        }
++                    }
++                    Layout.fillWidth: true
++                    Layout.fillHeight: true
++                    /* Create an invisible rectangle that's the same size as the inner content rect
++                       of the foreground window preview so that we can center the button within it.
++                       We have to center rather than using anchors because the button width varies
++                       with different localizations */
++                    Item {
++                        anchors {
++                            left: parent.left
++                            leftMargin: 10
++                            right: parent.right
++                            rightMargin: 40
++                            top: parent.top
++                            topMargin: 68
++                            bottom: parent.bottom
++                            bottomMargin: 10
++                        }
++                        Button {
++                            id: configureButton
++                            anchors {
++                                horizontalCenter: parent.horizontalCenter
++                                verticalCenter: parent.verticalCenter
++                            }
++                            enabled: model["configureable"]
++                            iconName: "configure"
++                            text: i18n("Configure %1...", decorationPreviews.themeName)
++                            onClicked: {
++                                gridView.currentIndex = index
++                                gridView.userChangedSelection()
++                                bridgeItem.bridge.configure()
++                            }
++                        }
++                    }
++                }
++            }
++        }
++    }
++    Layout.preferredHeight: 20 * units.gridUnit
++}
++
+diff --git a/kcmkwin/kwindecoration/qml/main.qml b/kcmkwin/kwindecoration/qml/main.qml
+new file mode 100644
+index 0000000000..75a754ea44
+--- /dev/null
++++ b/kcmkwin/kwindecoration/qml/main.qml
+@@ -0,0 +1,37 @@
++/*
++ * Copyright 2014  Martin Gräßlin <mgraesslin@kde.org>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of
++ * the License or (at your option) version 3 or any later version
++ * accepted by the membership of KDE e.V. (or its successor approved
++ * by the membership of KDE e.V.), which shall act as a proxy
++ * defined in Section 14 of version 3 of the license.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++import QtQuick 2.1
++import QtQuick.Controls 1.2
++import QtQuick.Layouts 1.1
++
++Rectangle {
++    color: backgroundColor
++    ColumnLayout {
++        anchors.fill: parent
++        Previews {
++            Layout.fillWidth: true
++            Layout.fillHeight: true
++        }
++        Buttons {
++            Layout.alignment: Qt.AlignTop
++            Layout.fillWidth: true
++        }
++    }
++}
+diff --git a/kcmkwin/kwindecoration/utils.cpp b/kcmkwin/kwindecoration/utils.cpp
+deleted file mode 100644
+index 2f8c45bb4b..0000000000
+--- a/kcmkwin/kwindecoration/utils.cpp
++++ /dev/null
+@@ -1,121 +0,0 @@
+-/*
+- * Copyright (c) 2019 Valerio Pilo <vpilo@coldshock.net>
+- *
+- * This library is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU Library General Public
+- * License version 2 as published by the Free Software Foundation.
+- *
+- * This library is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+- * Library General Public License for more details.
+- *
+- * You should have received a copy of the GNU Library General Public License
+- * along with this library; see the file COPYING.LIB.  If not, write to
+- * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+- * Boston, MA 02110-1301, USA.
+- */
+-
+-#include "utils.h"
+-
+-#include <KConfigGroup>
+-#include <KLocalizedString>
+-
+-namespace
+-{
+-const QMap<QString, KDecoration2::BorderSize> s_borderSizes {
+-    { QStringLiteral("None"),      KDecoration2::BorderSize::None },
+-    { QStringLiteral("NoSides"),   KDecoration2::BorderSize::NoSides },
+-    { QStringLiteral("Tiny"),      KDecoration2::BorderSize::Tiny },
+-    { QStringLiteral("Normal"),    KDecoration2::BorderSize::Normal },
+-    { QStringLiteral("Large"),     KDecoration2::BorderSize::Large },
+-    { QStringLiteral("VeryLarge"), KDecoration2::BorderSize::VeryLarge },
+-    { QStringLiteral("Huge"),      KDecoration2::BorderSize::Huge },
+-    { QStringLiteral("VeryHuge"),  KDecoration2::BorderSize::VeryHuge },
+-    { QStringLiteral("Oversized"), KDecoration2::BorderSize::Oversized }
+-};
+-const QMap<KDecoration2::BorderSize, QString> s_borderSizeNames {
+-    { KDecoration2::BorderSize::None,      i18n("No Borders") },
+-    { KDecoration2::BorderSize::NoSides,   i18n("No Side Borders") },
+-    { KDecoration2::BorderSize::Tiny,      i18n("Tiny") },
+-    { KDecoration2::BorderSize::Normal,    i18n("Normal") },
+-    { KDecoration2::BorderSize::Large,     i18n("Large") },
+-    { KDecoration2::BorderSize::VeryLarge, i18n("Very Large") },
+-    { KDecoration2::BorderSize::Huge,      i18n("Huge") },
+-    { KDecoration2::BorderSize::VeryHuge,  i18n("Very Huge") },
+-    { KDecoration2::BorderSize::Oversized, i18n("Oversized") }
+-};
+-
+-const QHash<KDecoration2::DecorationButtonType, QChar> s_buttonNames {
+-    {KDecoration2::DecorationButtonType::Menu, QChar('M') },
+-    {KDecoration2::DecorationButtonType::ApplicationMenu, QChar('N') },
+-    {KDecoration2::DecorationButtonType::OnAllDesktops, QChar('S') },
+-    {KDecoration2::DecorationButtonType::ContextHelp, QChar('H') },
+-    {KDecoration2::DecorationButtonType::Minimize, QChar('I') },
+-    {KDecoration2::DecorationButtonType::Maximize, QChar('A') },
+-    {KDecoration2::DecorationButtonType::Close, QChar('X') },
+-    {KDecoration2::DecorationButtonType::KeepAbove, QChar('F') },
+-    {KDecoration2::DecorationButtonType::KeepBelow, QChar('B') },
+-    {KDecoration2::DecorationButtonType::Shade, QChar('L') }
+-};
+-}
+-
+-
+-namespace Utils
+-{
+-
+-QString buttonsToString(const DecorationButtonsList &buttons)
+-{
+-    auto buttonToString = [](KDecoration2::DecorationButtonType button) -> QChar {
+-        const auto it = s_buttonNames.constFind(button);
+-        if (it != s_buttonNames.constEnd()) {
+-            return it.value();
+-        }
+-        return QChar();
+-    };
+-    QString ret;
+-    for (auto button : buttons) {
+-        ret.append(buttonToString(button));
+-    }
+-    return ret;
+-}
+-
+-DecorationButtonsList buttonsFromString(const QString &buttons)
+-{
+-    DecorationButtonsList ret;
+-    for (auto it = buttons.begin(); it != buttons.end(); ++it) {
+-        for (auto it2 = s_buttonNames.constBegin(); it2 != s_buttonNames.constEnd(); ++it2) {
+-            if (it2.value() == (*it)) {
+-                ret << it2.key();
+-            }
+-        }
+-    }
+-    return ret;
+-}
+-
+-DecorationButtonsList readDecorationButtons(const KConfigGroup &config, const QString &key, const DecorationButtonsList &defaultValue)
+-{
+-    return buttonsFromString(config.readEntry(key, buttonsToString(defaultValue)));
+-}
+-
+-KDecoration2::BorderSize stringToBorderSize(const QString &name)
+-{
+-    auto it = s_borderSizes.constFind(name);
+-    if (it == s_borderSizes.constEnd()) {
+-        // non sense values are interpreted just like normal
+-        return KDecoration2::BorderSize::Normal;
+-    }
+-    return it.value();
+-}
+-
+-QString borderSizeToString(KDecoration2::BorderSize size)
+-{
+-    return s_borderSizes.key(size);
+-}
+-
+-const QMap<KDecoration2::BorderSize, QString> &getBorderSizeNames()
+-{
+-    return s_borderSizeNames;
+-}
+-
+-} // namespace Utils
+diff --git a/kcmkwin/kwindecoration/utils.h b/kcmkwin/kwindecoration/utils.h
+deleted file mode 100644
+index 3a54196ab4..0000000000
+--- a/kcmkwin/kwindecoration/utils.h
++++ /dev/null
+@@ -1,41 +0,0 @@
+-/*
+- * Copyright (c) 2019 Valerio Pilo <vpilo@coldshock.net>
+- *
+- * This library is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU Library General Public
+- * License version 2 as published by the Free Software Foundation.
+- *
+- * This library is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+- * Library General Public License for more details.
+- *
+- * You should have received a copy of the GNU Library General Public License
+- * along with this library; see the file COPYING.LIB.  If not, write to
+- * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+- * Boston, MA 02110-1301, USA.
+- */
+-
+-#pragma once
+-
+-#include <KDecoration2/DecorationButton>
+-#include <KSharedConfig>
+-
+-#include <QVector>
+-
+-
+-using DecorationButtonsList = QVector<KDecoration2::DecorationButtonType>;
+-
+-namespace Utils
+-{
+-
+-QString buttonsToString(const DecorationButtonsList &buttons);
+-DecorationButtonsList buttonsFromString(const QString &buttons);
+-DecorationButtonsList readDecorationButtons(const KConfigGroup &config, const QString &key, const DecorationButtonsList &defaultValue);
+-
+-KDecoration2::BorderSize stringToBorderSize(const QString &name);
+-QString borderSizeToString(KDecoration2::BorderSize size);
+-
+-const QMap<KDecoration2::BorderSize, QString> &getBorderSizeNames();
+-
+-}
+diff --git a/kcmkwin/kwindecoration/window-decorations.knsrc b/kcmkwin/kwindecoration/window-decorations.knsrc
+deleted file mode 100644
+index 1ad3042b82..0000000000
+--- a/kcmkwin/kwindecoration/window-decorations.knsrc
++++ /dev/null
+@@ -1,66 +0,0 @@
+-[KNewStuff3]
+-Name=Window Decorations
+-Name[ar]=زخارف النوافذ
+-Name[bg]=Декорации на прозорците
+-Name[bs]=Dekoracije prozora
+-Name[ca]=Decoració de les finestres
+-Name[ca@valencia]=Decoració de les finestres
+-Name[cs]=Dekorace oken
+-Name[da]=Vinduesdekorationer
+-Name[de]=Fensterdekoration
+-Name[el]=Διακοσμήσεις παραθύρου
+-Name[en_GB]=Window Decorations
+-Name[es]=Decoración de ventanas
+-Name[et]=Akna dekoratsioonid
+-Name[eu]=Leiho-apaindurak
+-Name[fi]=Ikkunakehykset
+-Name[fr]=Décorations de fenêtres
+-Name[ga]=Maisiúcháin Fhuinneog
+-Name[gl]=Decoración da xanela
+-Name[he]=מסגרת חלון
+-Name[hi]=विंडो सजावट
+-Name[hr]=Ukrasi prozora
+-Name[hu]=Ablakdekorációk
+-Name[ia]=Decorationes de fenestra
+-Name[id]=Dekorasi Window
+-Name[is]=Gluggaskreytingar
+-Name[it]=Decorazioni delle finestre
+-Name[ja]=ウィンドウの飾り
+-Name[kk]=Терезенің безендірулері
+-Name[km]=ការ​តុបតែង​បង្អួច
+-Name[kn]=ವಿಂಡೋ ಅಲಂಕಾರಗಳು
+-Name[ko]=창 장식
+-Name[lt]=Langų dekoracijos
+-Name[lv]=Logu dekorācijas
+-Name[mr]=चौकट सजावट
+-Name[nb]=Vinduspynt
+-Name[nds]=Finstern opfladusen
+-Name[nl]=Vensterdecoraties
+-Name[nn]=Vindaugspynt
+-Name[pa]=ਵਿੰਡੋ ਸਜਾਵਟ
+-Name[pl]=Wygląd okien
+-Name[pt]=Decorações das Janelas
+-Name[pt_BR]=Decorações da janela
+-Name[ro]=Decorații fereastră
+-Name[ru]=Оформление окон
+-Name[si]=කවුළු සැරසිලි
+-Name[sk]=Dekorácie okien
+-Name[sl]=Okraski oken
+-Name[sr]=Декорације прозора
+-Name[sr@ijekavian]=Декорације прозора
+-Name[sr@ijekavianlatin]=Dekoracije prozora
+-Name[sr@latin]=Dekoracije prozora
+-Name[sv]=Fönsterdekorationer
+-Name[th]=ส่วนตกแต่งหน้าต่าง
+-Name[tr]=Pencere Dekorasyonları
+-Name[ug]=كۆزنەك بېزەكلىرى
+-Name[uk]=Обрамлення вікон
+-Name[wa]=Gåyotaedjes des fniesses
+-Name[x-test]=xxWindow Decorationsxx
+-Name[zh_CN]=窗口装饰
+-Name[zh_TW]=視窗裝飾
+-
+-ProvidersUrl=https://autoconfig.kde.org/ocs/providers.xml
+-Categories=Window Decoration Aurorae
+-TargetDir=aurorae/themes
+-Uncompress=archive
+diff --git a/kcmkwin/kwindesktop/CMakeLists.txt b/kcmkwin/kwindesktop/CMakeLists.txt
+index 2e36e5339b..67a0a9d383 100644
+--- a/kcmkwin/kwindesktop/CMakeLists.txt
++++ b/kcmkwin/kwindesktop/CMakeLists.txt
+@@ -35,4 +35,4 @@ kcoreaddons_desktop_to_json(kcm_kwin_virtualdesktops "kcm_kwin_virtualdesktops.d
+ install(FILES virtualdesktopssettings.kcfg DESTINATION ${KDE_INSTALL_KCFGDIR})
+ install(TARGETS kcm_kwin_virtualdesktops DESTINATION ${KDE_INSTALL_PLUGINDIR}/kcms)
+ install(FILES kcm_kwin_virtualdesktops.desktop  DESTINATION  ${KDE_INSTALL_KSERVICES5DIR})
+-kpackage_install_package(package kcm_kwin_virtualdesktops kcms)
++# kpackage_install_package(package kcm_kwin_virtualdesktops kcms)
+diff --git a/kcmkwin/kwindesktop/desktopsmodel.cpp b/kcmkwin/kwindesktop/desktopsmodel.cpp
+index b060ab6412..951731e552 100644
+--- a/kcmkwin/kwindesktop/desktopsmodel.cpp
++++ b/kcmkwin/kwindesktop/desktopsmodel.cpp
+@@ -195,7 +195,12 @@ void DesktopsModel::createDesktop(const QString &name)
+ 
+     beginInsertRows(QModelIndex(), m_desktops.count(), m_desktops.count());
+ 
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++    // I don't think the presence of braces makes a lot of difference here
++    const QString &dummyId = QUuid::createUuid().toString();
++#else
+     const QString &dummyId = QUuid::createUuid().toString(QUuid::WithoutBraces);
++#endif
+ 
+     m_desktops.append(dummyId);
+     m_names[dummyId] = name;
+diff --git a/kcmkwin/kwindesktop/virtualdesktops.cpp b/kcmkwin/kwindesktop/virtualdesktops.cpp
+index 2a4aa0e162..47e996b4a0 100644
+--- a/kcmkwin/kwindesktop/virtualdesktops.cpp
++++ b/kcmkwin/kwindesktop/virtualdesktops.cpp
+@@ -46,12 +46,14 @@ VirtualDesktops::VirtualDesktops(QObject *parent, const QVariantList &args)
+ 
+     setButtons(Apply | Default);
+ 
++#if KDECLARATIVE_VERSION >= QT_VERSION_CHECK(5, 70, 0)
+     QObject::connect(m_desktopsModel, &KWin::DesktopsModel::userModifiedChanged,
+         this, &VirtualDesktops::settingsChanged);
+     connect(m_animationsModel, &AnimationsModel::enabledChanged,
+         this, &VirtualDesktops::settingsChanged);
+     connect(m_animationsModel, &AnimationsModel::currentIndexChanged,
+         this, &VirtualDesktops::settingsChanged);
++#endif
+ }
+ 
+ VirtualDesktops::~VirtualDesktops()
+diff --git a/kcmkwin/kwindesktop/virtualdesktops.h b/kcmkwin/kwindesktop/virtualdesktops.h
+index 2968757902..bf843f83d6 100644
+--- a/kcmkwin/kwindesktop/virtualdesktops.h
++++ b/kcmkwin/kwindesktop/virtualdesktops.h
+@@ -19,7 +19,17 @@
+ #ifndef VIRTUALDESKTOPS_H
+ #define VIRTUALDESKTOPS_H
+ 
+-#include <KQuickAddons/ManagedConfigModule>
++#include <qglobal.h>
++#include <kdeclarative_version.h>
++
++#if KDECLARATIVE_VERSION >= QT_VERSION_CHECK(5, 70, 0)
++#   include <KQuickAddons/SharedConfigModule>
++#else
++#   include <KQuickAddons/ConfigModule>
++    namespace KQuickAddons {
++        using ManagedConfigModule = ConfigModule;
++    }
++#endif
+ #include <KSharedConfig>
+ 
+ class VirtualDesktopsSettings;
+@@ -38,6 +48,7 @@ class VirtualDesktops : public KQuickAddons::ManagedConfigModule
+     Q_PROPERTY(QAbstractItemModel *animationsModel READ animationsModel CONSTANT)
+     Q_PROPERTY(VirtualDesktopsSettings *virtualDesktopsSettings READ virtualDesktopsSettings CONSTANT)
+ 
++    using ManagedConfigModule = ConfigModule;
+ public:
+     explicit VirtualDesktops(QObject *parent = nullptr, const QVariantList &list = QVariantList());
+     ~VirtualDesktops() override;
+@@ -48,8 +59,13 @@ public:
+ 
+     VirtualDesktopsSettings *virtualDesktopsSettings() const;
+ 
++#if KDECLARATIVE_VERSION >= QT_VERSION_CHECK(5, 70, 0)
+     bool isDefaults() const override;
+     bool isSaveNeeded() const override;
++#else
++    bool isDefaults() const;
++    bool isSaveNeeded() const;
++#endif
+ 
+ public Q_SLOTS:
+     void load() override;
+diff --git a/kcmkwin/kwineffects/CMakeLists.txt b/kcmkwin/kwineffects/CMakeLists.txt
+index 4f533b9271..f9ea8f1cb4 100644
+--- a/kcmkwin/kwineffects/CMakeLists.txt
++++ b/kcmkwin/kwineffects/CMakeLists.txt
+@@ -32,4 +32,4 @@ kcoreaddons_desktop_to_json(kcm_kwin_effects "kcm_kwin_effects.desktop")
+ install(TARGETS kcm_kwin_effects DESTINATION ${KDE_INSTALL_PLUGINDIR}/kcms)
+ install(FILES kcm_kwin_effects.desktop DESTINATION ${KDE_INSTALL_KSERVICES5DIR})
+ install(FILES kwineffect.knsrc DESTINATION ${KDE_INSTALL_KNSRCDIR})
+-kpackage_install_package(package kcm_kwin_effects kcms)
++# kpackage_install_package(package kcm_kwin_effects kcms)
+diff --git a/kcmkwin/kwineffects/kcm.cpp b/kcmkwin/kwineffects/kcm.cpp
+index 898ec5ccdc..25701109c5 100644
+--- a/kcmkwin/kwineffects/kcm.cpp
++++ b/kcmkwin/kwineffects/kcm.cpp
+@@ -113,10 +113,14 @@ void DesktopEffectsKCM::configure(const QString &pluginId, QQuickItem *context)
+     m_model->requestConfigure(index, transientParent);
+ }
+ 
++#include <kdeclarative_version.h>
++
+ void DesktopEffectsKCM::updateNeedsSave()
+ {
+     setNeedsSave(m_model->needsSave());
++#if KDECLARATIVE_VERSION >= QT_VERSION_CHECK(5, 70, 0)
+     setRepresentsDefaults(m_model->isDefaults());
++#endif
+ }
+ 
+ } // namespace KWin
+diff --git a/kcmkwin/kwinoptions/main.cpp b/kcmkwin/kwinoptions/main.cpp
+index 2116567c73..36fd3775d3 100644
+--- a/kcmkwin/kwinoptions/main.cpp
++++ b/kcmkwin/kwinoptions/main.cpp
+@@ -35,6 +35,8 @@
+ #include "windows.h"
+ #include "kwinoptions_settings.h"
+ 
++#include <kconfigwidgets_version.h>>
++
+ K_PLUGIN_FACTORY_DECLARATION(KWinOptionsFactory)
+ 
+ class KFocusConfigStandalone : public KFocusConfig
+@@ -77,36 +79,48 @@ KWinOptions::KWinOptions(QWidget *parent, const QVariantList &)
+     mFocus = new KFocusConfig(false, mSettings, this);
+     mFocus->setObjectName(QLatin1String("KWin Focus Config"));
+     tab->addTab(mFocus, i18n("&Focus"));
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     connect(mFocus, qOverload<bool>(&KCModule::changed), this, qOverload<bool>(&KCModule::changed));
+     connect(mFocus, qOverload<bool>(&KCModule::defaulted), this, qOverload<bool>(&KCModule::defaulted));
++#endif
+ 
+     // Need to relay unmanagedWidgetDefaultState and unmanagedWidgetChangeState to wrapping KCModule
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     connect(mFocus, &KFocusConfig::unmanagedWidgetDefaulted, this, &KWinOptions::unmanagedWidgetDefaultState);
++#endif
+     connect(mFocus, &KFocusConfig::unmanagedWidgetStateChanged, this, &KWinOptions::unmanagedWidgetChangeState);
+ 
+     mTitleBarActions = new KTitleBarActionsConfig(false, mSettings, this);
+     mTitleBarActions->setObjectName(QLatin1String("KWin TitleBar Actions"));
+     tab->addTab(mTitleBarActions, i18n("Titlebar A&ctions"));
+     connect(mTitleBarActions, qOverload<bool>(&KCModule::changed), this, qOverload<bool>(&KCModule::changed));
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     connect(mTitleBarActions, qOverload<bool>(&KCModule::defaulted), this, qOverload<bool>(&KCModule::defaulted));
++#endif
+ 
+     mWindowActions = new KWindowActionsConfig(false, mSettings, this);
+     mWindowActions->setObjectName(QLatin1String("KWin Window Actions"));
+     tab->addTab(mWindowActions, i18n("W&indow Actions"));
+     connect(mWindowActions, qOverload<bool>(&KCModule::changed), this, qOverload<bool>(&KCModule::changed));
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     connect(mWindowActions, qOverload<bool>(&KCModule::defaulted), this, qOverload<bool>(&KCModule::defaulted));
++#endif
+ 
+     mMoving = new KMovingConfig(false, mSettings, this);
+     mMoving->setObjectName(QLatin1String("KWin Moving"));
+     tab->addTab(mMoving, i18n("Mo&vement"));
+     connect(mMoving, qOverload<bool>(&KCModule::changed), this, qOverload<bool>(&KCModule::changed));
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     connect(mMoving, qOverload<bool>(&KCModule::defaulted), this, qOverload<bool>(&KCModule::defaulted));
++#endif
+ 
+     mAdvanced = new KAdvancedConfig(false, mSettings, this);
+     mAdvanced->setObjectName(QLatin1String("KWin Advanced"));
+     tab->addTab(mAdvanced, i18n("Adva&nced"));
+     connect(mAdvanced, qOverload<bool>(&KCModule::changed), this, qOverload<bool>(&KCModule::changed));
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     connect(mAdvanced, qOverload<bool>(&KCModule::defaulted), this, qOverload<bool>(&KCModule::defaulted));
++#endif
+ 
+     KAboutData *about =
+         new KAboutData(QStringLiteral("kcmkwinoptions"), i18n("Window Behavior Configuration Module"),
+@@ -188,13 +202,17 @@ KActionsOptions::KActionsOptions(QWidget *parent, const QVariantList &)
+     mTitleBarActions->setObjectName(QLatin1String("KWin TitleBar Actions"));
+     tab->addTab(mTitleBarActions, i18n("&Titlebar Actions"));
+     connect(mTitleBarActions, qOverload<bool>(&KCModule::changed), this, qOverload<bool>(&KCModule::changed));
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     connect(mTitleBarActions, qOverload<bool>(&KCModule::defaulted), this, qOverload<bool>(&KCModule::defaulted));
++#endif
+ 
+     mWindowActions = new KWindowActionsConfig(false, mSettings, this);
+     mWindowActions->setObjectName(QLatin1String("KWin Window Actions"));
+     tab->addTab(mWindowActions, i18n("Window Actio&ns"));
+     connect(mWindowActions, qOverload<bool>(&KCModule::changed), this, qOverload<bool>(&KCModule::changed));
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     connect(mWindowActions, qOverload<bool>(&KCModule::defaulted), this, qOverload<bool>(&KCModule::defaulted));
++#endif
+ }
+ 
+ void KActionsOptions::load()
+diff --git a/kcmkwin/kwinoptions/windows.cpp b/kcmkwin/kwinoptions/windows.cpp
+index ecc81b6538..458359cc73 100644
+--- a/kcmkwin/kwinoptions/windows.cpp
++++ b/kcmkwin/kwinoptions/windows.cpp
+@@ -45,6 +45,8 @@
+ #include "kwinoptions_settings.h"
+ #include <KConfigDialogManager>
+ 
++#include <kconfigwidgets_version.h>
++
+ #define  CLICK_TO_FOCUS                 0
+ #define  CLICK_TO_FOCUS_MOUSE_PRECEDENT 1
+ #define  FOCUS_FOLLOWS_MOUSE            2
+@@ -122,7 +124,9 @@ void KFocusConfig::focusPolicyChanged()
+     emit unmanagedWidgetStateChanged(changed);
+ 
+     const bool isDefault = focusPolicy == CLICK_TO_FOCUS;
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     unmanagedWidgetDefaultState(isDefault);
++#endif
+     emit unmanagedWidgetDefaulted(isDefault);
+ 
+     // the auto raise related widgets are: autoRaise
+diff --git a/kcmkwin/kwinrules/CMakeLists.txt b/kcmkwin/kwinrules/CMakeLists.txt
+index 49bb6bdc0a..893b688d30 100644
+--- a/kcmkwin/kwinrules/CMakeLists.txt
++++ b/kcmkwin/kwinrules/CMakeLists.txt
+@@ -53,4 +53,4 @@ kcoreaddons_desktop_to_json(kcm_kwinrules "kcm_kwinrules.desktop" SERVICE_TYPES
+ 
+ install(TARGETS kcm_kwinrules DESTINATION ${PLUGIN_INSTALL_DIR}/kcms)
+ install(FILES kcm_kwinrules.desktop DESTINATION ${SERVICES_INSTALL_DIR})
+-kpackage_install_package(package kcm_kwinrules kcms)
++# kpackage_install_package(package kcm_kwinrules kcms)
+diff --git a/kcmkwin/kwinrules/main.cpp b/kcmkwin/kwinrules/main.cpp
+index 69b9b00310..3f7e9bcfb9 100644
+--- a/kcmkwin/kwinrules/main.cpp
++++ b/kcmkwin/kwinrules/main.cpp
+@@ -215,7 +215,11 @@ int main(int argc, char* argv[])
+         parser.addOption(QCommandLineOption("whole-app", i18n("Whether the settings should affect all windows of the application.")));
+         parser.process(app);
+ 
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++        uuid = QUuid(parser.value("uuid"));
++#else
+         uuid = QUuid::fromString(parser.value("uuid"));
++#endif
+         whole_app = parser.isSet("whole-app");
+     }
+ 
+diff --git a/kcmkwin/kwinrules/optionsmodel.cpp b/kcmkwin/kwinrules/optionsmodel.cpp
+index 9b18dc0ae1..dbef129176 100644
+--- a/kcmkwin/kwinrules/optionsmodel.cpp
++++ b/kcmkwin/kwinrules/optionsmodel.cpp
+@@ -47,7 +47,11 @@ int OptionsModel::rowCount(const QModelIndex &parent) const
+ 
+ QVariant OptionsModel::data(const QModelIndex &index, int role) const
+ {
++#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+     if (!checkIndex(index, CheckIndexOption::IndexIsValid | CheckIndexOption::ParentIsInvalid)) {
++#else
++    if (!index.isValid() || !index.parent().isValid()) {
++#endif
+         return QVariant();
+     }
+ 
+diff --git a/kcmkwin/kwinrules/rulebookmodel.cpp b/kcmkwin/kwinrules/rulebookmodel.cpp
+index 8bee93c8f1..83a0c47345 100644
+--- a/kcmkwin/kwinrules/rulebookmodel.cpp
++++ b/kcmkwin/kwinrules/rulebookmodel.cpp
+@@ -43,7 +43,11 @@ int RuleBookModel::rowCount(const QModelIndex &parent) const
+ 
+ QVariant RuleBookModel::data(const QModelIndex &index, int role) const
+ {
++#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+     if (!checkIndex(index, CheckIndexOption::IndexIsValid | CheckIndexOption::ParentIsInvalid)) {
++#else
++    if (!index.isValid() || !index.parent().isValid()) {
++#endif
+         return QVariant();
+     }
+ 
+@@ -57,7 +61,11 @@ QVariant RuleBookModel::data(const QModelIndex &index, int role) const
+ 
+ bool RuleBookModel::setData(const QModelIndex &index, const QVariant &value, int role)
+ {
++#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+     if (!checkIndex(index, CheckIndexOption::IndexIsValid | CheckIndexOption::ParentIsInvalid)) {
++#else
++    if (!index.isValid() || !index.parent().isValid()) {
++#endif
+         return false;
+     }
+ 
+diff --git a/kcmkwin/kwinrules/rulesmodel.cpp b/kcmkwin/kwinrules/rulesmodel.cpp
+index 60398d68bf..7be2bcc308 100644
+--- a/kcmkwin/kwinrules/rulesmodel.cpp
++++ b/kcmkwin/kwinrules/rulesmodel.cpp
+@@ -82,7 +82,11 @@ int RulesModel::rowCount(const QModelIndex &parent) const
+ 
+ QVariant RulesModel::data(const QModelIndex &index, int role) const
+ {
++#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+     if (!checkIndex(index, CheckIndexOption::IndexIsValid | CheckIndexOption::ParentIsInvalid)) {
++#else
++    if (!index.isValid() || !index.parent().isValid()) {
++#endif
+         return QVariant();
+     }
+ 
+@@ -123,7 +127,11 @@ QVariant RulesModel::data(const QModelIndex &index, int role) const
+ 
+ bool RulesModel::setData(const QModelIndex &index, const QVariant &value, int role)
+ {
++#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+     if (!checkIndex(index, CheckIndexOption::IndexIsValid | CheckIndexOption::ParentIsInvalid)) {
++#else
++    if (!index.isValid() || !index.parent().isValid()) {
++#endif
+         return false;
+     }
+ 
+diff --git a/kcmkwin/kwinscreenedges/main.cpp b/kcmkwin/kwinscreenedges/main.cpp
+index d0ea594a1a..d690d0e787 100644
+--- a/kcmkwin/kwinscreenedges/main.cpp
++++ b/kcmkwin/kwinscreenedges/main.cpp
+@@ -37,6 +37,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #include "kwinscreenedgesettings.h"
+ #include "kwinscreenedgescriptsettings.h"
+ 
++#include <kconfigwidgets_version.h>
++
+ K_PLUGIN_FACTORY(KWinScreenEdgesConfigFactory, registerPlugin<KWin::KWinScreenEdgesConfig>();)
+ 
+ namespace KWin
+@@ -56,7 +58,9 @@ KWinScreenEdgesConfig::KWinScreenEdgesConfig(QWidget *parent, const QVariantList
+     monitorInit();
+ 
+     connect(m_form, &KWinScreenEdgesConfigForm::saveNeededChanged, this, &KWinScreenEdgesConfig::unmanagedWidgetChangeState);
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     connect(m_form, &KWinScreenEdgesConfigForm::defaultChanged, this, &KWinScreenEdgesConfig::unmanagedWidgetDefaultState);
++#endif
+ }
+ 
+ KWinScreenEdgesConfig::~KWinScreenEdgesConfig()
+diff --git a/kcmkwin/kwinscreenedges/touch.cpp b/kcmkwin/kwinscreenedges/touch.cpp
+index 6ccbfd9d2a..3882902389 100644
+--- a/kcmkwin/kwinscreenedges/touch.cpp
++++ b/kcmkwin/kwinscreenedges/touch.cpp
+@@ -37,6 +37,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #include "kwintouchscreensettings.h"
+ #include "kwintouchscreenscriptsettings.h"
+ 
++#include <kconfigwidgets_version.h>
++
+ K_PLUGIN_FACTORY(KWinScreenEdgesConfigFactory, registerPlugin<KWin::KWinScreenEdgesConfig>();)
+ 
+ namespace KWin
+@@ -54,7 +56,9 @@ KWinScreenEdgesConfig::KWinScreenEdgesConfig(QWidget *parent, const QVariantList
+     monitorInit();
+ 
+     connect(m_form, &KWinTouchScreenEdgeConfigForm::saveNeededChanged, this, &KWinScreenEdgesConfig::unmanagedWidgetChangeState);
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     connect(m_form, &KWinTouchScreenEdgeConfigForm::defaultChanged, this, &KWinScreenEdgesConfig::unmanagedWidgetDefaultState);
++#endif
+ }
+ 
+ KWinScreenEdgesConfig::~KWinScreenEdgesConfig()
+diff --git a/kcmkwin/kwinscripts/module.cpp b/kcmkwin/kwinscripts/module.cpp
+index 2aab48a65d..3a6800a32c 100644
+--- a/kcmkwin/kwinscripts/module.cpp
++++ b/kcmkwin/kwinscripts/module.cpp
+@@ -66,7 +66,9 @@ Module::Module(QWidget *parent, const QVariantList &args) :
+     });
+ 
+     connect(ui->scriptSelector, &KPluginSelector::changed, this, qOverload<bool>(&KCModule::changed));
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     connect(ui->scriptSelector, &KPluginSelector::defaulted, this, qOverload<bool>(&KCModule::defaulted));
++#endif
+     connect(ui->importScriptButton, &QPushButton::clicked, this, &Module::importScript);
+ 
+     updateListViewContents();
+diff --git a/kcmkwin/kwintabbox/main.cpp b/kcmkwin/kwintabbox/main.cpp
+index 794a01f7a6..e93835c137 100644
+--- a/kcmkwin/kwintabbox/main.cpp
++++ b/kcmkwin/kwintabbox/main.cpp
+@@ -54,6 +54,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #include "kwinswitcheffectsettings.h"
+ #include "kwinpluginssettings.h"
+ 
++#include <kconfigwidgets_version.h>
++
+ K_PLUGIN_FACTORY(KWinTabBoxConfigFactory, registerPlugin<KWin::KWinTabBoxConfig>();)
+ 
+ namespace KWin
+@@ -255,7 +257,9 @@ void KWinTabBoxConfig::updateUnmanagedState()
+     isDefault &= updateUnmanagedIsDefault(m_primaryTabBoxUi, m_tabBoxConfig);
+     isDefault &= updateUnmanagedIsDefault(m_alternativeTabBoxUi, m_tabBoxAlternativeConfig);
+ 
++#if KCONFIGWIDGETS_VERSION >= QT_VERSION_CHECK(5, 65, 0)
+     unmanagedWidgetDefaultState(isDefault);
++#endif
+ }
+ 
+ bool KWinTabBoxConfig::updateUnmanagedIsNeedSave(const KWinTabBoxConfigForm *form, const TabBoxSettings *config)
+diff --git a/libkwineffects/kwineffectquickview.cpp b/libkwineffects/kwineffectquickview.cpp
+index 0e7390f478..b13f38cd5e 100644
+--- a/libkwineffects/kwineffectquickview.cpp
++++ b/libkwineffects/kwineffectquickview.cpp
+@@ -230,8 +230,18 @@ void EffectQuickView::forwardMouseEvent(QEvent *e)
+     {
+         QWheelEvent *we = static_cast<QWheelEvent *>(e);
+         const QPointF widgetPos = d->m_view->mapFromGlobal(we->pos());
++#if QT_VERSION >= QT_VERSION_CHECK(5, 12, 0)
++        // QWheelEvent(const QPointF&, const QPointF&, QPoint, QPoint, Qt::MouseButtons, Qt::KeyboardModifiers, Qt::ScrollPhase, bool);
+         QWheelEvent cloneEvent(widgetPos, we->globalPosF(), we->pixelDelta(), we->angleDelta(), we->buttons(),
+                                we->modifiers(), we->phase(), we->inverted());
++#else
++        // QWheelEvent(const QPointF&, const QPointF&, QPoint, QPoint, int qt4Delta, Qt::Orientation qt4Orientation,
++        //     Qt::MouseButtons, Qt::KeyboardModifiers, Qt::ScrollPhase, Qt::MouseEventSource, bool)
++        int qt4Delta = we->angleDelta().x() != 0 ? we->angleDelta().x() : we->angleDelta().y();
++        Qt::Orientation qt4Orientation = (we->angleDelta().x() != 0) ? Qt::Horizontal : Qt::Vertical;
++        QWheelEvent cloneEvent(widgetPos, we->globalPosF(), we->pixelDelta(), we->angleDelta(), qt4Delta, qt4Orientation,
++                               we->buttons(), we->modifiers(), we->phase(), Qt::MouseEventNotSynthesized, we->inverted());
++#endif
+         QCoreApplication::sendEvent(d->m_view, &cloneEvent);
+         e->setAccepted(cloneEvent.isAccepted());
+         return;
+@@ -371,7 +381,12 @@ void EffectQuickScene::setSource(const QUrl &source)
+     }
+     item->setParentItem(contentItem());
+ 
++#if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
+     auto updateSize = [item, this]() { item->setSize(contentItem()->size()); };
++#else
++    const QSizeF size(contentItem()->width(), contentItem()->height());
++    auto updateSize = [item, size, this]() { item->setSize(size); };
++#endif
+     updateSize();
+     connect(contentItem(), &QQuickItem::widthChanged, item, updateSize);
+     connect(contentItem(), &QQuickItem::heightChanged, item, updateSize);
+diff --git a/libkwineffects/kwinglplatform.cpp b/libkwineffects/kwinglplatform.cpp
+index 53dc3a74ef..a615724c1c 100644
+--- a/libkwineffects/kwinglplatform.cpp
++++ b/libkwineffects/kwinglplatform.cpp
+@@ -686,8 +686,13 @@ void GLPlatform::detect(OpenGLPlatformInterface platformInterface)
+         }
+     } else {
+         const QByteArray extensions = (const char *) glGetString(GL_EXTENSIONS);
++#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
++        // RJVB : no actual idea what Qt version introduced the syntax below:
+         QList<QByteArray> extensionsList = extensions.split(' ');
+         m_extensions = {extensionsList.constBegin(), extensionsList.constEnd()};
++#else
++        m_extensions = QSet<QByteArray>::fromList(extensions.split(' '));
++#endif
+     }
+ 
+     // Parse the Mesa version
+diff --git a/libkwineffects/kwinxrenderutils.cpp b/libkwineffects/kwinxrenderutils.cpp
+index 45dcfbd5ce..d3abd7265a 100644
+--- a/libkwineffects/kwinxrenderutils.cpp
++++ b/libkwineffects/kwinxrenderutils.cpp
+@@ -144,7 +144,11 @@ void XRenderPicture::fromImage(const QImage &img)
+     xcb_gcontext_t cid = xcb_generate_id(c);
+     xcb_create_gc(c, cid, xpix, 0, nullptr);
+     xcb_put_image(c, XCB_IMAGE_FORMAT_Z_PIXMAP, xpix, cid, img.width(), img.height(),
++#if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
+                   0, 0, 0, depth, img.sizeInBytes(), img.constBits());
++#else
++                  0, 0, 0, depth, img.byteCount(), img.constBits());
++#endif
+     xcb_free_gc(c, cid);
+ 
+     d = new XRenderPictureData(createPicture(xpix, depth));
+diff --git a/main_wayland.cpp b/main_wayland.cpp
+index 544c7d716d..37d1e7acdc 100644
+--- a/main_wayland.cpp
++++ b/main_wayland.cpp
+@@ -294,9 +294,13 @@ void ApplicationWayland::startSession()
+             QProcess *p = new Process(this);
+             p->setProcessChannelMode(QProcess::ForwardedErrorChannel);
+             p->setProcessEnvironment(processStartupEnvironment());
++#if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
+             p->setProgram(program);
+             p->setArguments(arguments);
+             p->startDetached();
++#else
++            p->startDetached(program, arguments);
++#endif
+             p->deleteLater();
+         }
+     }
+diff --git a/main_x11.cpp b/main_x11.cpp
+index 6474deb016..150274b9b3 100644
+--- a/main_x11.cpp
++++ b/main_x11.cpp
+@@ -415,8 +415,10 @@ int main(int argc, char * argv[])
+     qunsetenv("QT_DEVICE_PIXEL_RATIO");
+     qunsetenv("QT_SCALE_FACTOR");
+     QCoreApplication::setAttribute(Qt::AA_DisableHighDpiScaling);
++#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+     // KSMServer talks to us directly on DBus.
+     QCoreApplication::setAttribute(Qt::AA_DisableSessionManager);
++#endif
+ 
+     KWin::ApplicationX11 a(argc, argv);
+     a.setupTranslator();
+diff --git a/platformsupport/scenes/opengl/egl_dmabuf.cpp b/platformsupport/scenes/opengl/egl_dmabuf.cpp
+index 3f75bc7e6a..7cc708cadb 100644
+--- a/platformsupport/scenes/opengl/egl_dmabuf.cpp
++++ b/platformsupport/scenes/opengl/egl_dmabuf.cpp
+@@ -73,6 +73,14 @@ eglQueryDmaBufModifiersEXT_func eglQueryDmaBufModifiersEXT = nullptr;
+ #define EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT        0x344A
+ #endif // EGL_EXT_image_dma_buf_import_modifiers
+ 
++// (also) taken from EGL/eglext.h
++#ifndef EGL_WL_bind_wayland_display
++#define EGL_TEXTURE_Y_U_V_WL              0x31D7
++#define EGL_TEXTURE_Y_UV_WL               0x31D8
++#define EGL_TEXTURE_Y_XUXV_WL             0x31D9
++#define EGL_TEXTURE_EXTERNAL_WL           0x31DA
++#endif
++
+ struct YuvPlane
+ {
+     int widthDivisor;
+diff --git a/plugins/kdecorations/aurorae/src/aurorae.cpp b/plugins/kdecorations/aurorae/src/aurorae.cpp
+index 260aac8883..f178d8de1c 100644
+--- a/plugins/kdecorations/aurorae/src/aurorae.cpp
++++ b/plugins/kdecorations/aurorae/src/aurorae.cpp
+@@ -326,7 +326,12 @@ void Decoration::init()
+     } else {
+         m_view = new KWin::EffectQuickView(this, KWin::EffectQuickView::ExportMode::Image);
+         m_item->setParentItem(m_view->contentItem());
++#if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
+         auto updateSize = [this]() { m_item->setSize(m_view->contentItem()->size()); };
++#else
++        const QSizeF size(m_view->contentItem()->width(), m_view->contentItem()->height());
++        auto updateSize = [size, this]() { m_item->setSize(size); };
++#endif
+         updateSize();
+         connect(m_view->contentItem(), &QQuickItem::widthChanged, m_item, updateSize);
+         connect(m_view->contentItem(), &QQuickItem::heightChanged, m_item, updateSize);
+diff --git a/plugins/platforms/drm/drm_backend.cpp b/plugins/platforms/drm/drm_backend.cpp
+index 45fd9d827a..f5442e28d6 100644
+--- a/plugins/platforms/drm/drm_backend.cpp
++++ b/plugins/platforms/drm/drm_backend.cpp
+@@ -803,11 +803,11 @@ QString DrmBackend::supportInformation() const
+     QString supportInfo;
+     QDebug s(&supportInfo);
+     s.nospace();
+-    s << "Name: " << "DRM" << Qt::endl;
+-    s << "Active: " << m_active << Qt::endl;
+-    s << "Atomic Mode Setting: " << m_atomicModeSetting << Qt::endl;
++    s << "Name: " << "DRM" << endl;
++    s << "Active: " << m_active << endl;
++    s << "Atomic Mode Setting: " << m_atomicModeSetting << endl;
+ #if HAVE_EGL_STREAMS
+-    s << "Using EGL Streams: " << m_useEglStreams << Qt::endl;
++    s << "Using EGL Streams: " << m_useEglStreams << endl;
+ #endif
+     return supportInfo;
+ }
+diff --git a/plugins/platforms/virtual/egl_gbm_backend.cpp b/plugins/platforms/virtual/egl_gbm_backend.cpp
+index 8c04d57d1f..f720349cec 100644
+--- a/plugins/platforms/virtual/egl_gbm_backend.cpp
++++ b/plugins/platforms/virtual/egl_gbm_backend.cpp
+@@ -34,6 +34,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #define EGL_PLATFORM_SURFACELESS_MESA 0x31DD
+ #endif
+ 
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++#   define sizeInBytes()   byteCount()
++#endif
++
+ namespace KWin
+ {
+ 
+diff --git a/plugins/platforms/x11/standalone/glxbackend.cpp b/plugins/platforms/x11/standalone/glxbackend.cpp
+index 1ea6d4e6b9..1831ce4462 100644
+--- a/plugins/platforms/x11/standalone/glxbackend.cpp
++++ b/plugins/platforms/x11/standalone/glxbackend.cpp
+@@ -573,7 +573,7 @@ FBConfigInfo *GlxBackend::infoForVisual(xcb_visualid_t visual)
+     const xcb_render_directformat_t *direct = XRenderUtils::findPictFormatInfo(format);
+ 
+     if (!direct) {
+-        qCCritical(KWIN_X11STANDALONE).nospace() << "Could not find a picture format for visual 0x" << Qt::hex << visual;
++        qCCritical(KWIN_X11STANDALONE).nospace() << "Could not find a picture format for visual 0x" << hex << visual;
+         return info;
+     }
+ 
+@@ -607,7 +607,7 @@ FBConfigInfo *GlxBackend::infoForVisual(xcb_visualid_t visual)
+     GLXFBConfig *configs = glXChooseFBConfig(display(), DefaultScreen(display()), attribs, &count);
+ 
+     if (count < 1) {
+-        qCCritical(KWIN_X11STANDALONE).nospace() << "Could not find a framebuffer configuration for visual 0x" << Qt::hex << visual;
++        qCCritical(KWIN_X11STANDALONE).nospace() << "Could not find a framebuffer configuration for visual 0x" << hex << visual;
+         return info;
+     }
+ 
+@@ -689,7 +689,7 @@ FBConfigInfo *GlxBackend::infoForVisual(xcb_visualid_t visual)
+         glXGetFBConfigAttrib(display(), info->fbconfig, GLX_FBCONFIG_ID, &fbc_id);
+         glXGetFBConfigAttrib(display(), info->fbconfig, GLX_VISUAL_ID,   &visual_id);
+ 
+-        qCDebug(KWIN_X11STANDALONE).nospace() << "Using FBConfig 0x" << Qt::hex << fbc_id << " for visual 0x" << Qt::hex << visual_id;
++        qCDebug(KWIN_X11STANDALONE).nospace() << "Using FBConfig 0x" << hex << fbc_id << " for visual 0x" << hex << visual_id;
+     }
+ 
+     return info;
+diff --git a/plugins/platforms/x11/standalone/x11_decoration_renderer.cpp b/plugins/platforms/x11/standalone/x11_decoration_renderer.cpp
+index 54bd763ae3..19ac0a22e1 100644
+--- a/plugins/platforms/x11/standalone/x11_decoration_renderer.cpp
++++ b/plugins/platforms/x11/standalone/x11_decoration_renderer.cpp
+@@ -29,6 +29,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ #include <QTimer>
+ 
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++#   define sizeInBytes()   byteCount()
++#endif
++
+ namespace KWin
+ {
+ namespace Decoration
+diff --git a/plugins/platforms/x11/windowed/scene_qpainter_x11_backend.cpp b/plugins/platforms/x11/windowed/scene_qpainter_x11_backend.cpp
+index cfc3a4e6a5..4acdf58793 100644
+--- a/plugins/platforms/x11/windowed/scene_qpainter_x11_backend.cpp
++++ b/plugins/platforms/x11/windowed/scene_qpainter_x11_backend.cpp
+@@ -21,6 +21,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #include "x11windowed_backend.h"
+ #include "screens.h"
+ 
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++#   define sizeInBytes()   byteCount()
++#endif
++
+ namespace KWin
+ {
+ X11WindowedQPainterBackend::X11WindowedQPainterBackend(X11WindowedBackend *backend)
+diff --git a/plugins/platforms/x11/windowed/x11windowed_backend.cpp b/plugins/platforms/x11/windowed/x11windowed_backend.cpp
+index 064dcab618..3d2462b728 100644
+--- a/plugins/platforms/x11/windowed/x11windowed_backend.cpp
++++ b/plugins/platforms/x11/windowed/x11windowed_backend.cpp
+@@ -48,6 +48,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #include <linux/input.h>
+ #include <X11/Xlib-xcb.h>
+ 
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++#   define sizeInBytes()   byteCount()
++#endif
++
+ namespace KWin
+ {
+ 
+diff --git a/plugins/scenes/xrender/scene_xrender.cpp b/plugins/scenes/xrender/scene_xrender.cpp
+index ab664d5c66..03012b5a39 100644
+--- a/plugins/scenes/xrender/scene_xrender.cpp
++++ b/plugins/scenes/xrender/scene_xrender.cpp
+@@ -47,6 +47,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ #include <QPainter>
+ #include <QtMath>
+ 
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++#   define sizeInBytes()   byteCount()
++#endif
++
+ namespace KWin
+ {
+ 
+diff --git a/screenlockerwatcher.cpp b/screenlockerwatcher.cpp
+index 0fc1f29481..7b51d4402a 100644
+--- a/screenlockerwatcher.cpp
++++ b/screenlockerwatcher.cpp
+@@ -25,6 +25,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ // dbus generated
+ #include "screenlocker_interface.h"
+ #include "kscreenlocker_interface.h"
++#include <kscreenlocker_version.h>
+ 
+ namespace KWin
+ {
+@@ -81,7 +82,9 @@ void ScreenLockerWatcher::serviceOwnerChanged(const QString &serviceName, const
+         connect(m_interface, SIGNAL(ActiveChanged(bool)), SLOT(setLocked(bool)));
+         QDBusPendingCallWatcher *watcher = new QDBusPendingCallWatcher(m_interface->GetActive(), this);
+         connect(watcher, SIGNAL(finished(QDBusPendingCallWatcher*)), SLOT(activeQueried(QDBusPendingCallWatcher*)));
++#if KSCREENLOCKER_VERSION >= QT_VERSION_CHECK(5, 17, 0)
+         connect(m_kdeInterface, &OrgKdeScreensaverInterface::AboutToLock, this, &ScreenLockerWatcher::aboutToLock);
++#endif
+     }
+ }
+ 
+diff --git a/scripts/CMakeLists.txt b/scripts/CMakeLists.txt
+index 66b6c3ccd2..91338e65cb 100644
+--- a/scripts/CMakeLists.txt
++++ b/scripts/CMakeLists.txt
+@@ -1,5 +1,5 @@
+ function(add_kwin_script name)
+-    kpackage_install_package(${name} ${name} scripts kwin)
++#     kpackage_install_package(${name} ${name} scripts kwin)
+ 
+     # Copy the script to the build directory so one can run tests without prior
+     # make install. FIXME: use add_custom_command.
+diff --git a/virtualdesktops.cpp b/virtualdesktops.cpp
+index 8a2f981c49..87b25ab861 100644
+--- a/virtualdesktops.cpp
++++ b/virtualdesktops.cpp
+@@ -40,7 +40,12 @@ static bool s_loadingDesktopSettings = false;
+ 
+ static QByteArray generateDesktopId()
+ {
++#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
++    // I don't think the presence of braces makes a lot of difference here
++    return QUuid::createUuid().toString().toUtf8();
++#else
+     return QUuid::createUuid().toString(QUuid::WithoutBraces).toUtf8();
++#endif
+ }
+ 
+ VirtualDesktop::VirtualDesktop(QObject *parent)
+diff --git a/wayland_server.cpp b/wayland_server.cpp
+index f617ecc7a6..3402002d34 100644
+--- a/wayland_server.cpp
++++ b/wayland_server.cpp
+@@ -404,6 +404,7 @@ bool WaylandServer::init(const QByteArray &socketName, InitializationFlags flags
+         }
+     );
+ 
++
+     m_virtualDesktopManagement = m_display->createPlasmaVirtualDesktopManagement(m_display);
+     m_virtualDesktopManagement->create();
+     m_windowManagement->setPlasmaVirtualDesktopManagementInterface(m_virtualDesktopManagement);
+@@ -517,6 +518,8 @@ void WaylandServer::initWorkspace()
+     }
+ }
+ 
++#include <kscreenlocker_version.h>
++
+ void WaylandServer::initScreenLocker()
+ {
+     auto *screenLockerApp = ScreenLocker::KSldApp::self();
+@@ -524,6 +527,7 @@ void WaylandServer::initScreenLocker()
+     ScreenLocker::KSldApp::self()->setGreeterEnvironment(kwinApp()->processStartupEnvironment());
+     ScreenLocker::KSldApp::self()->initialize();
+ 
++#if KSCREENLOCKER_VERSION >= QT_VERSION_CHECK(5, 17, 0)
+     connect(ScreenLocker::KSldApp::self(), &ScreenLocker::KSldApp::aboutToLock, this,
+         [this, screenLockerApp] () {
+             if (m_screenLockerClientConnection) {
+@@ -534,14 +538,17 @@ void WaylandServer::initScreenLocker()
+             if (clientFd < 0) {
+                 return;
+             }
++#if KSCREENLOCKER_VERSION >= QT_VERSION_CHECK(5, 18, 0)
+             ScreenLocker::KSldApp::self()->setWaylandFd(clientFd);
+ 
+             for (auto *seat : m_display->seats()) {
+                 connect(seat, &KWayland::Server::SeatInterface::timestampChanged,
+                         screenLockerApp, &ScreenLocker::KSldApp::userActivity);
+             }
++#endif
+         }
+     );
++#endif
+ 
+     connect(ScreenLocker::KSldApp::self(), &ScreenLocker::KSldApp::unlocked, this,
+         [this, screenLockerApp] () {
+@@ -551,11 +558,13 @@ void WaylandServer::initScreenLocker()
+                 m_screenLockerClientConnection = nullptr;
+             }
+ 
++#if KSCREENLOCKER_VERSION >= QT_VERSION_CHECK(5, 18, 0)
+             for (auto *seat : m_display->seats()) {
+                 disconnect(seat, &KWayland::Server::SeatInterface::timestampChanged,
+                            screenLockerApp, &ScreenLocker::KSldApp::userActivity);
+             }
+             ScreenLocker::KSldApp::self()->setWaylandFd(-1);
++#endif
+         }
+     );
+ 
+@@ -777,7 +786,11 @@ quint32 WaylandServer::createWindowId(SurfaceInterface *surface)
+ 
+ quint16 WaylandServer::createClientId(ClientConnection *c)
+ {
++#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+     const QSet<unsigned short> ids(m_clientIds.constBegin(), m_clientIds.constEnd());
++#else
++    auto ids = m_clientIds.values().toSet();
++#endif
+     quint16 id = 1;
+     if (!ids.isEmpty()) {
+         for (quint16 i = ids.count() + 1; i >= 1 ; i--) {
