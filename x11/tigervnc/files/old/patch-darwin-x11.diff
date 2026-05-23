@@ -1,0 +1,818 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 1cd1f696116c389e4c37e7896a97df67b04bd430..6fc660c2a76575f3deaf95722cc933f19f54988a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -38,6 +38,8 @@ else()
+   set(CMAKE_INSTALL_FULL_UNITDIR "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_UNITDIR}")
+ endif()
+ 
++option(APPLE_FORCE_X11 "Force X11 build on Apple Mac" OFF)
++
+ option(INSTALL_SYSTEMD_UNITS "Install TigerVNC systemd units" ON)
+ 
+ if(MSVC)
+@@ -135,8 +137,12 @@ if(WIN32)
+ endif()
+ 
+ # X11 stuff. It's in a if() so that we can say REQUIRED
+-if(UNIX AND NOT APPLE)
++if(UNIX AND (NOT APPLE OR APPLE_FORCE_X11))
+   find_package(X11 REQUIRED)
++  add_definitions("-DHAVE_X11")
++elseif(APPLE)
++  # RJVB's patched fltk will do this too, but doing it twice should not give errors.
++  add_definitions("-D__APPLE_QUARTZ__")
+ endif()
+ 
+ # Check for zlib
+@@ -235,7 +237,7 @@ set(FLTK_SKIP_OPENGL TRUE)
+ set(FLTK_SKIP_FORMS TRUE)
+ find_package(FLTK)
+ 
+-if(UNIX AND NOT APPLE)
++if(UNIX AND (NOT APPLE OR APPLE_FORCE_X11))
+   # No proper handling for extra X11 libs that FLTK might need...
+   if(X11_Xft_FOUND)
+     # Xft headers include references to fontconfig, so we need
+@@ -293,7 +295,7 @@ add_subdirectory(common)
+ if(WIN32)
+   add_subdirectory(win)
+ else()
+-  # No interest in building x related parts on Apple
++  # No interest in building x(vncserver) related parts on Apple
+   if(NOT APPLE)
+     add_subdirectory(unix)
+   endif()
+diff --git a/cmake/StaticBuild.cmake b/cmake/StaticBuild.cmake
+index 1af9893b9cf23a87eb43768b22f4c20bde3757b2..abf63b9dc95b5059e32de223d89b29f88aaf3ffc 100644
+--- a/cmake/StaticBuild.cmake
++++ b/cmake/StaticBuild.cmake
+@@ -130,7 +130,7 @@ if(BUILD_STATIC)
+       set(FLTK_LIBRARIES "${FLTK_LIBRARIES} -lm -ldl")
+     endif()
+ 
+-    if(X11_FOUND AND NOT APPLE)
++    if(X11_FOUND AND (NOT APPLE OR APPLE_FORCE_X11))
+       if(${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
+         set(FLTK_LIBRARIES "${FLTK_LIBRARIES} ${X11_Xcursor_LIB} ${X11_Xfixes_LIB} -Wl,-Bstatic -lXft -Wl,-Bdynamic -lfontconfig -lXrender -lXext -R/usr/sfw/lib -L=/usr/sfw/lib -lfreetype -lsocket -lnsl")
+       else()
+diff --git a/media/CMakeLists.txt b/media/CMakeLists.txt
+index 91ea6f540342e603b3113e9ae4b1fc560eea892d..8da566a24c2864c08e93412b31fa3a47dcf535be 100644
+--- a/media/CMakeLists.txt
++++ b/media/CMakeLists.txt
+@@ -10,7 +10,7 @@ find_program(CONVERT_EXECUTABLE convert)
+ if(CONVERT_EXECUTABLE)
+   add_custom_target(icons DEPENDS ${ICON_FILES})
+ 
+-  if(UNIX AND NOT APPLE)
++  if(UNIX)
+     foreach(SIZE 16 22 24 32 48)
+       install(FILES icons/tigervnc_${SIZE}.png
+         DESTINATION ${CMAKE_INSTALL_FULL_DATADIR}/icons/hicolor/${SIZE}x${SIZE}/apps
+diff --git a/release/CMakeLists.txt b/release/CMakeLists.txt
+index 9bf0816ea4bb5a7e56fdeceb39cb835f48376509..3aa44e0ecbe7c7206b4ce9f597bf6b4c84965384 100644
+--- a/release/CMakeLists.txt
++++ b/release/CMakeLists.txt
+@@ -36,7 +36,7 @@ endif() # WIN32
+ # Mac DMG
+ #
+ 
+-if(APPLE)
++if(APPLE AND NOT APPLE_FORCE_X11)
+ 
+ set(DEFAULT_OSX_X86_BUILD ${CMAKE_SOURCE_DIR}/osxx86)
+ set(OSX_X86_BUILD ${DEFAULT_OSX_X86_BUILD} CACHE PATH
+diff --git a/tests/perf/CMakeLists.txt b/tests/perf/CMakeLists.txt
+index 053bfaae8a940da905fedac6d275369e05d47617..31cc9854e707729f0bac1b0a14f2be53055e403c 100644
+--- a/tests/perf/CMakeLists.txt
++++ b/tests/perf/CMakeLists.txt
+@@ -20,7 +20,7 @@ set(FBPERF_SOURCES
+   ${CMAKE_SOURCE_DIR}/vncviewer/Surface.cxx)
+ if(WIN32)
+   set(FBPERF_SOURCES ${FBPERF_SOURCES} ${CMAKE_SOURCE_DIR}/vncviewer/Surface_Win32.cxx)
+-elseif(APPLE)
++elseif(APPLE AND NOT APPLE_FORCE_X11)
+   set(FBPERF_SOURCES
+       ${FBPERF_SOURCES} ${CMAKE_SOURCE_DIR}/vncviewer/Surface_OSX.cxx
+       ${FBPERF_SOURCES} ${CMAKE_SOURCE_DIR}/vncviewer/keysym2ucs.c
+@@ -34,7 +34,11 @@ if(WIN32)
+   target_link_libraries(fbperf msimg32)
+ endif()
+ if(APPLE)
+-  target_link_libraries(fbperf "-framework Cocoa")
+-  target_link_libraries(fbperf "-framework Carbon")
+-  target_link_libraries(fbperf "-framework IOKit")
++  if(NOT APPLE_FORCE_X11)
++    target_link_libraries(fbperf "-framework Cocoa")
++    target_link_libraries(fbperf "-framework Carbon")
++    target_link_libraries(fbperf "-framework IOKit")
++  else()
++    target_link_libraries(fbperf ${X11_Xext_LIB} ${X11_X11_LIB})
++  endif()
+ endif()
+diff --git a/vncviewer/CMakeLists.txt b/vncviewer/CMakeLists.txt
+index 9aa985af2165144769f7a54f893f73211d61dc65..37aa54bdc65dc74ca6dfef6ecc18517b8f1997d4 100644
+--- a/vncviewer/CMakeLists.txt
++++ b/vncviewer/CMakeLists.txt
+@@ -33,7 +33,7 @@ endif()
+ 
+ if(WIN32)
+   set(VNCVIEWER_SOURCES ${VNCVIEWER_SOURCES} Win32TouchHandler.cxx win32.c)
+-elseif(APPLE)
++elseif(APPLE AND NOT APPLE_FORCE_X11)
+   set(VNCVIEWER_SOURCES ${VNCVIEWER_SOURCES} cocoa.mm osx_to_qnum.c)
+ else()
+   set(VNCVIEWER_SOURCES ${VNCVIEWER_SOURCES} GestureHandler.cxx XInputTouchHandler.cxx xkb_to_qnum.c)
+@@ -41,7 +41,7 @@ endif()
+ 
+ if(WIN32)
+   set(VNCVIEWER_SOURCES ${VNCVIEWER_SOURCES} Surface_Win32.cxx)
+-elseif(APPLE)
++elseif(APPLE AND NOT APPLE_FORCE_X11)
+   set(VNCVIEWER_SOURCES ${VNCVIEWER_SOURCES} Surface_OSX.cxx)
+ else()
+   set(VNCVIEWER_SOURCES ${VNCVIEWER_SOURCES} Surface_X11.cxx)
+@@ -57,7 +57,7 @@ target_link_libraries(vncviewer rfb network rdr os ${FLTK_LIBRARIES} ${GETTEXT_L
+ 
+ if(WIN32)
+   target_link_libraries(vncviewer msimg32)
+-elseif(APPLE)
++elseif(APPLE AND NOT APPLE_FORCE_X11)
+   target_link_libraries(vncviewer "-framework Cocoa")
+   target_link_libraries(vncviewer "-framework Carbon")
+   target_link_libraries(vncviewer "-framework IOKit")
+@@ -68,6 +68,9 @@ else()
+     add_definitions(-DHAVE_XRANDR)
+     target_link_libraries(vncviewer ${X11_Xrandr_LIB})
+   endif()
++  if(APPLE)
++    target_link_libraries(vncviewer ${X11_Xext_LIB} ${X11_X11_LIB})
++  endif()
+ endif()
+ 
+ install(TARGETS vncviewer DESTINATION ${CMAKE_INSTALL_FULL_BINDIR})
+diff --git a/vncviewer/DesktopWindow.cxx b/vncviewer/DesktopWindow.cxx
+index 0fe08707d3424422f5a05dbd18f3396a9b84f7d1..2d43d2f7ab1935d7e50e17b5996b0e7570e54b3d 100644
+--- a/vncviewer/DesktopWindow.cxx
++++ b/vncviewer/DesktopWindow.cxx
+@@ -49,7 +49,7 @@
+ #include "win32.h"
+ #endif
+ 
+-#ifdef __APPLE__
++#ifdef __APPLE_QUARTZ__
+ #include "cocoa.h"
+ #include <Carbon/Carbon.h>
+ #endif
+@@ -136,7 +136,7 @@ DesktopWindow::DesktopWindow(int w, int h, const char *name,
+     }
+   }
+ 
+-#ifdef __APPLE__
++#ifdef __APPLE_QUARTZ__
+   // On OS X we can do the maximize thing properly before the
+   // window is showned. Other platforms handled further down...
+   if (maximize) {
+@@ -155,7 +155,7 @@ DesktopWindow::DesktopWindow(int w, int h, const char *name,
+     // Hack: Window managers seem to be rather crappy at respecting
+     // fullscreen hints on initial windows. So on X11 we'll have to
+     // wait until after we've been mapped.
+-#if defined(WIN32) || defined(__APPLE__)
++#if defined(WIN32) || defined(__APPLE_QUARTZ__)
+     fullscreen_on();
+ #else
+     delayedFullscreen = true;
+@@ -172,7 +172,7 @@ DesktopWindow::DesktopWindow(int w, int h, const char *name,
+   // Unfortunately, current FLTK does not allow us to set the
+   // maximized property on Windows and X11 before showing the window.
+   // See STR #2083 and STR #2178
+-#ifndef __APPLE__
++#ifndef __APPLE_QUARTZ__
+   if (maximize) {
+     maximizeWindow();
+   }
+@@ -200,7 +200,7 @@ DesktopWindow::DesktopWindow(int w, int h, const char *name,
+ 
+   // By default we get a slight delay when we warp the pointer, something
+   // we don't want or we'll get jerky movement
+-#ifdef __APPLE__
++#ifdef __APPLE_QUARTZ__
+   CGEventSourceRef event = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState);
+   CGEventSourceSetLocalEventsSuppressionInterval(event, 0);
+   CFRelease(event);
+@@ -286,7 +286,7 @@ void DesktopWindow::resizeFramebuffer(int new_w, int new_h)
+   GetWindowPlacement(fl_xid(this), &wndpl);
+   if (wndpl.showCmd == SW_SHOWMAXIMIZED)
+     maximized = true;
+-#elif defined(__APPLE__)
++#elif defined(__APPLE_QUARTZ__)
+   if (cocoa_win_is_zoomed(this))
+     maximized = true;
+ #else
+@@ -350,7 +350,7 @@ void DesktopWindow::setCursorPos(const rfb::Point& pos)
+ #if defined(WIN32)
+   SetCursorPos(pos.x + x_root() + viewport->x(),
+                pos.y + y_root() + viewport->y());
+-#elif defined(__APPLE__)
++#elif defined(__APPLE_QUARTZ__)
+   CGPoint new_pos;
+   new_pos.x = pos.x + x_root() + viewport->x();
+   new_pos.y = pos.y + y_root() + viewport->y();
+@@ -368,7 +368,7 @@ void DesktopWindow::show()
+ {
+   Fl_Window::show();
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   XEvent e;
+ 
+   // Request ability to grab keyboard under Xwayland
+@@ -394,7 +394,7 @@ void DesktopWindow::draw()
+ 
+   // X11 needs an off screen buffer for compositing to avoid flicker,
+   // and alpha blending doesn't work for windows on Win32
+-#if !defined(__APPLE__)
++#if !defined(__APPLE_QUARTZ__)
+ 
+   // Adjust offscreen surface dimensions
+   if ((offscreen == NULL) ||
+@@ -561,7 +561,7 @@ void DesktopWindow::resize(int x, int y, int w, int h)
+ {
+   bool resizing;
+ 
+-#if ! (defined(WIN32) || defined(__APPLE__))
++#if ! (defined(WIN32) || defined(__APPLE_QUARTZ__))
+   // X11 window managers will treat a resize to cover the entire
+   // monitor as a request to go full screen. Make sure we avoid this.
+   if (!fullscreen_active()) {
+@@ -682,7 +682,7 @@ void DesktopWindow::setOverlay(const char* text, ...)
+   textbuf[sizeof(textbuf)-1] = '\0';
+   va_end(ap);
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   // FLTK < 1.3.5 crashes if fl_gc is unset
+   if (!fl_gc)
+     fl_gc = XDefaultGC(fl_display, 0);
+@@ -956,7 +956,7 @@ void DesktopWindow::fullscreen_on()
+     fullscreen();
+ }
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+ Bool eventIsFocusWithSerial(Display *display, XEvent *event, XPointer arg)
+ {
+   unsigned long serial;
+@@ -989,7 +989,7 @@ void DesktopWindow::grabKeyboard()
+     vlog.error(_("Failure grabbing keyboard"));
+     return;
+   }
+-#elif defined(__APPLE__)
++#elif defined(__APPLE_QUARTZ__)
+   int ret;
+   
+   ret = cocoa_capture_displays(this);
+@@ -1047,7 +1047,7 @@ void DesktopWindow::ungrabKeyboard()
+ 
+ #if defined(WIN32)
+   win32_disable_lowlevel_keyboard(fl_xid(this));
+-#elif defined(__APPLE__)
++#elif defined(__APPLE_QUARTZ__)
+   cocoa_release_displays(this);
+ #else
+   // FLTK has a grab so lets not mess with it
+@@ -1073,7 +1073,7 @@ void DesktopWindow::ungrabKeyboard()
+ 
+ void DesktopWindow::grabPointer()
+ {
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   // We also need to grab the pointer as some WMs like to grab buttons
+   // combined with modifies (e.g. Alt+Button0 in metacity).
+ 
+@@ -1091,7 +1091,7 @@ void DesktopWindow::ungrabPointer()
+ {
+   mouseGrabbed = false;
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   x11_ungrab_pointer(fl_xid(this));
+ #endif
+ }
+@@ -1126,7 +1126,7 @@ void DesktopWindow::maximizeWindow()
+     SetWindowLongPtr(fl_xid(this), GWL_STYLE, wi.dwStyle | WS_MAXIMIZE);
+   } else
+     ShowWindow(fl_xid(this), SW_MAXIMIZE);
+-#elif defined(__APPLE__)
++#elif defined(__APPLE_QUARTZ__)
+   if (fullscreen_active())
+     return;
+   cocoa_win_zoom(this);
+@@ -1545,7 +1545,7 @@ void DesktopWindow::handleStatsTimeout(void *data)
+   self->statsLastPixels = pixels;
+   self->statsLastPosition = pos;
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   // FLTK < 1.3.5 crashes if fl_gc is unset
+   if (!fl_gc)
+     fl_gc = XDefaultGC(fl_display, 0);
+diff --git a/vncviewer/MonitorArrangement.cxx b/vncviewer/MonitorArrangement.cxx
+index 83a53d3890cc58bc9f478f1db12dea43c82725a8..3702e085709c06ad1237a7c61802f2e480adc8c4 100644
+--- a/vncviewer/MonitorArrangement.cxx
++++ b/vncviewer/MonitorArrangement.cxx
+@@ -28,14 +28,14 @@
+ #include <FL/fl_draw.H>
+ #include <FL/Fl_Button.H>
+ 
+-#if defined(HAVE_XRANDR) && !defined(__APPLE__)
++#if defined(HAVE_XRANDR) && !defined(__APPLE_QUARTZ__)
+ #include <X11/extensions/Xrandr.h>
+ #include <X11/X.h>
+ #include <X11/Xlib.h>
+ #include <X11/Xutil.h>
+ #endif
+ 
+-#ifdef __APPLE__
++#ifdef __APPLE_QUARTZ__
+ #include <Carbon/Carbon.h>
+ #include <IOKit/graphics/IOGraphicsLib.h>
+ #include <IOKit/hidsystem/IOHIDLib.h>
+@@ -305,7 +305,7 @@ int MonitorArrangement::get_monitor_name(int m, char name[], size_t name_len)
+   Fl::screen_xywh(x, y, w, h, m);
+   return win32_get_monitor_name(x, y, w, h, name, name_len);
+ 
+-#elif defined(__APPLE__)
++#elif defined(__APPLE_QUARTZ__)
+   CGDisplayCount count;
+   int bytes_written = 0;
+   CGDirectDisplayID displays[16];
+diff --git a/vncviewer/OptionsDialog.cxx b/vncviewer/OptionsDialog.cxx
+index 190d8aa32729f25e016a3c35d803398d63dfae83..9ea77ab996c4f5a417e7b89d74a53277cc182900 100644
+--- a/vncviewer/OptionsDialog.cxx
++++ b/vncviewer/OptionsDialog.cxx
+@@ -265,11 +265,11 @@ void OptionsDialog::loadOptions(void)
+   viewOnlyCheckbox->value(viewOnly);
+   emulateMBCheckbox->value(emulateMiddleButton);
+   acceptClipboardCheckbox->value(acceptClipboard);
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   setPrimaryCheckbox->value(setPrimary);
+ #endif
+   sendClipboardCheckbox->value(sendClipboard);
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   sendPrimaryCheckbox->value(sendPrimary);
+ #endif
+   systemKeysCheckbox->value(fullscreenSystemKeys);
+@@ -389,11 +389,11 @@ void OptionsDialog::storeOptions(void)
+   viewOnly.setParam(viewOnlyCheckbox->value());
+   emulateMiddleButton.setParam(emulateMBCheckbox->value());
+   acceptClipboard.setParam(acceptClipboardCheckbox->value());
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   setPrimary.setParam(setPrimaryCheckbox->value());
+ #endif
+   sendClipboard.setParam(sendClipboardCheckbox->value());
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   sendPrimary.setParam(sendPrimaryCheckbox->value());
+ #endif
+   fullscreenSystemKeys.setParam(systemKeysCheckbox->value());
+@@ -731,7 +731,7 @@ void OptionsDialog::createInputPage(int tx, int ty, int tw, int th)
+   acceptClipboardCheckbox->callback(handleClipboard, this);
+   ty += CHECK_HEIGHT + TIGHT_MARGIN;
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   setPrimaryCheckbox = new Fl_Check_Button(LBLRIGHT(tx + INDENT, ty,
+                                                     CHECK_MIN_WIDTH,
+                                                     CHECK_HEIGHT,
+@@ -746,7 +746,7 @@ void OptionsDialog::createInputPage(int tx, int ty, int tw, int th)
+   sendClipboardCheckbox->callback(handleClipboard, this);
+   ty += CHECK_HEIGHT + TIGHT_MARGIN;
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   sendPrimaryCheckbox = new Fl_Check_Button(LBLRIGHT(tx + INDENT, ty,
+                                                      CHECK_MIN_WIDTH,
+                                                      CHECK_HEIGHT,
+@@ -952,7 +952,7 @@ void OptionsDialog::handleDesktopSize(Fl_Widget *widget, void *data)
+ 
+ void OptionsDialog::handleClipboard(Fl_Widget *widget, void *data)
+ {
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   OptionsDialog *dialog = (OptionsDialog*)data;
+ 
+   if (dialog->acceptClipboardCheckbox->value())
+diff --git a/vncviewer/OptionsDialog.h b/vncviewer/OptionsDialog.h
+index dcba813684f6f4ec56aac90fe7facc45cd5e1423..4fefed54466aaa0a8a2ac7b1af6831fcbf8bbf80 100644
+--- a/vncviewer/OptionsDialog.h
++++ b/vncviewer/OptionsDialog.h
+@@ -112,11 +112,11 @@ protected:
+   Fl_Check_Button *viewOnlyCheckbox;
+   Fl_Check_Button *emulateMBCheckbox;
+   Fl_Check_Button *acceptClipboardCheckbox;
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   Fl_Check_Button *setPrimaryCheckbox;
+ #endif
+   Fl_Check_Button *sendClipboardCheckbox;
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   Fl_Check_Button *sendPrimaryCheckbox;
+ #endif
+   Fl_Check_Button *systemKeysCheckbox;
+diff --git a/vncviewer/PlatformPixelBuffer.cxx b/vncviewer/PlatformPixelBuffer.cxx
+index 59e51d596425ecf7dc0893d1ea4577a4a6b869e9..52207da10b934c4ab107ff7c935fff3bf1d643f9 100644
+--- a/vncviewer/PlatformPixelBuffer.cxx
++++ b/vncviewer/PlatformPixelBuffer.cxx
+@@ -18,7 +18,7 @@
+ 
+ #include <assert.h>
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+ #include <sys/ipc.h>
+ #include <sys/shm.h>
+ #endif
+@@ -38,11 +38,11 @@ PlatformPixelBuffer::PlatformPixelBuffer(int width, int height) :
+                                         255, 255, 255, 16, 8, 0),
+                        0, 0, NULL, 0),
+   Surface(width, height)
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   , shminfo(NULL), xim(NULL)
+ #endif
+ {
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   if (!setupShm(width, height)) {
+     xim = XCreateImage(fl_display, CopyFromParent, 32,
+                        ZPixmap, 0, 0, width, height, 32, 0);
+@@ -68,7 +68,7 @@ PlatformPixelBuffer::PlatformPixelBuffer(int width, int height) :
+ 
+ PlatformPixelBuffer::~PlatformPixelBuffer()
+ {
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   if (shminfo) {
+     vlog.debug("Freeing shared memory XImage");
+     XShmDetach(fl_display, shminfo);
+@@ -102,7 +102,7 @@ rfb::Rect PlatformPixelBuffer::getDamage(void)
+   damage.clear();
+   mutex.unlock();
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   if (r.width() == 0 || r.height() == 0)
+     return r;
+ 
+@@ -126,7 +126,7 @@ rfb::Rect PlatformPixelBuffer::getDamage(void)
+   return r;
+ }
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+ 
+ static bool caughtError;
+ 
+diff --git a/vncviewer/PlatformPixelBuffer.h b/vncviewer/PlatformPixelBuffer.h
+index ec439f64fc3f1eed7485abd056d7a2e2bf7e13d5..5553b4cd5b0848f709e7cd3a7a14b80a073a00f6 100644
+--- a/vncviewer/PlatformPixelBuffer.h
++++ b/vncviewer/PlatformPixelBuffer.h
+@@ -19,7 +19,7 @@
+ #ifndef __PLATFORMPIXELBUFFER_H__
+ #define __PLATFORMPIXELBUFFER_H__
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+ #include <X11/Xlib.h>
+ #include <sys/ipc.h>
+ #include <sys/shm.h>
+@@ -51,7 +51,7 @@ protected:
+   os::Mutex mutex;
+   rfb::Region damage;
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+ protected:
+   bool setupShm(int width, int height);
+ 
+diff --git a/vncviewer/Surface.h b/vncviewer/Surface.h
+index 1cb87f502d6c6c107934d95e672964f07044285f..cc3023483a43a935ea43d0aa071fb1f9dc9dbff2 100644
+--- a/vncviewer/Surface.h
++++ b/vncviewer/Surface.h
+@@ -21,7 +21,7 @@
+ 
+ #if defined(WIN32)
+ #include <windows.h>
+-#elif defined(__APPLE__)
++#elif defined(__APPLE_QUARTZ__)
+ // Apple headers conflict with FLTK, so redefine types here
+ typedef struct CGImage* CGImageRef;
+ #else
+@@ -58,7 +58,7 @@ protected:
+ #if defined(WIN32)
+   RGBQUAD* data;
+   HBITMAP bitmap;
+-#elif defined(__APPLE__)
++#elif defined(__APPLE_QUARTZ__)
+   unsigned char* data;
+ #else
+   Pixmap pixmap;
+diff --git a/vncviewer/Viewport.cxx b/vncviewer/Viewport.cxx
+index 56bcc3140279425d7fa679214a7a6d2f7ace8261..cf1f384bfcbc43e34d4ebd60592cc30185decd93 100644
+--- a/vncviewer/Viewport.cxx
++++ b/vncviewer/Viewport.cxx
+@@ -42,7 +42,7 @@
+ #include <rfb/XF86keysym.h>
+ #endif
+ 
+-#if ! (defined(WIN32) || defined(__APPLE__))
++#if ! (defined(WIN32) || defined(__APPLE_QUARTZ__))
+ #include <X11/XKBlib.h>
+ #endif
+ 
+@@ -74,7 +74,7 @@
+ #include <FL/Fl_Menu.H>
+ #include <FL/Fl_Menu_Button.H>
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+ #include <X11/XKBlib.h>
+ extern const struct _code_map_xkb_to_qnum {
+   const char * from;
+@@ -85,7 +85,7 @@ extern const unsigned int code_map_xkb_to_qnum_len;
+ static int code_map_keycode_to_qnum[256];
+ #endif
+ 
+-#ifdef __APPLE__
++#ifdef __APPLE_QUARTZ__
+ #include "cocoa.h"
+ extern const unsigned short code_map_osx_to_qnum[];
+ extern const unsigned int code_map_osx_to_qnum_len;
+@@ -122,7 +122,7 @@ Viewport::Viewport(int w, int h, const rfb::PixelFormat& serverPF, CConn* cc_)
+     pendingServerClipboard(false), pendingClientClipboard(false),
+     menuCtrlKey(false), menuAltKey(false), cursor(NULL)
+ {
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   XkbDescPtr xkb;
+   Status status;
+ 
+@@ -322,7 +322,7 @@ void Viewport::handleClipboardData(const char* data)
+ 
+   // RFB doesn't have separate selection and clipboard concepts, so we
+   // dump the data into both variants.
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   if (setPrimary)
+     Fl::copy(data, len, 0);
+ #endif
+@@ -388,7 +388,7 @@ void Viewport::setLEDState(unsigned int state)
+   ret = SendInput(count, input, sizeof(*input));
+   if (ret < count)
+     vlog.error(_("Failed to update keyboard LED state: %lu"), GetLastError());
+-#elif defined(__APPLE__)
++#elif defined(__APPLE_QUARTZ__)
+   int ret;
+ 
+   ret = cocoa_set_caps_lock_state(state & ledCapsLock);
+@@ -450,7 +450,7 @@ void Viewport::pushLEDState()
+     state |= ledNumLock;
+   if (GetKeyState(VK_SCROLL) & 0x1)
+     state |= ledScrollLock;
+-#elif defined(__APPLE__)
++#elif defined(__APPLE_QUARTZ__)
+   int ret;
+   bool on;
+ 
+@@ -692,7 +692,7 @@ bool Viewport::hasFocus()
+   return focus == this;
+ }
+ 
+-#if ! (defined(WIN32) || defined(__APPLE__))
++#if ! (defined(WIN32) || defined(__APPLE_QUARTZ__))
+ unsigned int Viewport::getModifierMask(unsigned int keysym)
+ {
+   XkbDescPtr xkb;
+@@ -749,7 +749,7 @@ void Viewport::handleClipboardChange(int source, void *data)
+   if (!sendClipboard)
+     return;
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   if (!sendPrimary && (source == 0))
+     return;
+ #endif
+@@ -849,7 +849,7 @@ void Viewport::handleKeyPress(int keyCode, rdr::U32 keySym)
+     return;
+   }
+ 
+-#ifdef __APPLE__
++#ifdef __APPLE_QUARTZ__
+   // Alt on OS X behaves more like AltGr on other systems, and to get
+   // sane behaviour we should translate things in that manner for the
+   // remote VNC server. However that means we lose the ability to use
+@@ -877,7 +877,7 @@ void Viewport::handleKeyPress(int keyCode, rdr::U32 keySym)
+   // and send the same on release.
+   downKeySym[keyCode] = keySym;
+ 
+-#if defined(WIN32) || defined(__APPLE__)
++#if defined(WIN32) || defined(__APPLE_QUARTZ__)
+   vlog.debug("Key pressed: 0x%04x => 0x%04x", keyCode, keySym);
+ #else
+   vlog.debug("Key pressed: 0x%04x => XK_%s (0x%04x)",
+@@ -913,7 +913,7 @@ void Viewport::handleKeyRelease(int keyCode)
+     return;
+   }
+ 
+-#if defined(WIN32) || defined(__APPLE__)
++#if defined(WIN32) || defined(__APPLE_QUARTZ__)
+   vlog.debug("Key released: 0x%04x => 0x%04x", keyCode, iter->second);
+ #else
+   vlog.debug("Key released: 0x%04x => XK_%s (0x%04x)",
+@@ -1131,7 +1131,7 @@ int Viewport::handleSystemEvent(void *event, void *data)
+ 
+     return 1;
+   }
+-#elif defined(__APPLE__)
++#elif defined(__APPLE_QUARTZ__)
+   if (cocoa_is_keyboard_event(event)) {
+     int keyCode;
+ 
+diff --git a/vncviewer/parameters.cxx b/vncviewer/parameters.cxx
+index 46ad132f119075c3a86e8cda1edc512b22fe1bf1..0cd9eeba0f0d8923756b3432a6dec168de479595 100644
+--- a/vncviewer/parameters.cxx
++++ b/vncviewer/parameters.cxx
+@@ -138,7 +138,7 @@ BoolParameter acceptClipboard("AcceptClipboard",
+                               true);
+ BoolParameter sendClipboard("SendClipboard",
+                             "Send clipboard changes to the server", true);
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+ BoolParameter setPrimary("SetPrimary",
+                          "Set the primary selection as well as the "
+                          "clipboard selection", true);
+@@ -190,7 +190,7 @@ static VoidParameter* parameterArray[] = {
+   &shared,
+   &acceptClipboard,
+   &sendClipboard,
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   &sendPrimary,
+   &setPrimary,
+ #endif
+diff --git a/vncviewer/parameters.h b/vncviewer/parameters.h
+index 614e577f24b41dde3546b4450f4cbd73b0fd853e..9312efa8193ec8b02613d45d7234ef556867111e 100644
+--- a/vncviewer/parameters.h
++++ b/vncviewer/parameters.h
+@@ -65,7 +65,7 @@ extern rfb::BoolParameter shared;
+ extern rfb::BoolParameter acceptClipboard;
+ extern rfb::BoolParameter setPrimary;
+ extern rfb::BoolParameter sendClipboard;
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+ extern rfb::BoolParameter sendPrimary;
+ extern rfb::StringParameter display;
+ #endif
+diff --git a/vncviewer/touch.cxx b/vncviewer/touch.cxx
+index 3d23aa58d6d0b20ec6874539cd4e2eb548a9fa34..01bd5e54431e0f48ea2f5a47ccabdbf2ff3ef961 100644
+--- a/vncviewer/touch.cxx
++++ b/vncviewer/touch.cxx
+@@ -28,7 +28,7 @@
+ #if defined(WIN32)
+ #include <windows.h>
+ #include <commctrl.h>
+-#elif !defined(__APPLE__)
++#elif !defined(__APPLE_QUARTZ__)
+ #include <X11/extensions/XInput2.h>
+ #include <X11/extensions/XI2.h>
+ #endif
+@@ -44,7 +44,7 @@
+ #include "BaseTouchHandler.h"
+ #if defined(WIN32)
+ #include "Win32TouchHandler.h"
+-#elif !defined(__APPLE__)
++#elif !defined(__APPLE_QUARTZ__)
+ #include "XInputTouchHandler.h"
+ #endif
+ 
+@@ -52,7 +52,7 @@
+ 
+ static rfb::LogWriter vlog("Touch");
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+ static int xi_major;
+ #endif
+ 
+@@ -86,7 +86,7 @@ LRESULT CALLBACK win32WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam,
+     return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+ }
+ 
+-#elif !defined(__APPLE__)
++#elif !defined(__APPLE_QUARTZ__)
+ static void x11_change_touch_ownership(bool enable)
+ {
+   HandlerMap::const_iterator iter;
+@@ -189,7 +189,7 @@ static int handleTouchEvent(void *event, void *data)
+                  (int)GetLastError());
+     }
+   }
+-#elif !defined(__APPLE__)
++#elif !defined(__APPLE_QUARTZ__)
+   XEvent *xevent = (XEvent*)event;
+ 
+   if (xevent->type == MapNotify) {
+@@ -241,7 +241,7 @@ static int handleTouchEvent(void *event, void *data)
+ 
+ void enable_touch()
+ {
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   int ev, err;
+   int major_ver, minor_ver;
+ 
+diff --git a/vncviewer/touch.h b/vncviewer/touch.h
+index dad79b4e743bb906ed378e5f4ec9700ed8c4b4d4..02c0ba6d83f5c6d1c7e3c40a1adfac62119f1a01 100644
+--- a/vncviewer/touch.h
++++ b/vncviewer/touch.h
+@@ -22,7 +22,7 @@
+ void enable_touch();
+ void disable_touch();
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+ bool x11_grab_pointer(Window window);
+ void x11_ungrab_pointer(Window window);
+ #endif
+diff --git a/vncviewer/vncviewer.cxx b/vncviewer/vncviewer.cxx
+index 6a84c7cbb1c6a3f8bf515bfa1c554678d6306c77..14c6ebfffcb8885a34a41dc03e96302601a861c6 100644
+--- a/vncviewer/vncviewer.cxx
++++ b/vncviewer/vncviewer.cxx
+@@ -39,7 +39,7 @@
+ #define mkdir(path, mode) _mkdir(path)
+ #endif
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+ #include <X11/Xlib.h>
+ #include <X11/XKBlib.h>
+ #endif
+@@ -156,7 +156,7 @@ void run_mainloop()
+   }
+ }
+ 
+-#ifdef __APPLE__
++#ifdef __APPLE_QUARTZ__
+ static void about_callback(Fl_Widget *widget, void *data)
+ {
+   about_vncviewer();
+@@ -205,7 +205,7 @@ static void init_fltk()
+   Fl::background(220, 220, 220);
+ 
+   // macOS has a slightly brighter default background though
+-#ifdef __APPLE__
++#ifdef __APPLE_QUARTZ__
+   Fl::background(240, 240, 240);
+ #endif
+ 
+@@ -227,7 +227,7 @@ static void init_fltk()
+                         LR_DEFAULTCOLOR | LR_SHARED);
+ 
+   Fl_Window::default_icons(lg, sm);
+-#elif ! defined(__APPLE__)
++#elif ! defined(__APPLE_QUARTZ__)
+   const int icon_sizes[] = {48, 32, 24, 16};
+ 
+   Fl_PNG_Image *icons[4];
+@@ -296,7 +296,7 @@ static void init_fltk()
+   fl_cancel = _("Cancel");
+   fl_close  = _("Close");
+ 
+-#ifdef __APPLE__
++#ifdef __APPLE_QUARTZ__
+   /* Needs trailing space */
+   static char fltk_about[16];
+   snprintf(fltk_about, sizeof(fltk_about), "%s ", _("About"));
+@@ -376,7 +376,7 @@ static void usage(const char *programName)
+ #endif
+           programName, programName);
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   fprintf(stderr,"\n"
+           "Options:\n\n"
+           "  -display Xdisplay  - Specifies the X display for the viewer window\n"
+@@ -609,7 +609,7 @@ int main(int argc, char** argv)
+     i++;
+   }
+ 
+-#if !defined(WIN32) && !defined(__APPLE__)
++#if !defined(WIN32) && !defined(__APPLE_QUARTZ__)
+   if (strcmp(display, "") != 0) {
+     Fl::display(display);
+   }
