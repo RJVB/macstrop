@@ -515,14 +515,18 @@ proc kf5.git.setup {first {second ""} args} {
         global          git.shallow_since version
         ui_debug        "Checking out through github PortGroup"
         ui_debug        "## github.setup \"${first}\" \"${second}\" \"{*}${args}\""
-        set vv          ${version}
+        if {[info exists version]} {
+            set vv      ${version}
+        }
         if {[tbool kf5.git.shallowbefore]} {
             git.shallow_since \
                         ${kf5.git.shallowbefore}
         }
         github.setup    ${first} ${second} {*}${args}
-        version         ${vv}
-        unset vv
+        if {[info exists vv]} {
+            version     ${vv}
+            unset vv
+        }
     } else {
         fetch.type      git
         if {${second} eq ""} {
