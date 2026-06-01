@@ -109,9 +109,12 @@ proc get_devport_workpath {} {
 }
 
 proc devport_check_platform {} {
-    global devport_only_on_platform devport_not_on_platform os.platform
-    if {(${devport_only_on_platform} ne {} && ${os.platform} ne ${devport_only_on_platform})
-            || ${os.platform} eq ${devport_not_on_platform}} {
+    global subport devport_only_on_platform devport_not_on_platform os.platform
+    if {(${devport_only_on_platform} ne {} && ${os.platform} ne ${devport_only_on_platform})} {
+        ui_debug "port:${subport} only has a devport on platform ${devport_only_on_platform} (not ${os.platform})!"
+        return 0
+    } elseif {${os.platform} eq ${devport_not_on_platform}} {
+        ui_debug "No devport for port:${subport} on platform ${os.platform}!"
         return 0
     } else {
         return 1
