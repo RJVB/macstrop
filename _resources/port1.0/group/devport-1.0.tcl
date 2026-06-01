@@ -63,6 +63,10 @@ default devport_excluded_variants   {}
 options devport_ignore_devports
 default devport_ignore_devports     {}
 
+options devport_only_on_platform devport_not_on_platform
+default devport_only_on_platform    {}
+default devport_not_on_platform     {}
+
 namespace eval dev {}
     # it shouldn't be necessary to record variants in the archive name
     # (NB: the one that's part of the main port!)
@@ -104,10 +108,24 @@ proc get_devport_workpath {} {
     return ${devworkdir}
 }
 
+proc devport_check_platform {} {
+    global devport_only_on_platform devport_not_on_platform os.platform
+    if {(${devport_only_on_platform} ne {} && ${os.platform} ne ${devport_only_on_platform})
+            || ${os.platform} eq ${devport_not_on_platform}} {
+        return 0
+    } else {
+        return 1
+    }
+}
+
 # create the online devport content archive
 proc create_devport_content_archive {} {
     global mainport_name devport_name dev.archdir dev.archname dev.cachedir devport_excluded_variants
     global destroot prefix os.major os.platform portbuildpath portpath dev.tar.cmd muniversal.build_arch
+
+    if {![devport_check_platform]} {
+        return
+    }
     set rawargs [option devport_content]
     set args ""
     # convert the arguments to local-relative:
@@ -225,6 +243,9 @@ proc create_devport_content_archive {} {
 # registers content that standard devports will contain
 proc register_devport_standard_content {{theprefix {}}} {
     global subport destroot prefix mainport_name devport_name
+    if {![devport_check_platform]} {
+        return
+    }
     if {${theprefix} eq {}} {
         set theprefix ${prefix}
     }
@@ -276,6 +297,10 @@ proc register_devport_standard_content {{theprefix {}}} {
 
 proc append_to_devport_standard_content {args} {
     global subport destroot prefix mainport_name devport_name
+
+    if {![devport_check_platform]} {
+        return
+    }
     if {${subport} eq "${mainport_name}"} {
         foreach pattern ${args} {
             ui_debug "Finding and registering additional content for the devport: \"${pattern}\""
@@ -388,6 +413,10 @@ proc create_devport {dependency {auto_generate_content {}}} {
             universal_possible portsandbox_profile sandbox_enable portbuildpath \
             dev.archdir dev.archname dev.cachedir \
             dev::mainport_installed dev::workdir_uuid
+
+    if {![devport_check_platform]} {
+        return
+    }
     # just so we're clear that what port we're talking about (the main port):
     set baseport ${mainport_name}
     ui_debug "devport PG creating port:${devport_name}"
@@ -556,12 +585,20 @@ proc create_devport {dependency {auto_generate_content {}}} {
 
 proc is_devport {} {
     global subport devport_name
-    return [expr {"${subport}" eq "${devport_name}"}]
+    if {[devport_check_platform]} {
+        return [expr {"${subport}" eq "${devport_name}"}]
+    } else {
+        return 0
+    }
 }
 
 proc is_mainport {} {
     global subport mainport_name
-    return [expr {${subport} eq "${mainport_name}"}]
+    if {[devport_check_platform]} {
+        return [expr {${subport} eq "${mainport_name}"}]
+    } else {
+        return 1
+    }
 }
 
 # if {[is_mainport] && [file exists ${destroot}${dev.archdir}/${dev.archname}]} {
