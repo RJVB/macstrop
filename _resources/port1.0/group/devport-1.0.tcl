@@ -535,7 +535,7 @@ proc create_devport {dependency {auto_generate_content {}}} {
                 set cRevision [lindex $installed 2]
                 set cVariants [lindex $installed 3]
                 if {${dev::mainport_installed} eq yes} {
-                    ui_msg "---->  Programming the delayed (!) installation of the dev port \"${devport_name} ${cVariants}\""
+                    ui_msg "---->  Queuing the delayed (!) installation of the dev port \"${devport_name} ${cVariants}\""
                     catch {
                         # check if our (new!) devport archive exists, which means we're
                         # dealing with an older build for which we need to fall back to
