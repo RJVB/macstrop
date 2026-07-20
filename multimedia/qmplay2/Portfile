@@ -28,11 +28,15 @@ if {${os.platform} ne "darwin" || ${os.major} >= 13} {
 }
 PortGroup           LTO 1.0
 
+## only when upgrading the port version:
+## PortGroup           patch-updater 1.0
+
+
 description         A Qt5-based video and audio player.
 long_description    QMPlay2 is a video and audio player. It can play all formats \
-                    supported by FFmpeg, libmodplug (including J2B and SFX). It also \
-                    supports Audio CD, raw files, Rayman 2 music and chiptunes. It \
-                    contains YouTube and Prostopleer browsers.
+                    supported by FFmpeg and libopenmpt. It also \
+                    supports Audio CD, raw files, Rayman2 music and chiptunes. It \
+                    contains a YouTube browser/viewer.
 license             LGPL-3
 maintainers         gmail.com:rjvbertin openmaintainer
 platforms           darwin linux
@@ -128,7 +132,7 @@ if {${subport} eq "${name}"} {
     PortGroup       obsolete 1.0
 } else {
 
-    github.setup zaps166 QMPlay2 1a138527da0dd4b22e20f2837cca1887352fdab8
+    github.setup zaps166 QMPlay2 dbe75c6608e3af1fc2f069e538a5c52e653b33e6
     # ########################
     # after `git tag v21.06.07 -m "release 21.06.07" 2acce209e1b14bc7b5662f8a354f0d71c59d9cde`
     # after `git tag v21.12.07 -m "release 21.12.07" a84de320e544293fdf9ebe4e3b01b444f666956e`
@@ -155,16 +159,13 @@ if {${subport} eq "${name}"} {
     # after `git tag v25.06.27 -m "release 25.06.27" 67c701f0073878e1dc4c68afd2f19a4febfa0322`
     # after `git tag v25.09.03 -m "release 25.09.03" 24a659980c2cba8ef3f9107e7c30282a724474d9`
     # after `git tag v25.09.11 -m "release 25.09.11" 94dcc1dd59ae90b3f86d0f1a704eec389ea05d33`
+    ## OR JUST USE `git describe --tags` !!
     # ########################
-    version     25.09.11.8
+    version     26.06.27.16
 
     compiler.cxx_standard 2017
     if {${os.platform} eq "darwin"} {
         if {${os.major} >= 13} {
-#             # checkout the Vulkan code even if it's not currently supported on Mac:
-#             post-extract {
-#                 system -W ${worksrcpath} "git submodule update --init --recursive"
-#             }
             cmake.generator \
                     Ninja
             build.pre_args-prepend -k 0
@@ -203,6 +204,7 @@ configure.args-append \
                     -DUSE_RUBBERBAND=ON \
                     -DCMAKE_DISABLE_FIND_PACKAGE_Qt6=ON \
                     -DBUILD_WITH_QT6=OFF \
+                    -DUSE_CHIPTUNE_SID=OFF \
                     -DCMAKE_STRIP:FILEPATH=/bin/echo
 if {${os.platform} eq "darwin"} {
     configure.args-append \
@@ -290,6 +292,7 @@ if {${os.platform} ne "darwin"} {
 qt5.depends_component \
                     qtsvg qttools
 depends_lib-append  port:ffmpeg \
+                    port:libopenmpt \
                     port:portaudio \
                     port:rubberband
 
@@ -324,9 +327,12 @@ proc select_newer_ffmpeg {fvers} {
     # to add the ${fvers} install location). But see just below.
     configure.args-append \
                     -DBUILD_WITH_FFMPEG6=ON
-    if {[option os.platform] ne "darwin"} {
+    if {[option os.platform] ne "darwin" && [vercmp [qt5.active_version] 5.10] >= 0} {
         configure.args-append \
                     -DUSE_FFMPEG_VKVIDEO=ON
+    } else {
+        configure.args-append \
+                    -DUSE_FFMPEG_VKVIDEO=OFF
     }
     cmake.module_path-append \
                     ${prefix}/libexec/${fvers}
@@ -433,10 +439,19 @@ patchfiles-append   patch-no-autoraise-on-play.diff
 patchfiles-append   patch-support-gcc.diff
 
 # attempt to deal with YT videos that are forced into SABR mode
-patchfiles-append   patch-ytdlp-sabr-kludge-parallel.diff
+## hasn't been required for a while now, and becomes a nuisance to maintain :-/
+## patchfiles-append   patch-ytdlp-sabr-kludge-parallel.diff
 
 # # enable two more JS runtimes in yt-dlp
 # patchfiles-append   patch-ytdlp-more-jsruntimes.diff
+
+# YouTube streams (now?) have an "available_at" hint, and it seems that accessing them
+# before that time can throw a 403-Forbidden error. So respect the delay
+# FIXME: use a "sleep" that doesn't block the UI?
+patchfiles-append   patch-respect-yt-available_at.diff
+
+# 20260701 : Qt 5.9 support in new code
+patchfiles-append   patch-support-qt59-2.diff
 
 post-patch {
     reinplace "s|@PREFIX@|${prefix}|g" ${worksrcpath}/src/gui/CMakeLists.txt
@@ -540,6 +555,15 @@ if {${os.platform} eq "darwin"} {
         configure.args-replace \
                     -DUSE_PULSEAUDIO=OFF \
                     -DUSE_PULSEAUDIO=ON
+    }
+
+    variant sidplay description {Build the Chiptune module with SIDPLAY support} {}
+    if {[variant_isset sidplay]} {
+        depends_lib-append \
+                    port:libsidplayfp
+        configure.args-replace \
+                    -DUSE_CHIPTUNE_SID=OFF \
+                    -DUSE_CHIPTUNE_SID=ON
     }
 } else {
     if {[info exists langselect_qm_dir]} {
