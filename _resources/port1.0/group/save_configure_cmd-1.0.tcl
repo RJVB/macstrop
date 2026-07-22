@@ -348,6 +348,12 @@ proc configure::callback {} {
                 configure.save_build_cmd "install"
             }
         }
+    } else {
+        global build.cmd
+        if {[string match *python* ${build.cmd}]} {
+            ui_debug "[dict get [info frame 0] proc]: Python package port; calling `save_build_cmd \"install\"`"
+            configure.save_build_cmd "install"
+        }
     }
 }
 port::register_callback configure::callback
