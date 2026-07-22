@@ -9,6 +9,7 @@
 set LTO.configure_option {-config ltcg}
 PortGroup                       qt5 1.0
 PortGroup                       active_variants 1.1
+PortGroup                       legacysupport 1.1
 
 options qt5.add_spec qt5.debug_variant qt5.top_level qt5.cxxflags qt5.ldflags qt5.frameworkpaths qt5.spec_cmd
 default qt5.add_spec yes
@@ -92,11 +93,18 @@ pre-configure {
     # 2) some ports (e.g. py-pyqt5 py-qscintilla2) call qmake indirectly and
     #    do not pass on the configure.args values
     #
-    set cache [open "${qt5.top_level}/.qmake.cache" w 0644]
-    if {[vercmp ${qt5.version} 5.9] >= 0} {
+    set cache_file "${qt5.top_level}/.qmake.cache"
+    set cache [open ${cache_file} w 0644]
+    ui_debug "QT5 Qmake Cache ${cache_file}"
+    if {[vercmp ${qt5.version} >= 5.9]} {
         if {[variant_exists universal] && [variant_isset universal]} {
             puts ${cache} "QMAKE_APPLE_DEVICE_ARCHS=${configure.universal_archs}"
+        } elseif { ${configure.build_arch} ne "" } {
+            puts ${cache} "QMAKE_APPLE_DEVICE_ARCHS=${configure.build_arch}"
         } else {
+            # If `supported_archs` is `noarch`, `configure.build_arch` can be empty (see e.g. qt5-qtbase-docs).
+            # Having an empty QMAKE_APPLE_DEVICE_ARCHS can cause an error.
+            # Even if it is not really needed, not having a QMAKE_APPLE_DEVICE_ARCHS at all can also cause an error.
             puts ${cache} "QMAKE_APPLE_DEVICE_ARCHS=${build_arch}"
         }
     } else {
@@ -119,7 +127,13 @@ pre-configure {
         puts ${cache} "}"
     }
     puts ${cache} "QMAKE_MACOSX_DEPLOYMENT_TARGET=${macosx_deployment_target}"
-    puts ${cache} "QMAKE_MAC_SDK=macosx${configure.sdk_version}"
+    puts ${cache} "QMAKE_MAC_SDK=${qt5.mac_sdk}"
+
+    # https://github.com/qt/qtbase/commit/d64940891dffcb951f4b76426490cbc94fb4aba7
+    # Enable ccache support if active and available in given qt5 version
+    if { [option configure.ccache] && [vercmp ${qt5.version} >= 5.9.2]} {
+        puts ${cache} "CONFIG+=ccache"
+    }
 
     # respect configure.compiler but still allow qmake to find correct Xcode clang based on SDK
     if { ${configure.compiler} ne "clang" } {
@@ -132,18 +146,26 @@ pre-configure {
     }
 
     # save certain configure flags
-    set qmake5_cxx11_flags ""
-    set qmake5_cxx_flags   ""
-    set qmake5_l_flags     ""
+    set qmake5_cxx11_flags [list]
+    set qmake5_cxx_flags   [list]
+    set qmake5_c_flags     [list]
+    set qmake5_l_flags     [list]
     foreach flag ${configure.cxxflags} {
         if { ${flag} eq "-D_GLIBCXX_USE_CXX11_ABI=0" } {
             lappend qmake5_cxx11_flags ${flag}
         }
     }
+    foreach flag ${configure.cppflags} {
+        lappend qmake5_c_flags   ${flag}
+        lappend qmake5_cxx_flags ${flag}
+    }
+    # Need to respect ldflags as needed for legacysupport linking
     foreach flag ${configure.ldflags} {
+        lappend qmake5_l_flags ${flag}
     }
     set qmake5_cxx11_flags [join ${qmake5_cxx11_flags} " "]
     set qmake5_cxx_flags   [join ${qmake5_cxx_flags}   " "]
+    set qmake5_c_flags     [join ${qmake5_c_flags}     " "]
     set qmake5_l_flags     [join ${qmake5_l_flags}     " "]
 
     if { [vercmp ${qt5.version} 5.6] >= 0 } {
@@ -189,6 +211,9 @@ pre-configure {
     if {${qmake5_cxx_flags} ne "" } {
         puts ${cache} QMAKE_CXXFLAGS+="${qmake5_cxx_flags}"
     }
+    if {${qmake5_c_flags} ne "" } {
+        puts ${cache} QMAKE_CFLAGS+="${qmake5_c_flags}"
+    }
     if {${qmake5_l_flags} ne "" } {
         puts ${cache} QMAKE_LFLAGS+="${qmake5_l_flags}"
     }
@@ -226,7 +251,7 @@ pre-configure {
         set this_debug false
     }
 
-    # determine of qmake's default and user requests are compatible; override qmake if necessary
+    # determine if qmake's default and user requests are compatible; override qmake if necessary
     if { ${this_debug} && !${base_debug}  } {
         puts ${cache} "QT_CONFIG+=debug_and_release build_all debug"
         puts ${cache} "CONFIG+=debug_and_release build_all"
@@ -257,6 +282,13 @@ pre-configure {
 
     foreach flag ${qt5.frameworkpaths} {
         puts ${cache} "QMAKE_FRAMEWORKPATH+=${flag}"
+    }
+
+    # Boost PG support
+    if { [info exists boost.version] } {
+        puts ${cache} "QMAKE_CXXFLAGS+=[boost::cxx_flags]"
+        puts ${cache} "QMAKE_LFLAGS+=[boost::ld_flags]"
+        puts ${cache} "BOOST_DIR=[boost::install_area]"
     }
 
     close ${cache}

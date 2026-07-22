@@ -57,7 +57,7 @@ configure.universal_args-delete \
 
 default build.dir           {[meson::build.dir]}
 default build.cmd           {${prefix}/bin/ninja}
-default build.post_args     {}
+default build.post_args     {-v}
 default build.target        ""
 
 # remove DESTDIR= from arguments, but rather take it from environmental variable

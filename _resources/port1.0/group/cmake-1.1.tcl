@@ -49,6 +49,7 @@ options                             cmake.build_dir \
                                     cmake.install_prefix \
                                     cmake.install_rpath \
                                     cmake.module_path \
+                                    cmake.prefix_path \
                                     cmake_share_module_dir \
                                     cmake.out_of_source \
                                     cmake.set_osx_architectures \
@@ -88,6 +89,9 @@ default cmake_share_module_dir      {${prefix}/share/cmake/Modules}
 # extra locations to search for modules can be specified with
 # cmake.module_path; they come after ${cmake_share_module_dir}
 default cmake.module_path           {}
+
+# additional prefixes to search for libraries
+default cmake.prefix_path           {}
 
 # Set cmake.debugopts to the desired compiler debug options (or an empty string) if you want to
 # use custom options with the +debug variant.
@@ -315,8 +319,19 @@ proc cmake::distccing {} {
     }
 }
 
-
 configure.cmd       ${prefix}/bin/cmake
+
+proc cmake::objc_compilers {} {
+    global configure.cc configure.cxx configure.objc configure.objcxx
+    set ret [list]
+    if {${configure.objc} ne ${configure.cc}} {
+        lappend ret {-DCMAKE_OBJC_COMPILER="$OBJC"}
+    }
+    if {${configure.objcxx} ne ${configure.cxx}} {
+        lappend ret {-DCMAKE_OBJCXX_COMPILER="$OBJCXX"}
+    }
+    return ${ret}
+}
 
 # appropriate default settings for configure.pre_args
 # variables are grouped thematically, with the more important ones
@@ -333,6 +348,7 @@ default configure.pre_args {[list \
                     {*}[cmake::distccing] \
                     {-DCMAKE_C_COMPILER="$CC"} \
                     {-DCMAKE_CXX_COMPILER="$CXX"} \
+                    {*}[cmake::objc_compilers] \
                     -DCMAKE_POLICY_DEFAULT_CMP0025=NEW \
                     -DCMAKE_POLICY_DEFAULT_CMP0060=NEW \
                     -DCMAKE_VERBOSE_MAKEFILE=ON \
@@ -341,6 +357,7 @@ default configure.pre_args {[list \
                     -DCMAKE_FIND_FRAMEWORK=LAST \
                     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
                     -DCMAKE_MAKE_PROGRAM=${build.cmd} \
+                    -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON \
                     {*}[cmake::module_path] \
                     {*}[cmake::rpath_flags] \
                     -Wno-dev
@@ -384,8 +401,8 @@ pre-configure {
     }
 
     # The environment variable CPPFLAGS is not considered by CMake.
-    # (CMake upstream ticket #12928 "CMake silently ignores CPPFLAGS"
-    # <https://www.cmake.org/Bug/view.php?id=12928>).
+    # (CMake upstream ticket #12928 "Add support for CPPFLAGS environment variable"
+    # <https://gitlab.kitware.com/cmake/cmake/-/issues/12928>).
     #
     # But adding -I${prefix}/include to CFLAGS/CXXFLAGS is a bad idea.
     # If any other flags are needed, we need to add them.
@@ -407,23 +424,31 @@ pre-configure {
 
     # process ${configure.cppflags} because CMake ignores $CPPFLAGS
     if {${configure.cppflags} ne ""} {
-        set cppflags [split ${configure.cppflags}]
-        # reset configure.cppflags; we don't want options in double in CPPFLAGS and CFLAGS/CXXFLAGS
-        configure.cppflags
+#         set cppflags [split ${configure.cppflags}]
+#         # reset configure.cppflags; we don't want options in double in CPPFLAGS and CFLAGS/CXXFLAGS
+#         configure.cppflags
         # copy the cppflags arguments one by one into cflags and family
         # CMake does have an INCLUDE_DIRECTORIES variable but setting it from the commandline
         # doesn't have the intended effect (any longer).
-        foreach flag ${cppflags} {
-            configure.cflags-append     ${flag}
-            configure.cxxflags-append   ${flag}
-            # append to the ObjC flags too, even if CMake ignores them:
-            configure.objcflags-append  ${flag}
-            configure.objcxxflags-append   ${flag}
-        }
-        ui_debug "CPPFLAGS=\"${cppflags}\" inserted into CFLAGS=\"${configure.cflags}\" CXXFLAGS=\"${configure.cxxflags}\""
+#         foreach flag ${cppflags} {
+#             configure.cflags-append     ${flag}
+#             configure.cxxflags-append   ${flag}
+#             # append to the ObjC flags too, even if CMake ignores them:
+#             configure.objcflags-append  ${flag}
+#             configure.objcxxflags-append   ${flag}
+#         }
+#         ui_debug "CPPFLAGS=\"${cppflags}\" inserted into CFLAGS=\"${configure.cflags}\" CXXFLAGS=\"${configure.cxxflags}\""
+        configure.cflags-append     {*}${configure.cppflags}
+        configure.cxxflags-append   {*}${configure.cppflags}
+        # append to the ObjC flags too, even if CMake ignores them:
+        configure.objcflags-append  {*}${configure.cppflags}
+        configure.objcxxflags-append   {*}${configure.cppflags}
+        ui_debug "CPPFLAGS=\"[join ${configure.cppflags}]\" inserted into CFLAGS=\"[join ${configure.cflags}]\" CXXFLAGS=\"[join ${configure.cxxflags}]\""
+        # reset configure.cppflags; we don't want options in double in CPPFLAGS and CFLAGS/CXXFLAGS
+        configure.cppflags
     }
 
-    configure.pre_args-prepend "-G \"[join ${cmake.generator}]\""
+    configure.pre_args-prepend -G \"[join ${cmake.generator}]\"
     # undo a counterproductive action from the debug PG:
     configure.args-delete -DCMAKE_BUILD_TYPE=debugFull
     # set matching CMAKE_AR and CMAKE_RANLIB when using a macports-clang compiler
@@ -516,7 +541,7 @@ pre-configure {
 post-configure {
     # restore configure.ccache:
     if {[info exists cmake::ccache_cache]} {
-        configure.ccache    ${cmake::ccache_cache}
+        configure.ccache    {*}${cmake::ccache_cache}
         ui_debug "configure.ccache restored to ${cmake::ccache_cache}"
     }
     if {[info exists cmake::distcc_cache]} {
@@ -676,11 +701,11 @@ if {[variant_isset debug]} {
         } else {
             ui_debug "+debug variant uses default cmake.debugopts=\"${cmake.debugopts}\""
         }
-        configure.cflags-append         ${cmake.debugopts}
-        configure.cxxflags-append       ${cmake.debugopts}
-        configure.objcflags-append      ${cmake.debugopts}
-        configure.objcxxflags-append    ${cmake.debugopts}
-        configure.ldflags-append        ${cmake.debugopts}
+        configure.cflags-append         {*}${cmake::debugopts}
+        configure.cxxflags-append       {*}${cmake::debugopts}
+        configure.objcflags-append      {*}${cmake::debugopts}
+        configure.objcxxflags-append    {*}${cmake::debugopts}
+        configure.ldflags-append        {*}${cmake::debugopts}
         # try to ensure that info won't get stripped
         configure.args-append           -DCMAKE_STRIP:FILEPATH=/bin/echo
     }

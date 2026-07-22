@@ -287,6 +287,10 @@ namespace eval qt5 {
 options qt5.min_version
 default qt5.min_version 5.0
 
+# valid value for Qt variable QMAKE_MAC_SDK
+options qt5.mac_sdk
+default qt5.mac_sdk     {[qt5pg::qmake_mac_sdk]}
+
 # Ports that want to provide a universal variant need to use the muniversal PortGroup explicitly.
 universal_variant no
 
@@ -1096,6 +1100,23 @@ proc qt5pg::check_min_version {} {
         ui_debug "Qt version ${qt5.version} satifies requirement ${qt5.min_version} or above"
     }
 }
+
+# get a valid value for Qt variable QMAKE_MAC_SDK (copied from the stock Qt5 PG)
+proc qt5pg::qmake_mac_sdk {} {
+    global  configure.sdkroot \
+            configure.sdk_version
+
+    if {${configure.sdkroot} eq "" || [file tail ${configure.sdkroot}] eq "MacOSX.sdk"} {
+        return "macosx"
+    } elseif {[string first . ${configure.sdk_version}] == -1} {
+        set sdks [lsort -command vercmp -decreasing [glob -nocomplain [file rootname ${configure.sdkroot}]*.sdk]]
+        set best_sdk_version [string map {MacOSX ""} [file rootname [file tail [lindex $sdks 0]]]]
+        return macosx${best_sdk_version}
+    } else {
+        return macosx${configure.sdk_version}
+    }
+}
+
 port::register_callback qt5pg::check_min_version
 
 # kate: backspace-indents true; indent-pasted-text true; indent-width 4; keep-extra-spaces true; remove-trailing-spaces modified; replace-tabs true; replace-tabs-save true; syntax Tcl/Tk; tab-indents true; tab-width 4;
