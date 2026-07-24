@@ -551,6 +551,11 @@ proc rust::write_cargo_checksum {cdirname chksum} {
 proc rust::old_macos_compatibility {cname cversion} {
     global cargo.home subport
 
+    if {[option os.platform] ne "darwin"} {
+        # only valid empty return
+        return {}
+    }
+
     switch ${cname} {
         "cc" {
             if { [vercmp ${cversion} 1.0.94] < 0 && [vercmp ${cversion} 1.0.85] >= 0 } {
@@ -669,7 +674,9 @@ proc rust::import_crate {cname cversion chksum cratefile} {
     ui_info "Adding ${cratefile} to cargo home"
     rust::extract_crate ${cratefile}
     rust::write_cargo_checksum "${cname}-${cversion}" "\"${chksum}\""
-    rust::old_macos_compatibility ${cname} ${cversion}
+    if {[option os.platform] eq "darwin"} {
+        rust::old_macos_compatibility ${cname} ${cversion}
+    }
 }
 
 proc rust::import_crate_github {cname cgithub crevision chksum cratefile} {
@@ -681,7 +688,9 @@ proc rust::import_crate_github {cname cgithub crevision chksum cratefile} {
     ui_info "Adding ${cratefile} from github to cargo home"
     rust::extract_crate ${cratefile}
     rust::write_cargo_checksum ${cdirname} "null"
-    rust::old_macos_compatibility ${cname} ${crevision}
+    if {[option os.platform] eq "darwin"} {
+        rust::old_macos_compatibility ${cname} ${crevision}
+    }
 }
 
 post-extract {
@@ -919,10 +928,16 @@ proc rust::rust_pg_callback {} {
         set openssl_ver                 [string map {. {}} [option openssl.branch]]
         depends_lib-delete              port:openssl${openssl_ver}
         depends_lib-append              port:openssl${openssl_ver}
+        if {[option os.platform] ne "darwin"} {
+            depends_build-delete        port:openssl${openssl_ver}-dev
+            depends_build-append        port:openssl${openssl_ver}-dev
+        }
     }
 
+    # add platform block but don't indent so as not to confuse xxdiff
+    if {[option os.platform] eq "darwin"} {
     # rust-bootstrap requires `macosx_deployment_target` instead of `os.major`
-    if { [option os.platform] eq "darwin" && [vercmp [option macosx_deployment_target] 10.12] < 0} {
+    if { [vercmp [option macosx_deployment_target] 10.12] < 0} {
         if { [join [lrange [split ${subport} -] 0 1] -] eq "rust-bootstrap" } {
             # Bootstrap compilers are building on newer machines to be run on older ones.
             # Use libMacportsLegacySystem.B.dylib since it is able to use the `__asm("$ld$add$os10.5$...")` trick for symbols that are part of legacy-support *only* on older systems.
@@ -956,12 +971,13 @@ proc rust::rust_pg_callback {} {
     }
 
     # rust-bootstrap requires `macosx_deployment_target` instead of `os.major`
-    if { [option os.platform] eq "darwin" && [vercmp [option macosx_deployment_target] 10.6] < 0} {
+    if { [vercmp [option macosx_deployment_target] 10.6] < 0} {
         # __Unwind_RaiseException
         depends_lib-delete              port:libunwind
         depends_lib-append              port:libunwind
         configure.ldflags-delete        -lunwind
         configure.ldflags-append        -lunwind
+    }
     }
 
     # sometimes Cargo.lock does not exist
