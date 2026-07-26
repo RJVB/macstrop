@@ -49,14 +49,16 @@ post-extract {
 
 pre-destroot {
     # RJVB: see if we have a symlinked $prefix, and if so replicate the set-up under $destroot
-    if {[file type ${prefix}] eq "link"} {
+    if {[file type ${prefix}] eq "link" && [file type ${destroot}${prefix}] eq "directory"} {
         set realprefix [realpath ${prefix}]
+        if {![file exists ${destroot}${realprefix}]} {
         xinstall -m 755 -d ${destroot}[file dirname ${realprefix}]
-        # ${destroot}${prefix} will have been populated by now, and we want to preserve that tree.
-        # So rename it to the actual name it's supposed to have (this should all be on the same FS!)
-        file rename ${destroot}${prefix} ${destroot}${realprefix}
-        ln -s ${destroot}${realprefix} ${destroot}${prefix}
-        ui_warn "\t had to make \$destroot${prefix} a symlink to \$destroot${realprefix}"
+            # ${destroot}${prefix} will have been populated by now, and we want to preserve that tree.
+            # So rename it to the actual name it's supposed to have (this should all be on the same FS!)
+            file rename ${destroot}${prefix} ${destroot}${realprefix}
+            ln -sf ${destroot}${realprefix} ${destroot}${prefix}
+            ui_warn "\t had to make \$destroot${prefix} a symlink to \$destroot${realprefix}"
+        }
     }
     xinstall -d -m 0755 ${destroot}${prefix}/share/doc/${subport}/examples
 }
