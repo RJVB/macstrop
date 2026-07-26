@@ -48,6 +48,16 @@ post-extract {
 }
 
 pre-destroot {
+    # RJVB: see if we have a symlinked $prefix, and if so replicate the set-up under $destroot
+    if {[file type ${prefix}] eq "link"} {
+        set realprefix [realpath ${prefix}]
+        xinstall -m 755 -d ${destroot}[file dirname ${realprefix}]
+        # ${destroot}${prefix} will have been populated by now, and we want to preserve that tree.
+        # So rename it to the actual name it's supposed to have (this should all be on the same FS!)
+        file rename ${destroot}${prefix} ${destroot}${realprefix}
+        ln -s ${destroot}${realprefix} ${destroot}${prefix}
+        ui_warn "\t had to make \$destroot${prefix} a symlink to \$destroot${realprefix}"
+    }
     xinstall -d -m 0755 ${destroot}${prefix}/share/doc/${subport}/examples
 }
 
@@ -323,6 +333,13 @@ proc python_set_versions {option action args} {
             }
         }
         post-destroot {
+            # RJVB: see if we have to restore the correct $prefix
+            if {[file type ${prefix}] eq "link" && [file type ${destroot}${prefix}] eq "link"} {
+                set realprefix [realpath ${prefix}]
+                file delete ${destroot}${prefix}
+                file rename ${destroot}${realprefix} ${destroot}${prefix}
+                ui_warn "\t restored the symlink-to-be \$destroot${prefix} from \$destroot${realprefix}"
+            }
             if {${python.link_binaries}} {
                 foreach bin [glob -nocomplain -tails -directory "[python.destrooted_prefix]/bin" *] {
                     if {[catch {file type "${destroot}${prefix}/bin/${bin}${python.link_binaries_suffix}"}]} {
@@ -395,8 +412,12 @@ proc python.destrooted_prefix {} {
             return "${destroot}${prefix}"
         }
         1 {
-            ui_debug "Port ${subport} actual python.prefix is [string map [list ${destroot} ""] ${dirs}]\n\
-                \tinstead of [option python.prefix]"
+            if {${dirs} ne "${destroot}[option python.prefix]"} {
+                ui_debug "Port ${subport} actual python.prefix is [string map [list ${destroot} ""] ${dirs}]\n\
+                    \tinstead of [option python.prefix]"
+            } else {
+                ui_debug "Port ${subport} installed into [option python.prefix] as expected"
+            }
             return ${dirs}
         }
         default {
