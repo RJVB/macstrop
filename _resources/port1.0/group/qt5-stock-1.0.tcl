@@ -78,6 +78,12 @@ switch -exact ${qt5PGname} {
     }
 }
 
+if {![tbool qt5.no_LTO_variant] && ![variant_exists LTO]} {
+    if {![info exists building_qt5]} {
+        PortGroup LTO 1.0
+    }
+}
+
 if {[info exists qt5.prefer_kde]} {
     # this is a port that prefers port:qt5-kde and thus expects most of Qt5 to be installed
     # through that single port rather than enumerate all components it depends on. We have

@@ -150,10 +150,16 @@ pre-configure {
     set qmake5_cxx_flags   [list]
     set qmake5_c_flags     [list]
     set qmake5_l_flags     [list]
+    ## RJVB : always append ALL our CFLAGS !!
+    foreach flag ${configure.cflags} {
+        lappend qmake5_c_flags   ${flag}
+    }
     foreach flag ${configure.cxxflags} {
         if { ${flag} eq "-D_GLIBCXX_USE_CXX11_ABI=0" } {
             lappend qmake5_cxx11_flags ${flag}
         }
+        ## RJVB : always append ALL our CXXFLAGS !!
+        lappend qmake5_cxx_flags ${flag}
     }
     foreach flag ${configure.cppflags} {
         lappend qmake5_c_flags   ${flag}
@@ -224,6 +230,21 @@ pre-configure {
         puts ${cache} QMAKE_AR="${prefix}/bin/ar\ cq"
         puts ${cache} QMAKE_RANLIB="${prefix}/bin/ranlib"
     }
+        ## RJVB
+        if {[info exists configure.ar] && [info exists configure.nm] && [info exists configure.ranlib]} {
+            if {[option LTO.use_archive_helpers]} {
+                puts ${qt5::cache} "QMAKE_AR=${configure.ar} cqs"
+                puts ${qt5::cache} "QMAKE_NM=${configure.nm} -P"
+                puts ${qt5::cache} "QMAKE_RANLIB=${configure.ranlib} -s"
+            }
+        } elseif {[string match *clang++-mp* ${configure.cxx}]} {
+                set QMAKE_AR [string map {"clang++" "llvm-ar"} ${configure.cxx}]
+                set QMAKE_NM [string map {"clang++" "llvm-nm"} ${configure.cxx}]
+                set QMAKE_RANLIB [string map {"clang++" "llvm-ranlib"} ${configure.cxx}]
+                puts ${qt5::cache} "QMAKE_AR=${QMAKE_AR} cqs"
+                puts ${qt5::cache} "QMAKE_NM=${QMAKE_NM} -P"
+                puts ${qt5::cache} "QMAKE_RANLIB=${QMAKE_RANLIB}"
+        }
 
     # accommodating variant request varies depending on how qtbase was built
     set base_debug false
