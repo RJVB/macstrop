@@ -80,8 +80,9 @@ switch -exact ${qt5PGname} {
 
 if {[info exists qt5.prefer_kde]} {
     # this is a port that prefers port:qt5-kde and thus expects most of Qt5 to be installed
-    # through that single port rather than enumerate all components it depends on.
-    depends_lib-append  port:qt5
+    # through that single port rather than enumerate all components it depends on. We have
+    # a shim "masterport" for that:
+    depends_lib-append  port:qt5-kde-masterport
     # the port may also use a variable that is still provided by qt5-kde-1.0.tcl;
     # set it to an empty value so that it can be referenced without side-effects.
     global qt_cmake_defines

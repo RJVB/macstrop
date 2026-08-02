@@ -41,6 +41,20 @@
 # PortGroup             qt5 1.0
 
 ### testing testing testing ###
+
+# moved from the qt5-kde PG
+## NB
+## Remember to update the component2pathspec table when promoting
+## a stubport to a (sub)port!
+set qt5.kde_stubports \
+            {qtbase qtdeclarative qtserialbus qtserialport qtsensors \
+            qtquick1 qtwebchannel qtimageformats qtsvg qtmacextras qtx11extras \
+            qtlocation qtxmlpatterns qtcanvas3d qtgraphicaleffects qtmultimedia \
+            qtscript qt3d qtconnectivity qttools qtquickcontrols qtquickcontrols2 \
+            qtenginio qtwebkit-examples qtwebsockets qttranslations mysql-plugin \
+            sqlite-plugin qtwayland \
+            docs}
+
 PortGroup           qt5-stock 1.0
 return
 ###############################

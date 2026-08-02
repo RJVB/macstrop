@@ -520,18 +520,18 @@ proc qt5.active_branch {{install_branch 5}} {
     return ${ab}
 }
 
-## NB
-## Remember to update the component2pathspec table when promoting
-## a stubport to a (sub)port!
-set qt5.kde_stubports \
-            {qtbase qtdeclarative qtserialbus qtserialport qtsensors \
-            qtquick1 qtwebchannel qtimageformats qtsvg qtmacextras qtx11extras \
-            qtlocation qtxmlpatterns qtcanvas3d qtgraphicaleffects qtmultimedia \
-            qtscript qt3d qtconnectivity qttools qtquickcontrols qtquickcontrols2 \
-            qtenginio qtwebkit-examples qtwebsockets qttranslations mysql-plugin \
-            sqlite-plugin qtwayland \
-            docs
-}
+# ## NB
+# ## Remember to update the component2pathspec table when promoting
+# ## a stubport to a (sub)port!
+# set qt5.kde_stubports \
+#             {qtbase qtdeclarative qtserialbus qtserialport qtsensors \
+#             qtquick1 qtwebchannel qtimageformats qtsvg qtmacextras qtx11extras \
+#             qtlocation qtxmlpatterns qtcanvas3d qtgraphicaleffects qtmultimedia \
+#             qtscript qt3d qtconnectivity qttools qtquickcontrols qtquickcontrols2 \
+#             qtenginio qtwebkit-examples qtwebsockets qttranslations mysql-plugin \
+#             sqlite-plugin qtwayland \
+#             docs
+# }
 # new in 5.7.1: qtcharts qtdatavis3d qtgamepad qtpurchasing qtscxml
 # removed in 5.7: qtenginio (kept as stubport for 1 or 2 versions)
 # these are added to the list either when not building Qt, or when

@@ -18,6 +18,7 @@ if {[info exists qt5.custom_qt_name]} {
         set qt_dir       ${prefix}/libexec/qt512
     }
 }
+set qt_rel_dir          [string map [list ${prefix}/ ""] ${qt_dir}]
 ###RJVB###
 
 # standard Qt non-.app executables directory
@@ -149,7 +150,7 @@ namespace eval qt5pg {
         qtcanvas3d {
             5.5
             5.13
-            libexec/qt5/qml/QtCanvas3D/libqtcanvas3d.dylib
+            @QT_REL_DIR@/qml/QtCanvas3D/libqtcanvas3d.dylib
             ""
         }
         qtcharts {
@@ -185,7 +186,7 @@ namespace eval qt5pg {
         qtdoc {
             5.0
             6.0
-            libexec/qt5/doc/qtdoc.qch
+            @QT_REL_DIR@/doc/qtdoc.qch
             ""
         }
         qtgamepad {
@@ -203,7 +204,7 @@ namespace eval qt5pg {
         qtgraphicaleffects {
             5.0
             6.0
-            libexec/qt5/qml/QtGraphicalEffects/libqtgraphicaleffectsplugin.dylib
+            @QT_REL_DIR@/qml/QtGraphicalEffects/libqtgraphicaleffectsplugin.dylib
             ""
         }
         qtimageformats {
@@ -263,7 +264,7 @@ namespace eval qt5pg {
         qtquickcontrols {
             5.1
             6.0
-            libexec/qt5/qml/QtQuick/Controls/libqtquickcontrolsplugin.dylib
+            @QT_REL_DIR@/qml/QtQuick/Controls/libqtquickcontrolsplugin.dylib
             ""
         }
         qtquickcontrols2 {
@@ -275,7 +276,7 @@ namespace eval qt5pg {
         qtquicktimeline {
             5.14
             6.0
-            libexec/qt5/qml/QtQuick/Timeline/libqtquicktimelineplugin.dylib
+            @QT_REL_DIR@/qml/QtQuick/Timeline/libqtquicktimelineplugin.dylib
             ""
         }
         qtremoteobjects {
@@ -335,7 +336,7 @@ namespace eval qt5pg {
         qttranslations {
             5.0
             6.0
-            libexec/qt5/translations/qt_ar.qm
+            @QT_REL_DIR@/translations/qt_ar.qm
             ""
         }
         qtvirtualkeyboard {
@@ -371,7 +372,7 @@ namespace eval qt5pg {
         qtwebkit-examples {
             5.0
             6.0
-            libexec/qt5/examples/webkitwidgets/webkitwidgets.pro
+            @QT_REL_DIR@/examples/webkitwidgets/webkitwidgets.pro
             ""
         }
         qtwebsockets {
@@ -435,4 +436,14 @@ namespace eval qt5pg {
             ""
         }
     }
+    ## RJVB: replace the @QT_REL_DIR@ tokens
+    proc lipreplace {name args} {
+        upvar 1 $name theList
+        set theList [lreplace $theList[set theList {}] {*}$args]
+    }
+    foreach {comp compinfo} [array get qt5pg::qt5_component_lib] {
+        set deppath [string map [list "@QT_REL_DIR@" ${qt_rel_dir}] [lindex ${compinfo} 2]]
+        lipreplace qt5pg::qt5_component_lib(${comp}) 2 2 ${deppath}
+    }
+
 }
