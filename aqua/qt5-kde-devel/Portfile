@@ -23,7 +23,12 @@ if {${subport} eq "${name}"} {
     # +1 for QtTest backport
     # +2 for QStringView backport (2 steps)
     # +1 for OpenSSL 1.1
-    revision        [expr ${revision} + 5]
+    # +1 for getting to build it again in 2026, including a newer ICU requiring C++17,
+    #    plus adding an implicit +mariadb55 variant and port:mariadb dependency on Linux
+    #    plus adding an "internal" wakeUpCalled statevar in the GLib eventhandler
+    #    (that's for tinkering with an externally built newer XCB QPA plugin)
+    #    plus taking ownership of update-qthelp-collection-mp
+    revision        [expr ${revision} + 6]
 }
 if {${subport} eq "${name}-x11" || (${subport} eq "${name}" && ${os.platform} ne "darwin")} {
     # +1 for improved xcb clipboard tentafix
@@ -364,6 +369,10 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
     PortGroup           xcodeversion 1.0
     PortGroup           openssl 1.0
     openssl.branch      1.1
+    if {${subport} ne "${name}-zz-docs"} {
+        conflicts_build openssl-dev
+    }
+    
 
     minimum_xcodeversions   {13 6.2}
 
@@ -625,6 +634,10 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
     if {[variant_exists LTO] && [variant_isset LTO]} {
         configure.args-append -ltcg
     }
+    configure.args-append \
+        -openssl-runtime  \
+        OPENSSL_PREFIX=[openssl::install_area] \
+        OPENSSL_INCDIR=[openssl::install_area]/include
 
     if {${os.platform} eq "darwin"} {
         configure.args-append   \
@@ -639,8 +652,6 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         configure.args-append \
             -no-mtdev         \
             -no-harfbuzz      \
-            -openssl-runtime  \
-            OPENSSL_PREFIX=[openssl::install_area] \
             -no-xinput2       \
             -no-xcb           \
             -no-xcb-xlib
@@ -693,11 +704,17 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
             -R ${prefix}/${build_arch}-linux-gnu \
             -R ${qt_libs_dir}   \
             -no-reduce-relocations
-        compiler.cxx_standard 2014
+        compiler.cxx_standard 2017
         configure.args-append \
-            -c++std "c++14"
+            -c++std "c++1z"
         configure.env-append "LD_LIBRARY_PATH=${prefix}/lib:${prefix}/lib/${build_arch}-linux-gnu"
         build.env-append "LD_LIBRARY_PATH=${prefix}/lib:${prefix}/lib/${build_arch}-linux-gnu"
+
+        if {[file exists ${prefix}/lib/libstdc++.so.6] && ![string match *macports-gcc* ${configure.compiler}]} {
+            # we may need to expose our libstdc++
+            depends_build-append \
+                            port:libgcc-linker-lib
+        }
     }
     patchfiles-append \
                 ${PF59x}/patch-toolchainprf.diff \
@@ -712,6 +729,11 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
                 src/corelib/io/qstandardpaths_unix.cpp
         reinplace -W ${worksrcpath}/qtbase "s|@PREFIX@|[openssl::install_area]|g" \
                 src/network/ssl/qsslsocket_openssl_symbols.cpp
+        ## I find out 7y later that the opensslv11 test doesn't respect OPENSSL_INCDIR, 
+        ## so the easy solution is to hardcode the path in the test, because the rest of
+        ## the build does respect the search path and tries to build OSSL1.0 code against OSSL 1.1 headers...
+        reinplace -W ${worksrcpath}/qtbase "s|@OPENSSL_INCDIR@|[openssl::install_area]/include|g" \
+                config.tests/unix/openssl11/openssl.cpp
     }
 
 # Additional options:
@@ -1041,6 +1063,12 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         patchfiles-append   ${PF598}patch-toplevelwidgets.diff
         # qmake: when building with GCC and LTO (ltcg), let make determine the number of jobs (flto=auto)
         patchfiles-append   ${PF598}patch-ltcg-autojobs.diff
+        ## build against newer port:ICU requiring C++17
+        patchfiles-append   ${PF598}patch-support-newer-icu.diff
+        ## Linux: include a missing header that never was causing a problem before
+        patchfiles-append   ${PF598}patch-serialbus-socketcan-plugin.diff
+        ## backport the wakeUpCalled statevar from Qt 5.12
+        patchfiles-append   ${PF598}patch-qevdispglibpriv-wakeupcalled.diff
     }
 
     # see https://github.com/RJVB/macstrop/issues/88
@@ -1061,12 +1089,20 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
     # if ever C++17 mode is selected (which happens when the compiler supports it)
     configure.cxxflags-append -Wno-register
 
+    set workbinpath     ${workpath}/bin
+    configure.env-append \
+                        PATH=${workbinpath}:$env(PATH)
+    build.env-append    PATH=${workbinpath}:$env(PATH)
+    destroot.env-append PATH=${workbinpath}:$env(PATH)
+
     # use a simple way to get our compiler + options in:
     pre-configure {
         ui_info "Trying to coax the build to use ${optim_flag} optimisation"
         configure.args-append \
             QMAKE_CFLAGS_RELEASE=${optim_flag} \
-            QMAKE_CFLAGS_OPTIMIZE=${optim_flag}
+            QMAKE_CFLAGS_OPTIMIZE=${optim_flag} \
+            QMAKE_CFLAGS_RELEASE=${optim_flag} \
+            QMAKE_CXXFLAGS_OPTIMIZE=${optim_flag}
         xinstall -m 755 -d ${build.dir}/qtbase
         set qt5::cache [open "${build.dir}/.qmake.cache" w 0644]
         puts ${qt5::cache} "QMAKE_CC=${configure.cc}"
@@ -1077,6 +1113,8 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         puts ${qt5::cache} "QMAKE_LINK_SHLIB=${configure.cxx}"
         puts ${qt5::cache} "QMAKE_CFLAGS_OPTIMIZE=${optim_flag}"
         puts ${qt5::cache} "QMAKE_CFLAGS_RELEASE=${optim_flag}"
+        puts ${qt5::cache} "QMAKE_CXXFLAGS_OPTIMIZE=${optim_flag}"
+        puts ${qt5::cache} "QMAKE_CXXFLAGS_RELEASE=${optim_flag}"
         puts ${qt5::cache} "QMAKE_CFLAGS+=[join ${configure.cflags}]"
         puts ${qt5::cache} "QMAKE_CXXFLAGS+=[join ${configure.cxxflags}]"
         if {[info exists qt5.unset_cflags]} {
@@ -1085,6 +1123,18 @@ if { ${subport} eq ${name} || ${subport} eq "${name}-zz-docs" || ${subport} eq "
         }
         close ${qt5::cache}
         file copy -force ${build.dir}/.qmake.cache ${build.dir}/qtbase/.qmake.cache
+        xinstall -m 755 -d ${build.dir}/config.tests
+        file copy -force ${build.dir}/.qmake.cache ${build.dir}/config.tests/.qmake.cache
+        
+        if {[string match *clang* ${configure.compiler}]} {
+            xinstall -m 755 -d ${workbinpath}
+            ln -sf ${configure.cc} ${workbinpath}/clang
+            ln -sf ${configure.cxx} ${workbinpath}/clang++
+        } elseif {[string match *gcc* ${configure.compiler}]} {
+            xinstall -m 755 -d ${workbinpath}
+            ln -sf ${configure.cc} ${workbinpath}/gcc
+            ln -sf ${configure.cxx} ${workbinpath}/g++
+        }
     }
     if {${os.platform} ne "darwin"} {
         post-configure {
@@ -1278,6 +1328,19 @@ if { (${subport} eq ${name}) || (${subport} eq "${name}-x11") } {
                     port:gstreamer1 \
                     port:gstreamer1-gst-plugins-base
             }
+        } else {
+            depends_build-append \
+                    port:patchelf
+            depends_lib-append \
+                    port:mariadb
+            configure.args-append \
+                    -mysql_config ${prefix}/lib/mariadb/bin/mysql_config \
+                    MYSQL_INCDIR=${prefix}/include/mariadb \
+                    MYSQL_LIBDIR=${prefix}/lib/mariadb/mysql
+            post-destroot {
+                system -W ${destroot}${qt_plugins_dir} \
+                    "patchelf --add-rpath ${prefix}/lib/mariadb/mysql sqldrivers/libqsqlmysql.so"
+            }
         }
         variant QtHelpNG description {Use the QtHelpNG library/framework from port:qt5-assistant-devel} {
             depends_run-append  port:qt5-assistant-devel
@@ -1365,7 +1428,13 @@ if { (${subport} eq ${name}) || (${subport} eq "${name}-x11") } {
         patchfiles-append       ${PF598}patch-large-json-docs.diff
     }
 
-    configure.post_args-append      QMAKE_CXX=${configure.cxx} QMAKE_CC=${configure.cc}
+    configure.post_args-append      QMAKE_CXX=${configure.cxx} \
+                                    QMAKE_CC=${configure.cc} \
+                                    QMAKE_LINK_C=${configure.cc} \
+                                    QMAKE_LINK_C_SHLIB=${configure.cc} \
+                                    QMAKE_LINK=${configure.cxx} \
+                                    QMAKE_LINK_SHLIB=${configure.cxx} \
+                                    QMAKE_LFLAGS+=-L[openssl::install_area]/lib
     build.env-append                CXX=${configure.cxx} CC=${configure.cc}
     # let the build go as far as possible in an effort to catch all errors in a single go
     build.post_args-append          -wk
@@ -2591,6 +2660,11 @@ post-destroot {
     if {${subport} eq "${name}"} {
         xinstall -m 755 -d ${destroot}${qt_install_registry}/family
         ln -s ../${subport}  ${destroot}${qt_install_registry}/family/${basename}
+        xinstall -m 755 ${filespath}/update-qthelp-collection-mp.tcl \
+            ${destroot}${prefix}/bin/update-qthelp-collection-mp
+        reinplace "s|@MPTCLSH@|[lindex [glob ${prefix}/libexec/macports/bin/tclsh*] 0]|g" \
+            ${destroot}${prefix}/bin/update-qthelp-collection-mp
+
     }
     # remove an unneeded macro definition that may have been propagated from zlib-ng:
     if {![catch {set prunables [exec fgrep -l WITH_GZFILEOP -R ${destroot}${qt_mkspecs_dir}]}]} {
@@ -2600,13 +2674,15 @@ post-destroot {
     }
 }
 
-post-activate {
-    if {${subport} eq "${name}" && ![file exists ${prefix}/bin/update-qthelp-collection-mp.tcl]} {
-        xinstall -m 755 ${filespath}/update-qthelp-collection-mp.tcl ${prefix}/bin/update-qthelp-collection-mp
-        reinplace "s|@MPTCLSH@|[lindex [glob ${prefix}/libexec/macports/bin/tclsh*] 0]|g" ${prefix}/bin/update-qthelp-collection-mp
+pre-activate {
+    if {[file exists ${prefix}/bin/update-qthelp-collection-mp]} {
+        ui_warn "Taking proper ownership of dangling file ${prefix}/bin/update-qthelp-collection-mp"
+        file delete ${prefix}/bin/update-qthelp-collection-mp
     }
+}
 
-    set pgroup_files {"qt5-1.0.tcl" "qt5-kde-1.0.tcl" "qt5-stock-1.0.tcl.tcl" "qmake5-1.0.tcl" "qmake5-kde-1.0.tcl"}
+post-activate {
+    set pgroup_files {"qt5-1.0.tcl" "qt5-kde-1.0.tcl" "qt5-stock-1.0.tcl" "qmake5-1.0.tcl" "qmake5-kde-1.0.tcl"}
     ui_msg "Don't forget to copy the following file(s) into your main port tree's _resources directory:"
     foreach pg ${pgroup_files} {
         ui_msg "\t${qt5::currentportgroupdir}/${pg}"
