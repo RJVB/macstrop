@@ -497,7 +497,7 @@ if {[info exists LTO_needs_pre_build]} {
 
 set LTO::use_lld_set 0
 proc LTO::set_use_lld {{verbose no}} {
-    global prefix os.platform configure.compiler LTO.allow_UseLLD LTO.LTO.maybe_ForceLD
+    global prefix os.platform configure.compiler LTO.allow_UseLLD LTO.maybe_ForceLD
     if {[variant_exists use_lld] && [variant_isset use_lld]} {
         # NB: the below assumes that $LLD is always installed by
         # the latest port:lld-XY which provides the lld linker
@@ -539,7 +539,7 @@ proc LTO::set_use_lld {{verbose no}} {
         }
     }
     if {![variant_exists use_lld] || ![variant_isset use_lld]} {
-        if {(![tbool LTO.allow_UseLLD] || [tbool LTO.LTO.maybe_ForceLD]) && [string match "macports-clang*" ${configure.compiler}]} {
+        if {(![tbool LTO.allow_UseLLD] || [tbool LTO.maybe_ForceLD]) && [string match "macports-clang*" ${configure.compiler}]} {
             if {${LTO::mp_compiler_version} >= 5} {
                 # simple, unconditional "don't use lld" for clang compilers built to use lld by default
                 LTO.configure.flags_append {ldflags} "-fuse-ld=ld"
@@ -611,7 +611,7 @@ proc LTO::callback {} {
                             [string map {"clang" "llvm-symbolizer"} [option configure.cc]]
     }
     if {([variant_exists use_lld] && [variant_isset use_lld])
-            || (![tbool LTO.allow_UseLLD] || [tbool LTO.LTO.maybe_ForceLD])} {
+            || (![tbool LTO.allow_UseLLD] || [tbool LTO.maybe_ForceLD])} {
         if {!${LTO::use_lld_set}} {
             ui_debug "LTO PG double-checking if the use_lld setting is correct"
             LTO::set_use_lld yes
