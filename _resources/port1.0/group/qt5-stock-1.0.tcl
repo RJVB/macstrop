@@ -170,6 +170,7 @@ proc qt5.add_app_wrapper {wrappername {bundlename ""} {bundleexec ""} {appdir ""
         ui_error "qt5.add_app_wrapper: wrapper ${wrappername} would overwrite executable ${bundleexec}: ignoring!"
         return;
     }
+    ui_debug "qt5.add_app_wrapper ${wrappername} ${bundlename} ${bundleexec} ${appdir}"
     xinstall -m 755 -d ${destroot}${prefix}/bin
     if {![catch {set fd [open "${destroot}${prefix}/bin/${wrappername}" "w"]} err]} {
         puts ${fd} "#!/usr/bin/env bash"
