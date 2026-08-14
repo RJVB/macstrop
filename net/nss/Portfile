@@ -4,11 +4,14 @@ PortSystem          1.0
 PortGroup           legacysupport 1.1
 PortGroup           muniversal 1.0
 PortGroup           LTO 1.0
-PortGroup           compress_workdir 1.0
+PortGroup           save_configure_cmd 1.0
+platform darwin {
+    PortGroup       compress_workdir 1.0
+}
 
 name                nss
-version             3.92
-revision            0
+version             3.126
+
 set NSS_VMAJOR      [lindex [split ${version} .] 0]
 set NSS_VMINOR      [lindex [split ${version} .] 1]
 set NSS_VPATCH      [lindex [split ${version} .] 2]
@@ -16,23 +19,25 @@ if {${NSS_VPATCH} eq ""} {
     # NSS_VPATCH should always be a number
     set NSS_VPATCH 0
 }
+
 categories          net
+platforms           darwin linux
 maintainers         nomaintainer
 license             {MPL-2 GPL-2+ LGPL-2.1+}
 description         Network Security Service libraries.
-
 long_description    {*}${description}
-use_configure       no
 homepage            https://developer.mozilla.org/en-US/docs/Mozilla/Projects/NSS
 
-set my_release      NSS_[strsed ${version} {g/\./_/}]_RTM
+set theRelease      NSS_[string map {. _} ${version}]_RTM
 
-master_sites        https://ftp.mozilla.org/pub/security/nss/releases/${my_release}/src/ \
-                    ftp://ftp.mozilla.org/pub/security/nss/releases/${my_release}/src/
+master_sites        https://ftp.mozilla.org/pub/security/nss/releases/${theRelease}/src/ \
+                    ftp://ftp.mozilla.org/pub/security/nss/releases/${theRelease}/src/
 
-checksums           rmd160  4b5a7067df81594282581f0c6b19febbf5699b97 \
-                    sha256  3db192d6e882039af02ae7eaf3217ed114bb7ad83414c646772ab8021e24a254
-#                     size    72133646
+checksums           rmd160  4542d040b6600b8bbb0933582f86c02059eda796 \
+                    sha256  7aa07c758be1453d82d739240b249ffb7aef0041be488067e1c0f348e1f9e337
+#                     size    78769092
+
+use_configure       no
 
 # build fails with gcc-4.2 on Intel, but succeeds with gcc-4.2 on PPC
 # cc1: error: unrecognized command line option "-mpclmul"
@@ -40,6 +45,18 @@ checksums           rmd160  4b5a7067df81594282581f0c6b19febbf5699b97 \
 if {${configure.build_arch} in [list i386 x86_64]} {
     compiler.blacklist-append *gcc-4.* *gcc-3.*
 }
+
+if {${os.platform} eq "darwin"} {
+    set LIBDIR      lib/nss
+    set NSPR_LIB_DIR \
+                    lib/nspr
+} else {
+    set LIBDIR      lib
+    set NSPR_LIB_DIR \
+                    lib
+}
+
+patchfiles          undef-prefix.patch
 
 # VSX and Crypto have to be disabled, since they belong to post-G5 ISA.
 # See: https://bugzilla.mozilla.org/show_bug.cgi?id=1687164
@@ -54,8 +71,12 @@ if {${configure.build_arch} in [list ppc ppc64]} {
 patchfiles-append \
                 patch-AR.diff
 
-# fails with clang-425 https://trac.macports.org/ticket/63245
-compiler.blacklist-append {clang < 426}
+# fails with clang-425: https://trac.macports.org/ticket/63245
+#   warning: implicit declaration of function '_mm_sha256xxxxx'
+# fails with clang < 800: https://trac.macports.org/ticket/67585
+#   error: "AES/PCLMUL instructions not enabled"
+# TODO: Latter blacklisting is a quick fix only; needs more investigation
+compiler.blacklist-append {clang < 800}
 
 depends_lib     port:nspr \
                 port:zlib \
@@ -64,8 +85,6 @@ depends_lib     port:nspr \
 destroot.dir ${destroot.dir}/dist
 build.dir    ${build.dir}/nss
 
-# mimic the nss_build_all target, without building nspr
-build.pre_args  -w all latest
 # external tests require C++11
 build.args   NSS_DISABLE_GTESTS=1
 
@@ -73,11 +92,17 @@ build.args   NSS_DISABLE_GTESTS=1
 build.args-append NSS_ENABLE_WERROR=0
 
 # muniversal destroot requires a Makefile
-post-extract {
+pre-destroot {
     xinstall -d -m 0755 ${destroot.dir}
 
-    copy ${filespath}/Makefile-MacPorts-Install.in ${destroot.dir}/Makefile-MacPorts-Install
-    reinplace "s|__MACPORTS_PREFIX__|${prefix}|g" ${destroot.dir}/Makefile-MacPorts-Install
+    if {![file exists ${destroot.dir}/Makefile-MacPorts-Install]} {
+        if {[file exists ${filespath}/Makefile-MacPorts-Install-${os.platform}.in]} {
+            copy ${filespath}/Makefile-MacPorts-Install-${os.platform}.in ${destroot.dir}/Makefile-MacPorts-Install
+        } else {
+            copy ${filespath}/Makefile-MacPorts-Install.in ${destroot.dir}/Makefile-MacPorts-Install
+        }
+        reinplace "s|__MACPORTS_PREFIX__|${prefix}|g" ${destroot.dir}/Makefile-MacPorts-Install
+    }
 }
 
 destroot.args-append \
@@ -85,7 +110,7 @@ destroot.args-append \
 
 post-patch {
     # libraries are not relative to any main executable, so no need for @executable_path
-    reinplace "s|@executable_path|${prefix}/lib/nss|g" \
+    reinplace "s|@executable_path|${prefix}/${LIBDIR}|g" \
         ${build.dir}/coreconf/Darwin.mk \
         ${build.dir}/lib/freebl/config.mk
 }
@@ -95,7 +120,7 @@ post-destroot {
     # see https://bugzilla.mozilla.org/show_bug.cgi?id=530672
 
     xinstall  -m 0755 ${filespath}/nss-config.in       ${destroot}${prefix}/bin/nss-config
-    reinplace "s,@libdir@,${prefix}/lib/nss,g"         ${destroot}${prefix}/bin/nss-config
+    reinplace "s,@libdir@,${prefix}/${LIBDIR},g"         ${destroot}${prefix}/bin/nss-config
     reinplace "s,@prefix@,${prefix},g"                 ${destroot}${prefix}/bin/nss-config
     reinplace "s,@exec_prefix@,${prefix},g"            ${destroot}${prefix}/bin/nss-config
     reinplace "s,@includedir@,${prefix}/include/nss,g" ${destroot}${prefix}/bin/nss-config
@@ -107,7 +132,7 @@ post-destroot {
     set nss_version  [exec ${destroot}${prefix}/bin/nss-config --version]
 
     xinstall  -m 0644 ${filespath}/nss.pc.in          ${destroot}${prefix}/lib/pkgconfig/nss.pc
-    reinplace "s,@libdir@,${prefix}/lib/nss,g"        ${destroot}${prefix}/lib/pkgconfig/nss.pc
+    reinplace "s,@libdir@,${prefix}/${LIBDIR},g"        ${destroot}${prefix}/lib/pkgconfig/nss.pc
     reinplace "s,@prefix@,${prefix},g"                ${destroot}${prefix}/lib/pkgconfig/nss.pc
     reinplace "s,@exec_prefix@,${prefix},g"           ${destroot}${prefix}/lib/pkgconfig/nss.pc
     reinplace "s,@includedir@,${prefix}/include/nss," ${destroot}${prefix}/lib/pkgconfig/nss.pc
@@ -118,6 +143,8 @@ post-destroot {
     xinstall -m 0644 \
         {*}[glob ${build.dir}/doc/nroff/*.1] \
         ${destroot}${prefix}/share/man/man1/
+
+    file rename ${destroot}${prefix}/lib/libssl.a ${destroot}${prefix}/lib/libssl3.a
 }
 
 use_parallel_build  no
@@ -126,17 +153,16 @@ use_parallel_build  no
 compiler.c_standard 1999
 configure.cflags-append -std=c99
 
-# mimic nss/coreconf/Darwin.mk
-
 array set cpu_arch_map [list \
     arm64   aarch64 \
     ppc     ppc \
     ppc64   ppc64 \
+    riscv64 riscv64 \
     i386    x86 \
     x86_64  x86_64]
 
 if {!${universal_possible} || ![variant_isset universal]} {
-    if {${configure.build_arch} in [list arm64 ppc64 x86_64]} {
+    if {${configure.build_arch} in [list arm64 ppc64 riscv64 x86_64]} {
         build.args-append USE_64=1
     }
     if {[info exists cpu_arch_map(${configure.build_arch})]} {
@@ -156,13 +182,22 @@ if {!${universal_possible} || ![variant_isset universal]} {
     # The build system knows where to insert the directive as necessary (apparently...)
     configure.ldflags-delete    -L${prefix}/lib
     build.args-append \
-        CC="${configure.cc} ${configure.cflags} [get_canonical_archflags cc]" \
-        CCC="${configure.cxx} ${configure.cxxflags} [get_canonical_archflags cxx]" \
-        ARCMD="${configure.ar}" \
-        RANLIB="${configure.ranlib}"
+            ARCMD="${configure.ar}" \
+            RANLIB="${configure.ranlib}"
+    if {${os.platform} eq "darwin"} {
+        build.args-append \
+            CC="${configure.cc} ${configure.cflags} [get_canonical_archflags cc]" \
+            CCC="${configure.cxx} ${configure.cxxflags} [get_canonical_archflags cxx]"
+    } else {
+        build.args-append \
+            CC="${configure.cc} ${configure.cflags} [get_canonical_archflags cc] -Wl,-R,${prefix}/lib -Wl,-rpath,${prefix}/lib" \
+            CCC="${configure.cxx} ${configure.cxxflags} [get_canonical_archflags cxx] -Wl,-R,${prefix}/lib -Wl,-rpath,${prefix}/lib" \
+            RPATH=\"-Wl,-R,${prefix}/lib -Wl,-rpath,${prefix}/lib -Wl,-R,${prefix}/lib\" \
+            LDFLAGS=\"${configure.ldflags} -Wl,-rpath,${prefix}/lib\"
+    }
 } else {
     lappend merger_build_args(arm64)  USE_64=1 CPU_ARCH=aarch64
-    lappend merger_build_args(i386)   CPU_ARCH=x86
+    lappend merger_build_args(i386)   CPU_ARCH=i386
     lappend merger_build_args(ppc64)  USE_64=1
     lappend merger_build_args(x86_64) USE_64=1 CPU_ARCH=x86_64
 
@@ -175,7 +210,7 @@ if {!${universal_possible} || ![variant_isset universal]} {
 
 build.args-append \
     NSPR_INCLUDE_DIR=${prefix}/include/nspr \
-    NSPR_LIB_DIR=${prefix}/lib/nspr \
+    NSPR_LIB_DIR=${prefix}/${NSPR_LIB_DIR} \
     NSS_USE_SYSTEM_SQLITE=1 \
     USE_SYSTEM_ZLIB=1 \
     BUILD_OPT=1 \
@@ -192,7 +227,7 @@ if {${universal_possible} && [variant_isset universal]} {
 
     merger-post-destroot {
         foreach arch ${universal_archs_to_use} {
-            foreach chk [glob -nocomplain -directory ${destroot}-${arch}${prefix}/lib/nss *.chk] {
+            foreach chk [glob -nocomplain -directory ${destroot}-${arch}${prefix}/${LIBDIR} *.chk] {
                 # delete chk file and replace it with an empty file, which can be merged
                 # keep the empty file so that later, we can know which chk files need to be regenerated from universal library
                 file delete ${chk}
@@ -202,19 +237,19 @@ if {${universal_possible} && [variant_isset universal]} {
     }
 
     post-destroot {
-        foreach chk [glob -nocomplain -directory ${destroot}${prefix}/lib/nss *.chk] {
+        foreach chk [glob -nocomplain -directory ${destroot}${prefix}/${LIBDIR} *.chk] {
             # replace empty chk file with an actual one generated from universal library
             file delete ${chk}
             set base [file rootname ${chk}]
-            system "env DYLD_LIBRARY_PATH=${destroot}${prefix}/lib/nss ${destroot}${prefix}/bin/shlibsign -i ${base}.dylib -o ${chk}"
+            if {${os.platform} eq "darwin"} {
+                system "env DYLD_LIBRARY_PATH=${destroot}${prefix}/${LIBDIR} ${destroot}${prefix}/bin/shlibsign -i ${base}.dylib -o ${chk}"
+            } else {
+                system "env LD_LIBRARY_PATH=${destroot}${prefix}/${LIBDIR} ${destroot}${prefix}/bin/shlibsign -v -i ${base}.so -o ${chk}"
+            }
         }
     }
 }
-
-platform darwin 8 {
-    depends_build-append port:gmake-apple
-    build.cmd ${prefix}/bin/gmake-apple
-}
+configure.save_build_cmd "install"
 
 livecheck.type    regex
 livecheck.url     https://ftp.mozilla.org/pub/security/nss/releases/
