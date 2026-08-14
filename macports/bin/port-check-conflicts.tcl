@@ -42,7 +42,8 @@ proc printUsage {} {
     puts "port-name\[s\] is the name of a port(s) to check"
     puts "port-name can also be the path to a destroot directory"
     puts "  (for checking projects that are not yet available as a port;"
-    puts "   in this case it can be followed by a reference port name)"
+    puts "   in this case it can be followed by a reference port name,"
+    puts "   either as simply a name or, more reliably, refport=name)"
 }
 
 # fileutil::traverse filter:
@@ -443,8 +444,13 @@ for {set i 0} {${i} < ${argc}} {incr i} {
     set arg "[lindex $::argv ${i}]"
     set pWD ""
     set OK 0
+    ui_debug "arg=${arg}"
     if {[file exists ${arg}] && [file type ${arg}] eq "directory"} {
         set narg "[lindex $::argv [expr ${i} + 1]]"
+        set refport [string map {"refport=" ""} ${narg}]
+        if {${refport} eq ${narg}} {
+            set refport ""
+        }
         if {[file exists ${arg}/Portfile]} {
             set portDir [file normalize ${arg}]
             # from what I understand, [mportlookup] should support portDir or file://${portDir}
@@ -454,10 +460,11 @@ for {set i 0} {${i} < ${argc}} {incr i} {
             set portName ${_WD_port}
             set pWD [macports::getportworkpath_from_portdir ${portDir} ${_WD_port}]
             set OK [chworkdir ${portName} ${pWD}]
-        } elseif {${narg} ne "" && (![file exists ${narg}] || [file type ${narg}] ne "directory")} {
+        } elseif {${refport} ne "" || (${narg} ne "" && (![file exists ${narg}] || [file type ${narg}] ne "directory"))} {
             # user provided a name for the (installed) port to compare to
-            set portName ${narg}
+            set portName [expr {${refport} ne "" ? ${refport} : ${narg}}]
             set _WD_port ${portName}
+            ui_debug "using port:${portName} as reference"
             incr i
         } else {
             set portName ""
