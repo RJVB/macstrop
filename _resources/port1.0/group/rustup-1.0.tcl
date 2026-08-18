@@ -182,6 +182,7 @@ namespace eval rustup {
                             # as of 250408, that is Rust 1.86.0 (250331).
                             # as of 250227, that is Rust 1.87.0 (250509).
                             # as of 251119, that is Rust 1.91.1 (251107).
+                            # as of 260818 *TESTED ON LINUX*, that is Rust 1.97.1 (260714).
                             set toolchain_version stable
                         }
                         system "${rustup::home}/Cargo/bin/rustup install --profile minimal --no-self-update ${toolchain_version}"
