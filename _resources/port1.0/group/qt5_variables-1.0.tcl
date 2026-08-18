@@ -18,7 +18,8 @@ if {[info exists qt5.custom_qt_name]} {
         set qt_dir       ${prefix}/libexec/qt512
     }
 }
-set qt_rel_dir          [string map [list ${prefix}/ ""] ${qt_dir}]
+global qt_dir_rel
+set qt_dir_rel          [string map [list ${prefix}/ ""] ${qt_dir}]
 ###RJVB###
 
 # standard Qt non-.app executables directory
@@ -138,277 +139,277 @@ namespace eval qt5pg {
         qt3d {
             5.5
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt53DCore.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt53DCore.pc
             ""
         }
         qtbase {
             5.0
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Core.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Core.pc
             ""
         }
         qtcanvas3d {
             5.5
             5.13
-            @QT_REL_DIR@/qml/QtCanvas3D/libqtcanvas3d.dylib
+            @QT_DIR_REL@/qml/QtCanvas3D/libqtcanvas3d.dylib
             ""
         }
         qtcharts {
             5.7
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Charts.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Charts.pc
             ""
         }
         qtconnectivity {
             5.2
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Bluetooth.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Bluetooth.pc
             ""
         }
         qtdatavis3d {
             5.7
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5DataVisualization.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5DataVisualization.pc
             ""
         }
         qtdeclarative {
             5.0
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Qml.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Qml.pc
             ""
         }
         qtdeclarative-render2d {
             5.7
             5.8
-            @QT_REL_DIR@/lib/cmake/Qt5Quick/Qt5Quick_ContextPlugin.cmake
+            @QT_DIR_REL@/lib/cmake/Qt5Quick/Qt5Quick_ContextPlugin.cmake
             ""
         }
         qtdoc {
             5.0
             6.0
-            @QT_REL_DIR@/doc/qtdoc.qch
+            @QT_DIR_REL@/doc/qtdoc.qch
             ""
         }
         qtgamepad {
             5.7
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Gamepad.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Gamepad.pc
             ""
         }
         qtenginio {
             5.3
             5.7
-            @QT_REL_DIR@/lib/pkgconfig/Enginio.pc
+            @QT_DIR_REL@/lib/pkgconfig/Enginio.pc
             ""
         }
         qtgraphicaleffects {
             5.0
             6.0
-            @QT_REL_DIR@/qml/QtGraphicalEffects/libqtgraphicaleffectsplugin.dylib
+            @QT_DIR_REL@/qml/QtGraphicalEffects/libqtgraphicaleffectsplugin.dylib
             ""
         }
         qtimageformats {
             5.0
             6.0
-            @QT_REL_DIR@/lib/cmake/Qt5Gui/Qt5Gui_QTiffPlugin.cmake
+            @QT_DIR_REL@/lib/cmake/Qt5Gui/Qt5Gui_QTiffPlugin.cmake
             ""
         }
         qtlocation {
             5.2
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Location.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Location.pc
             ""
         }
         qtlottie {
             5.13
             6.0
-            @QT_REL_DIR@/lib/cmake/Qt5Bodymovin/Qt5BodymovinConfig.cmake
+            @QT_DIR_REL@/lib/cmake/Qt5Bodymovin/Qt5BodymovinConfig.cmake
             ""
         }
         qtmacextras {
             5.2
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5MacExtras.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5MacExtras.pc
             ""
         }
         qtmultimedia {
             5.0
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Multimedia.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Multimedia.pc
             ""
         }
         qtnetworkauth {
             5.8
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5NetworkAuth.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5NetworkAuth.pc
             ""
         }
         qtpurchasing {
             5.7
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Purchasing.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Purchasing.pc
             ""
         }
         qtquick1 {
             5.0
             5.6
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Declarative.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Declarative.pc
             ""
         }
         qtquick3d {
             5.14
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Quick3D.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Quick3D.pc
             ""
         }
         qtquickcontrols {
             5.1
             6.0
-            @QT_REL_DIR@/qml/QtQuick/Controls/libqtquickcontrolsplugin.dylib
+            @QT_DIR_REL@/qml/QtQuick/Controls/libqtquickcontrolsplugin.dylib
             ""
         }
         qtquickcontrols2 {
             5.6
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5QuickControls2.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5QuickControls2.pc
             ""
         }
         qtquicktimeline {
             5.14
             6.0
-            @QT_REL_DIR@/qml/QtQuick/Timeline/libqtquicktimelineplugin.dylib
+            @QT_DIR_REL@/qml/QtQuick/Timeline/libqtquicktimelineplugin.dylib
             ""
         }
         qtremoteobjects {
             5.9
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5RemoteObjects.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5RemoteObjects.pc
             ""
         }
         qtscript {
             5.0
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Script.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Script.pc
             ""
         }
         qtscxml {
             5.7
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Scxml.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Scxml.pc
             ""
         }
         qtsensors {
             5.1
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Sensors.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Sensors.pc
             ""
         }
         qtserialbus {
             5.6
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5SerialBus.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5SerialBus.pc
             ""
         }
         qtserialport {
             5.1
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5SerialPort.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5SerialPort.pc
             ""
         }
         qtspeech {
             5.8
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5TextToSpeech.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5TextToSpeech.pc
             ""
         }
         qtsvg {
             5.0
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Svg.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Svg.pc
             ""
         }
         qttools {
             5.0
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5Designer.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5Designer.pc
             ""
         }
         qttranslations {
             5.0
             6.0
-            @QT_REL_DIR@/translations/qt_ar.qm
+            @QT_DIR_REL@/translations/qt_ar.qm
             ""
         }
         qtvirtualkeyboard {
             5.7
             6.0
-            @QT_REL_DIR@/lib/cmake/Qt5Gui/Qt5Gui_QVirtualKeyboardPlugin.cmake
+            @QT_DIR_REL@/lib/cmake/Qt5Gui/Qt5Gui_QVirtualKeyboardPlugin.cmake
             ""
         }
         qtwebchannel {
             5.4
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5WebChannel.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5WebChannel.pc
             ""
         }
         qtwebengine {
             5.4
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5WebEngine.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5WebEngine.pc
             ""
         }
         qtwebglplugin {
             5.10
             6.0
-            @QT_REL_DIR@/lib/cmake/Qt5Gui/Qt5Gui_QWebGLIntegrationPlugin.cmake
+            @QT_DIR_REL@/lib/cmake/Qt5Gui/Qt5Gui_QWebGLIntegrationPlugin.cmake
             ""
         }
         qtwebkit {
             5.0
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5WebKit.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5WebKit.pc
             ""
         }
         qtwebkit-examples {
             5.0
             6.0
-            @QT_REL_DIR@/examples/webkitwidgets/webkitwidgets.pro
+            @QT_DIR_REL@/examples/webkitwidgets/webkitwidgets.pro
             ""
         }
         qtwebsockets {
             5.3
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5WebSockets.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5WebSockets.pc
             ""
         }
         qtwebview {
             5.6
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5WebView.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5WebView.pc
             ""
         }
         qtxmlpatterns {
             5.0
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5XmlPatterns.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5XmlPatterns.pc
             ""
         }
         sqlite-plugin {
             5.0
             6.0
-            @QT_REL_DIR@/lib/cmake/Qt5Sql/Qt5Sql_QSQLiteDriverPlugin.cmake
+            @QT_DIR_REL@/lib/cmake/Qt5Sql/Qt5Sql_QSQLiteDriverPlugin.cmake
             "-plugin"
         }
         psql-plugin {
             5.0
             6.0
-            @QT_REL_DIR@/lib/cmake/Qt5Sql/Qt5Sql_QPSQLDriverPlugin.cmake
+            @QT_DIR_REL@/lib/cmake/Qt5Sql/Qt5Sql_QPSQLDriverPlugin.cmake
             "-plugin"
         }
         mysql-plugin {
             5.0
             6.0
-            @QT_REL_DIR@/lib/cmake/Qt5Sql/Qt5Sql_QMYSQLDriverPlugin.cmake
+            @QT_DIR_REL@/lib/cmake/Qt5Sql/Qt5Sql_QMYSQLDriverPlugin.cmake
             "-plugin"
         }
     }
@@ -426,23 +427,23 @@ namespace eval qt5pg {
         set qt5_component_lib(qtx11extras) {
             5.2
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5X11Extras.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5X11Extras.pc
             ""
         }
         set qt5_component_lib(qtwayland) {
             5.2
             6.0
-            @QT_REL_DIR@/lib/pkgconfig/Qt5WaylandClient.pc
+            @QT_DIR_REL@/lib/pkgconfig/Qt5WaylandClient.pc
             ""
         }
     }
-    ## RJVB: replace the @QT_REL_DIR@ tokens
+    ## RJVB: replace the @QT_DIR_REL@ tokens
     proc lipreplace {name args} {
         upvar 1 $name theList
         set theList [lreplace $theList[set theList {}] {*}$args]
     }
     foreach {comp compinfo} [array get qt5pg::qt5_component_lib] {
-        set deppath [string map [list "@QT_REL_DIR@" ${qt_rel_dir}] [lindex ${compinfo} 2]]
+        set deppath [string map [list "@QT_DIR_REL@" ${qt_dir_rel}] [lindex ${compinfo} 2]]
         lipreplace qt5pg::qt5_component_lib(${comp}) 2 2 ${deppath}
     }
 
