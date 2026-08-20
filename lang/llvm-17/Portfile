@@ -26,6 +26,10 @@ platform darwin {
     legacysupport.disable_function_wrap yes
 }
 
+# platform darwin {
+    ## untested!
+    set lldb_standalone_build true
+# }
 categories              lang
 platforms               {darwin >= 10} linux
 license                 NCSA
@@ -35,7 +39,7 @@ set llvm_version        17
 set clang_exe_version   ${llvm_version}
 version                 ${llvm_version}.0.6
 
-name                    llvm-${llvm_version} ; revision 2
+name                    llvm-${llvm_version} ; revision 3
 subport                 clang-${llvm_version} { revision [ expr ${revision} + 5 ] }
 if {${os.platform} eq "darwin"} {
     subport                 mlir-${llvm_version}  { revision 1 }
@@ -43,7 +47,7 @@ if {${os.platform} eq "darwin"} {
     subport                 flang-${llvm_version} { revision 2 }
 } else {
     subport                 mlir-${llvm_version}  { revision 1 ; pre-fetch {return -code error "Not yet supported"; } }
-    subport                 lldb-${llvm_version}  { revision [ expr ${revision} + 1 ] ; pre-fetch {return -code error "Not yet supported"; } }
+    subport                 lldb-${llvm_version}  { revision [ expr ${revision} + 1 ] }
     subport                 flang-${llvm_version} { revision 2 ; pre-fetch {return -code error "Not yet supported"; } }
 }
 # for updated port:legacy-support
@@ -61,11 +65,23 @@ use_xz                  yes
 dist_subdir             llvm
 set suffix              mp-${llvm_version}
 set sub_prefix          ${prefix}/libexec/llvm-${llvm_version}
-if {${subport} ne "lld-${llvm_version}"} {
+# if {${subport} ne "lld-${llvm_version}"} {
+#     worksrcdir          ${worksrcdir}/llvm
+# } elseif {![info exists lld_dependent_build]} {
+#     set llvm_prefix     ${sub_prefix}
+#     set sub_prefix      ${prefix}/libexec/lld-${llvm_version}
+# }
+if {${subport} eq "lld-${llvm_version}"} {
+    if {![info exists lld_dependent_build]} {
+        set llvm_prefix     ${sub_prefix}
+        set sub_prefix      ${prefix}/libexec/lld-${llvm_version}
+    }
+} elseif {${subport} eq "lldb-${llvm_version}"} {
+    if {![info exists lldb_standalone_build]} {
+        worksrcdir      ${worksrcdir}/llvm
+    }
+} else {
     worksrcdir          ${worksrcdir}/llvm
-} elseif {![info exists lld_standalone_build]} {
-    set llvm_prefix     ${sub_prefix}
-    set sub_prefix      ${prefix}/libexec/lld-${llvm_version}
 }
 
 ## try this hack if clang_standalone_build doesn't work:
@@ -90,7 +106,7 @@ compiler.blacklist      *gcc* {clang < 1001} macports-clang-3.*
 compiler.blacklist-append {clang < 1204} {macports-clang-[5-9].0} {macports-clang-1[0-3]}
 compiler.fallback       clang macports-clang-14 macports-clang-15
 
-if {${subport} ne "llvm-${llvm_version}"} {
+if {${subport} ne "llvm-${llvm_version}" && ${subport} ne "llvm-${llvm_version}-dev"} {
     if {${os.platform} eq "darwin"} {
         ## do we need to keep a platform distinction here?!
         variant no_libcxx description {don't build/install with embedded *shared* libc++} {}
@@ -108,17 +124,17 @@ platform linux {
         +desktop +libstdcxx +no_libcxx +nortti
 }
 
-switch ${subport} {
-    "lldb-${llvm_version}" {
-        ui_debug "Building using Makefiles"
-        build.post_args-append -k
-    }
-    default {
+# switch ${subport} {
+#     "lldb-${llvm_version}" {
+#         ui_debug "Building using Makefiles"
+#         build.post_args-append -k
+#     }
+#     default {
         # most builds tested with Ninja
         cmake.generator Ninja
         build.pre_args  -v -k 0
-    }
-}
+#     }
+# }
 
 # NB: cmake.install_prefix must be set before accessing configure.pre_args
 # and changes made to it afterwards go unnoticed!!
@@ -202,8 +218,10 @@ if {${os.platform} eq "darwin"} {
         # lets make certain libc++ isn't picked up gratuitiously
         configure.args-append \
             -DLLVM_ENABLE_LIBCXX=OFF
-        # probably not really necessary:
-        conflicts_build-append libcxx-dev
+        if {${subport} ne "lldb-${llvm_version}"} {
+            # probably not really necessary:
+            conflicts_build-append libcxx-dev
+        }
         default_variants-append +gcc
         if {![variant_isset gcc]} {
             ui_error "+gcc should be set when building with ${configure.cxx}!"
@@ -442,6 +460,15 @@ if {${os.platform} eq "darwin" && ${os.major} <= [option legacysupport.newest_da
     }
 }
 
+PortGroup               devport 1.0
+devport_include_dir     ${sub_prefix}/include
+devport_lib_dir         ${sub_prefix}/lib
+
+mainport_name           llvm-${llvm_version}
+devport_description     devport for port:llvm-${llvm_version}
+devport_long_description {*}${devport_description}
+create_devport          port:llvm-${llvm_version} auto
+
 if {${subport} eq "llvm-${llvm_version}"} {
 
     homepage            https://llvm.org/
@@ -674,7 +701,7 @@ if { ${subport} eq "lld-${llvm_version}" } {
         # avoid need for thread_local_storage
         configure.args-append    -DLLVM_ENABLE_BACKTRACES=OFF
     }
-    if {![info exists lld_standalone_build]} {
+    if {![info exists lld_dependent_build]} {
         worksrcdir ${worksrcdir}/llvm
 
         long_description-append \
@@ -870,7 +897,7 @@ if { ${subport} eq "clang-${llvm_version}" || ${subport} eq "flang-${llvm_versio
                                      -DLLVM_ENABLE_BACKTRACES=OFF
         }
     } else {
-        # probably on Linux!
+        # probably on Linux! NB: this may make it impossible to build flang with clang!
         build.env-append            LD_LIBRARY_PATH=${build.dir}/lib/
         destroot.env-append         LD_LIBRARY_PATH=${build.dir}/lib/
         if {[file exists ${filespath}/find_abi_headers.sh]} {
@@ -903,27 +930,72 @@ if {${subport} eq "lldb-${llvm_version}"} {
 
     depends_lib-append  port:libedit port:libffi port:ncurses port:python${py_ver_nodot} path:lib/libxar.dylib:xar port:zlib
     depends_lib-append  port:llvm-${llvm_version} port:clang-${llvm_version}
-    depends_build-append port:swig-python path:bin/doxygen:doxygen
-    depends_run-append  port:lldb_select
+    depends_build-append bin:swig3.0:swig-python path:bin/doxygen:doxygen
+    #depends_run-append  port:lldb_select
 
     select.group        lldb
     select.file         ${filespath}/mp-${subport}
 
     # error: use of undeclared identifier 'CPU_SUBTYPE_ARM64E
-    platforms {darwin >= 18}
+    platforms {darwin >= 18} linux
+
+    post-extract {
+        file delete -force ${worksrcpath}/flang
+        file delete -force ${worksrcpath}/lld
+        file delete -force ${worksrcpath}/mlir
+    }
 
     configure.args-append \
         -DLLDB_CODESIGN_IDENTITY=- \
         -DLLDB_ENABLE_LUA=OFF
+    # for the standalone build:
+    if {[info exists lldb_standalone_build]} {
+        set worksrcpath ${workpath}/${distname}/lldb
 
-    set worksrcpath ${workpath}/${distname}/lldb
-
-    notes "Please follow the instructions at https://lldb.llvm.org/resources/build.html#code-signing-on-macos and then codesign lldb-server with:\n--------------------\n"
-    notes-append "${sub_prefix}/scripts/lldb/macos-setup-codesign.sh"
-    if {${os.major} >= 13} {
-        notes-append "sudo codesign --force --deep --preserve-metadata=identifier,entitlements,resource-rules,requirements,flags,team-identifier --sign lldb_codesign ${sub_prefix}/bin/lldb-server"
+        configure.args-append \
+            -DLLVM_CONFIG=${sub_prefix}/bin/llvm-config \
+            -DLLVM_DIR=${sub_prefix}/lib/cmake/llvm
     } else {
-        notes-append "sudo codesign --force --deep --preserve-metadata=identifier,entitlements,resource-rules,requirements --sign lldb_codesign ${sub_prefix}/bin/lldb-server"
+        if {${configure.compiler} eq "macports-clang-${llvm_version}"} {
+            ui_warn "port:${subport} cannot be built with the corresponding compiler \
+                        (configure.compiler=${configure.compiler})"
+            pre-configure {
+                ui_error "Please select a different compiler"
+                return -code error "unsupported compiler"
+            }
+        }
+        # the cross-platform args for building port:llvm-XY:
+        configure.args-append \
+                        -DLLVM_ENABLE_PROJECTS="polly"
+        # the cross-platform args for building port:clang-XY:
+        configure.args-append \
+                        -DCLANG_INCLUDE_TESTS=OFF          \
+                        -DCLANG_ENABLE_STATIC_ANALYZER=OFF \
+                        -DCLANG_ENABLE_ARCMT=OFF           \
+                        -DDARWIN_PREFER_PUBLIC_SDK=ON      \
+                        -DLLVM_BUILD_RUNTIME=ON
+        configure.args-append \
+                        -DLLVM_ENABLE_PROJECTS="polly\;llvm\;clang\;lldb"
+        build.args      lldb
+        destroot.pre_args \
+                        tools/lldb/install
+#         platform linux {
+#             build.env-append \
+#                         LD_LIBRARY_PATH=${build.dir}/lib/
+#             destroot.env-append \
+#                         LD_LIBRARY_PATH=${build.dir}/lib/
+#         }
+    }
+
+    platform darwin {
+        ## TODO : use my code-signing PG
+        notes "Please follow the instructions at https://lldb.llvm.org/resources/build.html#code-signing-on-macos and then codesign lldb-server with:\n--------------------\n"
+        notes-append "${sub_prefix}/scripts/lldb/macos-setup-codesign.sh"
+        if {${os.major} >= 13} {
+            notes-append "sudo codesign --force --deep --preserve-metadata=identifier,entitlements,resource-rules,requirements,flags,team-identifier --sign lldb_codesign ${sub_prefix}/bin/lldb-server"
+        } else {
+            notes-append "sudo codesign --force --deep --preserve-metadata=identifier,entitlements,resource-rules,requirements --sign lldb_codesign ${sub_prefix}/bin/lldb-server"
+        }
     }
 }
 
@@ -948,12 +1020,12 @@ variant tests description {Enable building of test code} {
 variant desktop description {Target only common desktop CPUs and GPUs} {
     if {${os.platform} eq "darwin"} {
         if {${os.major} >= 18} {
-            configure.args-append -DLLVM_TARGETS_TO_BUILD="X86\;PowerPC\;AMDGPU\;AArch64"
+            configure.args-append -DLLVM_TARGETS_TO_BUILD="X86\;PowerPC\;AArch64"
         } else {
-            configure.args-append -DLLVM_TARGETS_TO_BUILD="X86\;PowerPC\;AMDGPU"
+            configure.args-append -DLLVM_TARGETS_TO_BUILD="X86\;PowerPC"
         }
     } else {
-        configure.args-append -DLLVM_TARGETS_TO_BUILD="X86\;PowerPC\;AMDGPU\;ARM\;NVPTX"
+        configure.args-append -DLLVM_TARGETS_TO_BUILD="X86\;PowerPC\;ARM\;NVPTX"
     }
 }
 
@@ -962,11 +1034,17 @@ if {${subport} ne "llvm-${llvm_version}" && ![variant_isset desktop]} {
     require_active_variants port:llvm-${llvm_version} {}  desktop
 }
 
-if {${subport} ne "lldb-${llvm_version}"} {
-    variant nortti description "Don't build with internal RTTI support (increases compilation performance somewhat)" {
-        configure.args-delete -DLLVM_ENABLE_RTTI=ON
-        configure.args-append -DLLVM_ENABLE_RTTI=OFF
-    }
+variant nortti description "Don't build with internal RTTI support (increases compilation performance somewhat)" {
+    configure.args-delete -DLLVM_ENABLE_RTTI=ON
+    configure.args-append -DLLVM_ENABLE_RTTI=OFF
+}
+
+if {[variant_isset nortti]} {
+    require_active_variants port:llvm-${llvm_version} nortti
+    require_active_variants port:clang-${llvm_version} nortti
+} else {
+    require_active_variants port:llvm-${llvm_version} {} nortti
+    require_active_variants port:clang-${llvm_version} {} nortti
 }
 
 post-destroot {
@@ -978,7 +1056,10 @@ post-destroot {
         # amdgpu-ach fails with:
         # Failed to 'dlopen' libhsa-runtime64.so
         # Failed to load libamdhip64.so: dlopen(libamdhip64.so, 9): image not found
-        file delete ${destroot}${sub_prefix}/bin/amdgpu-arch
+        if {[file exists ${destroot}${sub_prefix}/bin/amdgpu-arch]} {
+            file delete ${destroot}${sub_prefix}/bin/amdgpu-arch
+            xinstall -m 755 ${filespath}/amdgpuarch.sh ${destroot}${sub_prefix}/bin/amdgpu-arch
+        }
     }
 
     # If only 'flang-new' created, link to 'flang'
@@ -1027,7 +1108,7 @@ post-destroot {
         }
     }
 
-    if {${subport} eq "lldb-${llvm_version}"} {
+    if {${os.platform} eq "darwin" && ${subport} eq "lldb-${llvm_version}"} {
         delete ${destroot}${prefix}/bin/debugserver-${suffix}
 
         set lldb_scripts_srcdir ${worksrcpath}/scripts
@@ -1082,6 +1163,12 @@ post-destroot {
         if {[variant_enabled no_libcxx] && ${os.platform} eq "linux"} {
             xinstall -m 755 -d ${destroot}${sub_prefix}/include/c++
             ln -s /usr/include/c++/v1 ${destroot}${sub_prefix}/include/c++
+        }
+    }
+
+    if {${os.platform} ne "darwin" && [info exists configure.ranlib]} {
+        foreach f [glob -nocomplain ${destroot}${sub_prefix}/lib/lib*.a] {
+            system "${configure.ranlib} ${f}"
         }
     }
 }
