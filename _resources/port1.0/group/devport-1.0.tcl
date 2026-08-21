@@ -74,13 +74,13 @@ namespace eval dev {}
     default dev.archname    {${mainport_name}@${version}-dev.tar.bz2}
     # this could go into the software images directory
     default dev.archdir     {${prefix}/var/devcontent}
-    default dev.cachedir    {/tmp/${devport_name}-cache/${prefix}}
+    default dev.cacheparent {/tmp/${devport_name}-cache}
+    default dev.cachedir    {${dev.cacheparent}${prefix}}
     if {[file exists ${prefix}/bin/bsdtar]} {
         default dev.tar.cmd {${prefix}/bin/bsdtar}
     } else {
         default dev.tar.cmd {tar}
     }
-
 
     set dev::mainport_installed no
 
@@ -491,7 +491,8 @@ proc create_devport {dependency {auto_generate_content {}}} {
 #                 # remove the entire directory because there's really no justification for anything else
 #                 ui_info "${subport} is now installed, removing cached content archive ${dev.cachedir}"
 #                 file delete -force ${dev.cachedir}
-                ui_info "${subport} is now installed, you could delete the cached content archive ${dev.cachedir}"
+                ui_info "${subport} is now installed, you could delete the cached content archive ${dev.cachedir}/${dev.archname} \
+                    for instance simply with `port clean ${mainport_name} devport_cache_delete=1`"
             }
         }
         post-install {
@@ -581,6 +582,15 @@ proc create_devport {dependency {auto_generate_content {}}} {
                 }
                 ui_warning "---->  Couldn't obtain the required information to auto-${action} the devport!"
                 ui_msg     "       Please ${action} port:${devport_name} with the same variants as the active port:${baseport}!"
+            }
+        }
+        post-clean {
+            global devport_cache_delete
+            # check if `port clean ${subport}` was invoked with `devport_cache_delete=yes`
+            if {[tbool devport_cache_delete]} {
+                # remove only our specific cachefile!
+                ui_msg " ---> Cleaning the devport cachefile"
+                file delete -force ${dev.cachedir}/${dev.archname}
             }
         }
     }
