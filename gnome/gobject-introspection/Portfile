@@ -2,8 +2,9 @@
 
 PortSystem          1.0
 if {${subport} ne "system-girepository"} {
-    PortGroup       meson 1.0
     PortGroup       active_variants 1.1
+    PortGroup       legacysupport 1.1
+    PortGroup       meson 1.0
 
     PortGroup       locale_select 1.0
     PortGroup       preserve_runtime_libraries 1.0
@@ -12,13 +13,13 @@ if {${subport} ne "system-girepository"} {
 }
 
 name                gobject-introspection
-conflicts           gobject-introspection-devel
-set my_name         gobject-introspection
+set theName         gobject-introspection
 
-version             1.72.0 ; revision 1
+version             1.86.0 ; revision 1
+epoch               1
 
 categories          gnome
-platforms           darwin
+platforms           darwin linux
 # library under LGPL-2+, tools under GPL-2+
 license             {LGPL GPL-2+}
 maintainers         {mascguy @mascguy} openmaintainer
@@ -26,17 +27,17 @@ maintainers         {mascguy @mascguy} openmaintainer
 description         GObject Introspection
 long_description    Gobject Introspection acts as a bridge between low-level C+GObject code and \
                     a managed runtime (JavaScript, Python, Java, Lua, .NET, Scheme, etc.).
-homepage            https://wiki.gnome.org/Projects/GObjectIntrospection
+homepage            https://gi.readthedocs.io
 
 set branch          [join [lrange [split ${version} .] 0 1] .]
-master_sites        gnome:sources/${my_name}/${branch}/
-dist_subdir         ${my_name}
-distname            ${my_name}-${version}
+master_sites        gnome:sources/${theName}/${branch}/
+dist_subdir         ${theName}
+distname            ${theName}-${version}
 use_xz              yes
 
-checksums           rmd160  9a340f9c422a0ee215f543e49553405276f3d760 \
-                    sha256  02fe8e590861d88f83060dd39cda5ccaa60b2da1d21d0f95499301b186beaabc 
-#                     size    1040936
+checksums           rmd160  eac2231a5cd5fe900b122c845e66650be69334b3 \
+                    sha256  920d1a3fcedeadc32acff95c2e203b319039dd4b4a08dd1a2dfd283d19c0b9ae
+#                     size    1083172
 
 platform linux {
     revision        [expr ${revision} +1]
@@ -71,22 +72,30 @@ platform linux {
 }
 
 
-if {${subport} ne "system-girepository"} {
-    find_new_enough_python3 7
+if {${os.platform} eq "darwin" && ${subport} eq ${name}} {
+    legacysupport.redirect_bins g-ir-compiler g-ir-generate g-ir-inspect g-ir-scanner
 }
+if {${subport} ne "system-girepository"} { ;###
 
-if {${subport} eq "${name}"} {
+# https://trac.macports.org/ticket/71191
+legacysupport.newest_darwin_requires_legacy 0
+
+find_new_enough_python3 8
+
+meson.wrap_mode nodownload
+
 meson.save_configure_cmd "install log"
-depends_build       port:pkgconfig \
+depends_build       path:bin/pkg-config:pkgconfig \
                     port:bison \
                     port:python${py_ver_nodot} \
-                    port:py${py_ver_nodot}-cython
+                    port:flex
 
-depends_lib         path:lib/pkgconfig/cairo.pc:cairo \
+depends_lib-append  path:lib/pkgconfig/cairo.pc:cairo \
                     path:lib/pkgconfig/glib-2.0.pc:glib2 \
                     port:libffi \
                     port:py${py_ver_nodot}-mako \
-                    port:py${py_ver_nodot}-markdown
+                    port:py${py_ver_nodot}-markdown \
+                    port:py${py_ver_nodot}-setuptools
 
 # python is a runtime dependency so doesn't need to be +universal if we are:
 depends_skip_archcheck-append \
@@ -95,8 +104,15 @@ depends_skip_archcheck-append \
                     python${py_ver_nodot} \
                     py${py_ver_nodot}-cython
 
-patchfiles          patch-fix-scanner-in-build-execution.diff \
-                    patch-fix-tools-python.diff
+patchfiles-append   patch-fix-scanner-in-build-execution.diff
+patchfiles-append   patch-fix-tools-python.diff
+patchfiles-append   patch-prefix-giscanner_transformer.py.diff
+patchfiles-append   patch-giscanner-dumper.diff
+
+# Fix library search path on non-/usr/local installs (e.g. Apple Silicon)
+# See: https://github.com/Homebrew/homebrew-core/issues/75020
+#      https://gitlab.gnome.org/GNOME/gobject-introspection/-/merge_requests/273
+patchfiles-append   patch-library-search-path.diff
 
 if {${os.platform} eq "darwin"} {
     depends_build-append \
@@ -104,44 +120,102 @@ if {${os.platform} eq "darwin"} {
     patchfiles-append \
                     patch-fix-rpath-gir-typelib.diff
     post-patch {
-        reinplace "s|libcairo-gobject.2.dylib|${prefix}/lib/libcairo-gobject.2.dylib|g" ${worksrcpath}/gir/meson.build
+        reinplace "s|libcairo-gobject\\.2\\.dylib|${prefix}/lib/libcairo-gobject.2.dylib|g" ${worksrcpath}/gir/meson.build
         reinplace "s|@MP_LIB@|${prefix}/lib/|g" ${worksrcpath}/giscanner/shlibs.py
     }
-    post-destroot {
-        # annoyingly this appears to be necessary:
-        system "install_name_tool -id ${prefix}/lib/libgirepository-1.0.1.dylib ${destroot}${prefix}/lib/libgirepository-1.0.dylib"
+    if {${subport} eq ${name}} {
+        post-destroot {
+            # annoyingly this appears to be necessary:
+            system "install_name_tool -id ${prefix}/lib/libgirepository-1.0.1.dylib ${destroot}${prefix}/lib/libgirepository-1.0.dylib"
+        }
     }
 } else {
     configure.args-append \
-                    --libdir ${prefix}/lib
+                    --libdir=${prefix}/lib
     configure.ldflags-append \
                     -Wl,-rpath,${prefix}/lib
     post-destroot {
-        system -W ${destroot}${prefix}/share/gir-1.0 "patch -Np0 -i ${filespath}/patch-rpath-in-gir-linux.diff"
-        foreach g [glob ${destroot}${prefix}/share/gir-1.0/*.gir] {
-            reinplace -q "s|@PREFIX@|${prefix}|g" ${g}
-            # regenerate the typelib file
-		  set typelib "[file rootname ${g}].typelib"
-            system -W ${destroot}${prefix}/share/gir-1.0 "${build.dir}/tools/g-ir-compiler -o ${typelib} ${g} \
-                --includedir ${build.dir}/gir --includedir ${worksrcpath}/gir"
+        if {${subport} eq "${name}"} {
+            ui_msg " ---> injecting absolute paths in .gir and .typelib files"
+            system -W ${destroot}${meson.install_prefix}/share/gir-1.0 \
+                "patch -p0 -i ${filespath}/patch-rpath-in-gir-linux.diff"
+            foreach g [glob ${destroot}${meson.install_prefix}/share/gir-1.0/*.gir] {
+                reinplace -q "s|@PREFIX@|${meson.install_prefix}|g" ${g}
+                # regenerate the typelib file
+              set typelib "[file rootname ${g}].typelib"
+                system -W ${destroot}${meson.install_prefix}/share/gir-1.0 "${build.dir}/tools/g-ir-compiler -o ${typelib} ${g} \
+                    --includedir ${build.dir}/gir --includedir ${worksrcpath}/gir"
+            }
+            file delete {*}[glob -nocomplain ${destroot}${prefix}/share/gir-1.0/*.gir.orig]
         }
     }
-    notes-append       "Don't forget to install port:system-girepository!"
+    if {${subport} eq "${name}"} {
+        notes-append   "Don't forget to install port:system-girepository!"
+    }
 }
 post-patch {
+    reinplace "s|@MP_LIB@|${prefix}/lib|g" ${worksrcpath}/giscanner/shlibs.py ${worksrcpath}/giscanner/ccompiler.py
     reinplace "s|@MP_PYTHON_CMD@|${configure.python}|g" ${worksrcpath}/tools/meson.build
     reinplace "s|#!/usr/bin/env python3|#!${configure.python}|g" \
-        ${worksrcpath}/misc/update-glib-annotations.py \
         misc/update-gtkdoc-tests.py \
         misc/update-vulkan-gir.py \
         tests/gi-tester
+    reinplace "s|@PREFIX@|${prefix}|g" ${worksrcpath}/giscanner/transformer.py
 }
 
 configure.python    ${prefix}/bin/python${py_ver}
 
 configure.args-append \
                     -Ddoctool=enabled \
-                    -Dpython=${configure.python}
+                    -Dpython=${configure.python} \
+                    -Dextra_library_paths=${prefix}/lib
+
+compiler.c_standard 2011
+
+subport gobject-introspection-bootstrap {
+    description             gobject-introspection bootstrap build to avoid circular dependency with glib2.
+    long_description        {*}${description} \nSee \
+                            https://discourse.gnome.org/t/dealing-with-glib-and-gobject-introspection-circular-dependency/18701
+
+    depends_lib-delete      path:lib/pkgconfig/cairo.pc:cairo
+    depends_lib-replace     path:lib/pkgconfig/glib-2.0.pc:glib2 \
+                            port:glib2-bootstrap
+
+    meson.install_prefix    ${prefix}/libexec/gobject-introspection-bootstrap
+    if {${os.platform} ne "darwin"} {
+        depends_build-append \
+                            port:patchelf
+        configure.args-replace \
+                            --libdir=${prefix}/lib \
+                            --libdir=${meson.install_prefix}/lib
+        configure.ldflags-append \
+                            -Wl,-rpath,${prefix}/libexec/glib2-bootstrap/lib \
+                            -Wl,-rpath,${meson.install_prefix}/lib
+        post-patch {
+            foreach l {gio girepository glib gmodule gobject gthread} {
+                reinplace "s|=${l}-2\\.0|=${l}Bootstrap-2.0|g" ${worksrcpath}/gir/meson.build
+            }
+        }
+    }
+    #configure.pre_args      setup --prefix=${prefix}/libexec/gobject-introspection-bootstrap
+    configure.args-replace  -Dextra_library_paths=${prefix}/lib \
+                            -Dextra_library_paths=${prefix}/lib:${prefix}/libexec/glib2-bootstrap/lib
+    configure.args-append   -Dcairo=disabled \
+                            -Dbuild_introspection_data=false
+    configure.pkg_config_path-prepend   ${prefix}/libexec/glib2-bootstrap/lib/pkgconfig
+    configure.ldflags-append \
+                            -L${prefix}/libexec/glib2-bootstrap/lib
+
+    build.env-append        PKG_CONFIG_PATH=${prefix}/libexec/glib2-bootstrap/lib/pkgconfig
+    if {${os.platform} ne "darwin"} {
+        build.env-append    LD_LIBRARY_PATH=${prefix}/libexec/glib2-bootstrap/lib
+        destroot.env-append LD_LIBRARY_PATH=${prefix}/libexec/glib2-bootstrap/lib
+    }
+    destroot.env-append     PKG_CONFIG_PATH=${prefix}/libexec/glib2-bootstrap/lib/pkgconfig
+}
+if {${subport} eq "${name}"} {
+    notes-append "You can now deactivate or desinstall port:${name}-bootstrap!"
+}
 
 # By default, gir will attempt to link programs using
 # the same compiler used to build Python itself. However,
@@ -154,19 +228,46 @@ configure.args-append \
 # when building this project. Identical logic already exists
 # in the gobject_introspection PortGroup, so dependent projects
 # should not require modification.
+#
+# 10.6.8 Rosetta requires a specific solution: https://github.com/mesonbuild/meson/issues/10351
+
 build.env-append    CC=${configure.cc}
 
-platform darwin 8 {
-    # Tiger does not support RPATHs at this time
-    patchfiles-append patch-girscanner-tiger-no-rpath.diff
-
-    build.env-append DYLD_LIBRARY_PATH=${workpath}/build/girepository
-}
-
 post-destroot {
-    preserve_libraries ${prefix}/lib "libgirepository-1.0.*.dylib libgirepository-1.0.so.*"
+    if {${subport} eq ${name}} {
+        preserve_libraries ${prefix}/lib "libgirepository-1.0.*.dylib libgirepository-1.0.so.*"
+        system "echo true > ${destroot}${prefix}/share/gobject-introspection-1.0/.isBootstrapped"
+    } elseif {${subport} eq "gobject-introspection-bootstrap"} {
+        platform linux {
+            # the rpath needs fixing, or else the bootstrap binaries will pick up
+            # the solibs from the installed main port (and e.g. report its version).
+            set rpath "${meson.install_prefix}/lib:${prefix}/lib"
+            foreach f [glob ${destroot}${meson.install_prefix}/bin/*] {
+                catch { [system "patchelf --set-rpath ${rpath} ${f}"] }
+            }
+            foreach f [glob ${destroot}${meson.install_prefix}/lib/*.so] {
+                catch { [system "patchelf --set-rpath ${rpath} ${f}"] }
+            }
+        }
+    }
 }
+#--------------------------------------------------------------------------------------------------
+# Note that several tests fail, due to @rpath issues with temporary test-only libs.
+# Needs to be reported to upstream.
+#
+#  7/65 test_shlibs.py                          FAIL            2.67s   exit status 1
+#    sanitize_shlib_path('@rpath/libbarapp-1.0.dylib'),
+#    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#    TypeError: sanitize_shlib_path() missing 1 required positional argument: 'libdir'
+#
+#
+# 53/65 gitypelibtest                           FAIL            0.33s   killed by signal 5 SIGTRAP
+#   Failed to load shared library '/opt/local/lib/libregress-1.0.dylib' referenced by the
+#   typelib: dlopen(/opt/local/lib/libregress-1.0.dylib, 9): image not found
+#--------------------------------------------------------------------------------------------------
+test.run            yes
 
 livecheck.type      gnome
-livecheck.name      ${my_name}
-}
+livecheck.name      ${theName}
+
+} ;###

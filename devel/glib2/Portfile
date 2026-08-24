@@ -2,6 +2,7 @@
 
 PortSystem                  1.0
 PortGroup                   clang_dependency 1.0
+PortGroup                   debug 1.0
 PortGroup                   conflicts_build 1.0
 PortGroup                   legacysupport 1.1
 PortGroup                   meson 1.0
@@ -14,14 +15,14 @@ PortGroup                   compress_workdir 1.0
 # Please keep the glib2 and glib2-devel ports as similar as possible.
 
 name                        glib2
-conflicts                   glib2-devel glib2-upstream
-set my_name                 glib
-version                     2.78.4 ; revision 1
+conflicts                   glib2-devel
+set theName                 glib
+version                     2.88.1
 epoch                       1
 
-checksums                   rmd160  7941be85af18c428d86f4a00e52f41542b061aa9 \
-                            sha256  24b8e0672dca120cc32d394bccb85844e732e04fe75d18bb0573b2dbc7548f63
-#                             size    5331892
+checksums                   rmd160  1c113025a78a598f56307b28304346f0e46f1853 \
+                            sha256  51ab804c56f6eab3e5045c774d1290ac5e4c923d4f9a3d8e33123bee45c1840e
+#                             size    5789296
 
 set branch                  [join [lrange [split ${version} .] 0 1] .]
 categories                  devel
@@ -30,7 +31,7 @@ license                     LGPL-2+
 homepage                    https://wiki.gnome.org/Projects/GLib
 platforms                   darwin
 dist_subdir                 glib2
-distname                    ${my_name}-${version}
+distname                    ${theName}-${version}
 use_xz                      yes
 use_parallel_build          yes
 
@@ -41,7 +42,7 @@ long_description            Glib is a library which includes support routines \
                             for C, such as lists, trees, hashes, memory \
                             allocation, and many other things.
 
-master_sites                gnome:sources/${my_name}/${branch}/
+master_sites                gnome:sources/${theName}/${branch}/
 
 # Disable unexpected download of subprojects
 meson.wrap_mode             nodownload
@@ -52,9 +53,7 @@ legacysupport.newest_darwin_requires_legacy 15
 patchfiles-append           libintl.patch
 patchfiles-append           patch-gio-tests-meson.build.diff
 patchfiles-append           patch-glib_gmem.c.diff
-patchfiles-append           patch-glib_gspawn.c.diff
 patchfiles-append           patch-glib_gunicollate.c.diff
-patchfiles-append           patch-gio_xdgmime_xdgmime.c.diff
 patchfiles-append           patch-get-launchd-dbus-session-address.diff
 patchfiles-append           patch-gmodule-gmodule-dl.c.diff
 patchfiles-append           patch-meson_build-meson_options-appinfo.diff
@@ -63,7 +62,9 @@ patchfiles-append           patch-meson_build-atomic-test-older-clang-versions.d
 patchfiles-append           universal.patch
 patchfiles-append           patch-glib2-findfolders-before-SL.diff
 patchfiles-append           patch-declarations.diff
-patchfiles-append           no-distutils.patch
+patchfiles-append           patch-hardcoded-paths.diff
+patchfiles-append           patch-do-not-break-build-deliberately.diff
+patchfiles-append           patch-restore-macos-macros.diff
 
 # RJVB: try to avoid aborting when a gsettings key isn't found
 patchfiles-append           patch-gsettings-tweak.diff
@@ -77,20 +78,25 @@ platform darwin {
         patchfiles-append   patch-gio_gcredentialsprivate.h.diff
         patchfiles-append   patch-gio_gcredentials.c.diff
         patchfiles-append   patch-gio_gsocket.h.diff
-    }
 
-    if {${os.major} == 10 && ${build_arch} eq "ppc"} {
-        patchfiles-replace \
-                            patch-glib2-findfolders-before-SL.diff \
-                            patch-glib2-findfolders-before-Lion.diff
+        # see: https://github.com/macos-powerpc/powerpc-ports/issues/102
+        # needed on 10.5, possibly relevant for 10a190, safe for 10.6.8:
+        patchfiles-append   patch-gio_gipv6tclassmessage.diff
     }
 }
 
 depends_build-append        port:gettext \
-                            bin:xmllint:libxml2 \
                             path:bin/pkg-config:pkgconfig
+if {![file exists ${prefix}/share/gobject-introspection-1.0/.isBootstrapped]} {
+    conflicts_build-append  gobject-introspection
+    depends_build-append    port:gobject-introspection-bootstrap
+    set gir_bootstrapping   yes
+} else {
+    depends_build-append    path:lib/pkgconfig/gobject-introspection-1.0.pc:gobject-introspection
+    set gir_bootstrapping   no
+}
 
-set python_versions         {3.7 3.8 3.9 3.10 3.11 3.12}
+set python_versions         {3.7 3.8 3.9 3.10 3.11 3.12 3.13 3.14}
 
 proc set_python {dv} {
     global py_ver py_ver_nodot
@@ -107,14 +113,14 @@ foreach v ${python_versions} {
     set py_ver_nodot        [string map {. {}} ${v}]
     variant python${py_ver_nodot} description "build using Python${v}" {}
     if {[variant_isset python${py_ver_nodot}]} {
-	   set_python ${v}
-        set variant_set yes
+        set_python          ${v}
+        set variant_set     yes
     }
 }
 if {![tbool variant_set]} {
-    default_variants        +python39
+    default_variants        +python311
     # cannot be avoided?!
-    set_python              3.9
+    set_python              3.11
 }
 
 depends_lib-append          port:gettext-runtime \
@@ -145,15 +151,7 @@ compiler.cxx_standard       2011
 # - Checking if "GCC size_t typedef is long" compiles: NO
 compiler.blacklist-append   {clang < 700}
 
-# https://bugzilla.gnome.org/show_bug.cgi?id=697017
-compiler.blacklist-append   gcc-3.3 *gcc-4.0 *gcc-4.2
-
-if {${os.platform} eq "darwin"} {
-    # -lresolv is needed at least on Tiger PPC.
-    configure.ldflags-append \
-                            -lresolv \
-                            -bind_at_load
-} else {
+if {${os.platform} ne "darwin"} {
     # avoid having to declare a build conflict with ourselves:
     # (glib-compile-resources: symbol lookup error: /opt/local/var/lnxports/build/_opt_local_site-ports_devel_glib2/glib2/work/build/gio/glib-compile-resources: undefined symbol: g_string_free_and_steal)
     configure.ldflags-delete \
@@ -168,7 +166,13 @@ configure.objcflags-append  -Wno-deprecated-declarations
 
 configure.args-append       -Ddefault_library=shared \
                             -Dlibelf=enabled \
-                            -Dwarning_level=0
+                            -Dlibmount=disabled \
+                            -Dwarning_level=0 \
+                            -Dintrospection=enabled \
+                            --localstatedir=${prefix}/var \
+                            -Druntime_dir=${prefix}/run \
+                            -Dgio_module_dir=${prefix}/lib/gio/modules \
+                            -Dbsymbolic_functions=false
 
 variant static description {build static libraries too} {}
 if {[variant_isset static]} {
@@ -176,16 +180,26 @@ if {[variant_isset static]} {
                             -Ddefault_library=both
 }
 
-if {${os.platform} ne "darwin"} {
-#     configure.args-append   -Diconv=external
-} else {
-    configure.args-append   -Dlibmount=disabled
-}
 configure.args-append       -Dgtk_doc=false
+
+if {${os.platform} ne "darwin"} {
+    configure.args-delete  -Dlibmount=disabled \
+                            -Dbsymbolic_functions=false
+}
 
 configure.perl              /usr/bin/perl
 configure.python            ${prefix}/bin/python${py_ver}
 configure.env-append        PERL_PATH=${configure.perl}
+if {[tbool gir_bootstrapping]} {
+    configure.env-append    PATH=${prefix}/libexec/gobject-introspection-bootstrap/bin:$env(PATH)
+    configure.pkg_config_path-prepend \
+                            ${prefix}/libexec/gobject-introspection-bootstrap/lib/pkgconfig \
+                            ${prefix}/libexec/glib2-bootstrap/lib/pkgconfig
+
+    build.env-append        PKG_CONFIG_PATH=${prefix}/libexec/gobject-introspection-bootstrap/lib/pkgconfig:${prefix}/libexec/glib2-bootstrap/lib/pkgconfig \
+                            PATH=${prefix}/libexec/gobject-introspection-bootstrap/bin:$env(PATH)
+}
+build.env-append            CC=${configure.cc}
 
 if {${universal_possible} && [variant_isset universal]} {
     foreach my_arch {ppc ppc64 i386 x86_64 arm64} {
@@ -203,24 +217,21 @@ post-patch {
             gio/xdgmime/xdgmime.c \
             glib/gi18n-lib.h \
             glib/gi18n.h \
-            gio/gdbusaddress.c
+            gio/gdbusaddress.c \
+            girepository/girepository.c \
+            glib/gutils.c
     } else {
         reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}/share:/usr/local|g" \
             gio/xdgmime/xdgmime.c
         reinplace -W ${worksrcpath} "s|@PREFIX@|${prefix}|g" \
             glib/gi18n-lib.h \
-            glib/gi18n.h 
+            glib/gi18n.h \
+            girepository/girepository.c \
+            glib/gutils.c
         reinplace -W ${worksrcpath} "s|@PREFIX@||g" \
             gio/gdbusprivate.c \
             gio/gdbusaddress.c
     }
-
-    reinplace -W ${worksrcpath} "s|data_dirs = \"/usr|data_dirs = \"${prefix}/share:/usr|g" \
-        glib/gutils.c
-
-    reinplace -W ${worksrcpath} "s|path = \"/bin|path = \"${prefix}/bin:/bin|g" \
-        glib/gutils.c \
-        glib/gspawn.c
 
     # Upstream mixes three variations of Python shebangs, so account for all
     fs-traverse f ${worksrcpath} {
@@ -236,14 +247,6 @@ post-patch {
 if {${os.platform} ne "darwin"} {
     build.env-append LD_LIBRARY_PATH=${build.dir}/glib
 }
-
-# this edit does not, for some reason, apply against the build-arm64 config.h
-# and should not be needed if we're using the muniversal PortGroup
-# needs testing on 32 bit systems to be certain of this
-#post-configure {
-#    system "ed - ${build.dir}/config.h < ${filespath}/config.h.ed"
-#}
-
 build.args-append           --verbose
 build.pre_args-append       -k 0
 
@@ -269,46 +272,111 @@ test.target                 --verbose test
 post-destroot {
     delete ${destroot}${prefix}/lib/charset.alias
 
-    set docdir ${prefix}/share/doc/${my_name}
-    xinstall -d ${destroot}${docdir}
-    xinstall -m 0644 -W ${worksrcpath} COPYING NEWS README.md \
-        ${destroot}${docdir}
-    if {![file exists ${destroot}${prefix}/include/gio-unix-2.0/gio/gdesktopappinfo.h]} {
-	   ui_msg "installing missing gdesktopappinfo.h file"
-        xinstall -m 644 ${worksrcpath}/gio/gdesktopappinfo.h ${destroot}${prefix}/include/gio-unix-2.0/gio/gdesktopappinfo.h
+    if {${subport} ne "glib2-bootstrap"} {
+        set docdir ${prefix}/share/doc/${theName}
+        xinstall -d ${destroot}${docdir}
+        xinstall -m 0644 -W ${worksrcpath} COPYING NEWS README.md \
+            ${destroot}${docdir}
+        if {![file exists ${destroot}${prefix}/include/gio-unix-2.0/gio/gdesktopappinfo.h]} {
+            ui_msg "installing missing gdesktopappinfo.h file"
+            xinstall -m 644 ${worksrcpath}/gio/gdesktopappinfo.h ${destroot}${prefix}/include/gio-unix-2.0/gio/gdesktopappinfo.h
+        }
+        platform linux {
+            ui_msg " ---> injecting absolute paths in .gir and .typelib files"
+            set env(LD_LIBRARY_PATH) "${destroot}${prefix}/lib"
+            system "printenv"
+            if {![tbool gir_bootstrapping]} {
+                set incdir ${prefix}/share/gir-1.0
+            } else {
+                set incdir ${prefix}/libexec/gobject-introspection-bootstrap/share/gir-1.0
+            }
+            foreach g [glob ${destroot}${prefix}/share/gir-1.0/*.gir] {
+                reinplace "s|\"libg|\"${prefix}/lib/libg|g" ${g}
+                reinplace -q "s|,libg|,${prefix}/lib/libg|g" ${g}
+                # regenerate the typelib file
+                set typelib "[file rootname ${g}].typelib"
+                system -W ${destroot}${prefix}/share/gir-1.0 \
+                    "../../bin/gi-compile-repository ${g} --output ${typelib} --includedir ${incdir}"
+            }
+        }
+    } else {
+        platform linux {
+#             # the rpath needs fixing, or else the bootstrap binaries will pick up
+#             # the solibs from the installed main port (and e.g. report its version).
+#             set rpath "${meson.install_prefix}/lib:${prefix}/lib"
+#             foreach f [glob ${destroot}${meson.install_prefix}/lib/*.so] {
+#                 catch { [system "patchelf --set-rpath ${rpath} ${f}"] }
+#             }
+#             foreach f [glob ${destroot}${meson.install_prefix}/bin/*] {
+#                 catch { [system "patchelf --set-rpath ${rpath} ${f}"] }
+#             }
+            # the rpath needs fixing, or else the bootstrap binaries will pick up
+            # the solibs from the installed main port (and e.g. report its version).
+            # problem is, any dependent of us will face the same problem, including
+            # during gir builds which are *(Q&$@# hard to control.
+            # So, rather than fixing the rpaths, we install the libraries with suffixes
+            # and modify all library requirements in our own binaries
+            # plus the link info in the .pc files.
+            ui_msg " ---> appending a suffix to our libraries"
+            set lpath ${destroot}${meson.install_prefix}/lib
+            set soversion 0.8800.1
+            foreach l {gio girepository glib gmodule gobject gthread} {
+                foreach f [glob ${lpath}/lib${l}-2.0.so] {
+                    file delete ${f}
+                    ln -s lib${l}Bootstrap-2.0.so.0  ${lpath}/lib${l}Bootstrap-2.0.so
+                    file delete ${f}.0
+                    ln -s lib${l}Bootstrap-2.0.so.${soversion}  ${lpath}/lib${l}Bootstrap-2.0.so.0
+                    file rename ${f}.${soversion} ${lpath}/lib${l}Bootstrap-2.0.so.${soversion}
+                }
+                foreach f [glob ${lpath}/pkgconfig/*.pc] {
+                    reinplace -q "s|l${l}|l${l}Bootstrap|g" ${f}
+                }
+                foreach f [glob ${destroot}${meson.install_prefix}/bin/*] {
+                    catch { system "patchelf --replace-needed lib${l}-2.0.so.0 lib${l}Bootstrap-2.0.so.0 ${f}" }
+                }
+            }
+            foreach l {gio girepository glib gmodule gobject gthread} {
+                ln -s ${l}-2.0.pc ${lpath}/pkgconfig/${l}Bootstrap-2.0.pc
+            }
+        }
     }
 }
 
-post-activate {
-    if {[file exists /usr/share/glib-2.0/schemas]} {
-        if {[catch {system "${prefix}/bin/glib-compile-schemas /usr/share/glib-2.0/schemas"} result]} {
-            ui_warning "glib-compile-schemas failed on /usr/share/glib-2.0/schemas: ${result}"
+if {${subport} ne "glib2-bootstrap"} {
+    post-activate {
+        if {[file exists /usr/share/glib-2.0/schemas]} {
+            if {[catch {system "${prefix}/bin/glib-compile-schemas /usr/share/glib-2.0/schemas"} result]} {
+                ui_warning "glib-compile-schemas failed on /usr/share/glib-2.0/schemas: ${result}"
+            }
+        }
+        if {[catch {system "${prefix}/bin/glib-compile-schemas ${prefix}/share/glib-2.0/schemas"} result]} {
+            ui_warning "glib-compile-schemas failed on ${prefix}/share/glib-2.0/schemas: ${result}"
         }
     }
-    if {[catch {system "${prefix}/bin/glib-compile-schemas ${prefix}/share/glib-2.0/schemas"} result]} {
-        ui_warning "glib-compile-schemas failed on ${prefix}/share/glib-2.0/schemas: ${result}"
+    if {[file exists ${prefix}/libexec/gobject-introspection-bootstrap/lib/pkgconfig/gobject-introspection-1.0.pc]} {
+        notes-append "You can now deactivate or uninstall port:glib2-bootstrap!"
     }
+    if {[tbool gir_bootstrapping]} {
+        notes-append "And you WILL need to install port:gobject-introspection >= 1.86.0!!"
+    }
+}
+
+if {${os.platform} ne "linux"} {
+    configure.args-append   -Ddtrace=disabled
 }
 
 platform darwin {
-    configure.args-append   -Ddtrace=false
-    
     # some tests fail to build on 10.6.8 Rosetta: https://trac.macports.org/ticket/65517
-    if {${os.major} == 10 && ${build_arch} eq "ppc"} {
+    # for version 2.88.0 there are also failures on 10.6 and x86_64:
+    # ../glib-2.88.0/glib/tests/testing.c:470:39: error: use of undeclared identifier 'F_DUPFD_CLOEXEC'
+    # so just disable the tests on 10.6 and below
+    if {${os.major} <= 10} {
         configure.args-append   -Dtests=false
     }
-}
 
-platform darwin 8 {
-    # https://trac.macports.org/ticket/67307
-    configure.cflags-append -D__DARWIN_NON_CANCELABLE=1
-
-    # the @loader_path linkages in the test binaries can't find the dylibs
-    configure.args-append   -Dtests=false
-
-    # meson on Tiger cannot use rpaths, so we workaround with this to find dylibs
-    foreach my_phase {build test destroot} {
-        ${my_phase}.env-append  "DYLD_LIBRARY_PATH=${build_dir}/glib:${build_dir}/gobject:${build_dir}/gio:${build_dir}/gthread:${build_dir}/gmodule"
+    if {${os.major} == 9 && ${configure.build_arch} in [list ppc64 x86_64]} {
+        # https://trac.macports.org/ticket/67307
+        configure.cflags-append -D__DARWIN_NON_CANCELABLE=1
     }
 }
 
@@ -346,6 +414,27 @@ if {![variant_isset docs]} {
                             -Dgtk_doc=true
 }
 
+subport glib2-bootstrap {
+    description             Glib2 build with introspection disabled, used to build gobject-introspection \
+                            and avoid circular dependency.
+    long_description        {*}${description} \nSee \
+                            https://discourse.gnome.org/t/dealing-with-glib-and-gobject-introspection-circular-dependency/18701
+
+    depends_build-delete    port:gobject-introspection-bootstrap \
+                            path:lib/pkgconfig/gobject-introspection-1.0.pc:gobject-introspection
+
+    meson.install_prefix    ${prefix}/libexec/glib2-bootstrap
+    if {${os.platform} ne "darwin"} {
+        depends_build-append \
+                            port:patchelf
+        configure.ldflags-append \
+                            -Wl,-rpath,${meson.install_prefix}/lib
+    }
+    #configure.pre_args      setup --prefix=${prefix}/libexec/glib2-bootstrap
+    configure.args-append   -Ddocumentation=false -Dman-pages=disabled -Dnls=disabled
+    configure.args-replace  -Dintrospection=enabled -Dintrospection=disabled
+}
+
 variant install_tests description {Install the built test binaries} {}
 if {[variant_isset install_tests]} {
     configure.args-append  -Dinstalled_tests=true
@@ -353,41 +442,26 @@ if {[variant_isset install_tests]} {
     configure.args-append  -Dinstalled_tests=false
 }
 
-proc port_conflict_check {p_port_name p_conflict_ver_min p_conflict_ver_max} {
-    ui_debug "port_conflict_check: Checking for conflict against port: ${p_port_name}"
+livecheck.type              gnome
+livecheck.name              ${theName}
 
-    if { ![catch {set port_conflict_ver_info [lindex [registry_active ${p_port_name}] 0]}] } {
-        set port_conflict_ver [lindex ${port_conflict_ver_info} 1]_[lindex ${port_conflict_ver_info} 2]
-        ui_debug "port_conflict_check: ${p_port_name} active version: ${port_conflict_ver}"
+if {${subport} eq "glib2"} {
+    pre-activate {
+        # the new glib2 port now installs files that were previously in gobject-introspection({,-devel} ports
+        if {![catch {lindex [registry_active gobject-introspection] 0} installed]} {
+            set _version [lindex $installed 1]
+            if {[vercmp $_version 1.86.0] < 0} {
+                ui_warn "Deactivating port:gobject-introspection"
+                registry_deactivate_composite gobject-introspection "" [list ports_nodepcheck 1]
+            }
+        }
 
-        if { [vercmp ${port_conflict_ver} ${p_conflict_ver_min}] >= 0
-            && [vercmp ${port_conflict_ver} ${p_conflict_ver_max}] <= 0 } {
-
-            ui_debug "port_conflict_check: ${p_port_name} conflicts; declare build conflict"
-            conflicts_build-append \
-                ${p_port_name}
-        } else {
-            ui_debug "port_conflict_check: ${p_port_name} does not conflict"
+        if {![catch {lindex [registry_active gobject-introspection-devel] 0} installed]} {
+            set _version [lindex $installed 1]
+            if {[vercmp $_version 1.86.0] < 0} {
+                ui_warn "Deactivating port:gobject-introspection-devel"
+                registry_deactivate_composite gobject-introspection-devel "" [list ports_nodepcheck 1]
+            }
         }
     }
 }
-
-# If the user happens to have `gobject-introspection` 1.80.x installed, force them to
-# deactivate it first. Otherwise, the newer version can cause other unexpected failures
-# if still active on downgrade.
-# Logic added 2024-04-17; keep in place for at least 12 months.
-proc gobj_conflict_check {} {
-    set gobj_port_name "gobject-introspection"
-    set gobj_port_names [list ${gobj_port_name} "${gobj_port_name}-devel"]
-    set gobj_ver_min "1.80.1_0"
-    set gobj_ver_max "1.80.1_0"
-
-    foreach p ${gobj_port_names} {
-        port_conflict_check ${p} ${gobj_ver_min} ${gobj_ver_max}
-    }
-}
-
-gobj_conflict_check
-
-livecheck.type              gnome
-livecheck.name              ${my_name}
