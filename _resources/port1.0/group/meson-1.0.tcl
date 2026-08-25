@@ -219,24 +219,7 @@ pre-configure {
 }
 
 proc meson.save_configure_cmd {{save_log_too ""}} {
-    namespace upvar ::meson configure_cmd_saved statevar
-    global merger_combine merger_arch_flag
-    if {[tbool statevar]} {
-        ui_debug "meson.save_configure_cmd already called"
-        return;
-    }
-    set statevar yes
-    # no-one should call configure.save_configure_cmd either!
-    set configure::statevar yes
-
-    if {![info exists configure.args]} {
-        configure.args-append
-    }
-    configure::initialise_save_logic "${save_log_too}"
-    post-configure {
-        configure::write_configure_cmd "${workpath}/.macports.${subport}.configure.cmd"
-        configure::try_copy_configure_log "${workpath}/.macports.${subport}.configure.log"
-    }
+    configure.save_configure_cmd "${save_log_too}"
 }
 
 variant debug description "Enable debug binaries" {
