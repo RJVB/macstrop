@@ -1138,8 +1138,8 @@ proc portdestroot::destroot_finish {args} {
     muniversal::merge  ${workpath}/destroot-arm64    ${workpath}/destroot-ppc-intel ${workpath}/destroot           ""  arm64 ppcintel ${muniversal.dont_diff}  ${muniversal.combine} ${muniversal.equivalent} ${diffFormatArmElse}
 
     # RJVB : now see if there's a devport for which we have to do the same thing!
-    if {[namespace exists dev]} {
-        global dev::workdir_uuid devport_name
+    global dev::workdir_uuid devport_name
+    if {[info exists devport_name]} {
         if {[info exists dev::workdir_uuid]} {
             set dwp [get_devport_workpath]
             ui_msg "$UI_PREFIX [format [msgcat::mc "  Merging %1\$s destroots"] ${devport_name}]"
@@ -1151,6 +1151,8 @@ proc portdestroot::destroot_finish {args} {
                 powerpc x86    ${muniversal.dont_diff}  ${muniversal.combine} ${muniversal.equivalent} ${diffFormatProc}
             muniversal::merge  ${dwp}/destroot-arm64    ${dwp}/destroot-ppc-intel ${dwp}/destroot           ""  \
                 arm64 ppcintel ${muniversal.dont_diff}  ${muniversal.combine} ${muniversal.equivalent} ${diffFormatArmElse}
+        } else {
+            ui_warn "devport PG has been included but dev::workdir_uuid is not set"
         }
     }
 
