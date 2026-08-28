@@ -967,7 +967,11 @@ foreach phase {patch configure build destroot test} {
 
                     if { \"${phase}\" eq \"test\" && !\[option muniversal.can_run.\${arch}\] } { continue }
 
-                    ui_msg \"\$UI_PREFIX \[format \[msgcat::mc \"  Running ${part} ${phase} %1\\\$s for architecture %2\\\$s\"\] \${subport} \${arch}\]\"
+                    if {\"${part}\" ne \"procedure\"} {
+                        ui_debug \"\[format \[msgcat::mc \"  Running ${part}-${phase} %1\\\$s for architecture %2\\\$s\"\] \${subport} \${arch}\]\"
+                    } else {
+                        ui_msg \"\$UI_PREFIX \[format \[msgcat::mc \"  ${phase}ing %1\\\$s for architecture %2\\\$s\"\] \${subport} \${arch}\]\"
+                    }
 
                     muniversal.build_arch \${arch}
                     set muniversal.current_arch \${arch}
@@ -1155,7 +1159,9 @@ proc portdestroot::destroot_finish {args} {
 pre-destroot {
     ui_debug "muniversal-1.1 PG overloaded the destroot_start & destroot_finishprocedures!"
 }
+## end variant universal
 }
+## end proc universal_setup
 }
 
 ##########################################################################################
