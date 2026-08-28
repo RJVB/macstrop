@@ -323,7 +323,7 @@ if {[variant_isset ${LTO.LTO_variant}] && ![info exists building_qt5]} {
 if {[string match *clang* ${configure.compiler}]} {
     if {${os.platform} ne "darwin" || [string match macports-clang* ${configure.compiler}]} {
         # only MacPorts provides llvm-ar and family on Mac
-        if {![variant_isset universal] || [info exists universal_archs_supported]} {
+        if {![variant_isset universal] || [info exists universal_archs_supported] || [info exists muniversal.architectures]} {
             default configure.ar "[string map {"clang" "llvm-ar"} ${configure.cc}]"
             default configure.nm "[string map {"clang" "llvm-nm"} ${configure.cc}]"
             if {[tbool LTO_needs_ranlib]} {
