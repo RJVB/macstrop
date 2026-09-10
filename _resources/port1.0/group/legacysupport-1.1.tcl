@@ -158,7 +158,7 @@ proc legacysupport::add_legacysupport {} {
     global ls_cache_incpath ls_cache_ldflags ls_cache_cppflags ls_cache_cxxflags
     global configure.cxx_stdlib
 
-    if { ${os.platform} eq "darwin" } {
+    if { ${os.platform} eq "darwin" && ${os.major} <= [option legacysupport.newest_darwin_requires_legacy]} {
 
         # depend on the support library or devel version if installed
         legacysupport::add_once [legacysupport::get_depends_type] append [legacysupport::get_dependency]
@@ -173,12 +173,12 @@ proc legacysupport::add_legacysupport {} {
             }
         }
 
-        if { ${os.major} <= [option legacysupport.newest_darwin_requires_legacy] } {
+        #if { ${os.major} <= [option legacysupport.newest_darwin_requires_legacy] } {
             # Add flags for legacy-support library
             set ls_cache_incpath  "${prefix}/include/LegacySupport"
             set ls_cache_ldflags  "[join [legacysupport::get_library_link_flags]]"
             set ls_cache_cppflags "[legacysupport::get_cpp_flags]"
-        }
+        #}
 
         # Flags for using MP libcxx
         if { [option legacysupport.use_mp_libcxx] && ${configure.cxx_stdlib} eq "libc++" } {
