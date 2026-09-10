@@ -10,6 +10,7 @@ set LTO.configure_option {-config ltcg}
 PortGroup                       qt5 1.0
 PortGroup                       active_variants 1.1
 PortGroup                       legacysupport 1.1
+legacysupport.newest_darwin_requires_legacy 0
 
 options qt5.add_spec qt5.debug_variant qt5.top_level qt5.cxxflags qt5.ldflags qt5.frameworkpaths qt5.spec_cmd
 default qt5.add_spec yes
