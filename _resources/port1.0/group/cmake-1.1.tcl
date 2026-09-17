@@ -536,6 +536,20 @@ pre-configure {
     if {${cmake::distcc_cache}} {
         ui_info "        (using distcc)"
     }
+
+    ## rewrite cmake.source_dir as a relative path to cmake.build_dir (aka configure.dir) and
+    ## use that in configure.post_args if the relative path is shorter than the absolute one.
+    set relSourceDir [cmake::makeRelativeTo ${configure.dir} ${cmake.source_dir}]
+    if {[string length ${relSourceDir}] < [string length ${cmake.source_dir}]} {
+        configure.post_args-replace \
+                        ${cmake.source_dir} \
+                        ${relSourceDir}
+    }
+}
+
+proc cmake::makeRelativeTo {refPath targetPath} {
+    #package require fileutil
+    return [file join ".." [::fileutil::stripPath [file dirname ${refPath}] ${targetPath}]]
 }
 
 post-configure {

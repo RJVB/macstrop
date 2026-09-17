@@ -16,7 +16,7 @@ default meson.wrap_mode     {default}
 
 # meson builds need to be done out-of-source
 default build_dir           {${workpath}/build}
-default source_dir          {${worksrcpath}}
+default source_dir          {${configure.dir}}
 
 options meson.build_type \
         meson.install_prefix
@@ -108,25 +108,42 @@ pre-destroot {
 
 namespace eval meson { }
 
+proc meson::makeRelativeTo {refPath targetPath} {
+    #package require fileutil
+    return [file join ".." [::fileutil::stripPath [file dirname ${refPath}] ${targetPath}]]
+}
+
 proc meson::get_post_args {} {
     global configure.dir build_dir build.dir muniversal.current_arch muniversal.build_arch
-    set args [list ${configure.dir}]
+
+    # meson is called inside ${configure.dir}, so instead of that full path we can just say ".":
+    set args [list "."]
     if {[info exists muniversal.build_arch]} {
         # muniversal 1.1 PG is being used
+        set theBuildDir ${build.dir}
         lappend args ${build.dir}
         if {[option muniversal.is_cross.[option muniversal.build_arch]]} {
             lappend args --cross-file=[option muniversal.build_arch]-darwin
         }
     } elseif {[info exists muniversal.current_arch]} {
         # muniversal 1.0 PG is being used
-        lappend args ${build_dir}-${muniversal.current_arch} --cross-file=${muniversal.current_arch}-darwin
+        set theBuildDir ${build_dir}-${muniversal.current_arch}
+        lappend args ${theBuildDir} --cross-file=${muniversal.current_arch}-darwin
     } else {
+        set theBuildDir ${build_dir}
         lappend args ${build_dir}
     }
     if {[option meson.native.binaries] ne {}} {
         lappend args --native-file=[option meson.native_file]
     }
     lappend args --wrap-mode=[option meson.wrap_mode]
+
+    ## now rewrite theBuildDir as a relative path to configure.dir and
+    ## use that instead if the relative path is shorter than the absolute one.
+    set relBuildDir [meson::makeRelativeTo ${configure.dir} ${theBuildDir}]
+    if {[string length ${relBuildDir}] < [string length ${theBuildDir}]} {
+        set args [lreplace ${args} 1 1 ${relBuildDir}]
+    }
     return ${args}
 }
 
