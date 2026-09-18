@@ -118,7 +118,8 @@ proc port_workdir {portname} {
     # output the path to the port's work directory
     set workpath [macports::getportworkpath_from_portdir $portDir $portname]
     set statefile [glob -nocomplain ${workpath}/.*.state]
-    if {[file exists ${statefile}]} {
+    set statefileCnt [llength ${statefile}]
+    if {${statefileCnt} == 1 && [file exists ${statefile}]} {
         # $statefile will be of the form $prefix/path/to..$mainport/${something}/work/.macports.${subport}.state
         # where $subport is the official portName as defined in the portFile and ${something} depends
         # on whether or not use_shorter_workpath is set (!).
@@ -127,6 +128,9 @@ proc port_workdir {portname} {
         return $workpath
     } else {
         set bestGuessPortName ${portname}
+        if {${statefileCnt} > 1} {
+            return ${workpath}
+        }
         return ""
     }
 }
