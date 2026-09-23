@@ -286,8 +286,9 @@ if {${kf5::includecounter} == 0} {
                             ${prefix}/lib/${build_arch}-linux-gnu/pkgconfig
         cmake.install_rpath-prepend \
                             ${prefix}/lib/${build_arch}-linux-gnu
-        configure.args-append \
-                            -DCMAKE_PREFIX_PATH=${prefix}
+## can't remember why I thought this was required; now breaks builds with clang-17 for some reason
+#         configure.args-append \
+#                             -DCMAKE_PREFIX_PATH=${prefix}
     }
     if {${os.platform} ne "darwin"} {
         if {[string match *clang* ${configure.cxx}]} {

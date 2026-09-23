@@ -85,7 +85,14 @@ default cmake.install_prefix        {${prefix}}
 default cmake.install_rpath         {${prefix}/lib}
 
 # standard place to install extra CMake modules
-default cmake_share_module_dir      {${prefix}/share/cmake/Modules}
+if {${os.platform} eq "linux"} {
+    # 260923 : sometimes it can be necessary to add the multiarch cmake dir explicitly on Linux?!
+    # (if ever this turns out to break non-KF5 builds (which are broken with clang17 WITHOUT),
+    # add the path to cmake.module_path in the KF5 PG!)
+    default cmake_share_module_dir  {${prefix}/share/cmake/Modules;${prefix}/lib/x86_64-linux-gnu/cmake}
+} else {
+    default cmake_share_module_dir  {${prefix}/share/cmake/Modules}
+}
 # extra locations to search for modules can be specified with
 # cmake.module_path; they come after ${cmake_share_module_dir}
 default cmake.module_path           {}
