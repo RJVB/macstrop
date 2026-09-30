@@ -1,0 +1,378 @@
+diff --git a/libmscore/edit.cpp b/libmscore/edit.cpp
+index 145e0545..ed7fd568 100644
+--- a/libmscore/edit.cpp
++++ b/libmscore/edit.cpp
+@@ -1248,13 +1248,14 @@ std::vector<Note*> Score::cmdTieNoteList(const Selection& selection, bool noteEn
+ //   cmdAddTie
+ //---------------------------------------------------------
+ 
+-void Score::cmdAddTie(bool addToChord)
++int Score::cmdAddTie(bool addToChord)
+       {
+       const std::vector<Note*> noteList = cmdTieNoteList(selection(), noteEntryMode());
++      bool cannotTie = false;
+ 
+       if (noteList.empty()) {
+             qDebug("no notes selected");
+-            return;
++            return -1;
+             }
+ 
+       startCmd();
+@@ -1350,27 +1351,32 @@ void Score::cmdAddTie(bool addToChord)
+                         tie->setTicks(note2->chord()->segment()->tick() - note->chord()->segment()->tick());
+                         undoAddElement(tie);
+                         }
++                  else {
++                        cannotTie = true;
++                        }
+                   }
+             }
+       if (lastAddedChord)
+             nextInputPos(lastAddedChord, false);
+       endCmd();
++      return cannotTie? 1 : 0;
+       }
+ 
+ //---------------------------------------------------------
+ //   cmdRemoveTie
+ //---------------------------------------------------------
+ 
+-void Score::cmdToggleTie()
++int Score::cmdToggleTie()
+       {
+       const std::vector<Note*> noteList = cmdTieNoteList(selection(), noteEntryMode());
++      int ret = 0;
+ 
+       if (noteList.empty()) {
+             qDebug("no notes selected");
+-            return;
++            return -1;
+             }
+ 
+-      bool canAddTies = false;
++      bool canAddTies = false, hasTies = false;
+       const size_t notes = noteList.size();
+       std::vector<Note*> tieNoteList(notes);
+ 
+@@ -1378,6 +1384,7 @@ void Score::cmdToggleTie()
+             Note* n = noteList[i];
+             if (n->tieFor()) {
+                   tieNoteList[i] = nullptr;
++                  hasTies = true;
+                   }
+             else {
+                   Note* tieNote = searchTieNote(n);
+@@ -1405,15 +1412,20 @@ void Score::cmdToggleTie()
+                         }
+                   }
+             }
+-      else {
++      else if (hasTies) {
+             for (Note* n : noteList) {
+                   Tie* tie = n->tieFor();
+                   if (tie)
+                         undoRemoveElement(tie);
+                   }
+             }
++      else {
++            // RJVB: here we could evoke the slur toggle equivalent, but we can only return a specific return code
++            ret = 1;
++            }
+ 
+       endCmd();
++      return ret;
+       }
+ 
+ 
+diff --git a/libmscore/score.h b/libmscore/score.h
+index e410332a..4d46361f 100644
+--- a/libmscore/score.h
++++ b/libmscore/score.h
+@@ -622,8 +622,8 @@ class Score : public QObject, public ScoreElement {
+       void resetAllPositions();
+ 
+       void cmdRemovePart(Part*);
+-      void cmdAddTie(bool addToChord = false);
+-      void cmdToggleTie();
++      int cmdAddTie (bool addToChord = false);
++      int cmdToggleTie();
+       static std::vector<Note*> cmdTieNoteList(const Selection& selection, bool noteEntryMode);
+       void cmdAddOttava(OttavaType);
+       void cmdAddStretch(qreal);
+diff --git a/mscore/scoreview.cpp b/mscore/scoreview.cpp
+index 0990539b..09f3fb6c 100644
+--- a/mscore/scoreview.cpp
++++ b/mscore/scoreview.cpp
+@@ -2607,12 +2607,20 @@ void ScoreView::cmd(const char* s)
+                         }
+                   }},
+             {{"tie"}, [](ScoreView* cv, const QByteArray&) {
++                  bool isHacked = !qEnvironmentVariableIsSet("MSCORE_USE_LEGACY_TIES");
+                   if (cv->noteEntryMode()) {
+-                        cv->score()->cmdAddTie();
++                        if (cv->score()->cmdAddTie() == 1 && isHacked) {
++                            qWarning() << "adding tie not possible; adding a slur instead";
++                            cv->cmdAddSlur();
++                            }
+                         cv->moveCursor();
+                         }
+                   else
+-                        cv->score()->cmdToggleTie();
++                        if (cv->score()->cmdToggleTie() == 1  && isHacked) {
++                            // add slur instead
++                            qWarning() << "toggling tie not possible; adding a slur instead";
++                            cv->cmdAddSlur();
++                            }
+                   }},
+             {{"chord-tie"}, [](ScoreView* cv, const QByteArray&) {
+                   cv->score()->cmdAddTie(true);
+diff --git a/libmscore/utils.cpp b/libmscore/utils.cpp
+index d4ed3364..325f066d 100644
+--- a/libmscore/utils.cpp
++++ b/libmscore/utils.cpp
+@@ -29,6 +29,9 @@
+ #include "tuplet.h"
+ #include "sym.h"
+ 
++#include <global/log.h>
++#include "repeatlist.h"
++
+ namespace Ms {
+ 
+ //---------------------------------------------------------
+@@ -764,6 +767,86 @@ int diatonicUpDown(Key k, int pitch, int steps)
+       return pitch;
+       }
+ 
++bool segmentsAreAdjacent(const Segment* firstSeg, const Segment* secondSeg)
++{
++    if (!firstSeg || !secondSeg) {
++        return false;
++    }
++    const MasterScore* master = firstSeg->masterScore();
++
++    const Measure* firstMeasure = firstSeg->measure();
++    const Measure* secondMeasure = secondSeg->measure();
++
++    if (firstMeasure == secondMeasure) {
++        return true;
++    }
++
++    const Measure* firstMasterMeasure = master->tick2measure(firstMeasure->tick());
++    const Measure* secondMasterMeasure = master->tick2measure(secondMeasure->tick());
++
++//     if (firstMasterMeasure) {
++//         firstMasterMeasure = firstMasterMeasure->coveringMMRestOrThis();
++//     }
++//     if (secondMasterMeasure) {
++//         secondMasterMeasure = secondMasterMeasure->coveringMMRestOrThis();
++//     }
++
++    IF_ASSERT_FAILED(firstMasterMeasure && secondMasterMeasure) {
++        return false;
++    }
++
++    const Score* score = firstSeg->score();
++    const RepeatList& repeatList = score->repeatList();
++
++    std::vector<const Measure*> measures;
++
++    bool firstMeasureSegmentFound = false;
++    bool secondMeasureSegmentFound = false;
++
++    for (auto it = repeatList.begin(); it != repeatList.end(); it++) {
++        const RepeatSegment* rs = *it;
++        const auto nextSegIt = std::next(it);
++
++        // Check if measures are in the same repeat segment
++        bool containsFirstMeasure = rs->containsMeasure(firstMasterMeasure);
++        bool containsSecondMeasure = rs->containsMeasure(secondMasterMeasure);
++        firstMeasureSegmentFound |= containsFirstMeasure;
++        secondMeasureSegmentFound |= containsSecondMeasure;
++
++        if (containsFirstMeasure && containsSecondMeasure) {
++            return true;
++        }
++
++        // Continue to build list of measures at the start of following repeat segments
++        if (rs->lastMeasure() != firstMasterMeasure || nextSegIt == repeatList.end()) {
++            continue;
++        }
++
++        // Get next segment
++        const RepeatSegment* nextSeg = *nextSegIt;
++        const Measure* nextSegFirstMeasure = nextSeg->firstMeasure();
++        if (!nextSegFirstMeasure) {
++            continue;
++        }
++
++        measures.push_back(nextSegFirstMeasure);
++    }
++
++    // Check if second segment is in a following measure in the repeat structure
++    for (const Measure* m : measures) {
++        if (m == secondMasterMeasure) {
++            return true;
++        }
++    }
++
++    if (!firstMeasureSegmentFound && !secondMeasureSegmentFound) {
++        // The measures are outside of the (invalid) repeat structure
++        return firstMasterMeasure->nextMeasure() == secondMasterMeasure;
++    }
++
++    return false;
++}
++
+ //---------------------------------------------------------
+ //   searchTieNote
+ //    search Note to tie to "note"
+@@ -777,9 +860,20 @@ Note* searchTieNote(Note* note)
+       Note* note2  = 0;
+       Chord* chord = note->chord();
+       Segment* seg = chord->segment();
+-      Part* part   = chord->part();
+-      int strack   = part->staves()->front()->idx() * VOICES;
+-      int etrack   = strack + part->staves()->size() * VOICES;
++      bool isHacked = !qEnvironmentVariableIsSet("MSCORE_USE_LEGACY_TIES");
++
++      const Segment* nextSegment = seg->next1(SegmentType::ChordRest);
++      while (nextSegment && nextSegment->tick() < (chord->tick() + chord->actualTicks())) {
++          nextSegment = nextSegment->next1(SegmentType::ChordRest);
++      }
++      if (isHacked) {
++          if (!nextSegment) {
++              return nullptr;
++          }
++          if (/*disableOverRepeats && */ !segmentsAreAdjacent(seg, nextSegment)) {
++              return nullptr;
++          }
++      }
+ 
+       if (chord->isGraceBefore()) {
+             chord = toChord(chord->parent());
+@@ -827,46 +921,85 @@ Note* searchTieNote(Note* note)
+       Fraction endTick = chord->tick() + chord->actualTicks() - Fraction(1, 4 * 480);
+ 
+       int idx1 = note->unisonIndex();
+-      while ((seg = seg->next1(SegmentType::ChordRest))) {
+-            // skip ahead to end of current note duration as calculated above
+-            // but just in case, stop if we find element in current track
+-            if (seg->tick() < endTick  && !seg->element(chord->track()))
+-                  continue;
+-            for (int track = strack; track < etrack; ++track) {
+-                  Element* e = seg->element(track);
+-                  if (e == 0 || !e->isChord())
+-                        continue;
+-                  Chord* c = toChord(e);
+-                  const int staffIdx = c->staffIdx() + c->staffMove();
+-                  if (staffIdx != chord->staffIdx() + chord->staffMove()) {
+-                        // this check is needed as we are iterating over all staves to capture cross-staff chords
+-                        continue;
+-                        }
+-                  // if there are grace notes before, try to tie to first one
+-                  QVector<Chord*> gnb = c->graceNotesBefore();
+-                  if (!gnb.empty()) {
+-                        Chord* gc = gnb[0];
+-                        Note* gn2 = gc->findNote(note->pitch());
+-                        if (gn2)
+-                              return gn2;
+-                        }
+-                  int idx2 = 0;
+-                  for (Note* n : c->notes()) {
+-                        if (n->pitch() == note->pitch()) {
+-                              if (idx1 == idx2) {
+-                                    if (note2 == 0 || c->track() == chord->track()) {
+-                                          note2 = n;
+-                                          break;
+-                                          }
+-                                    }
+-                              else
+-                                    ++idx2;
+-                              }
++      Part* part   = chord->part();
++      int strack   = part->staves()->front()->idx() * VOICES;
++      int etrack   = strack + part->staves()->size() * VOICES;
++      if (isHacked) {
++        for (int track = strack; track < etrack; ++track) {
++            Element* e = nextSegment->element(track);
++            if (!e || !e->isChord()) {
++                continue;
++            }
++            Chord* c = toChord(e);
++            if (c->vStaffIdx() != chord->vStaffIdx()) {
++                // this check is needed as we are iterating over all staves to capture cross-staff chords
++                continue;
++            }
++            // if there are grace notes before, try to tie to first one
++            QVector<Chord*> gnb = c->graceNotesBefore();
++            if (!gnb.empty()) {
++                Chord* gc = gnb.front();
++                Note* gn2 = gc->findNote(note->pitch());
++                if (gn2) {
++                    return gn2;
++                }
++            }
++            int idx2 = 0;
++            for (Note* n : c->notes()) {
++                if (n->pitch() == note->pitch()) {
++                    if (idx1 == idx2) {
++                        if (!note2 || c->track() == chord->track()) {
++                            note2 = n;
++                            break;
+                         }
+-                  }
+-            if (note2)
+-                  break;
++                    } else {
++                        ++idx2;
++                    }
++                }
+             }
++        }
++      } else {
++          while ((seg = seg->next1(SegmentType::ChordRest))) {
++                // skip ahead to end of current note duration as calculated above
++                // but just in case, stop if we find element in current track
++                if (seg->tick() < endTick  && !seg->element(chord->track()))
++                      continue;
++                for (int track = strack; track < etrack; ++track) {
++                      Element* e = seg->element(track);
++                      if (e == 0 || !e->isChord())
++                            continue;
++                      Chord* c = toChord(e);
++                      const int staffIdx = c->staffIdx() + c->staffMove();
++                      if (staffIdx != chord->staffIdx() + chord->staffMove()) {
++                            // this check is needed as we are iterating over all staves to capture cross-staff chords
++                            continue;
++                            }
++                      // if there are grace notes before, try to tie to first one
++                      QVector<Chord*> gnb = c->graceNotesBefore();
++                      if (!gnb.empty()) {
++                            Chord* gc = gnb[0];
++                            Note* gn2 = gc->findNote(note->pitch());
++                            if (gn2)
++                                  return gn2;
++                            }
++                      int idx2 = 0;
++                      for (Note* n : c->notes()) {
++                            if (n->pitch() == note->pitch()) {
++                                  if (idx1 == idx2) {
++                                        if (note2 == 0 || c->track() == chord->track()) {
++                                              note2 = n;
++                                              break;
++                                              }
++                                        }
++                                  else
++                                        ++idx2;
++                                  }
++                            }
++                      }
++                if (note2)
++                      break;
++                }
++      }
+       return note2;
+       }
+ 
