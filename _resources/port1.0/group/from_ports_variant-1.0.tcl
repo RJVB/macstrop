@@ -96,7 +96,7 @@ proc fromPorts::depends {type args} {
 proc fromPorts::callback {} {
     global long_description
     if {[option depends_host] ne {}} {
-        long_description-append \nDependencies obtained from the host:\n[option depends_host]
+        long_description-append \nDependencies to be provided by the host:\n[option depends_host]
     }
 }
 
