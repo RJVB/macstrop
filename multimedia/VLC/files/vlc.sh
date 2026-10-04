@@ -6,7 +6,7 @@ elif [ -x @PREFIX@/lib/libc++.1.dylib ] ;then
 	LIBCXXPATH=@PREFIX@/lib
 fi
 
-if [ "${LIBCXXPATH}" != "" ] them
+if [ "${LIBCXXPATH}" != "" ] ;then
 	if [ "${DYLD_INSERT_LIBRARIES}" != "" ] ;then
 		DYLD_INSERT_LIBRARIES="${DYLD_INSERT_LIBRARIES}:${LIBCXXPATH}/libc++abi.1.dylib:${LIBCXXPATH}/libc++.1.dylib"
 	else
