@@ -504,7 +504,7 @@ default kf5.git.branch {}
 ## set an appropriate git.url
 ## `kf5.git.setup project` : fetch from the KDE git server
 ## `kf5.git.setup host project` : fetch from ${host}${project}; "host" must be fully qualified and end with a separator
-## `kf5.git.setup account project hash [prefix]` : passed through to `github.setup`
+## `kf5.git.setup account project hash [prefix]` : passed through to `gitsrc.setup`
 ## NB: the 3rd option ignores `depth`, so should not be used with fetch.type==git if you want
 ## that setting to be respected.
 ## NB2: the other forms set fetch.type=git .
@@ -512,10 +512,10 @@ proc kf5.git.setup {first {second ""} args} {
     global kf5.version kf5.git.depth kf5.git.shallowbefore kf5.git.branch filespath fetch.type
     if {[llength ${args}] > 0} {
         # this implies `second` isn't empty either!
-        PortGroup       github 1.1
+        PortGroup       gitsrc 1.1
         global          git.shallow_since version
-        ui_debug        "Checking out through github PortGroup"
-        ui_debug        "## github.setup \"${first}\" \"${second}\" \"{*}${args}\""
+        ui_debug        "Checking out through gitsrc PortGroup"
+        ui_debug        "## gitsrc.setup \"${first}\" \"${second}\" \"{*}${args}\""
         if {[info exists version]} {
             set vv      ${version}
         }
@@ -523,7 +523,7 @@ proc kf5.git.setup {first {second ""} args} {
             git.shallow_since \
                         ${kf5.git.shallowbefore}
         }
-        github.setup    ${first} ${second} {*}${args}
+        gitsrc.setup    ${first} ${second} {*}${args}
         if {[info exists vv]} {
             version     ${vv}
             unset vv

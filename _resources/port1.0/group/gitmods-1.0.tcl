@@ -10,7 +10,7 @@ default git.fetch_submodules {yes}
 
 rename portfetch::gitfetch portfetch::gitfetch_stock
 pre-fetch {
-    ui_debug "github-1.1 PG overloaded the gitfetch procedure!"
+    ui_debug "gitmods-1.0 PG overloaded the gitfetch procedure!"
 }
 proc portfetch::gitfetch {args} {
     global worksrcpath patchfiles \
