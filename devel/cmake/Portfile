@@ -10,7 +10,7 @@ if { ${os.platform} eq "darwin" && ${os.major} >= 20 && ${build_arch} eq "x86_64
 
 }
 
-PortGroup           gitlab 1.0
+PortGroup           gitlab 1.1
 PortGroup           legacysupport 1.1
 
 # we end up building at least 4 binaries "simultaneously" at the end
@@ -32,7 +32,7 @@ set my_name         cmake
 categories          devel
 license             BSD
 installs_libs       no
-maintainers         {michaelld @michaelld} {mascguy @mascguy}
+maintainers         {mascguy @mascguy}
 
 description         Cross-platform make
 set base_long_description \
@@ -44,23 +44,21 @@ set base_long_description \
 homepage            https://cmake.org
 platforms           darwin freebsd linux
 gitlab.instance     https://gitlab.kitware.com
+# gitlab.kitware.com rejects our default UAS, but allows standard curl:
+fetch.user_agent    curl/8.12.1
 
-gitlab.setup        cmake   cmake 3.29.2 v
-checksums           rmd160  b5b16afbf7df7213ea52179dcc0ea123b1ebe2f4 \
-                    sha256  250b1ff470814cc3babdfab864e639d5a0d84270a5b67f0e3fc3cf637fc35468
-#                     size    8606672
-platform darwin {
-    # for patch-Modules-Compiler-GNU.cmake.diff
-    revision        1
-}
+gitlab.setup        cmake   cmake 3.31.12 v
+checksums           rmd160  c9062398f63f70b447122850524022c5fc40b10d \
+                    sha256  468ad2977edc09c7ea00999185a4d0663bb32352f00610163ce8087775461cb9
+#                     size    8918876
 
 dist_subdir         ${my_name}
 # The compressed help document (.qch) is built with the "sans dots" version in the name;
 # rename it to something that includes only the branch plus a non-numeric token that
 # might be bumped if ever a 3.x release introduces major changes. This should address
 # the issue that QCH readers like Qt's Assistant drop the document at every CMake upgrade.
-set qch_version 3292
-set qch_suffix  329a
+set qch_version 33112
+set qch_suffix  331a
 
 compiler.cxx_standard \
                     2017
@@ -104,16 +102,11 @@ patchfiles-append \
     patch-cmake-cmInstallRuntime-initializer-fix.diff \
     patch-libuv-legacy-systems.diff \
     patch-cmakeroot-with-app.diff \
-    patch-remove-homebrew-references.diff \
-    patch-Modules-Compiler-GNU.cmake.diff \
-    patch-9483-Xarch_flag.diff
-# https://gitlab.kitware.com/cmake/cmake/-/merge_requests/9492
-patchfiles-append \
-    patch-Modules-VerifyGeneratedArchs-Darwin.diff
+    patch-remove-homebrew-references.diff
 
 platform darwin 8 {
     # Tiger doesn't have _DARWIN_C_SOURCE macro so have to disable _POSIX_C_SOURCE instead
-    patchfiles-append patch-cmake-3290-posixcsource.diff
+    patchfiles-append patch-cmake-tiger-undef-posixcsource.diff
 }
 
 ## RJVB
@@ -128,6 +121,10 @@ if {${os.platform} eq "darwin" && ${os.major} <= 15} {
 #         patchfiles-append patch-build-pre-1012.diff
 }
 
+# fix issue(s) with the archs check on Darwin
+patchfiles-append \
+    patch-pr12572.diff
+
 if {${os.platform} ne "darwin"} {
 depends_build-append \
     port:ncurses-dev
@@ -139,6 +136,7 @@ depends_lib-append \
     port:bzip2 \
     port:libarchive \
     port:ncurses
+
 # configure is just a shell script that passes directly to bootstrap
 configure.cmd ./bootstrap
 
@@ -159,7 +157,7 @@ if {${os.platform} eq "darwin" && ${os.major} <= 10 &&
     ${cxx_stdlib} eq "libc++" && ![file exists ${configure.cxx}]} {
     set cmake_bootstrapping yes
     ui_error "This port:cmake version doesn't support bootstrapping"
-    ui_error "Please install the mainstream port:cmake first,"
+    ui_error "Please install the mainstream port:cmake or port:cmake-bootstrap first,"
     ui_error "and then re-run `portindex` in [file normalize ${portpath}/../..]"
     return -code error "Port not yet supported!"
 }
@@ -176,7 +174,8 @@ if {${os.platform} eq "darwin" && ${os.major} == 11 &&
 # cmake self-testing infrastructure
 # https://trac.macports.org/ticket/59782
 if {${configure.compiler} eq "macports-clang-3.4"} {
-    configure.post_args-append -DBUILD_TESTING=OFF
+    configure.post_args-append \
+        -DBUILD_TESTING=OFF
 }
 
 # We're keeping this; I can't remember if it was ever in the mainstream port.
@@ -251,8 +250,13 @@ platform darwin {
         configure.cxxflags-append -D__OPENTRANSPORTPROVIDERS__
     }
 
+if {[string match *gcc* ${configure.compiler}]} {
+    # Utilities/cmlibuv/src/unix/fs.c:562:57: error: passing argument 4 of 'scandir'
+    # from incompatible pointer type [-Wincompatible-pointer-types]
+    configure.cflags-append \
+        -Wno-error=incompatible-pointer-types
+
     # https://trac.macports.org/ticket/67943
-    if {[string match *gcc* ${configure.compiler}]} {
         configure.ldflags-append \
             -latomic
     }
@@ -375,7 +379,7 @@ if {![variant_isset qt5]} {
 }
 
 # Supported pythons
-set python_versions {38 39 310 311 312}
+set python_versions {37 38 39 310 311 312 313}
 
 # declare all +python* variants, with conflicts
 foreach pyver ${python_versions} {
@@ -413,7 +417,7 @@ if {[variant_isset docs]} {
     # set default +python* variant if none were already selected
     if {!${python_isset}} {
         set python_isset true
-        default_variants +python39
+        default_variants +python311
     }
 
     # make sure one of the +python* variants is set
@@ -447,6 +451,9 @@ if {[variant_isset docs]} {
         --mandir=share/man \
         --sphinx-man \
         --sphinx-build=${prefix}/bin/sphinx-build-${PYTHON_VERSION_WITH_DOT}
+    # cmake arguments go into post_args :
+    configure.post_args-append \
+        -DPython_EXECUTABLE=${prefix}/bin/python${PYTHON_VERSION_WITH_DOT}
     if {[variant_isset qt5]} {
         configure.args-append \
             --sphinx-qthelp
@@ -560,8 +567,8 @@ subport ${subport_docs} {
     depends_lib
     conflicts
     depends_run port:${name}
-    ui_debug "port:${subport} requires port:${name}+qt5+docs"
-    require_active_variants ${name} {qt5 docs}
+    ui_debug "port:${subport} requires port:${name}+docs"
+    require_active_variants ${name} docs
     description CMake documentation
     long_description Stub port that requires port:cmake to be installed with the docs variant active
     revision 0
@@ -575,8 +582,12 @@ if {${subport} eq ${name}} {
     test.run                yes
     test.target             test
 
+    # Restrict to CMake version 3.x ONLY.  For 4.x, go to cmake-devel.
     # Ignore RC versions
-    gitlab.livecheck.regex  {([0-9.]+)}
+    gitlab.livecheck.regex  {(3.[0-9.]+)}
+    # avoid "403 Permission denied" errors:
+    livecheck.curloptions-append \
+                    --user-agent ${fetch.user_agent}
 } else {
     livecheck.type          none
 }
