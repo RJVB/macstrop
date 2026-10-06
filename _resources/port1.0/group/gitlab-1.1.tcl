@@ -31,7 +31,7 @@ default gitlab.livecheck.regex {(\[0-9]\[^<]+)}
 
 proc gitlab.setup {gl_author gl_project gl_version {gl_tag_prefix ""} {gl_tag_suffix ""}} {
     global extract.suffix gitlab.author gitlab.project gitlab.version gitlab.tag_prefix gitlab.tag_suffix
-    global gitlab.homepage gitlab.master_sites gitlab.livecheck.branch PortInfo
+    global gitlab.homepage gitlab.master_sites gitlab.livecheck.branch git.branch PortInfo
 
     gitlab.author           ${gl_author}
     gitlab.project          ${gl_project}
@@ -48,7 +48,7 @@ proc gitlab.setup {gl_author gl_project gl_version {gl_tag_prefix ""} {gl_tag_su
     git.url                 ${gitlab.homepage}.git
     git.branch              [join ${gitlab.tag_prefix}]${gitlab.version}[join ${gitlab.tag_suffix}]
     default master_sites    {${gitlab.master_sites}}
-    distname                ${gitlab.project}-${gitlab.version}
+    distname                ${gitlab.project}-${git.branch}
     use_bzip2               yes
 
 # I don't _think_ we need this bit from the github portgroup, but keeping
