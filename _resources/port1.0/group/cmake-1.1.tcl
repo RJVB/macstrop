@@ -300,14 +300,27 @@ set cmake::distcc_cache ${configure.distcc}
 proc cmake::ccaching {} {
     global prefix
     namespace upvar ::cmake ccache_cache cccache
+    namespace upvar ::cmake distcc_cache distcc
     if {${cccache} && [file exists ${prefix}/bin/ccache]} {
-        return [list \
-            -DCMAKE_C_COMPILER_LAUNCHER=${prefix}/bin/ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=${prefix}/bin/ccache \
-            -DCMAKE_Fortran_COMPILER_LAUNCHER=${prefix}/bin/ccache \
-            -DCMAKE_OBJC_COMPILER_LAUNCHER=${prefix}/bin/ccache \
-            -DCMAKE_OBJCXX_COMPILER_LAUNCHER=${prefix}/bin/ccache \
-            -DCMAKE_ISPC_COMPILER_LAUNCHER=${prefix}/bin/ccache]
+        if {${distcc} && [file exists ${prefix}/bin/distcc]} {
+            # not sure that this actually works, but ccache calling distcc calling the compiler
+            # should be the way of combining the features, theoretically
+            return [list \
+                -DCMAKE_C_COMPILER_LAUNCHER="${prefix}/bin/ccache\;${prefix}/bin/distcc" \
+                -DCMAKE_CXX_COMPILER_LAUNCHER="${prefix}/bin/ccache\;${prefix}/bin/distcc" \
+                -DCMAKE_Fortran_COMPILER_LAUNCHER="${prefix}/bin/ccache\;${prefix}/bin/distcc" \
+                -DCMAKE_OBJC_COMPILER_LAUNCHER="${prefix}/bin/ccache\;${prefix}/bin/distcc" \
+                -DCMAKE_OBJCXX_COMPILER_LAUNCHER="${prefix}/bin/ccache\;${prefix}/bin/distcc" \
+                -DCMAKE_ISPC_COMPILER_LAUNCHER="${prefix}/bin/ccache\;${prefix}/bin/distcc"]
+        } else {
+            return [list \
+                -DCMAKE_C_COMPILER_LAUNCHER=${prefix}/bin/ccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=${prefix}/bin/ccache \
+                -DCMAKE_Fortran_COMPILER_LAUNCHER=${prefix}/bin/ccache \
+                -DCMAKE_OBJC_COMPILER_LAUNCHER=${prefix}/bin/ccache \
+                -DCMAKE_OBJCXX_COMPILER_LAUNCHER=${prefix}/bin/ccache \
+                -DCMAKE_ISPC_COMPILER_LAUNCHER=${prefix}/bin/ccache]
+        }
     }
 }
 proc cmake::distccing {} {
