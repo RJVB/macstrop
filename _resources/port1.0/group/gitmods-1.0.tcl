@@ -5,6 +5,9 @@
 options git.shallow_since
 default git.shallow_since {}
 
+options git.depth
+default git.depth {}
+
 options git.fetch_submodules
 default git.fetch_submodules {yes}
 
@@ -14,7 +17,7 @@ pre-fetch {
 }
 proc portfetch::gitfetch {args} {
     global worksrcpath patchfiles \
-           git.url git.branch git.cmd git.shallow_since git.fetch_submodules
+           git.url git.branch git.cmd git.shallow_since git.depth git.fetch_submodules
 
     if {${git.fetch_submodules}} {
         set fetchsubmodopt "--recurse-submodules"
@@ -23,12 +26,22 @@ proc portfetch::gitfetch {args} {
         set fetchsubmodopt ""
         set shallowsubmodopt ""
     }
-    set options "--progress ${fetchsubmodopt}"
+    if {${git.branch} eq ""} {
+        set options "--progress ${fetchsubmodopt}"
+        set nobranch yes
+    } else {
+        set options "--progress --revision=${git.branch} ${fetchsubmodopt}"
+        set nobranch no
+        if {${git.depth} ne {}} {
+            append options " --depth=${git.depth}"
+        }
+    }
     if {${git.shallow_since} ne {}} {
         append options " --shallow-since ${git.shallow_since} ${shallowsubmodopt}"
-    } elseif {${git.branch} eq ""} {
+    } elseif {${nobranch}} {
         # if we're just using HEAD, we can make a shallow repo
         append options " --depth=1 ${shallowsubmodopt}"
+        ui_debug "git fetch: no commit or tag specified, fetching just HEAD (--depth=1)"
     }
     set cmdstring "${git.cmd} clone $options ${git.url} [shellescape ${worksrcpath}] 2>&1"
     ui_debug "Executing: $cmdstring"
