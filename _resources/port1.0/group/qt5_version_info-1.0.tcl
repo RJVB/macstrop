@@ -10,6 +10,7 @@ array set available_qt_versions {
     qt513 {qt513-qtbase 5.13}
     qt511 {qt511-qtbase 5.11}
     qt59  {qt59-qtbase  5.9}
+    qt5-kde  {qt5-kde  5.9}
     qt58  {qt58-qtbase  5.8}
     qt57  {qt57-qtbase  5.7}
     qt56  {qt56-qtbase  5.6}
@@ -29,12 +30,16 @@ array set custom_qt_versions {
 # see https://doc.qt.io/qt-5/supported-platforms-and-configurations.html
 
 proc qt5.get_default_name {} {
-    global os.major
+    global os.major qt5.prefer_kde
 
     ###RJVB###
     global os.platform
     if {${os.platform} ne "darwin"} {
-        return qt5
+        if {[variant_isset qt5kde] || ([info exists qt5.prefer_kde])} {
+            return qt5-kde
+        } else {
+            return qt5
+        }
     }
     ###RJVB###
 
@@ -86,6 +91,9 @@ proc qt5.get_default_name {} {
         #
         return qt57
         #
+    } elseif {[variant_isset qt5kde] || ([info exists qt5.prefer_kde])} {
+        # >= darwin13, so we can honour a qt5kde preference
+        return qt5-kde
     } elseif { ${os.major} == 13 } {
         #
         # OS X Mavericks (10.9)
