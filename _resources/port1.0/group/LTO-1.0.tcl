@@ -145,10 +145,12 @@ if {${os.platform} eq "darwin"} {
         if {[LTO::variant_enabled ${LTO.LTO_variant}] && ${configure.compiler} ne "clang"} {
             xinstall -m 755 -d ${build.dir}/.lto_cache
             ui_debug "Setting ${LTO.LTO_variant} cache path to ${build.dir}/.lto_cache"
-            if {[info exists muniversal.build_arch] && [variant_isset universal]} {
-                configure.ldflags.${muniversal.current_arch}-append -Wl,-cache_path_lto,${build.dir}/.lto_cache
-            } elseif {[info exists merger_arch_flag] && [variant_isset universal]} {
-                lappend merger_configure_ldflags(${muniversal.current_arch}) -Wl,-cache_path_lto,${build.dir}/.lto_cache
+            if {[info exists muniversal.current_arch]} {
+                if {[info exists muniversal.build_arch] && [variant_isset universal]} {
+                    configure.ldflags.${muniversal.current_arch}-append -Wl,-cache_path_lto,${build.dir}/.lto_cache
+                } elseif {[info exists merger_arch_flag] && [variant_isset universal]} {
+                    lappend merger_configure_ldflags(${muniversal.current_arch}) -Wl,-cache_path_lto,${build.dir}/.lto_cache
+                }
             } else {
                 configure.ldflags-append -Wl,-cache_path_lto,${build.dir}/.lto_cache
             }
