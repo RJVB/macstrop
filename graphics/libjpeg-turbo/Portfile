@@ -7,12 +7,14 @@ PortGroup           muniversal 1.0
 if {[variant_exists static] && [variant_isset static]} {
     set LTO.fat_LTO_Objects yes
 }
+set LTO.allow_ThinLTO no
 PortGroup           LTO 1.0
 
 name                libjpeg-turbo
 conflicts           mozjpeg
 #set my_name         libjpeg-turbo
 version             3.2.0
+set branch          [join [lrange [split ${version} .] 0 1] .]
 github.setup        ${name} ${name} ${version}
 github.tarball_from releases
 
@@ -41,6 +43,26 @@ dist_subdir         ${name}
 checksums           rmd160 b94eebc6c6af8c3d367a1ce92c8f68e09741c3cb \
                     sha256 6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e
 
+patch.pre_args      -Np1
+# # on darwin, create an additional copy of libjpeg with the compatibility_version set to 10.0.0
+# # for the sake of the likely numerous dependents built against an earlier libjpeg-turbo version
+# # that declared that version but is otherwise perfectly compatible.
+# patchfiles-append   patch-compatver10.diff
+platform darwin {
+    variant preserve_compatibility description {make the generated library runtime compatible for existing dependents} {
+        patchfiles-append \
+                    patch-setcompatver=10.diff
+    }
+    if {[file exists ${prefix}/lib/libjpeg.10.dylib]} {
+        default_variants-append \
+                    +preserve_compatibility
+    }
+# for patch-compatver10.diff ...
+#     depends_build-append \
+#                     port:cctools
+}
+
+
 configure.args-append \
                     -DENABLE_SHARED=ON \
                     -DENABLE_STATIC=OFF \
@@ -66,7 +88,13 @@ if {${universal_possible} && [variant_isset universal]} {
 post-destroot {
     # for a while, builds with the JPEG8 ABI still used 10 for their SOVERSION
     if {${os.platform} eq "darwin"} {
-        ln -s libjpeg.10.dylib ${destroot}${prefix}/lib/libjpeg.10.dylib
+#         # create libjpeg.10.dylib from our custom libjpegcv
+#         file rename ${destroot}${prefix}/lib/libjpegcv.8.${branch}.dylib ${destroot}${prefix}/lib/libjpeg.10.dylib
+#         system "install_name_tool -id ${prefix}/lib/libjpeg.10.dylib ${destroot}${prefix}/lib/libjpeg.10.dylib"
+#         file delete -force ${destroot}${prefix}/lib/libjpegcv.dylib ${destroot}${prefix}/lib/libjpegcv.8.dylib
+        if {[variant_isset preserve_compatibility]} {
+            ln -s libjpeg.8.dylib ${destroot}${prefix}/lib/libjpeg.10.dylib
+        }
     } else {
         ln -s libjpeg.so.8 ${destroot}${prefix}/lib/libjpeg.so.10
     }
@@ -100,7 +128,8 @@ variant java description {Add Java support} {
 #                         -DCMAKE_BUILD_WITH_INSTALL_RPATH:BOOL=OFF
 
     test.run            yes
-    test.env-append \
+    test.env-append     DYLD_LIBRARY_PATH=${destroot}${prefix}/lib \
+                        LD_LIBRARY_PATH=${destroot}${prefix}/lib \
                         CTEST_OUTPUT_ON_FAILURE=1
 # }
 
