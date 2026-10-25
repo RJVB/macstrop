@@ -17,7 +17,7 @@ PortGroup                   compress_workdir 1.0
 name                        glib2
 conflicts                   glib2-devel
 set theName                 glib
-version                     2.88.1
+version                     2.88.1 ; revision 1
 epoch                       1
 
 checksums                   rmd160  1c113025a78a598f56307b28304346f0e46f1853 \
@@ -286,6 +286,12 @@ post-build {
 test.run                    yes
 test.target                 --verbose test
 
+# platform linux {
+#     variant no_abs_introspection description {do not use absolute paths to our libraries in the introspection (typelib & gir) files} {
+#         notes-append "This does not appear to make a difference, at least not once port:${subport}@${version} is already installed"
+#     }
+# }
+# 
 post-destroot {
     delete ${destroot}${prefix}/lib/charset.alias
 
@@ -298,22 +304,31 @@ post-destroot {
             ui_msg "installing missing gdesktopappinfo.h file"
             xinstall -m 644 ${worksrcpath}/gio/gdesktopappinfo.h ${destroot}${prefix}/include/gio-unix-2.0/gio/gdesktopappinfo.h
         }
-        platform linux {
-            ui_msg " ---> injecting absolute paths in .gir and .typelib files"
-            set env(LD_LIBRARY_PATH) "${destroot}${prefix}/lib"
+        if {!([variant_exists no_abs_introspection] && [variant_isset no_abs_introspection])} {
+            if {${os.platform} eq "linux"} {
+                ui_msg " ---> injecting absolute paths in .gir and .typelib files"
+                set env(LD_LIBRARY_PATH) "${destroot}${prefix}/lib"
+            } else {
+                ui_msg " ---> Re-generating .typelib files"
+            }
             system "printenv"
             if {![tbool gir_bootstrapping]} {
                 set incdir ${prefix}/share/gir-1.0
+                # let's use the compiler from gobject-introspection!
+                set ircomp ${prefix}/bin/g-ir-compiler
             } else {
                 set incdir ${prefix}/libexec/gobject-introspection-bootstrap/share/gir-1.0
+                set ircomp ../../bin/gi-compile-repository
             }
             foreach g [glob ${destroot}${prefix}/share/gir-1.0/*.gir] {
-                reinplace "s|\"libg|\"${prefix}/lib/libg|g" ${g}
-                reinplace -q "s|,libg|,${prefix}/lib/libg|g" ${g}
+                platform linux {
+                    reinplace "s|\"libg|\"${prefix}/lib/libg|g" ${g}
+                    reinplace -q "s|,libg|,${prefix}/lib/libg|g" ${g}
+                }
                 # regenerate the typelib file
-                set typelib "[file rootname ${g}].typelib"
-                system -W ${destroot}${prefix}/share/gir-1.0 \
-                    "../../bin/gi-compile-repository ${g} --output ${typelib} --includedir ${incdir}"
+                set typelib "[file rootname [file tail ${g}]].typelib"
+                system -W ${destroot}${prefix}/lib/girepository-1.0 \
+                    "${ircomp} ${g} --debug --verbose --output ${typelib} --includedir ${incdir}"
             }
         }
     } else {
