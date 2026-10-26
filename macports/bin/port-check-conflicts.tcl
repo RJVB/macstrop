@@ -266,8 +266,11 @@ proc port_provides { fileNames } {
         set file [macports::normalise $filename]
         if {[file exists $file] || ![catch {file type $file}]} {
             if {![file isdirectory $file] || [file type $file] eq "link"} {
+                set port0 [registry::file_registered $filename]
                 set port [registry::file_registered $file]
-                if { $port != 0 } {
+                if { $port0 != 0 } {
+                    dict set providers "${filename}" "${port0}"
+                } elseif { $port != 0 } {
                     dict set providers "${filename}" "${port}"
                 } else {
                     set checkdpkg "${checkdpkg} ${file}"
