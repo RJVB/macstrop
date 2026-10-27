@@ -93,7 +93,7 @@ proc python_get_version {} {
 
 proc python_get_default_version {} {
     global python.versions
-    set def_v 313
+    set def_v 314
     if {[info exists python.versions] && ${def_v} ni ${python.versions}} {
         return [lindex ${python.versions} end]
     } else {
@@ -191,13 +191,13 @@ proc python_set_versions {option action args} {
             }
             if {${python.set_sdkroot}} {
                 if {${configure.sdkroot} ne ""} {
-                    append pycflags " -isysroot${configure.sdkroot}"
-                    append pycxxflags " -isysroot${configure.sdkroot}"
-                    append pyobjcflags " -isysroot${configure.sdkroot}"
+                    lappend pycflags -isysroot${configure.sdkroot}
+                    lappend pycxxflags -isysroot${configure.sdkroot}
+                    lappend pyobjcflags -isysroot${configure.sdkroot}
                 } else {
-                    append pycflags " -isysroot/"
-                    append pycxxflags " -isysroot/"
-                    append pyobjcflags " -isysroot/"
+                    lappend pycflags -isysroot/
+                    lappend pycxxflags -isysroot/
+                    lappend pyobjcflags -isysroot/
                 }
             }
             # Only needed for Python 3.12, since later require C11.
