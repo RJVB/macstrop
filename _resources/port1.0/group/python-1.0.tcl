@@ -64,12 +64,26 @@ pre-destroot {
     xinstall -d -m 0755 ${destroot}${prefix}/share/doc/${subport}/examples
 }
 
+# python.subport_basename: for modules, this determines the actual name of the pyXY-?
+#   subports of master port py-foo. By default these will be pyXY-foo, but changing the
+#   default of subport_basename allows e.g. to offload py-foo versions for older Python
+#   versions into a dedicated port called py-foo-legacy. For instance:
+#   name                    py-meson-legacy
+#   python.subport_basename meson
+#   python.versions         37 38 39
+options python.subport_basename
+default python.subport_basename {[regsub ^py- [option name] ""]}
+# set the distfiles directory based on the pyXY-foo names of the "payload" subports
+#   to avoid downloading duplicates of the distfiles.
+default dist_subdir             {py-[option python.subport_basename]}
+
 # python.rootname: The "proper" name of the software. For a module
-#   pyXY-foo, this defaults to "foo"; for an app "foobar", this defaults
-#   to "foobar".
+#   pyXY-foo, this defaults to "foo" if subport_basename is left to its default;
+#   for an app "foobar", this defaults to "foobar".
 
 options python.rootname
-default python.rootname {[regsub ^py- [option name] ""]}
+#default python.rootname {[regsub ^py- [option name] ""]}
+default python.rootname {[option python.subport_basename]}
 
 default master_sites    {pypi:[string index ${python.rootname} 0]/${python.rootname}}
 default distname        {${python.rootname}-${version}}
@@ -108,7 +122,9 @@ proc python_set_versions {option action args} {
     global name subport python._addedcode
     if {[string match py-* $name]} {
         foreach v [option $option] {
-            subport py${v}[string trimleft $name py] {}
+            # instead of re-parsing ${name}, we determine the subport name from python.subport_basename
+            # which will have been set to the same value by default.
+            subport py${v}-[option python.subport_basename] {}
         }
         if {$subport eq $name || $subport eq ""} {
             # Ensure the stub port does not do anything with distfiles—not
