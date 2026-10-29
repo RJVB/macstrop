@@ -86,6 +86,7 @@ namespace eval devport_helper {
                     set dep [lindex [split ${d} ":"] end]
                     if {[info exists devportDB(${dep})]} {
                         set devdep $devportDB(${dep})
+                        set warn_inact yes
                         # found one, let's see if the devport is already declared in depends_build:
                         if {[lsearch -regexp ${depends_build} "\[^ \]*:${devdep}"] < 0} {
                             set blisted -1
@@ -101,15 +102,21 @@ namespace eval devport_helper {
                             if {${blisted} < 0} {
                                 ui_debug "port:${devdep} is missing from the build dependencies; adding it"
                                 depends_build-append "port:${devdep}"
-                                if {[catch {registry_active ${devdep}}]} {
-                                    # it'd be nice if there were a conditional way to use ui_warn here
-                                    # where it prints before asking the used to install a dependency
-                                    # that may simply have been deactivate (= is installed).
-                                    # With my patched "base" the ui_info routine is an acceptable workaround.
-                                    ui_info "WARNING: port:${devdep} not installed or not activated."
-                                }
                             } else {
                                 ui_debug "port:${devdep} is listed as a configure or build conflict or to be ignored; NOT adding it"
+                                set warn_inact no
+                            }
+                        }
+                        if {${warn_inact}} {
+                            if {[registry_exists_for_name ${devdep}] && [catch {registry_active ${devdep}}]} {
+                                # it'd be nice if it were possible to use ui_warn in a way
+                                # where it prints before asking the user to install a dependency
+                                # that simply has been deactivate (= is installed, because exists_for_name==True),
+                                # or easier to print these warnings in a pre-configure block. Maybe create
+                                # a namespaced list here, install a (single!) pre-configure function and
+                                # check the members of the list once more in there?
+                                # With my patched "base" the ui_info routine is an acceptable workaround.
+                                ui_info "WARNING: port:${devdep} is not currently activated."
                             }
                         }
                     }
