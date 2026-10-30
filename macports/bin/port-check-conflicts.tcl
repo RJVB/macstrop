@@ -386,22 +386,34 @@ proc chworkdir {portName pWD} {
     return 0
 }
 
-proc du {files} {
+proc du {files {real no}} {
     global DU SED
-    if {[catch {set ret [exec sh -c "${DU} -hc ${files} | tail -1 | ${SED} -e 's/\\s\[\\s\]*total//g'"]}]} {
-        return ""
+    if {${real}} {
+        set realSize " --apparent-size"
     } else {
-        return ${ret}
+        set realSize ""
     }
+    if {[catch {set ret [exec sh -c "${DU} -hc ${realSize} ${files} | tail -1 | ${SED} -e 's/\\s\[\\s\]*total//g'"]}]} {
+        # let's assume the aggregate command failed because there were too many files
+        puts stderr "## calling `du${realSize}` on [llength ${files}] individual files!"
+        set tot 0
+        foreach f ${files} {
+            if {[catch {set ret [exec sh -c "${DU} -c -B1 ${realSize} ${f} | tail -1 | ${SED} -e 's/\\s\[\\s\]*total//g'"]} result]} {
+                # bail when another error occurred
+                puts stderr $::errorInfo
+                puts stderr "`du` failure on \"${f}\" ($result)"
+                return "<unknown>"
+            } else {
+                incr tot ${ret}
+            }
+        }
+        set ret "[expr [round [expr ${tot} / 10485.760]] / 100.0]M"
+    }
+    return ${ret}
 }
 
 proc du-real {files} {
-    global DU SED
-    if {[catch {set ret [exec sh -c "${DU} -hc --apparent-size ${files} | tail -1 | ${SED} -e 's/\\s\[\\s\]*total//g'"]}]} {
-        return ""
-    } else {
-        return ${ret}
-    }
+    return [du ${files} yes]
 }
 
 thread::send $runner [list after 250 {puts stderr "Initialising MacPorts..."}] timerID
