@@ -366,6 +366,7 @@ default configure.env ${go_env}
 
 proc go.append_env {} {
     global configure.ldflags os.major build.env go.offline_build
+    global configure.cflags configure.cxxflags
     # Create a wrapper scripts around compiler commands to enforce use of MacPorts flags
     # and to aid use of MacPorts legacysupport library as required.
     if { ${os.major} <= [option legacysupport.newest_darwin_requires_legacy] } {
@@ -377,7 +378,7 @@ proc go.append_env {} {
         compwrap.compiler_pre_flags-append    ${configure.ldflags}
         compwrap.compiler_post_flags-append   -Wno-error
     }
-    post-extract {
+    #post-extract {
         build.env-append \
             "CC=[compwrap::wrap_compiler cc]" \
             "CXX=[compwrap::wrap_compiler cxx]" \
@@ -397,7 +398,7 @@ proc go.append_env {} {
         }
         configure.env-append {*}${build.env}
         test.env-append      {*}${build.env}
-    }
+    #}
 
     if { ! ${go.offline_build} } {
         ui_debug "Disabling offline building for Go"
