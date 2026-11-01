@@ -398,7 +398,7 @@ proc du {files {real no}} {
         puts stderr "## calling `du${realSize}` on [llength ${files}] individual files!"
         set tot 0
         foreach f ${files} {
-            if {[catch {set ret [exec sh -c "${DU} -c -B1 ${realSize} ${f} | tail -1 | ${SED} -e 's/\\s\[\\s\]*total//g'"]} result]} {
+            if {[catch {set ret [exec sh -c "${DU} -c -B1 ${realSize} \"${f}\" | tail -1 | ${SED} -e 's/\\s\[\\s\]*total//g'"]} result]} {
                 # bail when another error occurred
                 puts stderr $::errorInfo
                 puts stderr "`du` failure on \"${f}\" ($result)"
