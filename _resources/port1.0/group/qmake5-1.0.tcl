@@ -10,7 +10,9 @@ set LTO.configure_option {-config ltcg}
 PortGroup                       qt5 1.0
 PortGroup                       active_variants 1.1
 PortGroup                       legacysupport 1.1
-legacysupport.newest_darwin_requires_legacy 0
+if {[tbool building_qt5]} {
+    legacysupport.newest_darwin_requires_legacy 0
+}
 
 ## RJVB
 PortGroup                       LTO 1.0
