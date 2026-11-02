@@ -1,0 +1,109 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
+PortSystem          1.0
+PortGroup           github 1.0
+PortGroup           golang 1.0
+PortGroup           qmake5 1.0
+
+## we include the golang PG to get the proper settings into the environment so that
+## the build script can invoke `go` even on systems where this requires legacy-support.
+go.setup            github.com/visualfc/liteide 6f24e4aba572ec251093185debf8006ffd327415
+
+## but this is not a standard Go application so we do the fetching via the github PG
+github.setup        visualfc liteide 6f24e4aba572ec251093185debf8006ffd327415
+version             38.4.101
+github.tarball_from archive
+dist_subdir         ${name}
+
+## the golang PG has some logic in the post-extract that we can't prevent it from doing,
+## other than by doing a git fetch.
+fetch.type          git
+distname            ${name}-git
+set worksrcpath     ${workpath}/${distname}
+
+categories          editors devel
+license             LGPL
+maintainers         {judaew @judaew} openmaintainer
+
+description         LiteIDE is a simple, open source, cross-platform Go IDE.
+long_description    {*}${description}
+homepage            http://liteide.org
+platforms           linux darwin
+
+patch.pre_args-replace -p0 -p1
+patchfiles-append   patch-liteenv-prefix.diff \
+                    patch-build-linux.diff \
+                    patch-build-darwin.diff \
+                    patch-support-older-qt5.diff \
+                    patch-less-bold-fonts.diff \
+                    patch-darwin-no-fs-specifics.diff
+
+post-patch {
+    fs-traverse f ${worksrcpath}/liteidex/os_deploy/macosx/liteenv/ {
+        if {![file isdirectory ${f}]} {
+            reinplace "s|@@PREFIX@@|${prefix}|g" ${f}
+        }
+    }
+}
+
+depends_build-append \
+                    port:coreutils
+
+## the project's  update_pkg.sh basically does this (just not the "MacPorts way",
+## and without consideration for retro-systems):
+depends_run-append  port:gocode \
+                    port:gotools \
+                    port:gomodifytags
+if {${os.platform} ne "darwin" || ${os.major} > 17} {
+    depends_run-append \
+                    port:gopls
+} else {
+    notes-append \
+"You can install port:gopls for added functionality but beware that the older version \
+compatible with your system may not work as expected and/or hog the CPU"
+}
+
+# Workaround xcrun: error: SDK "macosx12" cannot be located
+configure.sdk_version
+
+use_configure       yes
+use_parallel_build  yes
+
+## set up the build as the project's build_XXXX_qt5.sh scripts did (before being patched)
+build.dir           ${worksrcpath}/build
+configure.dir       ${build.dir}
+configure.env-append \
+                    BUILD_ROOT=${build.dir} \
+                    LITEIDE_ROOT=${worksrcpath}/liteidex
+
+configure.args      -r ../liteidex
+
+build.env-append    GOPATH=${worksrcpath}/liteidex \
+                    QTDIR=${qt_dir}
+## args passed to the build script are passed on to the `make` command
+build.pre_args      -j${build.jobs} -w -k
+
+if {${os.platform} eq "darwin"} {
+    build.cmd       ./build_macos_qt5.sh
+
+    post-destroot {
+        xinstall -m 755 -d ${destroot}${qt_apps_dir}
+        file rename ${destroot}${prefix}/LiteIDE.app \
+            ${destroot}${qt_apps_dir}/LiteIDE.app
+        foreach b {gotools gocode gomodifytags gopls} {
+            ln -s ${prefix}/bin/${b} ${destroot}${qt_apps_dir}/LiteIDE.app/Contents/MacOS/
+        }
+        file delete -force ${destroot}${qt_apps_dir}/LiteIDE.app/Contents/Resources/welcome/zh_CN
+        qt5.add_app_wrapper liteide LiteIDE
+    }
+} else {
+    build.cmd       ./build_linux_qt5.sh
+}
+
+destroot {
+    ## sic! If $prefix=/opt/local, we replace the entire "local" with the "liteide" directory,
+    ## which is populated as if it were the destination $prefix .
+    file delete -force ${destroot}${prefix}
+    file copy ${worksrcpath}/build/liteide ${destroot}${prefix}
+    file delete -force ${destroot}${prefix}/share/liteide/welcome/zh_CN/
+}
