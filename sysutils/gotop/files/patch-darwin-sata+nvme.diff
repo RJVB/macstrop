@@ -1,0 +1,356 @@
+diff --git a/nvme_darwin.cpp b/nvme_darwin.cpp
+index 875a32d..b69b0f2 100644
+--- a/nvme_darwin.cpp
++++ b/nvme_darwin.cpp
+@@ -4,9 +4,32 @@
+ #include <CoreFoundation/CoreFoundation.h>
+ #include <IOKit/IOCFPlugIn.h>
+ #include <IOKit/IOKitLib.h>
+-#include <IOKit/storage/nvme/NVMeSMARTLibExternal.h>
++#if __has_include(<IOKit/storage/nvme/NVMeSMARTLibExternal.h>)
++	#include <IOKit/storage/nvme/NVMeSMARTLibExternal.h>
++	#define HAS_NVME
++#endif
+ #include <stdlib.h>
+ 
++#ifndef HAS_NVME
++
++unsigned int smart_nvme_open_darwin(const char *path, void **ptr) {
++  printf("Disk \"%s\" cannot be NVMe on this OS version!\n", path);
++  return EINVAL;
++}
++
++unsigned int smart_nvme_identify_darwin(void *ptr, void *buffer, unsigned int nsid) {
++  return -1;
++}
++
++unsigned int smart_nvme_readsmart_darwin(void *ptr, void *buffer) {
++  return -1;
++}
++
++void smart_nvme_close_darwin(void *ptr) {
++}
++
++#else
++
+ struct smart_nvme_darwin {
+   IONVMeSMARTInterface **smartIfNVMe;
+   IOCFPlugInInterface **plugin;
+@@ -47,7 +70,7 @@ unsigned int smart_nvme_open_darwin(const char *path, void **ptr) {
+   }
+ 
+   if (!disk) {
+-    printf("no disk found");
++    printf("no NVMe disk found at \"%s\"\n", path);
+     goto exit1;
+   }
+ 
+@@ -99,3 +122,4 @@ void smart_nvme_close_darwin(void *ptr) {
+ 
+   free(nvme);
+ }
++#endif
+diff --git a/sata.go b/sata.go
+index 52e5996..5f18901 100644
+--- a/sata.go
++++ b/sata.go
+@@ -5,6 +5,7 @@ import (
+ 	"fmt"
+ 	"regexp"
+ 	"time"
++	"unsafe"
+ )
+ 
+ // https://people.freebsd.org/~imp/asiabsdcon2015/works/d2161r5-ATAATAPI_Command_Set_-_3.pdf
+@@ -533,6 +534,7 @@ type SataDevice struct {
+ 	fd               int
+ 	attributeMapping map[int]ataDeviceAttr
+ 	firmwareBug      int
++	ptr              unsafe.Pointer // opaque pointer to underlying macosx sata struct
+ }
+ 
+ // AtaSmartThresholdEntry individual SMART attribute threshold (12 bytes)
+diff --git a/sata_darwin.cpp b/sata_darwin.cpp
+new file mode 100644
+index 0000000..427a8dc
+--- /dev/null
++++ b/sata_darwin.cpp
+@@ -0,0 +1,159 @@
++// SPDX-License-Identifier: MIT
++
++#include "sata_darwin.h"
++#include <CoreFoundation/CoreFoundation.h>
++#include <IOKit/IOCFPlugIn.h>
++#include <IOKit/IOKitLib.h>
++#if __has_include(<IOKit/storage/ata/ATASMARTLib.h>)
++	#include <IOKit/storage/ata/IOATAStorageDefines.h>
++	#include <IOKit/storage/ata/ATASMARTLib.h>
++	#define HAS_SMART
++#endif
++#include <stdlib.h>
++#include <sys/_endian.h>
++
++#ifndef HAS_SMART
++
++unsigned int smart_sata_open_darwin(const char *path, void **ptr) {
++  fprintf(stderr, "Disk \"%s\" presumably not SATA!\n", path);
++  return EINVAL;
++}
++
++unsigned int smart_sata_identify_darwin(void *ptr, char *buffer, unsigned int buflen) {
++  return -1;
++}
++
++unsigned int smart_sata_readsmart_darwin(void *ptr, void *buffer) {
++  return -1;
++}
++
++void smart_sata_close_darwin(void *ptr) {
++}
++
++#else
++
++struct smart_sata_darwin {
++  IOATASMARTInterface **smartIf;
++  IOCFPlugInInterface **plugin;
++  io_object_t disk;
++};
++
++static bool is_smart_capable(io_object_t dev) {
++  CFTypeRef smartCapableKey = IORegistryEntryCreateCFProperty(dev, CFSTR(kIOPropertySMARTCapableKey), kCFAllocatorDefault, 0);
++  if (smartCapableKey) {
++    CFRelease(smartCapableKey);
++    return true;
++  }
++
++  return false;
++}
++
++// *path is a string that has a format like "disk0".
++unsigned int smart_sata_open_darwin(const char *path, void **ptr) {
++  // see also https://gist.github.com/AlanQuatermain/250538
++  SInt32 score = 0;
++  int res = EINVAL;
++  IOATASMARTInterface **smartIf;
++  IOCFPlugInInterface **plugin;
++  struct smart_sata_darwin *sata;
++  const char *devname = NULL;
++  io_object_t disk;
++
++  if (strncmp (path, "/dev/rdisk", 10) == 0)
++    devname = path + 6;
++  else if (strncmp (path, "/dev/disk", 9) == 0)
++    devname = path + 5;
++  else if (strncmp (path, "disk", 4) == 0)
++    // allow user to just say 'disk0'
++    devname = path;
++
++  // Find the device. This part should be the same for the NVMe and ATA
++  if (devname) {
++    CFMutableDictionaryRef matcher = IOBSDNameMatching(kIOMasterPortDefault, 0, devname);
++    disk = IOServiceGetMatchingService(kIOMasterPortDefault, matcher);
++  } else {
++    disk = IORegistryEntryFromPath (kIOMasterPortDefault, path);
++  }
++
++  while (!is_smart_capable(disk)) {
++    io_object_t prevdisk = disk;
++
++    // Find this device's parent and try again.
++    IOReturn err = IORegistryEntryGetParentEntry(disk, kIOServicePlane, &disk);
++    if (err != kIOReturnSuccess || !disk) {
++      IOObjectRelease(prevdisk);
++      break;
++    }
++  }
++
++  if (!disk) {
++    printf("no SATA disk found at \"%s\"\n", path);
++    goto exit1;
++  }
++
++  res = IOCreatePlugInInterfaceForService(disk, kIOATASMARTUserClientTypeID, kIOCFPlugInInterfaceID, &plugin, &score);
++  if (res != kIOReturnSuccess)
++    goto exit2;
++
++  res = (*plugin)->QueryInterface(plugin, CFUUIDGetUUIDBytes(kIOATASMARTInterfaceID), (void **)&smartIf);
++  if (res != S_OK)
++    goto exit3;
++
++  *ptr = malloc(sizeof(struct smart_sata_darwin));
++  sata = (struct smart_sata_darwin *)*ptr;
++
++  if (!sata)
++    goto exit4;
++
++  sata->disk = disk;
++  sata->plugin = plugin;
++  sata->smartIf = smartIf;
++
++  return 0;
++
++exit4:
++  (*smartIf)->Release(smartIf);
++exit3:
++  IODestroyPlugInInterface(plugin);
++exit2:
++  IOObjectRelease(disk);
++exit1:
++  return res;
++}
++
++unsigned int smart_sata_identify_darwin(void *ptr, void *buffer, unsigned int buflen) {
++  struct smart_sata_darwin *sata = (struct smart_sata_darwin *)ptr;
++  UInt32 dummy = 0;
++#if __DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN
++  if (buflen % 2) {
++    fprintf(stderr, "buflen %d is not a multiple of 2\n", buflen);
++    return EINVAL
++  }
++#endif
++  int ret = (*sata->smartIf)->GetATAIdentifyData(sata->smartIf, buffer, buflen, &dummy);
++#if __DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN
++  if (ret == kIOReturnSuccess) {
++    int i;
++    /* The system has already byte-swapped, undo it.  */
++    for (i = 0; i < buflen/2; i+=2) {
++      swap2 (data + i);
++    }
++  }
++#endif
++  return ret;
++}
++
++unsigned int smart_sata_readsmartdata_darwin(void *ptr, void *buffer) {
++  struct smart_sata_darwin *sata = (struct smart_sata_darwin *)ptr;
++  return (*sata->smartIf)->SMARTReadData(sata->smartIf, (struct ATASMARTData *)buffer);
++}
++
++void smart_sata_close_darwin(void *ptr) {
++  struct smart_sata_darwin *sata = (struct smart_sata_darwin *)ptr;
++  (*sata->smartIf)->Release(sata->smartIf);
++  IODestroyPlugInInterface(sata->plugin);
++  IOObjectRelease(sata->disk);
++
++  free(sata);
++}
++#endif
+diff --git a/sata_darwin.go b/sata_darwin.go
+new file mode 100644
+index 0000000..af3297d
+--- /dev/null
++++ b/sata_darwin.go
+@@ -0,0 +1,77 @@
++package smart
++
++// #cgo darwin LDFLAGS: -framework IOKit -framework CoreFoundation
++// #include "sata_darwin.h"
++import "C"
++
++import (
++	"bytes"
++	"encoding/binary"
++	"fmt"
++	"unsafe"
++)
++
++func OpenSata(name string) (*SataDevice, error) {
++	dev := SataDevice{}
++
++	if res := C.smart_sata_open_darwin(C.CString(name), &dev.ptr); res != 0 {
++		return nil, fmt.Errorf("open darwin device error: 0x%x", res)
++	}
++
++	return &dev, nil
++}
++
++func (d *SataDevice) Close() error {
++	C.smart_sata_close_darwin(d.ptr)
++	d.ptr = unsafe.Pointer(nil)
++	return nil
++}
++
++func (d *SataDevice) Identify() (*AtaIdentifyDevice, error) {
++	var resp AtaIdentifyDevice
++
++	buf := make([]byte, 512)
++	if err := C.smart_sata_identify_darwin(d.ptr, unsafe.Pointer(&buf[0]), 512); err != 0 {
++		return nil, fmt.Errorf("smart_sata_identify_darwin: %v", err)
++	}
++
++	if err := binary.Read(bytes.NewBuffer(buf), binary.LittleEndian, &resp); err != nil {
++		return nil, err
++	}
++
++	return &resp, nil
++}
++
++func (d *SataDevice) readSMARTData() (*AtaSmartPageRaw, error) {
++	buf := make([]byte, 512)
++	if err := C.smart_sata_readsmartdata_darwin(d.ptr, unsafe.Pointer(&buf[0])); err != 0 {
++		return nil, fmt.Errorf("smart_sata_readsmartdata_darwin: %v", err)
++	}
++
++	page := AtaSmartPageRaw{}
++	if err := binary.Read(bytes.NewBuffer(buf[:362]), binary.LittleEndian, &page); err != nil {
++		return nil, err
++	}
++
++	return &page, nil
++}
++
++func (d *SataDevice) readSMARTLog(logPage uint8) ([]byte, error) {
++	return nil, ErrOSUnsupported
++}
++
++func (d *SataDevice) ReadSMARTLogDirectory() (*AtaSmartLogDirectory, error) {
++	return nil, ErrOSUnsupported
++}
++
++func (d *SataDevice) ReadSMARTErrorLogSummary() (*AtaSmartErrorLogSummary, error) {
++	return nil, ErrOSUnsupported
++}
++
++func (d *SataDevice) ReadSMARTSelfTestLog() (*AtaSmartSelfTestLog, error) {
++	return nil, ErrOSUnsupported
++}
++
++func (d *SataDevice) readSMARTThresholds() (*AtaSmartThresholdsPageRaw, error) {
++	return nil, ErrOSUnsupported
++}
+diff --git a/sata_darwin.h b/sata_darwin.h
+new file mode 100644
+index 0000000..670d345
+--- /dev/null
++++ b/sata_darwin.h
+@@ -0,0 +1,16 @@
++// SPDX-License-Identifier: MIT
++
++#pragma once
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++unsigned int smart_sata_open_darwin(const char *path, void **ptr);
++unsigned int smart_sata_identify_darwin(void *ptr, void *buffer, unsigned int buflen);
++unsigned int smart_sata_readsmartdata_darwin(void *ptr, void *buffer);
++void smart_sata_close_darwin(void *ptr);
++
++#ifdef __cplusplus
++}
++#endif
+diff --git a/sata_other.go b/sata_other.go
+index 002c8f4..2673d5c 100644
+--- a/sata_other.go
++++ b/sata_other.go
+@@ -1,6 +1,6 @@
+-// go:build !linux
+-//go:build !linux
+-// +build !linux
++// go:build !linux && !darwin
++//go:build !linux && !darwin
++// +build !linux,!darwin
+ 
+ package smart
+ 
