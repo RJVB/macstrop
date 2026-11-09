@@ -352,12 +352,12 @@ set go_env {GOPATH=${gopath} GOARCH=${goarch} GOOS=${goos} GOPROXY=off GO111MODU
                 CC=${configure.cc} CXX=${configure.cxx} FC=${configure.fc} \
                 OBJC=${configure.objc} OBJCXX=${configure.objcxx} }
 
-default build.cmd     {${go.bin} build}
+default build.cmd     {${go.bin} build -v}
 default build.args      ""
 default build.target    ""
 default build.env     ${go_env}
 
-default test.cmd      {${go.bin} test}
+default test.cmd      {${go.bin} test -v}
 default test.args       ""
 default test.target     ""
 default test.env      ${go_env}
