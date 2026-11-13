@@ -288,6 +288,9 @@ default configure.dir {[cmake::build_dir]}
 default build.dir {${configure.dir}}
 default build.post_args VERBOSE=ON
 
+default test.cmd {${prefix}/bin/ctest}
+default test.pre_args {--force-new-ctest-process --progress --output-on-failure}
+
 # cache the configure.ccache variable (it will be overridden in the pre-configure step)
 set cmake::ccache_cache ${configure.ccache}
 # idem for distcc
