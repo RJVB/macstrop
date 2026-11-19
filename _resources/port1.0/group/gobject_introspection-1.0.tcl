@@ -9,6 +9,9 @@
 options gobject_introspection
 default gobject_introspection   no
 
+options gobject_introspection.meson_type
+default gobject_introspection.meson_type {feature}
+
 namespace eval gobject_introspection_pg {
 }
 
@@ -33,11 +36,25 @@ proc gobject_introspection_pg::append_env { phase var } {
 }
 
 proc gobject_introspection_pg::gobject_introspection_setup {} {
+    switch [option gobject_introspection.meson_type] {
+        feature {
+            set gisOn enabled
+            set gisOff disabled
+        }
+        boolean {
+            set gisOn true
+            set gisOff false
+        }
+        default {
+            ui_error "unknown choice for `gobject_introspection.meson_type`: [option gobject_introspection.meson_type]"
+            return -code error "unsupported meson type for gobject_introspection"
+        }
+    }
     if {![option gobject_introspection]} {
         if { [string match *cmake* [option configure.cmd] ] } {
             configure.args-append   -DENABLE_GOBJECT_INTROSPECTION=OFF
         } elseif { [string match *meson* [option configure.cmd] ] } {
-            configure.args-append   -Dintrospection=false
+            configure.args-append   -Dintrospection=${gisOff}
         } else {
             configure.args-append   --disable-introspection
         }
@@ -56,7 +73,7 @@ proc gobject_introspection_pg::gobject_introspection_setup {} {
         if { [string match *cmake* [option configure.cmd] ] } {
             configure.args-append   -DENABLE_GOBJECT_INTROSPECTION=ON
         } elseif { [string match *meson* [option configure.cmd] ] } {
-            configure.args-append   -Dintrospection=enabled
+            configure.args-append   -Dintrospection=${gisOn}
         } else {
             configure.args-append   --enable-introspection
         }
