@@ -512,9 +512,11 @@ proc python_callback {} {
                     }
                     scikit {
                         depends_build-delete    port:py${python.version}-scikit-build-core \
-                                                port:ninja
+                                                path:bin/ninja:ninja
                         depends_build-append    port:py${python.version}-scikit-build-core \
-                                                port:ninja
+                                                path:bin/ninja:ninja
+                        depends_skip_archcheck-append \
+                                                ninja
                     }
                     default {}
                 }
