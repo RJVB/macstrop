@@ -140,9 +140,13 @@ proc meson::get_post_args {} {
 
     ## now rewrite theBuildDir as a relative path to configure.dir and
     ## use that instead if the relative path is shorter than the absolute one.
-    set relBuildDir [meson::makeRelativeTo ${configure.dir} ${theBuildDir}]
-    if {[string length ${relBuildDir}] < [string length ${theBuildDir}]} {
-        set args [lreplace ${args} 1 1 ${relBuildDir}]
+    if {[file type ${configure.dir}] eq "directory"} {
+        set relBuildDir [meson::makeRelativeTo ${configure.dir} ${theBuildDir}]
+        if {[string length ${relBuildDir}] < [string length ${theBuildDir}]} {
+            set args [lreplace ${args} 1 1 ${relBuildDir}]
+        }
+    } else {
+        ui_debug "${configure.dir} is not a directory; not trying to relativise the build dir!"
     }
     return ${args}
 }
