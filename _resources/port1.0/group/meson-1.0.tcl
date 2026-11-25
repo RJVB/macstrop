@@ -31,6 +31,7 @@ default meson.debugopts     {[meson::debugopts]}
 
 namespace eval meson {
     proc build.dir {} {
+        ui_debug "meson::build.dir : build_dir=[option build_dir]"
         return "[option build_dir]"
     }
 }
@@ -140,10 +141,13 @@ proc meson::get_post_args {} {
 
     ## now rewrite theBuildDir as a relative path to configure.dir and
     ## use that instead if the relative path is shorter than the absolute one.
-    if {[file type ${configure.dir}] eq "directory"} {
+    if {[file exists ${configure.dir}] && [file type ${configure.dir}] eq "directory"} {
         set relBuildDir [meson::makeRelativeTo ${configure.dir} ${theBuildDir}]
         if {[string length ${relBuildDir}] < [string length ${theBuildDir}]} {
+            ui_debug "Using \"${relBuildDir}\" instead of \"${theBuildDir}\" because it's shorter"
             set args [lreplace ${args} 1 1 ${relBuildDir}]
+        } else {
+            ui_debug "NOT using \"${relBuildDir}\" instead of the default \"${theBuildDir}\""
         }
     } else {
         ui_debug "${configure.dir} is not a directory; not trying to relativise the build dir!"
