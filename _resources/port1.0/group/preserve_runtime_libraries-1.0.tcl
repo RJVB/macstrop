@@ -282,6 +282,9 @@ if {${os.platform} eq "darwin"} {
         if {[variant_isset preserve_runtime_libraries]} {
             if {${pattern} eq ""} {
                 set pattern "*.so.*"
+                ui_debug "Updating preserved libraries with default pattern \"${pattern}\""
+            } else {
+                ui_debug "Updating preserved libraries with specified pattern \"${pattern}\""
             }
             # when preserving multiple directories, make them depend on each other
             # construct a dict that maps SO names to file names
@@ -291,12 +294,13 @@ if {${os.platform} eq "darwin"} {
             }
             # now make the preserved libraries depend on other preserved libraries.
             foreach lib [glob -nocomplain ${destroot}${prefix}/lib/${PRL::preserve_runtime_library_dir}/${pattern}] {
-                # remove unnecessary rpath entries first
-                # See: https://github.com/RJVB/macstrop/issues/144 !!
-                system "patchelf --shrink-rpath ${lib}"
+## no need to shrink AND check if the preservation path is already included in the rpath!
+#default                 # remove unnecessary rpath entries first
+#                 # See: https://github.com/RJVB/macstrop/issues/144 !!
+#                 system "patchelf --shrink-rpath ${lib}"
                 set lrpath [exec patchelf --print-rpath ${lib}]
                 # prepend the new installation path to the rpath if not already present
-                if {[lsearch -exact "${prefix}/lib/${PRL::preserve_runtime_library_dir}:${lrpath}" [split ${lrpath} ":"]] < 0} {
+                if {[lsearch -exact [split ${lrpath} ":"] ${prefix}/lib/${PRL::preserve_runtime_library_dir}] < 0} {
                     system "patchelf --set-rpath ${prefix}/lib/${PRL::preserve_runtime_library_dir}:${lrpath} ${lib}"
                 } else {
                     ui_debug "Preservation RPATH ${prefix}/lib/${PRL::preserve_runtime_library_dir} already in ${lib}!"
